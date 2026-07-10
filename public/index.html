@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProAgro ERP — Financeiro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ==================== LOGIN ==================== -->
+  <div id="view-login" class="login-wrap" style="display:none">
+    <div class="login-brand">
+      <div class="mark">
+        <svg width="38" height="38" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+          <rect width="40" height="40" rx="9" fill="#3DAE43"/>
+          <path d="M11 22c4-9 12-11 18-11-1 8-5 15-14 15-1.5 0-2.8-.3-4-.9V22z" fill="#fff"/>
+          <path d="M11 30c2-5 6-8 11-9-4 3-7 6-8 9h-3z" fill="#0B3B24"/>
+        </svg>
+        <div>
+          <div class="brand-name">ProAgro Seguros</div>
+          <div class="brand-sub">Sistema de Gestão</div>
+        </div>
+      </div>
+      <div>
+        <h1>ERP Corporativo<br>Módulo Financeiro</h1>
+        <p>Contas a pagar e receber, fluxo de caixa, conciliação bancária, orçamento e relatórios gerenciais em um único ambiente.</p>
+      </div>
+      <div class="foot">Proteção Agropecuária Serviços Técnicos e Corretagem de Seguros LTDA · v1.0</div>
+    </div>
+    <div class="login-panel">
+      <div class="login-card">
+        <h2 id="auth-title">Acessar o sistema</h2>
+        <p class="sub" id="auth-sub">Use suas credenciais corporativas.</p>
+        <div class="domain-hint">Acesso restrito aos domínios <strong>@proagroseguros.com</strong> e <strong>@proagroinsur.tech</strong>.</div>
+        <div id="auth-msg" class="form-msg"></div>
+        <div class="field" id="f-name" style="display:none">
+          <label for="reg-name">Nome completo</label>
+          <input type="text" id="reg-name" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="auth-email">E-mail corporativo</label>
+          <input type="email" id="auth-email" placeholder="nome@proagroseguros.com" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="auth-pass">Senha</label>
+          <input type="password" id="auth-pass" autocomplete="current-password">
+        </div>
+        <button class="btn primary block" id="auth-submit">Entrar</button>
+        <p class="hint" style="text-align:center; margin-top:16px">
+          <a href="#" id="auth-toggle" style="color:var(--azul-700)">Primeiro acesso? Criar conta</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== APLICAÇÃO ==================== -->
+  <div id="view-app" class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg width="30" height="30" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+          <rect width="40" height="40" rx="9" fill="#3DAE43"/>
+          <path d="M11 22c4-9 12-11 18-11-1 8-5 15-14 15-1.5 0-2.8-.3-4-.9V22z" fill="#fff"/>
+          <path d="M11 30c2-5 6-8 11-9-4 3-7 6-8 9h-3z" fill="#0B3B24"/>
+        </svg>
+        <div>
+          <div class="brand-name">ProAgro</div>
+          <div class="brand-sub">ERP · Financeiro</div>
+        </div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="userbox">
+        <div class="avatar" id="u-avatar">–</div>
+        <div>
+          <div class="uname" id="u-name">–</div>
+          <div class="umail" id="u-mail">–</div>
+        </div>
+        <button id="btn-logout" title="Sair">Sair</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <div class="crumb">Financeiro</div>
+          <h2 id="page-title">Dashboard</h2>
+        </div>
+        <div class="crumb" id="today-label"></div>
+      </div>
+      <div class="content" id="content"></div>
+    </div>
+  </div>
+
+  <!-- Modal genérico -->
+  <div class="modal-back" id="modal-back">
+    <div class="modal" role="dialog" aria-modal="true">
+      <header>
+        <h3 id="modal-title">—</h3>
+        <button class="x-close" id="modal-close" aria-label="Fechar">×</button>
+      </header>
+      <div class="body" id="modal-body"></div>
+      <footer id="modal-footer"></footer>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
