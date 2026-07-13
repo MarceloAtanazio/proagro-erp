@@ -301,3 +301,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   .user-row { grid-template-columns:1fr; }
   .user-meta, .user-actions { justify-content:flex-start; }
 }
+
+/* ===== Anexos ===== */
+.att-upload { background:var(--verde-050,#EAF5EC); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+.att-upload-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+.att-upload-row select { flex:0 0 auto; min-width:150px; }
+.att-upload-row input[type="file"] { flex:1 1 200px; font-size:13px; }
+.att-item {
+  display:flex; align-items:center; gap:12px; padding:10px 12px;
+  border:1px solid var(--line); border-radius:10px; background:#fff; margin-bottom:8px;
+}
+.att-ico { font-size:20px; flex:0 0 auto; }
+.att-info { flex:1 1 auto; min-width:0; }
+.att-name { font-weight:600; font-size:13.5px; color:var(--ink,#1b2620); word-break:break-word; }
+.att-meta { font-size:12px; color:var(--muted); margin-top:1px; }
+.att-act { display:flex; gap:6px; align-items:center; flex:0 0 auto; }
