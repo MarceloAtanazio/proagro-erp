@@ -354,6 +354,10 @@ async function renderPagar() {
       <select id="f-status"><option value="">Todos os status</option><option value="pendente">Pendentes</option>
         <option value="vencido">Vencidos</option><option value="pago">Pagos</option></select>
       <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option>${x}</option>`).join('')}</select>
+      <div class="date-range">
+        <label>De <input type="date" id="f-de"></label>
+        <label>Até <input type="date" id="f-ate"></label>
+      </div>
       <div class="spacer"></div>
       <button class="btn" id="btn-csv">Exportar CSV</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
@@ -362,12 +366,15 @@ async function renderPagar() {
 
   const draw = () => {
     const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, fc = $('#f-cat').value, today = todayISO();
+    const de = $('#f-de').value, ate = $('#f-ate').value;
     const filtered = rows.filter(r => {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
       if (fs === 'pago' && r.status !== 'pago') return false;
       if (fs === 'vencido' && !late) return false;
       if (fc && r.category !== fc) return false;
+      if (de && r.due_date < de) return false;
+      if (ate && r.due_date > ate) return false;
       return !q || (r.description + ' ' + (r.supplier_name || '') + ' ' + (r.document || '')).toLowerCase().includes(q);
     });
     const total = filtered.reduce((s, r) => s + r.amount, 0);
@@ -401,7 +408,7 @@ async function renderPagar() {
     $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('payable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('título', `/api/payables/${b.dataset.del}`, renderPagar));
   };
-  ['q', 'f-status', 'f-cat'].forEach(id => $('#' + id).oninput = draw);
+  ['q', 'f-status', 'f-cat', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
   $('#btn-new').onclick = () => formPagar(null, sups);
   $('#btn-csv').onclick = () => exportCSV('contas_a_pagar',
     ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','Valor','Status','Pagamento'],
@@ -466,6 +473,10 @@ async function renderReceber() {
       <input type="search" id="q" placeholder="Buscar cliente, descrição…">
       <select id="f-status"><option value="">Todos os status</option><option value="pendente">Pendentes</option>
         <option value="vencido">Vencidos</option><option value="recebido">Recebidos</option></select>
+      <div class="date-range">
+        <label>De <input type="date" id="f-de"></label>
+        <label>Até <input type="date" id="f-ate"></label>
+      </div>
       <div class="spacer"></div>
       <button class="btn" id="btn-csv">Exportar CSV</button>
       <button class="btn primary" id="btn-new">+ Novo recebível</button>
@@ -474,11 +485,14 @@ async function renderReceber() {
 
   const draw = () => {
     const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, today = todayISO();
+    const de = $('#f-de').value, ate = $('#f-ate').value;
     const filtered = rows.filter(r => {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
       if (fs === 'recebido' && r.status !== 'recebido') return false;
       if (fs === 'vencido' && !late) return false;
+      if (de && r.due_date < de) return false;
+      if (ate && r.due_date > ate) return false;
       return !q || (r.description + ' ' + r.client_name + ' ' + (r.document || '')).toLowerCase().includes(q);
     });
     const total = filtered.reduce((s, r) => s + r.amount, 0);
@@ -509,7 +523,7 @@ async function renderReceber() {
     $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('receivable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('recebível', `/api/receivables/${b.dataset.del}`, renderReceber));
   };
-  ['q', 'f-status'].forEach(id => $('#' + id).oninput = draw);
+  ['q', 'f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
   $('#btn-new').onclick = () => formReceber(null);
   $('#btn-csv').onclick = () => exportCSV('contas_a_receber',
     ['Vencimento','Cliente','Descricao','Categoria','Documento','Valor','Status','Recebimento'],
@@ -1294,6 +1308,27 @@ function readFileAsBase64(file) {
     r.readAsDataURL(file);
   });
 }
+function b64toBlob(b64, mime) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+async function openAttachmentFile(id) {
+  // Abre a aba ANTES do fetch (síncrono, no clique) para não ser bloqueada pelo navegador.
+  const win = window.open('', '_blank');
+  try {
+    const r = await api(`/api/attachments/file/${id}`);
+    const blob = b64toBlob(r.data, r.mime_type);
+    const url = URL.createObjectURL(blob);
+    if (win) win.location.href = url;
+    else { const a = document.createElement('a'); a.href = url; a.download = r.file_name; a.click(); }
+  } catch (e) {
+    if (win) win.close();
+    toast(e.message || 'Não foi possível abrir o anexo.');
+  }
+}
+
 function updateAttBadge(type, id, n) {
   const b = document.querySelector(`[data-att="${type}:${id}"]`);
   if (b) b.textContent = '📎' + (n ? ' ' + n : '');
@@ -1338,10 +1373,11 @@ function openAttachments(type, id, label) {
             <div class="att-meta">${KIND_LABELS[a.kind] || 'Outro'} · ${fmtSize(a.byte_size)} · ${brDate(a.created_at.slice(0, 10))}</div>
           </div>
           <div class="att-act">
-            <a class="btn sm" href="/api/attachments/file/${a.id}" target="_blank" rel="noopener">Ver</a>
+            <button class="btn sm" data-attview="${a.id}">Ver</button>
             ${editable ? `<button class="btn sm danger-ghost" data-attdel="${a.id}">Excluir</button>` : ''}
           </div>
         </div>`).join('');
+      box.querySelectorAll('[data-attview]').forEach(b => b.onclick = () => openAttachmentFile(b.dataset.attview));
       box.querySelectorAll('[data-attdel]').forEach(b => b.onclick = () => {
         openModal('Excluir anexo', '<p>Deseja excluir este documento? Esta ação não pode ser desfeita.</p>',
           [{ label: 'Cancelar', onClick: () => openAttachments(type, id, label) },
