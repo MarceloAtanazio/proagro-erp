@@ -5,9 +5,13 @@
 
 // ------------------ Constantes ------------------
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-const CAT_DESPESA = ['Folha de Pagamento','Instalações','Frota','RH / Benefícios','Jurídico','Tecnologia','Serviços Técnicos','Viáticos','Impostos e Taxas','Marketing e Eventos','Outros'];
-const CAT_RECEITA = ['Comissões','Serviços Intercompany','Serviços Técnicos','Receitas Financeiras','Outros'];
-const CENTROS = ['Administrativo','Comercial','Operação a Campo','Diretoria'];
+// Populadas via /api/settings ao entrar no app (ver loadSettings()).
+// Mantidas como const para que todas as telas compartilhem a mesma
+// referência de array — o conteúdo é atualizado por push/splice, nunca reatribuído.
+const CAT_DESPESA = [];
+const CAT_RECEITA = [];
+const CAT_FORNECEDOR = [];
+const CENTROS = [];
 const CORES = { verde: '#00783F', verdeMed: '#3DAE43', azul: '#1F4E78', cinza: '#9AA8A0', vermelho: '#B23A2F', ambar: '#C9922A' };
 
 let USER = null;
@@ -32,6 +36,18 @@ function permLevel(page) {
 }
 const canViewPage = page => { const l = permLevel(page); return l === 'view' || l === 'edit'; };
 const canEditPage = page => permLevel(page) === 'edit';
+
+// Busca categorias/centros de custo configurados e popula os arrays globais
+// usados em todos os formulários (Contas a Pagar/Receber, Fornecedores, Orçamento).
+async function loadSettings() {
+  try {
+    const s = await api('/api/settings');
+    CAT_DESPESA.length = 0; CAT_DESPESA.push(...s.categories.despesa);
+    CAT_RECEITA.length = 0; CAT_RECEITA.push(...s.categories.receita);
+    CAT_FORNECEDOR.length = 0; CAT_FORNECEDOR.push(...s.categories.fornecedor);
+    CENTROS.length = 0; CENTROS.push(...s.costCenters);
+  } catch { /* segue com o que já estava carregado */ }
+}
 
 // Gerador de senha forte (16 chars: maiúscula, minúscula, número e símbolo,
 // sem caracteres ambíguos como 0/O/1/l). Usa crypto para a escolha.
@@ -139,7 +155,8 @@ function showApp() {
   route();
 }
 // Entra no app e, se necessário, força a troca da senha do primeiro acesso.
-function enterApp() {
+async function enterApp() {
+  await loadSettings();
   showApp();
   if (USER && USER.must_change_password) openForcedPasswordChange();
 }
@@ -197,7 +214,8 @@ const ICONS = {
   bud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4m8-4v4"/></svg>',
   vs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 20V10m6 10V4m6 16v-7"/></svg>',
   rep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6"/></svg>',
-  usr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>'
+  usr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
+  cfg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 008 4.6a1.7 1.7 0 001.03-1.56V3a2 2 0 014 0v.09A1.7 1.7 0 0016 4.6a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 8a1.7 1.7 0 001.56 1.03H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>'
 };
 
 const PAGES = [
@@ -210,7 +228,8 @@ const PAGES = [
   { hash: 'orcamento', title: 'Orçamento Anual', icon: 'bud', section: 'Planejamento' },
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
-  { hash: 'usuarios', title: 'Usuários', icon: 'usr', section: 'Administração', super: true }
+  { hash: 'usuarios', title: 'Usuários', icon: 'usr', section: 'Administração', super: true },
+  { hash: 'config', title: 'Configurações', icon: 'cfg', super: true }
 ];
 
 function buildNav() {
@@ -262,7 +281,7 @@ function route() {
   const renderers = {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
-    orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, usuarios: renderUsuarios
+    orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, usuarios: renderUsuarios, config: renderConfig
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
   renderers[page.hash]()
@@ -680,7 +699,7 @@ function formFornecedor(r) {
     ${fld('s-name', 'Razão social *', 'text', r.name || '')}
     <div class="form-row">
       ${fld('s-cnpj', 'CNPJ', 'text', r.cnpj || '', 'placeholder="00.000.000/0000-00"')}
-      ${fldSel('s-cat', 'Categoria', [{ v: '', t: '—' }, ...CAT_DESPESA.map(x => ({ v: x, t: x }))], r.category || '')}
+      ${fldSel('s-cat', 'Categoria', [{ v: '', t: '—' }, ...CAT_FORNECEDOR.map(x => ({ v: x, t: x }))], r.category || '')}
     </div>
     <div class="form-row">
       ${fld('s-contact', 'Contato', 'text', r.contact_name || '')}
@@ -1283,6 +1302,146 @@ function openReset(u) {
      }}]);
   wirePwGen();
 }
+// ============================================================
+// CONFIGURAÇÕES (categorias e centros de custo)
+// ============================================================
+const CFG_TYPE_LABEL = { despesa: 'Categorias de Despesa', receita: 'Categorias de Receita', fornecedor: 'Categorias de Fornecedor' };
+
+async function renderConfig() {
+  const data = await api('/api/settings/manage');
+  const c = $('#content');
+
+  const section = (type, items) => {
+    const rows = items.filter(x => x.type === type);
+    return `<div class="card cfg-card">
+      <h3>${CFG_TYPE_LABEL[type]}</h3>
+      <div class="cfg-add-row">
+        <input type="text" placeholder="Nova categoria…" data-newcat="${type}">
+        <button class="btn sm primary" data-addcat="${type}">+ Adicionar</button>
+      </div>
+      <div class="cfg-list">${rows.length ? rows.map(x => `
+        <div class="cfg-item ${x.active ? '' : 'inactive'}">
+          <span class="cfg-name">${esc(x.name)}</span>
+          <span class="badge ${x.active ? 'ok' : 'off'}">${x.active ? 'Ativa' : 'Inativa'}</span>
+          <div class="cfg-actions">
+            <button class="btn sm" data-catedit="${x.id}">Renomear</button>
+            <button class="btn sm" data-cattoggle="${x.id}">${x.active ? 'Desativar' : 'Ativar'}</button>
+            <button class="btn sm danger-ghost" data-catdel="${x.id}">Excluir</button>
+          </div>
+        </div>`).join('') : '<div class="empty">Nenhuma categoria cadastrada.</div>'}</div>
+    </div>`;
+  };
+
+  c.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <h3>Configurações da plataforma</h3>
+      <p style="font-size:13.5px; color:var(--ink-2)">Gerencie aqui as categorias de despesas, receitas e fornecedores, além dos centros de custo.
+      Essas listas alimentam os formulários de <strong>Contas a Pagar</strong>, <strong>Contas a Receber</strong>, <strong>Fornecedores</strong> e <strong>Orçamento Anual</strong>,
+      e toda movimentação lançada com elas aparece automaticamente em <strong>Orçado x Realizado</strong> e <strong>Relatórios Gerenciais</strong>.
+      Categorias <strong>desativadas</strong> somem das opções de novos lançamentos, mas continuam valendo para o histórico já registrado.</p>
+    </div>
+    ${section('despesa', data.categories)}
+    ${section('receita', data.categories)}
+    ${section('fornecedor', data.categories)}
+    <div class="card cfg-card">
+      <h3>Centros de Custo</h3>
+      <div class="cfg-add-row">
+        <input type="text" placeholder="Novo centro de custo…" id="cfg-newcc">
+        <button class="btn sm primary" id="cfg-addcc">+ Adicionar</button>
+      </div>
+      <div class="cfg-list">${data.costCenters.length ? data.costCenters.map(x => `
+        <div class="cfg-item ${x.active ? '' : 'inactive'}">
+          <span class="cfg-name">${esc(x.name)}</span>
+          <span class="badge ${x.active ? 'ok' : 'off'}">${x.active ? 'Ativo' : 'Inativo'}</span>
+          <div class="cfg-actions">
+            <button class="btn sm" data-ccedit="${x.id}">Renomear</button>
+            <button class="btn sm" data-cctoggle="${x.id}">${x.active ? 'Desativar' : 'Ativar'}</button>
+            <button class="btn sm danger-ghost" data-ccdel="${x.id}">Excluir</button>
+          </div>
+        </div>`).join('') : '<div class="empty">Nenhum centro de custo cadastrado.</div>'}</div>
+    </div>`;
+
+  // --- Categorias: adicionar ---
+  c.querySelectorAll('[data-addcat]').forEach(b => b.onclick = async () => {
+    const type = b.dataset.addcat;
+    const input = c.querySelector(`[data-newcat="${type}"]`);
+    const name = input.value.trim();
+    if (!name) return toast('Digite o nome da categoria.');
+    try { await api('/api/settings/categories', { method: 'POST', body: { type, name } }); toast('Categoria adicionada.'); await loadSettings(); renderConfig(); }
+    catch (e) { toast(e.message); }
+  });
+  c.querySelectorAll('[data-newcat]').forEach(inp => inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') c.querySelector(`[data-addcat="${inp.dataset.newcat}"]`).click();
+  }));
+
+  // --- Categorias: renomear ---
+  c.querySelectorAll('[data-catedit]').forEach(b => b.onclick = () => {
+    const id = b.dataset.catedit, cur = data.categories.find(x => String(x.id) === id);
+    openModal('Renomear categoria', `${fld('cfg-catname', 'Nome', 'text', cur.name)}`,
+      [{ label: 'Cancelar', onClick: closeModal },
+       { label: 'Salvar', cls: 'primary', onClick: async () => {
+          const name = $('#cfg-catname').value.trim();
+          if (!name) return modalError('Informe o nome.');
+          try { await api(`/api/settings/categories/${id}`, { method: 'PUT', body: { name } }); closeModal(); toast('Categoria renomeada — os lançamentos existentes foram atualizados.'); await loadSettings(); renderConfig(); }
+          catch (e) { modalError(e.message); }
+       }}]);
+  });
+
+  // --- Categorias: ativar/desativar ---
+  c.querySelectorAll('[data-cattoggle]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.cattoggle, cur = data.categories.find(x => String(x.id) === id);
+    try { await api(`/api/settings/categories/${id}`, { method: 'PUT', body: { active: !cur.active } }); toast('Situação atualizada.'); await loadSettings(); renderConfig(); }
+    catch (e) { toast(e.message); }
+  });
+
+  // --- Categorias: excluir ---
+  c.querySelectorAll('[data-catdel]').forEach(b => b.onclick = () => {
+    const id = b.dataset.catdel, cur = data.categories.find(x => String(x.id) === id);
+    openModal('Excluir categoria', `<p>Deseja excluir a categoria <strong>${esc(cur.name)}</strong>? Se ela estiver em uso em algum lançamento, será necessário desativá-la em vez de excluir.</p>`,
+      [{ label: 'Cancelar', onClick: closeModal },
+       { label: 'Excluir', cls: 'primary', onClick: async () => {
+          try { await api(`/api/settings/categories/${id}`, { method: 'DELETE' }); closeModal(); toast('Categoria excluída.'); await loadSettings(); renderConfig(); }
+          catch (e) { modalError(e.message); }
+       }}]);
+  });
+
+  // --- Centros de custo: adicionar ---
+  $('#cfg-addcc').onclick = async () => {
+    const name = $('#cfg-newcc').value.trim();
+    if (!name) return toast('Digite o nome do centro de custo.');
+    try { await api('/api/settings/cost-centers', { method: 'POST', body: { name } }); toast('Centro de custo adicionado.'); await loadSettings(); renderConfig(); }
+    catch (e) { toast(e.message); }
+  };
+  $('#cfg-newcc').addEventListener('keydown', e => { if (e.key === 'Enter') $('#cfg-addcc').click(); });
+
+  // --- Centros de custo: renomear / ativar / excluir ---
+  c.querySelectorAll('[data-ccedit]').forEach(b => b.onclick = () => {
+    const id = b.dataset.ccedit, cur = data.costCenters.find(x => String(x.id) === id);
+    openModal('Renomear centro de custo', `${fld('cfg-ccname', 'Nome', 'text', cur.name)}`,
+      [{ label: 'Cancelar', onClick: closeModal },
+       { label: 'Salvar', cls: 'primary', onClick: async () => {
+          const name = $('#cfg-ccname').value.trim();
+          if (!name) return modalError('Informe o nome.');
+          try { await api(`/api/settings/cost-centers/${id}`, { method: 'PUT', body: { name } }); closeModal(); toast('Centro de custo renomeado.'); await loadSettings(); renderConfig(); }
+          catch (e) { modalError(e.message); }
+       }}]);
+  });
+  c.querySelectorAll('[data-cctoggle]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.cctoggle, cur = data.costCenters.find(x => String(x.id) === id);
+    try { await api(`/api/settings/cost-centers/${id}`, { method: 'PUT', body: { active: !cur.active } }); toast('Situação atualizada.'); await loadSettings(); renderConfig(); }
+    catch (e) { toast(e.message); }
+  });
+  c.querySelectorAll('[data-ccdel]').forEach(b => b.onclick = () => {
+    const id = b.dataset.ccdel, cur = data.costCenters.find(x => String(x.id) === id);
+    openModal('Excluir centro de custo', `<p>Deseja excluir <strong>${esc(cur.name)}</strong>? Se estiver em uso em algum título, será necessário desativá-lo em vez de excluir.</p>`,
+      [{ label: 'Cancelar', onClick: closeModal },
+       { label: 'Excluir', cls: 'primary', onClick: async () => {
+          try { await api(`/api/settings/cost-centers/${id}`, { method: 'DELETE' }); closeModal(); toast('Centro de custo excluído.'); await loadSettings(); renderConfig(); }
+          catch (e) { modalError(e.message); }
+       }}]);
+  });
+}
+
 function confirmAction(label, fn, okMsg) {
   openModal('Confirmar', `<p>Deseja realmente ${esc(label)}?</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
