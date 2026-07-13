@@ -492,6 +492,128 @@ app.delete('/api/attachments/:id', requireAuth, h(async (req, res) => {
 }));
 
 // ------------------------------------------------------------
+// Configurações: categorias (despesa/receita/fornecedor) e centros de custo
+// ------------------------------------------------------------
+const CAT_TYPES = ['despesa', 'receita', 'fornecedor'];
+
+// Leitura: qualquer usuário autenticado (precisa para popular os formulários).
+// Só itens ATIVOS — o que está desativado some das opções de novos lançamentos,
+// mas continua valendo para os lançamentos já existentes.
+app.get('/api/settings', requireAuth, h(async (req, res) => {
+  const cats = await query('SELECT id, type, name FROM erp_categories WHERE active = true ORDER BY type, name');
+  const ccs = await query('SELECT id, name FROM erp_cost_centers WHERE active = true ORDER BY name');
+  const grouped = { despesa: [], receita: [], fornecedor: [] };
+  cats.forEach(c => grouped[c.type].push(c.name));
+  res.json({ categories: grouped, costCenters: ccs.map(c => c.name) });
+}));
+
+// Gestão completa (inclui inativos) — somente o super-administrador.
+app.get('/api/settings/manage', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const cats = await query('SELECT id, type, name, active FROM erp_categories ORDER BY type, name');
+  const ccs = await query('SELECT id, name, active FROM erp_cost_centers ORDER BY name');
+  res.json({ categories: cats, costCenters: ccs });
+}));
+
+app.post('/api/settings/categories', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const type = req.body.type, name = sanitize(req.body.name);
+  if (!CAT_TYPES.includes(type)) return res.status(400).json({ error: 'Tipo de categoria inválido.' });
+  if (!name) return res.status(400).json({ error: 'Informe o nome da categoria.' });
+  const dup = await query('SELECT id FROM erp_categories WHERE type=$1 AND lower(name)=lower($2)', [type, name]);
+  if (dup.length) return res.status(409).json({ error: 'Já existe uma categoria com este nome.' });
+  const ins = await query('INSERT INTO erp_categories (type, name) VALUES ($1,$2) RETURNING id', [type, name]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+// Renomear (propaga para os lançamentos já cadastrados) e/ou ativar/desativar.
+app.put('/api/settings/categories/:id', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT * FROM erp_categories WHERE id=$1', [id]);
+  const cat = rows[0];
+  if (!cat) return res.status(404).json({ error: 'Categoria não encontrada.' });
+
+  const name = sanitize(req.body.name);
+  const active = req.body.active;
+  if (name && name !== cat.name) {
+    const dup = await query('SELECT id FROM erp_categories WHERE type=$1 AND lower(name)=lower($2) AND id<>$3', [cat.type, name, id]);
+    if (dup.length) return res.status(409).json({ error: 'Já existe uma categoria com este nome.' });
+    await query('UPDATE erp_categories SET name=$1 WHERE id=$2', [name, id]);
+    // Propaga o novo nome para os lançamentos que já usam a categoria antiga.
+    if (cat.type === 'despesa') {
+      await query('UPDATE erp_payables SET category=$1 WHERE category=$2', [name, cat.name]);
+      await query("UPDATE erp_budgets SET category=$1 WHERE category=$2 AND type='despesa'", [name, cat.name]);
+    } else if (cat.type === 'receita') {
+      await query('UPDATE erp_receivables SET category=$1 WHERE category=$2', [name, cat.name]);
+      await query("UPDATE erp_budgets SET category=$1 WHERE category=$2 AND type='receita'", [name, cat.name]);
+    } else {
+      await query('UPDATE erp_suppliers SET category=$1 WHERE category=$2', [name, cat.name]);
+    }
+  }
+  if (typeof active === 'boolean') await query('UPDATE erp_categories SET active=$1 WHERE id=$2', [active, id]);
+  res.json({ ok: true });
+}));
+
+// Exclui a categoria — só se não estiver em uso em nenhum lançamento
+// (caso contrário, oriente a desativar em vez de excluir).
+app.delete('/api/settings/categories/:id', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT * FROM erp_categories WHERE id=$1', [id]);
+  const cat = rows[0];
+  if (!cat) return res.status(404).json({ error: 'Categoria não encontrada.' });
+
+  let used = 0;
+  if (cat.type === 'despesa') {
+    used = (await query('SELECT COUNT(*)::int AS n FROM erp_payables WHERE category=$1', [cat.name]))[0].n
+         + (await query("SELECT COUNT(*)::int AS n FROM erp_budgets WHERE category=$1 AND type='despesa'", [cat.name]))[0].n;
+  } else if (cat.type === 'receita') {
+    used = (await query('SELECT COUNT(*)::int AS n FROM erp_receivables WHERE category=$1', [cat.name]))[0].n
+         + (await query("SELECT COUNT(*)::int AS n FROM erp_budgets WHERE category=$1 AND type='receita'", [cat.name]))[0].n;
+  } else {
+    used = (await query('SELECT COUNT(*)::int AS n FROM erp_suppliers WHERE category=$1', [cat.name]))[0].n;
+  }
+  if (used > 0) return res.status(409).json({ error: `Esta categoria está em uso em ${used} registro(s). Desative-a em vez de excluir.` });
+  await query('DELETE FROM erp_categories WHERE id=$1', [id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/settings/cost-centers', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const name = sanitize(req.body.name);
+  if (!name) return res.status(400).json({ error: 'Informe o nome do centro de custo.' });
+  const dup = await query('SELECT id FROM erp_cost_centers WHERE lower(name)=lower($1)', [name]);
+  if (dup.length) return res.status(409).json({ error: 'Já existe um centro de custo com este nome.' });
+  const ins = await query('INSERT INTO erp_cost_centers (name) VALUES ($1) RETURNING id', [name]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/settings/cost-centers/:id', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT * FROM erp_cost_centers WHERE id=$1', [id]);
+  const cc = rows[0];
+  if (!cc) return res.status(404).json({ error: 'Centro de custo não encontrado.' });
+
+  const name = sanitize(req.body.name);
+  const active = req.body.active;
+  if (name && name !== cc.name) {
+    const dup = await query('SELECT id FROM erp_cost_centers WHERE lower(name)=lower($1) AND id<>$2', [name, id]);
+    if (dup.length) return res.status(409).json({ error: 'Já existe um centro de custo com este nome.' });
+    await query('UPDATE erp_cost_centers SET name=$1 WHERE id=$2', [name, id]);
+    await query('UPDATE erp_payables SET cost_center=$1 WHERE cost_center=$2', [name, cc.name]);
+  }
+  if (typeof active === 'boolean') await query('UPDATE erp_cost_centers SET active=$1 WHERE id=$2', [active, id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/settings/cost-centers/:id', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT * FROM erp_cost_centers WHERE id=$1', [id]);
+  const cc = rows[0];
+  if (!cc) return res.status(404).json({ error: 'Centro de custo não encontrado.' });
+  const used = (await query('SELECT COUNT(*)::int AS n FROM erp_payables WHERE cost_center=$1', [cc.name]))[0].n;
+  if (used > 0) return res.status(409).json({ error: `Este centro de custo está em uso em ${used} título(s). Desative-o em vez de excluir.` });
+  await query('DELETE FROM erp_cost_centers WHERE id=$1', [id]);
+  res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
 // Conciliação Bancária
 // ------------------------------------------------------------
 app.get('/api/bank', requireAuth, requireViewAny(['conciliacao']), h(async (req, res) => {
