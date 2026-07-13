@@ -247,3 +247,57 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ===== Controle de acesso / permissões ===== */
+.ro-banner {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--warn-050, #FBF3E0); color: var(--warn, #8A6414);
+  border: 1px solid var(--warn, #C9922A); border-radius: 10px;
+  padding: 10px 14px; font-size: 13px; font-weight: 500; margin-bottom: 16px;
+}
+.perm-grid { display: grid; gap: 8px; }
+.perm-row {
+  display: grid; grid-template-columns: 1fr 150px; align-items: center; gap: 10px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+}
+.perm-row span { font-size: 13px; color: var(--ink-2); }
+.perm-row select { width: 100%; }
+.cred-box { display: grid; gap: 10px; margin-top: 6px; }
+.cred-box > div {
+  display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 10px;
+  background: var(--verde-050, #EAF5EC); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+}
+.cred-box span { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.cred-box code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; font-weight: 600;
+  color: var(--verde-700, #00783F); word-break: break-all; user-select: all;
+}
+
+/* ===== Lista de usuários (cards) ===== */
+.user-head { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; }
+.user-list { display:flex; flex-direction:column; gap:10px; }
+.user-row {
+  display:grid; grid-template-columns: 1fr auto auto; align-items:center; gap:16px;
+  background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  box-shadow:var(--shadow); padding:14px 16px;
+}
+.user-id { display:flex; gap:12px; align-items:flex-start; }
+.user-id .avatar {
+  width:38px; height:38px; flex:0 0 38px; border-radius:50%;
+  background:var(--verde-050,#EAF5EC); color:var(--verde-700,#00783F);
+  display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;
+}
+.user-name { font-weight:600; font-size:14px; color:var(--ink,#1b2620); }
+.user-mail { font-size:12.5px; color:var(--muted); margin-top:1px; }
+.user-meta { display:flex; gap:8px; align-items:center; }
+.user-actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+.chip-row { display:flex; flex-wrap:wrap; gap:5px; }
+.chip {
+  font-size:11px; padding:2px 8px; border-radius:6px;
+  background:#EEF1EF; color:var(--ink-2); border:1px solid var(--line);
+}
+.chip-edit { background:var(--verde-050,#EAF5EC); color:var(--verde-700,#00783F); border-color:var(--verde-500,#3DAE43); }
+@media (max-width: 720px) {
+  .user-row { grid-template-columns:1fr; }
+  .user-meta, .user-actions { justify-content:flex-start; }
+}
