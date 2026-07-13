@@ -1,736 +1,100 @@
-// ============================================================
-// ProAgro ERP — API (Módulo Financeiro)
-// Versão Vercel (serverless) + Supabase (Postgres)
-//
-// Diferenças em relação à versão local (Express + SQLite):
-//  - better-sqlite3  -> pg (Postgres / Supabase), tudo assíncrono
-//  - express-session -> cookie httpOnly com JWT assinado (stateless,
-//    necessário pois funções serverless não compartilham memória
-//    entre execuções)
-//  - rate limit de login em Map()  -> tabela erp_login_attempts
-//  - toda a lógica de negócio (validações, regras de conciliação,
-//    relatórios) foi preservada
-// ============================================================
-const express = require('express');
-const cookieParser = require('cookie-parser');
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const path = require('path');
-const { query, n } = require('../src/db');
-
-const app = express();
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.warn('[auth] Variável JWT_SECRET não definida. Configure-a nas variáveis de ambiente da Vercel (string aleatória longa).');
-}
-const COOKIE_NAME = 'proagro_token';
-const SESSION_HOURS = 8;
-
-// Domínios corporativos autorizados
-const ALLOWED_DOMAINS = ['proagroseguros.com', 'proagroinsur.tech'];
-
-app.use(express.json({ limit: '2mb' }));
-app.use(cookieParser());
-
-// ------------------------------------------------------------
-// Segurança / utilitários
-// ------------------------------------------------------------
-function emailDomainAllowed(email) {
-  const m = String(email || '').toLowerCase().trim().match(/^[^@\s]+@([^@\s]+)$/);
-  return !!m && ALLOWED_DOMAINS.includes(m[1]);
-}
-
-function signToken(user) {
-  return jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: `${SESSION_HOURS}h` });
-}
-
-function setAuthCookie(res, user) {
-  res.cookie(COOKIE_NAME, signToken(user), {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: SESSION_HOURS * 60 * 60 * 1000,
-    path: '/'
-  });
-}
-
-// Páginas cujo acesso é configurável por usuário.
-// "usuarios" não entra aqui: é exclusiva do administrador.
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios'];
-
-// Normaliza o objeto de permissões recebido do frontend para o formato
-// { pagina: 'view' | 'edit' }, descartando páginas desconhecidas e níveis inválidos.
-function normalizePermissions(input) {
-  const out = {};
-  const src = (input && typeof input === 'object') ? input : {};
-  for (const page of PERM_PAGES) {
-    const lvl = src[page];
-    if (lvl === 'view' || lvl === 'edit') out[page] = lvl;
-  }
-  return out;
-}
-
-function levelOf(user, page) {
-  if (user.role === 'admin') return 'edit';
-  const p = (user.permissions || {})[page];
-  return (p === 'edit' || p === 'view') ? p : 'none';
-}
-const canView = (user, page) => { const l = levelOf(user, page); return l === 'view' || l === 'edit'; };
-const canEdit = (user, page) => levelOf(user, page) === 'edit';
-
-// requireAuth agora carrega o usuário completo do banco a CADA requisição.
-// Assim, mudanças de permissão ou desativação de conta têm efeito imediato,
-// sem depender do que estava no token (que só guarda o id).
-async function requireAuth(req, res, next) {
-  const token = req.cookies && req.cookies[COOKIE_NAME];
-  if (!token) return res.status(401).json({ error: 'Não autenticado. Faça login para continuar.' });
-  let payload;
-  try { payload = jwt.verify(token, JWT_SECRET); }
-  catch { return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' }); }
-  try {
-    const rows = await query(
-      'SELECT id, name, email, role, status, active, permissions, must_change_password FROM erp_users WHERE id = $1',
-      [payload.sub]
-    );
-    const u = rows[0];
-    if (!u || u.active !== true || u.status !== 'ativo') {
-      return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
-    }
-    u.permissions = u.permissions || {};
-    req.user = u;
-    next();
-  } catch (e) {
-    console.error('[requireAuth]', e);
-    return res.status(500).json({ error: 'Erro interno de autenticação.' });
-  }
-}
-
-function requireAdmin(req, res, next) {
-  if (req.user && req.user.role === 'admin') return next();
-  return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
-}
-
-// Exige permissão de LEITURA em ao menos uma das páginas que consomem o dado.
-// (alguns endpoints alimentam mais de uma tela — ex.: /api/suppliers também
-// abastece o seletor de fornecedores em Contas a Pagar.)
-function requireViewAny(pages) {
-  return (req, res, next) => {
-    if (req.user.role === 'admin') return next();
-    if (pages.some(p => canView(req.user, p))) return next();
-    return res.status(403).json({ error: 'Você não tem permissão para visualizar estes dados.' });
-  };
-}
-// Exige permissão de EDIÇÃO na página dona do recurso. Esta é a trava de
-// segurança real: um usuário "somente leitura" não consegue gravar nada,
-// mesmo que envie a requisição manualmente.
-function requireEdit(page) {
-  return (req, res, next) => {
-    if (req.user.role === 'admin') return next();
-    if (canEdit(req.user, page)) return next();
-    return res.status(403).json({ error: 'Você não tem permissão para editar nesta seção.' });
-  };
-}
-
-// Gerador de senha forte no servidor (usado como fallback/garantia).
-function generateStrongPassword(len = 16) {
-  const U = 'ABCDEFGHJKLMNPQRSTUVWXYZ', L = 'abcdefghijkmnopqrstuvwxyz', D = '23456789', S = '!@#$%&*?-_+=';
-  const all = U + L + D + S;
-  const crypto = require('crypto');
-  const pick = set => set[crypto.randomInt(set.length)];
-  let out = [pick(U), pick(L), pick(D), pick(S)];
-  for (let i = out.length; i < len; i++) out.push(pick(all));
-  for (let i = out.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [out[i], out[j]] = [out[j], out[i]]; }
-  return out.join('');
-}
-function passwordStrongEnough(pw) {
-  return typeof pw === 'string' && pw.length >= 10 &&
-    /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
-}
-
-// Rate limit de login usando tabela Postgres (funções serverless não
-// compartilham memória entre execuções, então um Map() local não funciona).
-async function loginRateLimit(req, res, next) {
-  try {
-    const ip = String(req.ip || req.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
-    const rows = await query(`
-      INSERT INTO erp_login_attempts (ip, count, first_attempt)
-      VALUES ($1, 1, now())
-      ON CONFLICT (ip) DO UPDATE SET
-        count = CASE WHEN now() - erp_login_attempts.first_attempt > interval '15 minutes'
-                     THEN 1 ELSE erp_login_attempts.count + 1 END,
-        first_attempt = CASE WHEN now() - erp_login_attempts.first_attempt > interval '15 minutes'
-                     THEN now() ELSE erp_login_attempts.first_attempt END
-      RETURNING count
-    `, [ip]);
-    if (rows[0].count > 10) {
-      return res.status(429).json({ error: 'Muitas tentativas de login. Aguarde 15 minutos.' });
-    }
-    next();
-  } catch (e) {
-    console.error('[loginRateLimit]', e);
-    next(); // não bloqueia o login por falha do rate limiter
-  }
-}
-
-const sanitize = v => (typeof v === 'string' ? v.trim() : v);
-const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
-
-// Envolve handlers async para propagar erros ao Express corretamente.
-const h = fn => (req, res) => fn(req, res).catch(err => {
-  console.error(err);
-  res.status(500).json({ error: 'Erro interno. Tente novamente.' });
-});
-
-// ------------------------------------------------------------
-// Autenticação
-// ------------------------------------------------------------
-
-// Informa ao frontend se já existe algum usuário. Se não existir, o primeiro
-// cadastro cria o administrador (bootstrap). Se existir, o cadastro passa a
-// ser apenas uma SOLICITAÇÃO de acesso, aprovada depois pelo administrador.
-app.get('/api/auth/bootstrap-status', h(async (req, res) => {
-  const rows = await query('SELECT COUNT(*)::int AS n FROM erp_users');
-  res.json({ hasUsers: rows[0].n > 0 });
-}));
-
-app.post('/api/auth/register', loginRateLimit, h(async (req, res) => {
-  const name = sanitize(req.body.name);
-  const email = String(sanitize(req.body.email) || '').toLowerCase();
-  const password = String(req.body.password || '');
-
-  if (!name || name.length < 3) return res.status(400).json({ error: 'Informe o nome completo.' });
-  if (!emailDomainAllowed(email)) {
-    return res.status(403).json({ error: 'Cadastro permitido apenas para e-mails @proagroseguros.com ou @proagroinsur.tech.' });
-  }
-
-  const exists = await query('SELECT id FROM erp_users WHERE email = $1', [email]);
-  if (exists.length) return res.status(409).json({ error: 'Já existe um cadastro ou solicitação para este e-mail.' });
-
-  const countRows = await query('SELECT COUNT(*)::int AS n FROM erp_users');
-  const isFirst = countRows[0].n === 0;
-
-  if (isFirst) {
-    // Bootstrap: primeiro usuário vira administrador ativo com acesso total.
-    if (password.length < 8) return res.status(400).json({ error: 'A senha do administrador deve ter no mínimo 8 caracteres.' });
-    const hash = bcrypt.hashSync(password, 10);
-    const inserted = await query(
-      `INSERT INTO erp_users (name, email, password_hash, role, status, active, permissions, must_change_password)
-       VALUES ($1,$2,$3,'admin','ativo',true,NULL,false) RETURNING id`,
-      [name, email, hash]
-    );
-    const user = { id: inserted[0].id, name, email, role: 'admin', status: 'ativo', permissions: {}, must_change_password: false };
-    setAuthCookie(res, user);
-    return res.json({ ok: true, user });
-  }
-
-  // Demais cadastros: cria SOLICITAÇÃO pendente, sem senha utilizável e sem
-  // login automático. O administrador aprova, define a senha e as permissões.
-  const placeholder = bcrypt.hashSync(generateStrongPassword(24), 10); // hash inutilizável até aprovação
-  await query(
-    `INSERT INTO erp_users (name, email, password_hash, role, status, active, permissions, must_change_password)
-     VALUES ($1,$2,$3,'usuario','pendente',false,'{}'::jsonb,false)`,
-    [name, email, placeholder]
-  );
-  return res.json({ ok: true, pending: true });
-}));
-
-app.post('/api/auth/login', loginRateLimit, h(async (req, res) => {
-  const email = String(sanitize(req.body.email) || '').toLowerCase();
-  const password = String(req.body.password || '');
-  if (!emailDomainAllowed(email)) {
-    return res.status(403).json({ error: 'Acesso permitido apenas para e-mails @proagroseguros.com ou @proagroinsur.tech.' });
-  }
-  const rows = await query('SELECT * FROM erp_users WHERE email = $1', [email]);
-  const user = rows[0];
-  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
-  }
-  if (user.status === 'pendente') {
-    return res.status(403).json({ error: 'Sua solicitação de acesso ainda não foi aprovada pelo administrador.' });
-  }
-  if (user.status === 'recusado' || user.active !== true) {
-    return res.status(403).json({ error: 'Conta inativa. Contate o administrador.' });
-  }
-  setAuthCookie(res, user);
-  res.json({ ok: true, user: {
-    id: user.id, name: user.name, email: user.email, role: user.role,
-    status: user.status, permissions: user.permissions || {},
-    must_change_password: !!user.must_change_password
-  }});
-}));
-
-app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie(COOKIE_NAME, { path: '/' });
-  res.json({ ok: true });
-});
-
-app.get('/api/auth/me', requireAuth, h(async (req, res) => {
-  const u = req.user;
-  res.json({ user: {
-    id: u.id, name: u.name, email: u.email, role: u.role,
-    status: u.status, permissions: u.permissions || {},
-    must_change_password: !!u.must_change_password
-  }});
-}));
-
-// Troca de senha do próprio usuário (usada também na troca obrigatória do
-// primeiro acesso, quando o administrador gerou a senha inicial).
-app.post('/api/auth/change-password', requireAuth, h(async (req, res) => {
-  const current = String(req.body.current_password || '');
-  const next = String(req.body.new_password || '');
-  if (!passwordStrongEnough(next)) {
-    return res.status(400).json({ error: 'A nova senha deve ter ao menos 10 caracteres, com maiúscula, minúscula, número e símbolo.' });
-  }
-  const rows = await query('SELECT password_hash, must_change_password FROM erp_users WHERE id = $1', [req.user.id]);
-  const u = rows[0];
-  // Na troca obrigatória de primeiro acesso não exigimos a senha atual.
-  if (!u.must_change_password) {
-    if (!bcrypt.compareSync(current, u.password_hash)) {
-      return res.status(400).json({ error: 'Senha atual incorreta.' });
-    }
-  }
-  await query('UPDATE erp_users SET password_hash = $1, must_change_password = false WHERE id = $2',
-    [bcrypt.hashSync(next, 10), req.user.id]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Fornecedores
-// ------------------------------------------------------------
-app.get('/api/suppliers', requireAuth, requireViewAny(['fornecedores','pagar']), h(async (req, res) => {
-  res.json(await query('SELECT * FROM erp_suppliers ORDER BY name'));
-}));
-
-app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
-  const b = req.body;
-  if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, status, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-    [sanitize(b.name), sanitize(b.cnpj), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
-  res.json({ ok: true, id: rows[0].id });
-}));
-
-app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
-  const b = req.body;
-  if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, status=$8, notes=$9 WHERE id=$10`,
-    [sanitize(b.name), sanitize(b.cnpj), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.delete('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
-  const usedRows = await query('SELECT COUNT(*)::int AS n FROM erp_payables WHERE supplier_id = $1', [req.params.id]);
-  const used = usedRows[0].n;
-  if (used > 0) return res.status(409).json({ error: `Fornecedor possui ${used} título(s) vinculado(s). Inative-o em vez de excluir.` });
-  await query('DELETE FROM erp_suppliers WHERE id = $1', [req.params.id]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Contas a Pagar
-// ------------------------------------------------------------
-app.get('/api/payables', requireAuth, requireViewAny(['pagar']), h(async (req, res) => {
-  const rows = await query(`
-    SELECT p.*, s.name AS supplier_name
-    FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
-    ORDER BY p.due_date`);
-  res.json(rows);
-}));
-
-function validateTitle(b) {
-  if (!sanitize(b.description)) return 'Descrição é obrigatória.';
-  if (!sanitize(b.category)) return 'Categoria é obrigatória.';
-  const amount = Number(b.amount);
-  if (!isFinite(amount) || amount <= 0) return 'Valor deve ser maior que zero.';
-  if (!isDate(b.due_date)) return 'Data de vencimento inválida.';
-  return null;
-}
-
-app.post('/api/payables', requireAuth, requireEdit('pagar'), h(async (req, res) => {
-  const b = req.body, err = validateTitle(b);
-  if (err) return res.status(400).json({ error: err });
-  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-    [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.user.id]);
-  res.json({ ok: true, id: rows[0].id });
-}));
-
-app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, res) => {
-  const b = req.body, err = validateTitle(b);
-  if (err) return res.status(400).json({ error: err });
-  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, notes=$8 WHERE id=$9`,
-    [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/payables/:id/pay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
-  const d = req.body.payment_date;
-  if (!isDate(d)) return res.status(400).json({ error: 'Data de pagamento inválida.' });
-  await query(`UPDATE erp_payables SET status='pago', payment_date=$1 WHERE id=$2`, [d, req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/payables/:id/unpay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
-  await query(`UPDATE erp_payables SET status='pendente', payment_date=NULL WHERE id=$1`, [req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.delete('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, res) => {
-  await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['payable', req.params.id]);
-  await query('DELETE FROM erp_payables WHERE id = $1', [req.params.id]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Contas a Receber
-// ------------------------------------------------------------
-app.get('/api/receivables', requireAuth, requireViewAny(['receber']), h(async (req, res) => {
-  res.json(await query('SELECT * FROM erp_receivables ORDER BY due_date'));
-}));
-
-app.post('/api/receivables', requireAuth, requireEdit('receber'), h(async (req, res) => {
-  const b = req.body, err = validateTitle(b);
-  if (err) return res.status(400).json({ error: err });
-  if (!sanitize(b.client_name)) return res.status(400).json({ error: 'Cliente é obrigatório.' });
-  const rows = await query(`INSERT INTO erp_receivables (client_name, description, category, document, amount, due_date, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [sanitize(b.client_name), sanitize(b.description), sanitize(b.category),
-     sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.user.id]);
-  res.json({ ok: true, id: rows[0].id });
-}));
-
-app.put('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (req, res) => {
-  const b = req.body, err = validateTitle(b);
-  if (err) return res.status(400).json({ error: err });
-  if (!sanitize(b.client_name)) return res.status(400).json({ error: 'Cliente é obrigatório.' });
-  await query(`UPDATE erp_receivables SET client_name=$1, description=$2, category=$3, document=$4, amount=$5, due_date=$6, notes=$7 WHERE id=$8`,
-    [sanitize(b.client_name), sanitize(b.description), sanitize(b.category),
-     sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/receivables/:id/receive', requireAuth, requireEdit('receber'), h(async (req, res) => {
-  const d = req.body.receipt_date;
-  if (!isDate(d)) return res.status(400).json({ error: 'Data de recebimento inválida.' });
-  await query(`UPDATE erp_receivables SET status='recebido', receipt_date=$1 WHERE id=$2`, [d, req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/receivables/:id/unreceive', requireAuth, requireEdit('receber'), h(async (req, res) => {
-  await query(`UPDATE erp_receivables SET status='pendente', receipt_date=NULL WHERE id=$1`, [req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (req, res) => {
-  await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['receivable', req.params.id]);
-  await query('DELETE FROM erp_receivables WHERE id = $1', [req.params.id]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Conciliação Bancária
-// ------------------------------------------------------------
-app.get('/api/bank', requireAuth, requireViewAny(['conciliacao']), h(async (req, res) => {
-  res.json(await query('SELECT * FROM erp_bank_transactions ORDER BY txn_date DESC, id DESC'));
-}));
-
-app.post('/api/bank', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
-  const b = req.body;
-  if (!isDate(b.txn_date)) return res.status(400).json({ error: 'Data inválida.' });
-  if (!sanitize(b.description)) return res.status(400).json({ error: 'Descrição é obrigatória.' });
-  const amount = Number(b.amount);
-  if (!isFinite(amount) || amount === 0) return res.status(400).json({ error: 'Valor inválido.' });
-  const rows = await query('INSERT INTO erp_bank_transactions (txn_date, description, amount, imported_batch) VALUES ($1,$2,$3,$4) RETURNING id',
-    [b.txn_date, sanitize(b.description), amount, 'manual']);
-  res.json({ ok: true, id: rows[0].id });
-}));
-
-// Importação de extrato CSV: colunas data;descricao;valor (ou data,descricao,valor)
-app.post('/api/bank/import', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
-  const text = String(req.body.csv || '');
-  if (!text.trim()) return res.status(400).json({ error: 'Arquivo vazio.' });
-  const batch = 'import-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  const parseAmount = s => {
-    s = String(s).trim().replace(/["'R$\s]/g, '');
-    if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.'); // formato BR
-    return Number(s);
-  };
-  const toISO = s => {
-    s = String(s).trim().replace(/"/g, '');
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
-  };
-  let ok = 0, skipped = 0;
-  for (const line of lines) {
-    const sep = line.includes(';') ? ';' : ',';
-    const parts = line.split(sep);
-    if (parts.length < 3) { skipped++; continue; }
-    const date = toISO(parts[0]);
-    const amount = parseAmount(parts[parts.length - 1]);
-    const desc = parts.slice(1, parts.length - 1).join(' ').replace(/"/g, '').trim();
-    if (!date || !desc || !isFinite(amount) || amount === 0) { skipped++; continue; }
-    await query('INSERT INTO erp_bank_transactions (txn_date, description, amount, imported_batch) VALUES ($1,$2,$3,$4)', [date, desc, amount, batch]);
-    ok++;
-  }
-  res.json({ ok: true, imported: ok, skipped });
-}));
-
-// Sugestões de conciliação: títulos com mesmo valor, em janela de ±7 dias
-app.get('/api/bank/:id/suggestions', requireAuth, requireViewAny(['conciliacao']), h(async (req, res) => {
-  const rows0 = await query('SELECT * FROM erp_bank_transactions WHERE id = $1', [req.params.id]);
-  const t = rows0[0];
-  if (!t) return res.status(404).json({ error: 'Lançamento não encontrado.' });
-  const abs = Math.abs(t.amount);
-  let rows;
-  if (t.amount < 0) {
-    rows = await query(`
-      SELECT p.id, p.description, p.amount, p.due_date AS ref_date, p.status, s.name AS party, 'payable' AS kind
-      FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
-      WHERE ABS(p.amount - $1) < 0.01
-        AND ABS(p.due_date - $2::date) <= 7
-      ORDER BY ABS(p.due_date - $2::date)`, [abs, t.txn_date]);
-  } else {
-    rows = await query(`
-      SELECT r.id, r.description, r.amount, r.due_date AS ref_date, r.status, r.client_name AS party, 'receivable' AS kind
-      FROM erp_receivables r
-      WHERE ABS(r.amount - $1) < 0.01
-        AND ABS(r.due_date - $2::date) <= 7
-      ORDER BY ABS(r.due_date - $2::date)`, [abs, t.txn_date]);
-  }
-  res.json(rows);
-}));
-
-app.post('/api/bank/:id/reconcile', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
-  const { matched_type, matched_id } = req.body;
-  const rows0 = await query('SELECT * FROM erp_bank_transactions WHERE id = $1', [req.params.id]);
-  const t = rows0[0];
-  if (!t) return res.status(404).json({ error: 'Lançamento não encontrado.' });
-
-  if (matched_type === 'payable' && matched_id) {
-    await query(`UPDATE erp_payables SET status='pago', payment_date=COALESCE(payment_date, $1) WHERE id=$2`, [t.txn_date, matched_id]);
-  } else if (matched_type === 'receivable' && matched_id) {
-    await query(`UPDATE erp_receivables SET status='recebido', receipt_date=COALESCE(receipt_date, $1) WHERE id=$2`, [t.txn_date, matched_id]);
-  }
-  await query('UPDATE erp_bank_transactions SET reconciled=true, matched_type=$1, matched_id=$2 WHERE id=$3',
-    [matched_type || 'manual', matched_id || null, req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/bank/:id/unreconcile', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
-  await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE id=$1', [req.params.id]);
-  res.json({ ok: true });
-}));
-
-app.delete('/api/bank/:id', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
-  await query('DELETE FROM erp_bank_transactions WHERE id = $1', [req.params.id]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Orçamento
-// ------------------------------------------------------------
-app.get('/api/budgets/:year', requireAuth, requireViewAny(['orcamento','orcadoreal']), h(async (req, res) => {
-  const year = Number(req.params.year);
-  res.json(await query('SELECT * FROM erp_budgets WHERE year = $1 ORDER BY type, category, month', [year]));
-}));
-
-// Upsert em lote: [{month, type, category, amount}, ...]
-app.post('/api/budgets/:year', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
-  const year = Number(req.params.year);
-  const items = Array.isArray(req.body.items) ? req.body.items : [];
-  if (!year || year < 2000 || year > 2100) return res.status(400).json({ error: 'Ano inválido.' });
-  for (const it of items) {
-    const m = Number(it.month), a = Number(it.amount);
-    if (m < 1 || m > 12 || !['receita', 'despesa'].includes(it.type) || !sanitize(it.category) || !isFinite(a) || a < 0) continue;
-    await query(`INSERT INTO erp_budgets (year, month, type, category, amount) VALUES ($1,$2,$3,$4,$5)
-      ON CONFLICT (year, month, type, category) DO UPDATE SET amount = excluded.amount`,
-      [year, m, it.type, sanitize(it.category), a]);
-  }
-  res.json({ ok: true });
-}));
-
-app.delete('/api/budgets/:year/category', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
-  const { type, category } = req.body;
-  await query('DELETE FROM erp_budgets WHERE year=$1 AND type=$2 AND category=$3', [Number(req.params.year), type, category]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Relatórios / agregações
-// ------------------------------------------------------------
-
-// Realizado por mês/categoria/tipo em um ano (para Orçado x Realizado e DRE)
-app.get('/api/reports/actuals/:year', requireAuth, requireViewAny(['orcadoreal','relatorios']), h(async (req, res) => {
-  const y = Number(req.params.year);
-  const despesas = await query(`
-    SELECT EXTRACT(MONTH FROM payment_date)::int AS month, category, SUM(amount) AS total
-    FROM erp_payables WHERE status='pago' AND EXTRACT(YEAR FROM payment_date) = $1
-    GROUP BY month, category`, [y]);
-  const receitas = await query(`
-    SELECT EXTRACT(MONTH FROM receipt_date)::int AS month, category, SUM(amount) AS total
-    FROM erp_receivables WHERE status='recebido' AND EXTRACT(YEAR FROM receipt_date) = $1
-    GROUP BY month, category`, [y]);
-  res.json({
-    despesas: despesas.map(r => ({ ...r, total: n(r.total) })),
-    receitas: receitas.map(r => ({ ...r, total: n(r.total) }))
-  });
-}));
-
-// Fluxo de caixa: realizado (pagos/recebidos) + projetado (pendentes por vencimento)
-app.get('/api/reports/cashflow/:year', requireAuth, requireViewAny(['dashboard','fluxo']), h(async (req, res) => {
-  const y = Number(req.params.year);
-  const q = async (table, dateCol, statusVal, statusPend) => {
-    const realizado = await query(`SELECT EXTRACT(MONTH FROM ${dateCol})::int AS month, SUM(amount) AS total
-      FROM ${table} WHERE status='${statusVal}' AND EXTRACT(YEAR FROM ${dateCol}) = $1 GROUP BY month`, [y]);
-    const projetado = await query(`SELECT EXTRACT(MONTH FROM due_date)::int AS month, SUM(amount) AS total
-      FROM ${table} WHERE status='${statusPend}' AND EXTRACT(YEAR FROM due_date) = $1 GROUP BY month`, [y]);
-    return {
-      realizado: realizado.map(r => ({ ...r, total: n(r.total) })),
-      projetado: projetado.map(r => ({ ...r, total: n(r.total) }))
-    };
-  };
-  res.json({
-    entradas: await q('erp_receivables', 'receipt_date', 'recebido', 'pendente'),
-    saidas: await q('erp_payables', 'payment_date', 'pago', 'pendente')
-  });
-}));
-
-// KPIs do dashboard
-app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-  const mesAtual = today.slice(0, 7);
-
-  const one = async (sql, params) => (await query(sql, params))[0];
-
-  const pagarPend = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente'`);
-  const pagar30 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in30]);
-  const pagarVencido = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente' AND due_date < $1`, [today]);
-  const receberPend = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente'`);
-  const receber30 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in30]);
-  const receberVencido = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date < $1`, [today]);
-  const naoConciliados = await one(`SELECT COUNT(*)::int AS c FROM erp_bank_transactions WHERE reconciled=false`);
-  const saldoBanco = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions`);
-  const recebidoMes = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='recebido' AND to_char(receipt_date,'YYYY-MM')=$1`, [mesAtual]);
-  const pagoMes = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]);
-
-  const vencendo = await query(`
-    SELECT 'pagar' AS tipo, p.description, p.amount, p.due_date, s.name AS party
-    FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id
-    WHERE p.status='pendente' AND p.due_date BETWEEN $1 AND $2
-    UNION ALL
-    SELECT 'receber', description, amount, due_date, client_name
-    FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2
-    ORDER BY due_date LIMIT 10`, [today, in30]);
-
-  const wrap = r => ({ v: n(r.v), n: r.c });
-  res.json({
-    pagarPend: wrap(pagarPend), pagar30: wrap(pagar30), pagarVencido: wrap(pagarVencido),
-    receberPend: wrap(receberPend), receber30: wrap(receber30), receberVencido: wrap(receberVencido),
-    naoConciliados: naoConciliados.c, saldoBanco: n(saldoBanco.v),
-    recebidoMes: n(recebidoMes.v), pagoMes: n(pagoMes.v),
-    vencendo: vencendo.map(v => ({ ...v, amount: n(v.amount) }))
-  });
-}));
-
-// ------------------------------------------------------------
-// Administração de usuários (somente admin)
-// ------------------------------------------------------------
-app.get('/api/users', requireAuth, requireAdmin, h(async (req, res) => {
-  res.json(await query(`SELECT id, name, email, role, status, active, permissions, must_change_password, created_at
-    FROM erp_users ORDER BY
-      CASE status WHEN 'pendente' THEN 0 WHEN 'ativo' THEN 1 ELSE 2 END, name`));
-}));
-
-// Aprovar uma solicitação pendente: define senha, perfil e permissões.
-app.post('/api/users/:id/approve', requireAuth, requireAdmin, h(async (req, res) => {
-  const id = Number(req.params.id);
-  const rows = await query('SELECT id, status FROM erp_users WHERE id = $1', [id]);
-  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  if (rows[0].status !== 'pendente') return res.status(400).json({ error: 'Esta solicitação já foi tratada.' });
-
-  const role = req.body.role === 'admin' ? 'admin' : 'usuario';
-  const password = String(req.body.password || '');
-  if (!passwordStrongEnough(password)) {
-    return res.status(400).json({ error: 'A senha gerada não atende ao mínimo de segurança (10+ caracteres, com maiúscula, minúscula, número e símbolo).' });
-  }
-  const perms = role === 'admin' ? {} : normalizePermissions(req.body.permissions);
-  await query(
-    `UPDATE erp_users SET status='ativo', active=true, role=$1, permissions=$2::jsonb,
-       password_hash=$3, must_change_password=true WHERE id=$4`,
-    [role, JSON.stringify(perms), bcrypt.hashSync(password, 10), id]
-  );
-  res.json({ ok: true });
-}));
-
-// Recusar uma solicitação pendente.
-app.post('/api/users/:id/reject', requireAuth, requireAdmin, h(async (req, res) => {
-  const id = Number(req.params.id);
-  if (id === Number(req.user.id)) return res.status(400).json({ error: 'Ação inválida sobre a própria conta.' });
-  await query("UPDATE erp_users SET status='recusado', active=false WHERE id=$1 AND status='pendente'", [id]);
-  res.json({ ok: true });
-}));
-
-// Atualizar perfil e permissões de um usuário já ativo.
-app.put('/api/users/:id/permissions', requireAuth, requireAdmin, h(async (req, res) => {
-  const id = Number(req.params.id);
-  const rows = await query('SELECT id, status FROM erp_users WHERE id = $1', [id]);
-  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  if (id === Number(req.user.id) && req.body.role && req.body.role !== 'admin') {
-    return res.status(400).json({ error: 'Você não pode remover o próprio perfil de administrador.' });
-  }
-  const role = req.body.role === 'admin' ? 'admin' : 'usuario';
-  const perms = role === 'admin' ? {} : normalizePermissions(req.body.permissions);
-  await query('UPDATE erp_users SET role=$1, permissions=$2::jsonb WHERE id=$3',
-    [role, JSON.stringify(perms), id]);
-  res.json({ ok: true });
-}));
-
-// Redefinir a senha de um usuário (gera nova senha; troca obrigatória no acesso).
-app.post('/api/users/:id/reset-password', requireAuth, requireAdmin, h(async (req, res) => {
-  const id = Number(req.params.id);
-  const password = String(req.body.password || '');
-  if (!passwordStrongEnough(password)) {
-    return res.status(400).json({ error: 'A senha gerada não atende ao mínimo de segurança.' });
-  }
-  const rows = await query("SELECT id FROM erp_users WHERE id=$1 AND status='ativo'", [id]);
-  if (!rows.length) return res.status(404).json({ error: 'Usuário ativo não encontrado.' });
-  await query('UPDATE erp_users SET password_hash=$1, must_change_password=true WHERE id=$2',
-    [bcrypt.hashSync(password, 10), id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/users/:id/toggle', requireAuth, requireAdmin, h(async (req, res) => {
-  if (Number(req.params.id) === Number(req.user.id)) return res.status(400).json({ error: 'Não é possível desativar o próprio usuário.' });
-  await query("UPDATE erp_users SET active = NOT active WHERE id = $1 AND status='ativo'", [req.params.id]);
-  res.json({ ok: true });
-}));
-
-// ------------------------------------------------------------
-// Rota não encontrada dentro de /api
-// (o arquivo estático index.html é servido pela própria Vercel via
-// vercel.json — não é preciso express.static aqui)
-// ------------------------------------------------------------
-app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));
-
-// ------------------------------------------------------------
-// Frontend (servido pelo próprio Express, dentro da função)
-// A detecção automática de arquivos estáticos da Vercel não estava
-// servindo index.html/app.js/styles.css neste projeto, então servimos
-// nós mesmos — mais garantido.
-// ------------------------------------------------------------
-app.use(express.static(path.join(__dirname, '..', 'public')));
-
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Rota não encontrada.' });
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
-});
-
-module.exports = app;
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProAgro ERP — Financeiro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ==================== LOGIN ==================== -->
+  <div id="view-login" class="login-wrap" style="display:none">
+    <div class="login-brand">
+      <div class="mark">
+        <img src="/logo-white.png" alt="ProAgro Seguros" style="height:40px;width:auto;display:block">
+      </div>
+      <div>
+        <h1>ERP Corporativo<br>Módulo Financeiro</h1>
+        <p>Contas a pagar e receber, fluxo de caixa, conciliação bancária, orçamento e relatórios gerenciais em um único ambiente.</p>
+      </div>
+      <div class="foot">Proteção Agropecuária Serviços Técnicos e Corretagem de Seguros LTDA · v1.0</div>
+    </div>
+    <div class="login-panel">
+      <div class="login-card">
+        <h2 id="auth-title">Acessar o sistema</h2>
+        <p class="sub" id="auth-sub">Use suas credenciais corporativas.</p>
+        <div class="domain-hint">Acesso restrito aos domínios <strong>@proagroseguros.com</strong> e <strong>@proagroinsur.tech</strong>.</div>
+        <div id="auth-msg" class="form-msg"></div>
+        <div class="field" id="f-name" style="display:none">
+          <label for="reg-name">Nome completo</label>
+          <input type="text" id="reg-name" autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="auth-email">E-mail corporativo</label>
+          <input type="email" id="auth-email" placeholder="nome@proagroseguros.com" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="auth-pass">Senha</label>
+          <input type="password" id="auth-pass" autocomplete="current-password">
+        </div>
+        <button class="btn primary block" id="auth-submit">Entrar</button>
+        <p class="hint" style="text-align:center; margin-top:16px">
+          <a href="#" id="auth-toggle" style="color:var(--azul-700)">Primeiro acesso? Criar conta</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== APLICAÇÃO ==================== -->
+  <div id="view-app" class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="/logo-white.png" alt="ProAgro Seguros" style="height:28px;width:auto;display:block">
+        <div>
+          <div class="brand-sub">ERP · Financeiro</div>
+        </div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="userbox">
+        <div class="avatar" id="u-avatar">–</div>
+        <div>
+          <div class="uname" id="u-name">–</div>
+          <div class="umail" id="u-mail">–</div>
+        </div>
+        <button id="btn-logout" title="Sair">Sair</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <div>
+          <div class="crumb">Financeiro</div>
+          <h2 id="page-title">Dashboard</h2>
+        </div>
+        <div class="crumb" id="today-label"></div>
+      </div>
+      <div class="content" id="content"></div>
+    </div>
+  </div>
+
+  <!-- Modal genérico -->
+  <div class="modal-back" id="modal-back">
+    <div class="modal" role="dialog" aria-modal="true">
+      <header>
+        <h3 id="modal-title">—</h3>
+        <button class="x-close" id="modal-close" aria-label="Fechar">×</button>
+      </header>
+      <div class="body" id="modal-body"></div>
+      <footer id="modal-footer"></footer>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
