@@ -343,7 +343,10 @@ function chartOpts(extra) {
 // CONTAS A PAGAR
 // ============================================================
 async function renderPagar() {
-  const [rows, sups] = await Promise.all([api('/api/payables'), api('/api/suppliers')]);
+  const [rows, sups, counts] = await Promise.all([
+    api('/api/payables'), api('/api/suppliers'),
+    api('/api/attachments/count/payable').catch(() => ({}))
+  ]);
   const c = $('#content');
   c.innerHTML = `
     <div class="toolbar">
@@ -385,6 +388,7 @@ async function renderPagar() {
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente' ? `<button class="btn sm primary" data-pay="${r.id}">Baixar</button>` : `<button class="btn sm" data-unpay="${r.id}">Estornar</button>`}
+            <button class="btn sm" data-att="payable:${r.id}">📎${counts[r.id] ? ' ' + counts[r.id] : ''}</button>
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
@@ -394,6 +398,7 @@ async function renderPagar() {
     $('#tbl').querySelectorAll('[data-pay]').forEach(b => b.onclick = () => baixaPagar(rows.find(r => r.id == b.dataset.pay)));
     $('#tbl').querySelectorAll('[data-unpay]').forEach(b => b.onclick = async () => { await api(`/api/payables/${b.dataset.unpay}/unpay`, { method: 'POST' }); toast('Baixa estornada.'); renderPagar(); });
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formPagar(rows.find(r => r.id == b.dataset.edit), sups));
+    $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('payable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('título', `/api/payables/${b.dataset.del}`, renderPagar));
   };
   ['q', 'f-status', 'f-cat'].forEach(id => $('#' + id).oninput = draw);
@@ -451,7 +456,10 @@ function formPagar(r, sups) {
 // CONTAS A RECEBER
 // ============================================================
 async function renderReceber() {
-  const rows = await api('/api/receivables');
+  const [rows, counts] = await Promise.all([
+    api('/api/receivables'),
+    api('/api/attachments/count/receivable').catch(() => ({}))
+  ]);
   const c = $('#content');
   c.innerHTML = `
     <div class="toolbar">
@@ -488,6 +496,7 @@ async function renderReceber() {
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente' ? `<button class="btn sm primary" data-rec="${r.id}">Receber</button>` : `<button class="btn sm" data-unrec="${r.id}">Estornar</button>`}
+            <button class="btn sm" data-att="receivable:${r.id}">📎${counts[r.id] ? ' ' + counts[r.id] : ''}</button>
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
@@ -497,6 +506,7 @@ async function renderReceber() {
     $('#tbl').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => baixaReceber(rows.find(r => r.id == b.dataset.rec)));
     $('#tbl').querySelectorAll('[data-unrec]').forEach(b => b.onclick = async () => { await api(`/api/receivables/${b.dataset.unrec}/unreceive`, { method: 'POST' }); toast('Recebimento estornado.'); renderReceber(); });
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formReceber(rows.find(r => r.id == b.dataset.edit)));
+    $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('receivable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('recebível', `/api/receivables/${b.dataset.del}`, renderReceber));
   };
   ['q', 'f-status'].forEach(id => $('#' + id).oninput = draw);
@@ -1266,6 +1276,103 @@ function confirmAction(label, fn, okMsg) {
         try { await fn(); closeModal(); toast(okMsg || 'Concluído.'); renderUsuarios(); }
         catch (e) { modalError(e.message); }
      }}]);
+}
+
+// ============================================================
+// Anexos (boletos, notas fiscais, comprovantes)
+// ============================================================
+const KIND_LABELS = { boleto: 'Boleto', nota_fiscal: 'Nota Fiscal', comprovante: 'Comprovante', contrato: 'Contrato', outro: 'Outro' };
+const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', contrato: '📑', outro: '📎' };
+const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+const pageForType = t => (t === 'payable' ? 'pagar' : 'receber');
+
+function readFileAsBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = () => rej(new Error('Falha ao ler o arquivo.'));
+    r.readAsDataURL(file);
+  });
+}
+function updateAttBadge(type, id, n) {
+  const b = document.querySelector(`[data-att="${type}:${id}"]`);
+  if (b) b.textContent = '📎' + (n ? ' ' + n : '');
+}
+
+function openAttachments(type, id, label) {
+  const editable = canEditPage(pageForType(type));
+  openModal('Anexos — ' + label, `
+    ${editable ? `
+    <div class="att-upload">
+      <div class="field" style="margin:0">
+        <label>Adicionar documento</label>
+        <div class="att-upload-row">
+          <select id="att-kind">
+            <option value="boleto">Boleto</option>
+            <option value="nota_fiscal">Nota Fiscal</option>
+            <option value="comprovante">Comprovante de pagamento</option>
+            <option value="contrato">Contrato</option>
+            <option value="outro" selected>Outro</option>
+          </select>
+          <input type="file" id="att-file" accept=".pdf,.png,.jpg,.jpeg,.xml,.xlsx,.docx,image/*,application/pdf">
+          <button class="btn primary" id="att-send" type="button">Anexar</button>
+        </div>
+        <small style="color:var(--muted)">Até 3 MB por arquivo (PDF, imagem, XML, planilha…).</small>
+      </div>
+    </div>` : ''}
+    <div id="att-list" style="margin-top:${editable ? '16px' : '0'}"><div class="empty">Carregando…</div></div>`,
+    [{ label: 'Fechar', cls: 'primary', onClick: closeModal }]);
+
+  const loadList = async () => {
+    try {
+      const items = await api(`/api/attachments/${type}/${id}`);
+      updateAttBadge(type, id, items.length);
+      const box = $('#att-list');
+      if (!box) return;
+      if (!items.length) { box.innerHTML = '<div class="empty">Nenhum documento anexado.</div>'; return; }
+      box.innerHTML = items.map(a => `
+        <div class="att-item">
+          <span class="att-ico">${KIND_ICON[a.kind] || '📎'}</span>
+          <div class="att-info">
+            <div class="att-name">${esc(a.file_name)}</div>
+            <div class="att-meta">${KIND_LABELS[a.kind] || 'Outro'} · ${fmtSize(a.byte_size)} · ${brDate(a.created_at.slice(0, 10))}</div>
+          </div>
+          <div class="att-act">
+            <a class="btn sm" href="/api/attachments/file/${a.id}" target="_blank" rel="noopener">Ver</a>
+            ${editable ? `<button class="btn sm danger-ghost" data-attdel="${a.id}">Excluir</button>` : ''}
+          </div>
+        </div>`).join('');
+      box.querySelectorAll('[data-attdel]').forEach(b => b.onclick = () => {
+        openModal('Excluir anexo', '<p>Deseja excluir este documento? Esta ação não pode ser desfeita.</p>',
+          [{ label: 'Cancelar', onClick: () => openAttachments(type, id, label) },
+           { label: 'Excluir', cls: 'primary', onClick: async () => {
+              try { await api(`/api/attachments/${b.dataset.attdel}`, { method: 'DELETE' }); toast('Anexo excluído.'); openAttachments(type, id, label); }
+              catch (e) { modalError(e.message); }
+           }}]);
+      });
+    } catch (e) {
+      const box = $('#att-list'); if (box) box.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    }
+  };
+
+  if (editable) {
+    $('#att-send').onclick = async () => {
+      const input = $('#att-file'), file = input.files[0];
+      if (!file) return toast('Selecione um arquivo.');
+      if (file.size > 3 * 1024 * 1024) return toast('Arquivo acima do limite de 3 MB.');
+      const btn = $('#att-send'); btn.disabled = true; btn.textContent = 'Enviando…';
+      try {
+        const data = await readFileAsBase64(file);
+        await api(`/api/attachments/${type}/${id}`, { method: 'POST', body: {
+          file_name: file.name, mime_type: file.type || 'application/octet-stream', kind: $('#att-kind').value, data
+        }});
+        toast('Documento anexado.'); input.value = '';
+        loadList();
+      } catch (e) { toast(e.message); }
+      finally { btn.disabled = false; btn.textContent = 'Anexar'; }
+    };
+  }
+  loadList();
 }
 
 // ============================================================
