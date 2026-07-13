@@ -343,3 +343,15 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   .cfg-item { flex-wrap:wrap; }
   .cfg-actions { width:100%; justify-content:flex-end; }
 }
+
+/* ===== Dashboard reformulado — seções e alertas ===== */
+.dash-section-title {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--verde-700, #00783F); margin: 26px 0 10px; padding-top: 6px; border-top: 1px solid var(--line);
+}
+.dash-section-title:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.alert-list { display: flex; flex-direction: column; gap: 8px; }
+.alert-item { font-size: 13.5px; padding: 10px 14px; border-radius: 8px; line-height: 1.4; }
+.alert-item.red { background: #FBEAE7; color: #8A2A20; border: 1px solid #E3A79C; }
+.alert-item.warn { background: #FBF3E0; color: #8A6414; border: 1px solid #E3C078; }
+.alert-item.ok { background: var(--verde-050, #EAF5EC); color: var(--verde-700, #00783F); border: 1px solid #BFE0C9; }
