@@ -468,15 +468,16 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
 }));
 
 // Download / visualização de um anexo.
+// Retornamos em base64 dentro de um JSON (texto puro) em vez de enviar o
+// binário cru: funções serverless da Vercel às vezes corrompem respostas
+// binárias dependendo do Content-Type — texto nunca tem esse problema.
 app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
   const rows = await query('SELECT entity_type, file_name, mime_type, data FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   const a = rows[0];
   if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
   const page = pageForType(a.entity_type);
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
-  res.setHeader('Content-Type', a.mime_type || 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(a.file_name)}"`);
-  res.send(a.data); // pg devolve bytea como Buffer
+  res.json({ file_name: a.file_name, mime_type: a.mime_type || 'application/octet-stream', data: a.data.toString('base64') });
 }));
 
 // Excluir um anexo.
