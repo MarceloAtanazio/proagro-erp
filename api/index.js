@@ -34,7 +34,7 @@ const ALLOWED_DOMAINS = ['proagroseguros.com', 'proagroinsur.tech'];
 // Para transferir essa função, altere o e-mail abaixo (e faça deploy).
 const SUPER_ADMIN_EMAIL = 'm.atanazio@proagroseguros.com';
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '12mb' }));
 app.use(cookieParser());
 
 // ------------------------------------------------------------
@@ -397,6 +397,96 @@ app.post('/api/receivables/:id/unreceive', requireAuth, requireEdit('receber'), 
 app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (req, res) => {
   await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['receivable', req.params.id]);
   await query('DELETE FROM erp_receivables WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
+// Anexos (boletos, notas fiscais, comprovantes) — armazenados no banco
+// ------------------------------------------------------------
+const ATTACH_TYPES = { payable: 'pagar', receivable: 'receber' };
+const ATTACH_KINDS = ['boleto', 'nota_fiscal', 'comprovante', 'contrato', 'outro'];
+const MAX_ATTACH_BYTES = 3 * 1024 * 1024; // 3 MB por arquivo (limite seguro p/ Vercel)
+
+function pageForType(type) { return ATTACH_TYPES[type] || null; }
+
+// Lista de anexos (metadados, sem o binário) de um título específico.
+app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
+  const page = pageForType(req.params.type);
+  if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
+  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão para visualizar.' });
+  const rows = await query(
+    `SELECT id, kind, file_name, mime_type, byte_size, created_at
+       FROM erp_attachments WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC`,
+    [req.params.type, Number(req.params.id)]
+  );
+  res.json(rows);
+}));
+
+// Contagem de anexos por título (para exibir o total na listagem).
+app.get('/api/attachments/count/:type', requireAuth, h(async (req, res) => {
+  const page = pageForType(req.params.type);
+  if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
+  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
+  const rows = await query(
+    'SELECT entity_id, COUNT(*)::int AS n FROM erp_attachments WHERE entity_type=$1 GROUP BY entity_id',
+    [req.params.type]
+  );
+  const map = {};
+  rows.forEach(r => { map[r.entity_id] = r.n; });
+  res.json(map);
+}));
+
+// Upload de um anexo (arquivo enviado em base64).
+app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
+  const page = pageForType(req.params.type);
+  if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
+  if (req.user.role !== 'admin' && !canEdit(req.user, page)) return res.status(403).json({ error: 'Sem permissão para anexar nesta seção.' });
+
+  const fileName = sanitize(req.body.file_name);
+  const mime = sanitize(req.body.mime_type) || 'application/octet-stream';
+  const kind = ATTACH_KINDS.includes(req.body.kind) ? req.body.kind : 'outro';
+  const b64 = String(req.body.data || '');
+  if (!fileName) return res.status(400).json({ error: 'Nome do arquivo é obrigatório.' });
+  if (!b64) return res.status(400).json({ error: 'Arquivo vazio.' });
+
+  let buf;
+  try { buf = Buffer.from(b64, 'base64'); } catch { return res.status(400).json({ error: 'Arquivo inválido.' }); }
+  if (!buf.length) return res.status(400).json({ error: 'Arquivo vazio.' });
+  if (buf.length > MAX_ATTACH_BYTES) return res.status(413).json({ error: 'Arquivo acima do limite de 3 MB.' });
+
+  // Confirma que o título existe.
+  const table = req.params.type === 'payable' ? 'erp_payables' : 'erp_receivables';
+  const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
+  if (!own.length) return res.status(404).json({ error: 'Título não encontrado.' });
+
+  const ins = await query(
+    `INSERT INTO erp_attachments (entity_type, entity_id, kind, file_name, mime_type, byte_size, data, uploaded_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [req.params.type, Number(req.params.id), kind, fileName, mime, buf.length, buf, req.user.id]
+  );
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+// Download / visualização de um anexo.
+app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
+  const rows = await query('SELECT entity_type, file_name, mime_type, data FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
+  const a = rows[0];
+  if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
+  const page = pageForType(a.entity_type);
+  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
+  res.setHeader('Content-Type', a.mime_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(a.file_name)}"`);
+  res.send(a.data); // pg devolve bytea como Buffer
+}));
+
+// Excluir um anexo.
+app.delete('/api/attachments/:id', requireAuth, h(async (req, res) => {
+  const rows = await query('SELECT entity_type FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
+  const a = rows[0];
+  if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
+  const page = pageForType(a.entity_type);
+  if (req.user.role !== 'admin' && !canEdit(req.user, page)) return res.status(403).json({ error: 'Sem permissão para excluir.' });
+  await query('DELETE FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
 }));
 
