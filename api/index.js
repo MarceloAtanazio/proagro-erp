@@ -30,6 +30,10 @@ const SESSION_HOURS = 8;
 // Domínios corporativos autorizados
 const ALLOWED_DOMAINS = ['proagroseguros.com', 'proagroinsur.tech'];
 
+// Super-administrador: ÚNICO usuário que gerencia contas e permissões.
+// Para transferir essa função, altere o e-mail abaixo (e faça deploy).
+const SUPER_ADMIN_EMAIL = 'm.atanazio@proagroseguros.com';
+
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
@@ -55,21 +59,103 @@ function setAuthCookie(res, user) {
   });
 }
 
-function requireAuth(req, res, next) {
+// Páginas cujo acesso é configurável por usuário.
+// "usuarios" não entra aqui: é exclusiva do administrador.
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios'];
+
+// Normaliza o objeto de permissões recebido do frontend para o formato
+// { pagina: 'view' | 'edit' }, descartando páginas desconhecidas e níveis inválidos.
+function normalizePermissions(input) {
+  const out = {};
+  const src = (input && typeof input === 'object') ? input : {};
+  for (const page of PERM_PAGES) {
+    const lvl = src[page];
+    if (lvl === 'view' || lvl === 'edit') out[page] = lvl;
+  }
+  return out;
+}
+
+function levelOf(user, page) {
+  if (user.role === 'admin') return 'edit';
+  const p = (user.permissions || {})[page];
+  return (p === 'edit' || p === 'view') ? p : 'none';
+}
+const canView = (user, page) => { const l = levelOf(user, page); return l === 'view' || l === 'edit'; };
+const canEdit = (user, page) => levelOf(user, page) === 'edit';
+
+// requireAuth agora carrega o usuário completo do banco a CADA requisição.
+// Assim, mudanças de permissão ou desativação de conta têm efeito imediato,
+// sem depender do que estava no token (que só guarda o id).
+async function requireAuth(req, res, next) {
   const token = req.cookies && req.cookies[COOKIE_NAME];
   if (!token) return res.status(401).json({ error: 'Não autenticado. Faça login para continuar.' });
+  let payload;
+  try { payload = jwt.verify(token, JWT_SECRET); }
+  catch { return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' }); }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = { id: payload.sub, role: payload.role };
+    const rows = await query(
+      'SELECT id, name, email, role, status, active, permissions, must_change_password FROM erp_users WHERE id = $1',
+      [payload.sub]
+    );
+    const u = rows[0];
+    if (!u || u.active !== true || u.status !== 'ativo') {
+      return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+    }
+    u.permissions = u.permissions || {};
+    req.user = u;
     next();
-  } catch {
-    return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+  } catch (e) {
+    console.error('[requireAuth]', e);
+    return res.status(500).json({ error: 'Erro interno de autenticação.' });
   }
 }
 
 function requireAdmin(req, res, next) {
   if (req.user && req.user.role === 'admin') return next();
   return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+}
+
+// Trava da administração de usuários: somente o super-administrador (por e-mail).
+function requireSuperAdmin(req, res, next) {
+  if (req.user && String(req.user.email).toLowerCase() === SUPER_ADMIN_EMAIL) return next();
+  return res.status(403).json({ error: 'Apenas o administrador principal pode gerenciar usuários.' });
+}
+
+// Exige permissão de LEITURA em ao menos uma das páginas que consomem o dado.
+// (alguns endpoints alimentam mais de uma tela — ex.: /api/suppliers também
+// abastece o seletor de fornecedores em Contas a Pagar.)
+function requireViewAny(pages) {
+  return (req, res, next) => {
+    if (req.user.role === 'admin') return next();
+    if (pages.some(p => canView(req.user, p))) return next();
+    return res.status(403).json({ error: 'Você não tem permissão para visualizar estes dados.' });
+  };
+}
+// Exige permissão de EDIÇÃO na página dona do recurso. Esta é a trava de
+// segurança real: um usuário "somente leitura" não consegue gravar nada,
+// mesmo que envie a requisição manualmente.
+function requireEdit(page) {
+  return (req, res, next) => {
+    if (req.user.role === 'admin') return next();
+    if (canEdit(req.user, page)) return next();
+    return res.status(403).json({ error: 'Você não tem permissão para editar nesta seção.' });
+  };
+}
+
+// Gerador de senha forte no servidor (usado como fallback/garantia).
+function generateStrongPassword(len = 16) {
+  const U = 'ABCDEFGHJKLMNPQRSTUVWXYZ', L = 'abcdefghijkmnopqrstuvwxyz', D = '23456789', S = '!@#$%&*?-_+=';
+  const all = U + L + D + S;
+  const crypto = require('crypto');
+  const pick = set => set[crypto.randomInt(set.length)];
+  let out = [pick(U), pick(L), pick(D), pick(S)];
+  for (let i = out.length; i < len; i++) out.push(pick(all));
+  for (let i = out.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [out[i], out[j]] = [out[j], out[i]]; }
+  return out.join('');
+}
+function passwordStrongEnough(pw) {
+  return typeof pw === 'string' && pw.length >= 10 &&
+    /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw) && /[^A-Za-z0-9]/.test(pw);
 }
 
 // Rate limit de login usando tabela Postgres (funções serverless não
@@ -109,32 +195,11 @@ const h = fn => (req, res) => fn(req, res).catch(err => {
 // ------------------------------------------------------------
 // Autenticação
 // ------------------------------------------------------------
-app.post('/api/auth/register', loginRateLimit, h(async (req, res) => {
-  const name = sanitize(req.body.name);
-  const email = String(sanitize(req.body.email) || '').toLowerCase();
-  const password = String(req.body.password || '');
 
-  if (!name || name.length < 3) return res.status(400).json({ error: 'Informe o nome completo.' });
-  if (!emailDomainAllowed(email)) {
-    return res.status(403).json({ error: 'Cadastro permitido apenas para e-mails @proagroseguros.com ou @proagroinsur.tech.' });
-  }
-  if (password.length < 8) return res.status(400).json({ error: 'A senha deve ter no mínimo 8 caracteres.' });
-
-  const exists = await query('SELECT id FROM erp_users WHERE email = $1', [email]);
-  if (exists.length) return res.status(409).json({ error: 'E-mail já cadastrado.' });
-
-  const hash = bcrypt.hashSync(password, 10);
-  const countRows = await query('SELECT COUNT(*)::int AS n FROM erp_users');
-  const isFirst = countRows[0].n === 0;
-  const role = isFirst ? 'admin' : 'usuario';
-  const inserted = await query(
-    'INSERT INTO erp_users (name, email, password_hash, role) VALUES ($1,$2,$3,$4) RETURNING id',
-    [name, email, hash, role]
-  );
-  const user = { id: inserted[0].id, name, email, role };
-  setAuthCookie(res, user);
-  res.json({ ok: true, user });
-}));
+// Autocadastro DESATIVADO: novos usuários são criados exclusivamente pelo
+// super-administrador, em Administração > Usuários.
+app.post('/api/auth/register', (req, res) =>
+  res.status(403).json({ error: 'Cadastro indisponível. Solicite seu acesso ao administrador.' }));
 
 app.post('/api/auth/login', loginRateLimit, h(async (req, res) => {
   const email = String(sanitize(req.body.email) || '').toLowerCase();
@@ -142,13 +207,24 @@ app.post('/api/auth/login', loginRateLimit, h(async (req, res) => {
   if (!emailDomainAllowed(email)) {
     return res.status(403).json({ error: 'Acesso permitido apenas para e-mails @proagroseguros.com ou @proagroinsur.tech.' });
   }
-  const rows = await query('SELECT * FROM erp_users WHERE email = $1 AND active = true', [email]);
+  const rows = await query('SELECT * FROM erp_users WHERE email = $1', [email]);
   const user = rows[0];
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
   }
+  if (user.status === 'pendente') {
+    return res.status(403).json({ error: 'Sua solicitação de acesso ainda não foi aprovada pelo administrador.' });
+  }
+  if (user.status === 'recusado' || user.active !== true) {
+    return res.status(403).json({ error: 'Conta inativa. Contate o administrador.' });
+  }
   setAuthCookie(res, user);
-  res.json({ ok: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  res.json({ ok: true, user: {
+    id: user.id, name: user.name, email: user.email, role: user.role,
+    status: user.status, permissions: user.permissions || {},
+    must_change_password: !!user.must_change_password,
+    is_super: String(user.email).toLowerCase() === SUPER_ADMIN_EMAIL
+  }});
 }));
 
 app.post('/api/auth/logout', (req, res) => {
@@ -157,18 +233,44 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, h(async (req, res) => {
-  const rows = await query('SELECT id, name, email, role FROM erp_users WHERE id = $1', [req.user.id]);
-  res.json({ user: rows[0] || null });
+  const u = req.user;
+  res.json({ user: {
+    id: u.id, name: u.name, email: u.email, role: u.role,
+    status: u.status, permissions: u.permissions || {},
+    must_change_password: !!u.must_change_password,
+    is_super: String(u.email).toLowerCase() === SUPER_ADMIN_EMAIL
+  }});
+}));
+
+// Troca de senha do próprio usuário (usada também na troca obrigatória do
+// primeiro acesso, quando o administrador gerou a senha inicial).
+app.post('/api/auth/change-password', requireAuth, h(async (req, res) => {
+  const current = String(req.body.current_password || '');
+  const next = String(req.body.new_password || '');
+  if (!passwordStrongEnough(next)) {
+    return res.status(400).json({ error: 'A nova senha deve ter ao menos 10 caracteres, com maiúscula, minúscula, número e símbolo.' });
+  }
+  const rows = await query('SELECT password_hash, must_change_password FROM erp_users WHERE id = $1', [req.user.id]);
+  const u = rows[0];
+  // Na troca obrigatória de primeiro acesso não exigimos a senha atual.
+  if (!u.must_change_password) {
+    if (!bcrypt.compareSync(current, u.password_hash)) {
+      return res.status(400).json({ error: 'Senha atual incorreta.' });
+    }
+  }
+  await query('UPDATE erp_users SET password_hash = $1, must_change_password = false WHERE id = $2',
+    [bcrypt.hashSync(next, 10), req.user.id]);
+  res.json({ ok: true });
 }));
 
 // ------------------------------------------------------------
 // Fornecedores
 // ------------------------------------------------------------
-app.get('/api/suppliers', requireAuth, h(async (req, res) => {
+app.get('/api/suppliers', requireAuth, requireViewAny(['fornecedores','pagar']), h(async (req, res) => {
   res.json(await query('SELECT * FROM erp_suppliers ORDER BY name'));
 }));
 
-app.post('/api/suppliers', requireAuth, h(async (req, res) => {
+app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
   const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, status, notes)
@@ -178,7 +280,7 @@ app.post('/api/suppliers', requireAuth, h(async (req, res) => {
   res.json({ ok: true, id: rows[0].id });
 }));
 
-app.put('/api/suppliers/:id', requireAuth, h(async (req, res) => {
+app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
   await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, status=$8, notes=$9 WHERE id=$10`,
@@ -187,7 +289,7 @@ app.put('/api/suppliers/:id', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/suppliers/:id', requireAuth, h(async (req, res) => {
+app.delete('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const usedRows = await query('SELECT COUNT(*)::int AS n FROM erp_payables WHERE supplier_id = $1', [req.params.id]);
   const used = usedRows[0].n;
   if (used > 0) return res.status(409).json({ error: `Fornecedor possui ${used} título(s) vinculado(s). Inative-o em vez de excluir.` });
@@ -198,7 +300,7 @@ app.delete('/api/suppliers/:id', requireAuth, h(async (req, res) => {
 // ------------------------------------------------------------
 // Contas a Pagar
 // ------------------------------------------------------------
-app.get('/api/payables', requireAuth, h(async (req, res) => {
+app.get('/api/payables', requireAuth, requireViewAny(['pagar']), h(async (req, res) => {
   const rows = await query(`
     SELECT p.*, s.name AS supplier_name
     FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
@@ -215,7 +317,7 @@ function validateTitle(b) {
   return null;
 }
 
-app.post('/api/payables', requireAuth, h(async (req, res) => {
+app.post('/api/payables', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, notes, created_by)
@@ -225,7 +327,7 @@ app.post('/api/payables', requireAuth, h(async (req, res) => {
   res.json({ ok: true, id: rows[0].id });
 }));
 
-app.put('/api/payables/:id', requireAuth, h(async (req, res) => {
+app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, notes=$8 WHERE id=$9`,
@@ -234,19 +336,19 @@ app.put('/api/payables/:id', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/payables/:id/pay', requireAuth, h(async (req, res) => {
+app.post('/api/payables/:id/pay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   const d = req.body.payment_date;
   if (!isDate(d)) return res.status(400).json({ error: 'Data de pagamento inválida.' });
   await query(`UPDATE erp_payables SET status='pago', payment_date=$1 WHERE id=$2`, [d, req.params.id]);
   res.json({ ok: true });
 }));
 
-app.post('/api/payables/:id/unpay', requireAuth, h(async (req, res) => {
+app.post('/api/payables/:id/unpay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   await query(`UPDATE erp_payables SET status='pendente', payment_date=NULL WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
 }));
 
-app.delete('/api/payables/:id', requireAuth, h(async (req, res) => {
+app.delete('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['payable', req.params.id]);
   await query('DELETE FROM erp_payables WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
@@ -255,11 +357,11 @@ app.delete('/api/payables/:id', requireAuth, h(async (req, res) => {
 // ------------------------------------------------------------
 // Contas a Receber
 // ------------------------------------------------------------
-app.get('/api/receivables', requireAuth, h(async (req, res) => {
+app.get('/api/receivables', requireAuth, requireViewAny(['receber']), h(async (req, res) => {
   res.json(await query('SELECT * FROM erp_receivables ORDER BY due_date'));
 }));
 
-app.post('/api/receivables', requireAuth, h(async (req, res) => {
+app.post('/api/receivables', requireAuth, requireEdit('receber'), h(async (req, res) => {
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   if (!sanitize(b.client_name)) return res.status(400).json({ error: 'Cliente é obrigatório.' });
@@ -270,7 +372,7 @@ app.post('/api/receivables', requireAuth, h(async (req, res) => {
   res.json({ ok: true, id: rows[0].id });
 }));
 
-app.put('/api/receivables/:id', requireAuth, h(async (req, res) => {
+app.put('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (req, res) => {
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   if (!sanitize(b.client_name)) return res.status(400).json({ error: 'Cliente é obrigatório.' });
@@ -280,19 +382,19 @@ app.put('/api/receivables/:id', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/receivables/:id/receive', requireAuth, h(async (req, res) => {
+app.post('/api/receivables/:id/receive', requireAuth, requireEdit('receber'), h(async (req, res) => {
   const d = req.body.receipt_date;
   if (!isDate(d)) return res.status(400).json({ error: 'Data de recebimento inválida.' });
   await query(`UPDATE erp_receivables SET status='recebido', receipt_date=$1 WHERE id=$2`, [d, req.params.id]);
   res.json({ ok: true });
 }));
 
-app.post('/api/receivables/:id/unreceive', requireAuth, h(async (req, res) => {
+app.post('/api/receivables/:id/unreceive', requireAuth, requireEdit('receber'), h(async (req, res) => {
   await query(`UPDATE erp_receivables SET status='pendente', receipt_date=NULL WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
 }));
 
-app.delete('/api/receivables/:id', requireAuth, h(async (req, res) => {
+app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (req, res) => {
   await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['receivable', req.params.id]);
   await query('DELETE FROM erp_receivables WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
@@ -301,11 +403,11 @@ app.delete('/api/receivables/:id', requireAuth, h(async (req, res) => {
 // ------------------------------------------------------------
 // Conciliação Bancária
 // ------------------------------------------------------------
-app.get('/api/bank', requireAuth, h(async (req, res) => {
+app.get('/api/bank', requireAuth, requireViewAny(['conciliacao']), h(async (req, res) => {
   res.json(await query('SELECT * FROM erp_bank_transactions ORDER BY txn_date DESC, id DESC'));
 }));
 
-app.post('/api/bank', requireAuth, h(async (req, res) => {
+app.post('/api/bank', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
   const b = req.body;
   if (!isDate(b.txn_date)) return res.status(400).json({ error: 'Data inválida.' });
   if (!sanitize(b.description)) return res.status(400).json({ error: 'Descrição é obrigatória.' });
@@ -317,7 +419,7 @@ app.post('/api/bank', requireAuth, h(async (req, res) => {
 }));
 
 // Importação de extrato CSV: colunas data;descricao;valor (ou data,descricao,valor)
-app.post('/api/bank/import', requireAuth, h(async (req, res) => {
+app.post('/api/bank/import', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
   const text = String(req.body.csv || '');
   if (!text.trim()) return res.status(400).json({ error: 'Arquivo vazio.' });
   const batch = 'import-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
@@ -349,7 +451,7 @@ app.post('/api/bank/import', requireAuth, h(async (req, res) => {
 }));
 
 // Sugestões de conciliação: títulos com mesmo valor, em janela de ±7 dias
-app.get('/api/bank/:id/suggestions', requireAuth, h(async (req, res) => {
+app.get('/api/bank/:id/suggestions', requireAuth, requireViewAny(['conciliacao']), h(async (req, res) => {
   const rows0 = await query('SELECT * FROM erp_bank_transactions WHERE id = $1', [req.params.id]);
   const t = rows0[0];
   if (!t) return res.status(404).json({ error: 'Lançamento não encontrado.' });
@@ -373,7 +475,7 @@ app.get('/api/bank/:id/suggestions', requireAuth, h(async (req, res) => {
   res.json(rows);
 }));
 
-app.post('/api/bank/:id/reconcile', requireAuth, h(async (req, res) => {
+app.post('/api/bank/:id/reconcile', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
   const { matched_type, matched_id } = req.body;
   const rows0 = await query('SELECT * FROM erp_bank_transactions WHERE id = $1', [req.params.id]);
   const t = rows0[0];
@@ -389,12 +491,12 @@ app.post('/api/bank/:id/reconcile', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/bank/:id/unreconcile', requireAuth, h(async (req, res) => {
+app.post('/api/bank/:id/unreconcile', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
   await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 }));
 
-app.delete('/api/bank/:id', requireAuth, h(async (req, res) => {
+app.delete('/api/bank/:id', requireAuth, requireEdit('conciliacao'), h(async (req, res) => {
   await query('DELETE FROM erp_bank_transactions WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 }));
@@ -402,13 +504,13 @@ app.delete('/api/bank/:id', requireAuth, h(async (req, res) => {
 // ------------------------------------------------------------
 // Orçamento
 // ------------------------------------------------------------
-app.get('/api/budgets/:year', requireAuth, h(async (req, res) => {
+app.get('/api/budgets/:year', requireAuth, requireViewAny(['orcamento','orcadoreal']), h(async (req, res) => {
   const year = Number(req.params.year);
   res.json(await query('SELECT * FROM erp_budgets WHERE year = $1 ORDER BY type, category, month', [year]));
 }));
 
 // Upsert em lote: [{month, type, category, amount}, ...]
-app.post('/api/budgets/:year', requireAuth, h(async (req, res) => {
+app.post('/api/budgets/:year', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
   const year = Number(req.params.year);
   const items = Array.isArray(req.body.items) ? req.body.items : [];
   if (!year || year < 2000 || year > 2100) return res.status(400).json({ error: 'Ano inválido.' });
@@ -422,7 +524,7 @@ app.post('/api/budgets/:year', requireAuth, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/budgets/:year/category', requireAuth, h(async (req, res) => {
+app.delete('/api/budgets/:year/category', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
   const { type, category } = req.body;
   await query('DELETE FROM erp_budgets WHERE year=$1 AND type=$2 AND category=$3', [Number(req.params.year), type, category]);
   res.json({ ok: true });
@@ -433,7 +535,7 @@ app.delete('/api/budgets/:year/category', requireAuth, h(async (req, res) => {
 // ------------------------------------------------------------
 
 // Realizado por mês/categoria/tipo em um ano (para Orçado x Realizado e DRE)
-app.get('/api/reports/actuals/:year', requireAuth, h(async (req, res) => {
+app.get('/api/reports/actuals/:year', requireAuth, requireViewAny(['orcadoreal','relatorios']), h(async (req, res) => {
   const y = Number(req.params.year);
   const despesas = await query(`
     SELECT EXTRACT(MONTH FROM payment_date)::int AS month, category, SUM(amount) AS total
@@ -450,7 +552,7 @@ app.get('/api/reports/actuals/:year', requireAuth, h(async (req, res) => {
 }));
 
 // Fluxo de caixa: realizado (pagos/recebidos) + projetado (pendentes por vencimento)
-app.get('/api/reports/cashflow/:year', requireAuth, h(async (req, res) => {
+app.get('/api/reports/cashflow/:year', requireAuth, requireViewAny(['dashboard','fluxo']), h(async (req, res) => {
   const y = Number(req.params.year);
   const q = async (table, dateCol, statusVal, statusPend) => {
     const realizado = await query(`SELECT EXTRACT(MONTH FROM ${dateCol})::int AS month, SUM(amount) AS total
@@ -469,7 +571,7 @@ app.get('/api/reports/cashflow/:year', requireAuth, h(async (req, res) => {
 }));
 
 // KPIs do dashboard
-app.get('/api/reports/dashboard', requireAuth, h(async (req, res) => {
+app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
   const mesAtual = today.slice(0, 7);
@@ -507,15 +609,75 @@ app.get('/api/reports/dashboard', requireAuth, h(async (req, res) => {
 }));
 
 // ------------------------------------------------------------
-// Administração de usuários (somente admin)
+// Administração de usuários (SOMENTE o super-administrador)
 // ------------------------------------------------------------
-app.get('/api/users', requireAuth, requireAdmin, h(async (req, res) => {
-  res.json(await query('SELECT id, name, email, role, active, created_at FROM erp_users ORDER BY name'));
+app.get('/api/users', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  res.json(await query(`SELECT id, name, email, role, status, active, permissions, must_change_password, created_at
+    FROM erp_users ORDER BY CASE WHEN active THEN 0 ELSE 1 END, name`));
 }));
 
-app.post('/api/users/:id/toggle', requireAuth, requireAdmin, h(async (req, res) => {
-  if (Number(req.params.id) === Number(req.user.id)) return res.status(400).json({ error: 'Não é possível desativar o próprio usuário.' });
-  await query('UPDATE erp_users SET active = NOT active WHERE id = $1', [req.params.id]);
+// Cria um usuário diretamente, já ativo, com senha e permissões definidas.
+app.post('/api/users', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const name = sanitize(req.body.name);
+  const email = String(sanitize(req.body.email) || '').toLowerCase();
+  const password = String(req.body.password || '');
+  const role = req.body.role === 'admin' ? 'admin' : 'usuario';
+
+  if (!name || name.length < 3) return res.status(400).json({ error: 'Informe o nome completo.' });
+  if (!emailDomainAllowed(email)) {
+    return res.status(400).json({ error: 'E-mail deve ser @proagroseguros.com ou @proagroinsur.tech.' });
+  }
+  if (!passwordStrongEnough(password)) {
+    return res.status(400).json({ error: 'A senha gerada não atende ao mínimo de segurança (10+ caracteres, com maiúscula, minúscula, número e símbolo).' });
+  }
+  const exists = await query('SELECT id FROM erp_users WHERE email = $1', [email]);
+  if (exists.length) return res.status(409).json({ error: 'Já existe um usuário com este e-mail.' });
+
+  const perms = role === 'admin' ? {} : normalizePermissions(req.body.permissions);
+  const inserted = await query(
+    `INSERT INTO erp_users (name, email, password_hash, role, status, active, permissions, must_change_password)
+     VALUES ($1,$2,$3,$4,'ativo',true,$5::jsonb,true) RETURNING id`,
+    [name, email, bcrypt.hashSync(password, 10), role, JSON.stringify(perms)]
+  );
+  res.json({ ok: true, id: inserted[0].id });
+}));
+
+// Atualizar perfil e permissões de um usuário.
+app.put('/api/users/:id/permissions', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT id, email FROM erp_users WHERE id = $1', [id]);
+  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  if (String(rows[0].email).toLowerCase() === SUPER_ADMIN_EMAIL) {
+    return res.status(400).json({ error: 'O administrador principal tem acesso total e não pode ser restringido.' });
+  }
+  const role = req.body.role === 'admin' ? 'admin' : 'usuario';
+  const perms = role === 'admin' ? {} : normalizePermissions(req.body.permissions);
+  await query('UPDATE erp_users SET role=$1, permissions=$2::jsonb WHERE id=$3',
+    [role, JSON.stringify(perms), id]);
+  res.json({ ok: true });
+}));
+
+// Redefinir a senha de um usuário (gera nova; troca obrigatória no acesso).
+app.post('/api/users/:id/reset-password', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const password = String(req.body.password || '');
+  if (!passwordStrongEnough(password)) {
+    return res.status(400).json({ error: 'A senha gerada não atende ao mínimo de segurança.' });
+  }
+  const rows = await query('SELECT id FROM erp_users WHERE id=$1', [id]);
+  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  await query('UPDATE erp_users SET password_hash=$1, must_change_password=true WHERE id=$2',
+    [bcrypt.hashSync(password, 10), id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/users/:id/toggle', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT email FROM erp_users WHERE id = $1', [id]);
+  if (rows.length && String(rows[0].email).toLowerCase() === SUPER_ADMIN_EMAIL) {
+    return res.status(400).json({ error: 'Não é possível desativar o administrador principal.' });
+  }
+  await query("UPDATE erp_users SET active = NOT active WHERE id = $1", [id]);
   res.json({ ok: true });
 }));
 
