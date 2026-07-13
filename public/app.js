@@ -12,6 +12,39 @@ const CORES = { verde: '#00783F', verdeMed: '#3DAE43', azul: '#1F4E78', cinza: '
 
 let USER = null;
 let charts = [];
+let READONLY = false;      // página atual é somente-leitura para este usuário?
+let CURRENT_PAGE = 'dashboard';
+let FORCE_MODAL = false;   // trava o modal (troca de senha obrigatória)
+
+// Páginas com acesso configurável (espelha PERM_PAGES do backend)
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios'];
+const PAGE_LABELS = {
+  dashboard:'Dashboard', pagar:'Contas a Pagar', receber:'Contas a Receber', fluxo:'Fluxo de Caixa',
+  conciliacao:'Conciliação Bancária', fornecedores:'Fornecedores', orcamento:'Orçamento Anual',
+  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais'
+};
+
+function permLevel(page) {
+  if (!USER) return 'none';
+  if (USER.role === 'admin') return 'edit';
+  const p = (USER.permissions || {})[page];
+  return (p === 'edit' || p === 'view') ? p : 'none';
+}
+const canViewPage = page => { const l = permLevel(page); return l === 'view' || l === 'edit'; };
+const canEditPage = page => permLevel(page) === 'edit';
+
+// Gerador de senha forte (16 chars: maiúscula, minúscula, número e símbolo,
+// sem caracteres ambíguos como 0/O/1/l). Usa crypto para a escolha.
+function gerarSenhaForte(len = 16) {
+  const U = 'ABCDEFGHJKLMNPQRSTUVWXYZ', L = 'abcdefghijkmnopqrstuvwxyz', D = '23456789', S = '!@#$%&*?-_+=';
+  const all = U + L + D + S;
+  const r = new Uint32Array(len); crypto.getRandomValues(r);
+  const pick = (set, i) => set[r[i] % set.length];
+  const out = [pick(U, 0), pick(L, 1), pick(D, 2), pick(S, 3)];
+  for (let i = 4; i < len; i++) out.push(pick(all, i));
+  for (let i = out.length - 1; i > 0; i--) { const j = r[i] % (i + 1); [out[i], out[j]] = [out[j], out[i]]; }
+  return out.join('');
+}
 
 // ------------------ Utilitários ------------------
 const $ = s => document.querySelector(s);
@@ -23,6 +56,14 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 const num = v => { const n = Number(String(v).replace(/\./g,'').replace(',','.')); return isFinite(n) ? n : 0; };
 
 async function api(path, opts = {}) {
+  const method = (opts.method || 'GET').toUpperCase();
+  // Guarda de UX: bloqueia escrita quando a página atual é somente-leitura.
+  // (A trava real está no backend; isto só evita cliques inúteis e dá mensagem clara.)
+  if (method !== 'GET' && USER && USER.role !== 'admin' && READONLY
+      && !path.includes('/auth/') && !path.startsWith('/api/users')) {
+    toast('Você tem acesso somente leitura nesta seção.');
+    throw new Error('Acesso somente leitura nesta seção.');
+  }
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -55,7 +96,11 @@ function openModal(title, bodyHTML, buttons) {
   });
   $('#modal-back').classList.add('open');
 }
-function closeModal() { $('#modal-back').classList.remove('open'); }
+function closeModal() {
+  if (FORCE_MODAL) return;
+  $('#modal-back').classList.remove('open');
+  $('#modal-close').style.display = '';
+}
 $('#modal-close').onclick = closeModal;
 $('#modal-back').addEventListener('click', e => { if (e.target.id === 'modal-back') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
@@ -73,11 +118,15 @@ const fldSel = (id, label, options, selected) =>
     `<option value="${esc(o.v)}" ${String(o.v) === String(selected) ? 'selected' : ''}>${esc(o.t)}</option>`).join('')}</select></div>`;
 
 // ------------------ Autenticação ------------------
-let regMode = false;
-
 function showLogin() {
   $('#view-app').classList.remove('visible');
   $('#view-login').style.display = 'flex';
+  // Autocadastro desativado: esconde qualquer resquício de "criar conta".
+  if ($('#auth-toggle')) $('#auth-toggle').style.display = 'none';
+  if ($('#f-name')) $('#f-name').style.display = 'none';
+  $('#auth-title').textContent = 'Acessar o sistema';
+  $('#auth-sub').textContent = 'Use suas credenciais corporativas.';
+  $('#auth-submit').textContent = 'Entrar';
 }
 function showApp() {
   $('#view-login').style.display = 'none';
@@ -89,35 +138,53 @@ function showApp() {
   buildNav();
   route();
 }
-
-$('#auth-toggle').onclick = e => {
-  e.preventDefault();
-  regMode = !regMode;
-  $('#f-name').style.display = regMode ? 'block' : 'none';
-  $('#auth-title').textContent = regMode ? 'Criar conta' : 'Acessar o sistema';
-  $('#auth-sub').textContent = regMode ? 'Cadastro exclusivo para colaboradores.' : 'Use suas credenciais corporativas.';
-  $('#auth-submit').textContent = regMode ? 'Criar conta' : 'Entrar';
-  $('#auth-toggle').textContent = regMode ? 'Já tenho conta — voltar ao login' : 'Primeiro acesso? Criar conta';
-  $('#auth-msg').className = 'form-msg';
-};
+// Entra no app e, se necessário, força a troca da senha do primeiro acesso.
+function enterApp() {
+  showApp();
+  if (USER && USER.must_change_password) openForcedPasswordChange();
+}
 
 $('#auth-submit').onclick = async () => {
   const msg = $('#auth-msg'); msg.className = 'form-msg';
   const email = $('#auth-email').value.trim();
   const password = $('#auth-pass').value;
   try {
-    const payload = regMode
-      ? await api('/api/auth/register', { method: 'POST', body: { name: $('#reg-name').value.trim(), email, password } })
-      : await api('/api/auth/login', { method: 'POST', body: { email, password } });
-    USER = payload.user;
-    showApp();
+    const payload = await api('/api/auth/login', { method: 'POST', body: { email, password } });
+    USER = payload.user; enterApp();
   } catch (err) {
     msg.className = 'form-msg err'; msg.textContent = err.message;
   }
 };
 $('#auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-submit').click(); });
 
-$('#btn-logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }); USER = null; showLogin(); };
+$('#btn-logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }); USER = null; location.hash = ''; showLogin(); };
+
+// Troca obrigatória de senha no primeiro acesso (senha gerada pelo admin).
+function openForcedPasswordChange() {
+  FORCE_MODAL = true;
+  openModal('Definir nova senha', `
+    <p style="font-size:13.5px;color:var(--ink-2);margin-bottom:12px">Por segurança, defina uma senha pessoal para continuar. A senha temporária fornecida pelo administrador deixará de valer.</p>
+    <div class="field"><label for="np1">Nova senha</label>
+      <div style="display:flex;gap:8px">
+        <input id="np1" type="text" autocomplete="new-password" style="font-family:monospace">
+        <button class="btn sm" id="np-gen" type="button">Gerar</button>
+      </div>
+      <small style="color:var(--muted)">Mín. 10 caracteres, com maiúscula, minúscula, número e símbolo.</small>
+    </div>
+    <div class="field"><label for="np2">Confirmar nova senha</label><input id="np2" type="password"></div>`,
+    [{ label: 'Salvar e continuar', cls: 'primary', onClick: async () => {
+        const a = $('#np1').value, b = $('#np2').value;
+        if (a !== b) return modalError('As senhas não coincidem.');
+        try {
+          await api('/api/auth/change-password', { method: 'POST', body: { new_password: a } });
+          USER.must_change_password = false;
+          FORCE_MODAL = false; $('#modal-close').style.display = ''; closeModal();
+          toast('Senha definida com sucesso.');
+        } catch (e) { modalError(e.message); }
+    }}]);
+  $('#modal-close').style.display = 'none';
+  $('#np-gen').onclick = () => { $('#np1').value = gerarSenhaForte(16); };
+}
 
 // ------------------ Navegação ------------------
 const ICONS = {
@@ -143,26 +210,53 @@ const PAGES = [
   { hash: 'orcamento', title: 'Orçamento Anual', icon: 'bud', section: 'Planejamento' },
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
-  { hash: 'usuarios', title: 'Usuários', icon: 'usr', section: 'Administração', admin: true }
+  { hash: 'usuarios', title: 'Usuários', icon: 'usr', section: 'Administração', super: true }
 ];
 
 function buildNav() {
   const nav = $('#nav'); nav.innerHTML = '';
+  let curSection = null, emitted = null;
   PAGES.forEach(p => {
-    if (p.admin && USER.role !== 'admin') return;
-    if (p.section) nav.appendChild(el('div', 'nav-section', p.section));
+    if (p.section) curSection = p.section;
+    const visible = p.super ? !!USER.is_super : canViewPage(p.hash);
+    if (!visible) return;
+    if (curSection && curSection !== emitted) { nav.appendChild(el('div', 'nav-section', curSection)); emitted = curSection; }
     const a = el('a', '', ICONS[p.icon] + '<span>' + p.title + '</span>');
     a.href = '#' + p.hash; a.dataset.hash = p.hash;
     nav.appendChild(a);
   });
 }
 
+function firstAllowedHash() {
+  for (const p of PAGES) {
+    const ok = p.super ? !!USER.is_super : canViewPage(p.hash);
+    if (ok) return p.hash;
+  }
+  return null;
+}
+
 window.addEventListener('hashchange', () => { if (USER) route(); });
 
 function route() {
   destroyCharts();
-  const hash = (location.hash || '#dashboard').slice(1);
-  const page = PAGES.find(p => p.hash === hash) || PAGES[0];
+  let hash = (location.hash || '').slice(1);
+  if (!hash) hash = firstAllowedHash() || 'dashboard';
+  const page = PAGES.find(p => p.hash === hash);
+  const allowed = page && (page.super ? !!USER.is_super : canViewPage(page.hash));
+
+  if (!page || !allowed) {
+    const fb = firstAllowedHash();
+    document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+    $('#page-title').textContent = 'Sem acesso';
+    $('#content').innerHTML = `<div class="card"><h3>Acesso não autorizado</h3>
+      <p style="color:var(--ink-2);font-size:13.5px">Você não tem permissão para acessar esta página.
+      ${fb ? 'Use o menu à esquerda para navegar pelas seções liberadas para o seu usuário.'
+           : 'Nenhuma seção foi liberada para o seu usuário — contate o administrador.'}</p></div>`;
+    return;
+  }
+
+  CURRENT_PAGE = page.hash;
+  READONLY = page.super ? false : !canEditPage(page.hash);
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.hash === page.hash));
   $('#page-title').textContent = page.title;
   const renderers = {
@@ -171,7 +265,16 @@ function route() {
     orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, usuarios: renderUsuarios
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
-  renderers[page.hash]().catch(err => { $('#content').innerHTML = `<div class="empty">${esc(err.message)}</div>`; });
+  renderers[page.hash]()
+    .then(() => { if (READONLY) injectReadonlyBanner(); })
+    .catch(err => { $('#content').innerHTML = `<div class="empty">${esc(err.message)}</div>`; });
+}
+
+function injectReadonlyBanner() {
+  const c = $('#content');
+  if (!c || c.querySelector('.ro-banner')) return;
+  const b = el('div', 'ro-banner', '🔒 Acesso somente leitura — você pode consultar os dados desta seção, mas não editá-los.');
+  c.prepend(b);
 }
 
 // ============================================================
@@ -963,29 +1066,206 @@ async function renderRelatorios() {
 // ============================================================
 async function renderUsuarios() {
   const rows = await api('/api/users');
+  const byId = id => rows.find(u => String(u.id) === String(id));
+
+  const permChips = u => {
+    if (u.role === 'admin') return '<span class="badge ok">Acesso total</span>';
+    const p = u.permissions || {}, keys = PERM_PAGES.filter(k => p[k]);
+    if (!keys.length) return '<small style="color:var(--muted)">Nenhuma página</small>';
+    return `<div class="chip-row">${keys.map(k =>
+      `<span class="chip ${p[k] === 'edit' ? 'chip-edit' : ''}">${PAGE_LABELS[k]}${p[k] === 'edit' ? ' ✎' : ''}</span>`).join('')}</div>`;
+  };
+
   const c = $('#content');
   c.innerHTML = `
-    <div class="card" style="margin-bottom:16px">
-      <h3>Controle de acesso</h3>
-      <p style="font-size:13.5px; color:var(--ink-2)">Novos usuários se cadastram pela tela de login, exclusivamente com e-mails
-      <strong>@proagroseguros.com</strong> ou <strong>@proagroinsur.tech</strong>. O primeiro usuário cadastrado torna-se administrador.
-      Aqui você pode ativar ou desativar contas.</p>
+    <div class="card user-head">
+      <div>
+        <h3 style="margin:0">Usuários cadastrados</h3>
+        <p style="font-size:13px;color:var(--ink-2);margin:4px 0 0">O acesso à plataforma é criado exclusivamente por você. Defina as páginas e o nível (ver / editar) de cada colaborador.</p>
+      </div>
+      <button class="btn primary" id="btn-new-user">+ Criar usuário</button>
     </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Situação</th><th>Cadastro</th><th class="actions">Ações</th></tr></thead>
-      <tbody>${rows.map(u => `<tr>
-        <td><strong>${esc(u.name)}</strong></td><td>${esc(u.email)}</td>
-        <td><span class="badge ${u.role === 'admin' ? 'pend' : 'off'}">${u.role === 'admin' ? 'Administrador' : 'Usuário'}</span></td>
-        <td><span class="badge ${u.active ? 'ok' : 'late'}">${u.active ? 'Ativo' : 'Desativado'}</span></td>
-        <td>${brDate(u.created_at.slice(0, 10))}</td>
-        <td class="actions">${u.id === USER.id ? '<small style="color:var(--muted)">Você</small>'
-          : `<button class="btn sm" data-toggle="${u.id}">${u.active ? 'Desativar' : 'Reativar'}</button>`}</td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
+
+    <div class="user-list">
+      ${rows.map(u => {
+        const initials = u.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
+        const isSuper = u.email.toLowerCase() === 'm.atanazio@proagroseguros.com';
+        return `<div class="user-row">
+          <div class="user-id">
+            <div class="avatar">${initials}</div>
+            <div>
+              <div class="user-name">${esc(u.name)} ${u.id === USER.id ? '<span style="color:var(--muted);font-weight:400">(você)</span>' : ''}</div>
+              <div class="user-mail">${esc(u.email)} · cadastro: ${brDate(u.created_at.slice(0, 10))}</div>
+              <div style="margin-top:6px">${permChips(u)}</div>
+            </div>
+          </div>
+          <div class="user-meta">
+            <span class="badge ${u.role === 'admin' ? 'pend' : 'off'}">${u.role === 'admin' ? 'admin' : 'usuário'}</span>
+            <span class="badge ${u.active ? 'ok' : 'late'}">${u.active ? 'Ativo' : 'Inativo'}</span>
+          </div>
+          <div class="user-actions">${
+            isSuper
+              ? '<small style="color:var(--muted)">administrador principal</small>'
+              : `<button class="btn sm" data-perms="${u.id}">Acesso</button>
+                 <button class="btn sm" data-reset="${u.id}">Redefinir senha</button>
+                 <button class="btn sm" data-toggle="${u.id}">${u.active ? 'Desativar' : 'Ativar'}</button>`
+          }</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  $('#btn-new-user').onclick = openCreateUser;
+  c.querySelectorAll('[data-perms]').forEach(b => b.onclick = () => openEditPerms(byId(b.dataset.perms)));
+  c.querySelectorAll('[data-reset]').forEach(b => b.onclick = () => openReset(byId(b.dataset.reset)));
   c.querySelectorAll('[data-toggle]').forEach(b => b.onclick = async () => {
     try { await api(`/api/users/${b.dataset.toggle}/toggle`, { method: 'POST' }); toast('Situação atualizada.'); renderUsuarios(); }
     catch (e) { toast(e.message); }
   });
+}
+
+// Presets de perfil que pré-preenchem a matriz de permissões (ajustável depois).
+const PERM_PRESETS = {
+  admin:      null, // acesso total (ignora a matriz)
+  financeiro: { dashboard:'view', pagar:'edit', receber:'edit', fluxo:'view', conciliacao:'edit', fornecedores:'edit', orcamento:'view', orcadoreal:'view', relatorios:'view' },
+  consulta:   { dashboard:'view', pagar:'view', receber:'view', fluxo:'view', conciliacao:'view', fornecedores:'view', orcamento:'view', orcadoreal:'view', relatorios:'view' },
+  custom:     {}
+};
+
+// ---- Componentes reutilizáveis da administração de usuários ----
+function permMatrixHTML(perms) {
+  perms = perms || {};
+  return `<div class="perm-grid">${PERM_PAGES.map(pg => {
+    const cur = perms[pg] || 'none';
+    return `<div class="perm-row">
+      <span>${PAGE_LABELS[pg]}</span>
+      <select data-perm="${pg}">
+        <option value="none" ${cur === 'none' ? 'selected' : ''}>Sem acesso</option>
+        <option value="view" ${cur === 'view' ? 'selected' : ''}>Ver</option>
+        <option value="edit" ${cur === 'edit' ? 'selected' : ''}>Ver e editar</option>
+      </select></div>`;
+  }).join('')}</div>`;
+}
+function readPermMatrix(scope) {
+  const out = {};
+  (scope || document).querySelectorAll('[data-perm]').forEach(s => { if (s.value !== 'none') out[s.dataset.perm] = s.value; });
+  return out;
+}
+function pwGenFieldHTML(label = 'Senha inicial') {
+  return `<div class="field"><label>${label}</label>
+    <div style="display:flex; gap:8px; align-items:center">
+      <input id="gpw" type="text" readonly style="font-family:monospace; letter-spacing:.5px">
+      <button class="btn sm" id="gpw-gen" type="button">Gerar</button>
+      <button class="btn sm" id="gpw-copy" type="button">Copiar</button>
+    </div>
+    <small style="color:var(--muted)">Senha forte de 16 caracteres. O usuário deverá trocá-la no primeiro acesso.</small>
+  </div>`;
+}
+function wirePwGen() {
+  $('#gpw').value = gerarSenhaForte(16);
+  $('#gpw-gen').onclick = () => { $('#gpw').value = gerarSenhaForte(16); };
+  $('#gpw-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('#gpw').value); toast('Senha copiada.'); }
+    catch { toast('Selecione e copie manualmente.'); }
+  };
+}
+function showGeneratedPassword(u, pw) {
+  openModal('Acesso criado', `
+    <p style="font-size:13.5px; color:var(--ink-2)">Repasse estas credenciais a <strong>${esc(u.name)}</strong>.
+    Por segurança, esta senha <strong>não poderá ser consultada novamente</strong>.</p>
+    <div class="cred-box">
+      <div><span>E-mail</span><code>${esc(u.email)}</code></div>
+      <div><span>Senha</span><code>${esc(pw)}</code></div>
+    </div>`,
+    [{ label: 'Copiar senha', onClick: async () => { try { await navigator.clipboard.writeText(pw); toast('Senha copiada.'); } catch { toast('Copie manualmente.'); } } },
+     { label: 'Concluir', cls: 'primary', onClick: closeModal }]);
+}
+function applyPreset(presetKey, scope) {
+  const preset = PERM_PRESETS[presetKey];
+  const isAdmin = presetKey === 'admin';
+  const box = scope.querySelector('.perm-box');
+  if (box) box.style.display = isAdmin ? 'none' : 'block';
+  if (isAdmin || presetKey === 'custom') return;
+  scope.querySelectorAll('[data-perm]').forEach(sel => { sel.value = (preset && preset[sel.dataset.perm]) || 'none'; });
+}
+
+function openCreateUser() {
+  openModal('Criar usuário', `
+    <p style="font-size:13.5px; color:var(--ink-2)">O acesso é criado por você. Defina os dados, o perfil e as páginas liberadas. A senha inicial é exibida uma única vez.</p>
+    <div class="field"><label for="cu-name">Nome completo</label><input id="cu-name" placeholder="Nome do colaborador"></div>
+    <div class="field"><label for="cu-email">E-mail institucional</label><input id="cu-email" type="email" placeholder="colaborador@proagroseguros.com"></div>
+    <div class="field"><label for="cu-preset">Perfil <span style="font-weight:400;color:var(--muted)">(pré-preenche as páginas — ajuste se necessário)</span></label>
+      <select id="cu-preset">
+        <option value="custom" selected>Personalizado</option>
+        <option value="financeiro">Financeiro (operacional)</option>
+        <option value="consulta">Consulta (somente leitura)</option>
+        <option value="admin">Administrador (acesso total)</option>
+      </select></div>
+    ${pwGenFieldHTML()}
+    <div class="perm-box">
+      <label style="font-weight:600; font-size:12.5px; color:var(--ink-2); display:block; margin:6px 0">Páginas com acesso</label>
+      ${permMatrixHTML({})}
+    </div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Criar e gerar acesso', cls: 'primary', onClick: async () => {
+        const name = $('#cu-name').value.trim();
+        const email = $('#cu-email').value.trim();
+        const preset = $('#cu-preset').value;
+        const role = preset === 'admin' ? 'admin' : 'usuario';
+        const password = $('#gpw').value;
+        const permissions = role === 'admin' ? {} : readPermMatrix($('#modal-body'));
+        try {
+          const r = await api('/api/users', { method: 'POST', body: { name, email, role, password, permissions } });
+          closeModal();
+          showGeneratedPassword({ name, email }, password);
+          renderUsuarios();
+        } catch (e) { modalError(e.message); }
+     }}]);
+  wirePwGen();
+  const presetSel = $('#cu-preset');
+  presetSel.onchange = () => applyPreset(presetSel.value, $('#modal-body'));
+  applyPreset('custom', $('#modal-body'));
+}
+function openEditPerms(u) {
+  openModal('Permissões de acesso', `
+    <p style="font-size:13.5px; color:var(--ink-2)">Editar o acesso de <strong>${esc(u.name)}</strong>.</p>
+    <div class="field"><label for="ep-role">Perfil</label>
+      <select id="ep-role">
+        <option value="usuario" ${u.role !== 'admin' ? 'selected' : ''}>Usuário</option>
+        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Administrador (acesso total)</option>
+      </select></div>
+    <div id="ep-perms">
+      <label style="font-weight:600; font-size:12.5px; color:var(--ink-2); display:block; margin:6px 0">Permissões por página</label>
+      ${permMatrixHTML(u.permissions)}
+    </div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        const role = $('#ep-role').value, permissions = readPermMatrix($('#ep-perms'));
+        try { await api(`/api/users/${u.id}/permissions`, { method: 'PUT', body: { role, permissions } }); closeModal(); toast('Permissões atualizadas.'); renderUsuarios(); }
+        catch (e) { modalError(e.message); }
+     }}]);
+  const roleSel = $('#ep-role'), permsBox = $('#ep-perms');
+  permsBox.style.display = roleSel.value === 'admin' ? 'none' : 'block';
+  roleSel.onchange = () => { permsBox.style.display = roleSel.value === 'admin' ? 'none' : 'block'; };
+}
+function openReset(u) {
+  openModal('Redefinir senha', `
+    <p style="font-size:13.5px; color:var(--ink-2)">Gerar uma nova senha para <strong>${esc(u.name)}</strong>. A senha atual deixará de funcionar imediatamente.</p>
+    ${pwGenFieldHTML('Nova senha')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Redefinir', cls: 'primary', onClick: async () => {
+        const password = $('#gpw').value;
+        try { await api(`/api/users/${u.id}/reset-password`, { method: 'POST', body: { password } }); closeModal(); showGeneratedPassword(u, password); }
+        catch (e) { modalError(e.message); }
+     }}]);
+  wirePwGen();
+}
+function confirmAction(label, fn, okMsg) {
+  openModal('Confirmar', `<p>Deseja realmente ${esc(label)}?</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Confirmar', cls: 'primary', onClick: async () => {
+        try { await fn(); closeModal(); toast(okMsg || 'Concluído.'); renderUsuarios(); }
+        catch (e) { modalError(e.message); }
+     }}]);
 }
 
 // ============================================================
@@ -1015,6 +1295,8 @@ function exportCSV(name, headers, rows) {
 (async function init() {
   try {
     const me = await api('/api/auth/me');
-    USER = me.user; showApp();
-  } catch { showLogin(); }
+    USER = me.user; enterApp();
+  } catch {
+    showLogin();
+  }
 })();
