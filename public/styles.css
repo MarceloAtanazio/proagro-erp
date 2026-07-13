@@ -326,3 +326,20 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .date-range input[type="date"] { border:none; padding:0; font-size:13px; font-family:inherit; color:var(--ink,#1b2620); }
 .date-range input[type="date"]:focus { outline:none; }
 @media (max-width: 900px) { .date-range { flex-wrap:wrap; } }
+
+/* ===== Configurações (categorias / centros de custo) ===== */
+.cfg-card { margin-bottom: 16px; }
+.cfg-add-row { display:flex; gap:8px; margin:10px 0 14px; }
+.cfg-add-row input[type="text"] { flex:1 1 auto; }
+.cfg-list { display:flex; flex-direction:column; gap:6px; }
+.cfg-item {
+  display:flex; align-items:center; gap:10px;
+  border:1px solid var(--line); border-radius:8px; padding:8px 12px; background:#fff;
+}
+.cfg-item.inactive { opacity:.6; background:#FAFBFA; }
+.cfg-name { font-weight:600; font-size:13.5px; color:var(--ink,#1b2620); flex:1 1 auto; }
+.cfg-actions { display:flex; gap:6px; flex:0 0 auto; }
+@media (max-width: 640px) {
+  .cfg-item { flex-wrap:wrap; }
+  .cfg-actions { width:100%; justify-content:flex-end; }
+}
