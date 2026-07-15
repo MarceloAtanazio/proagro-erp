@@ -69,6 +69,15 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const brl = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const brDate = iso => { if (!iso) return '—'; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// Mantém os filtros de uma tela (busca, status, categoria, período) entre
+// navegações, até que o usuário clique em "Limpar filtros".
+function loadFilters(key) {
+  try { return JSON.parse(sessionStorage.getItem(key)) || {}; } catch { return {}; }
+}
+function saveFilters(key, obj) {
+  try { sessionStorage.setItem(key, JSON.stringify(obj)); } catch { /* ignora se sessionStorage indisponível */ }
+}
 const num = v => { const n = Number(String(v).replace(/\./g,'').replace(',','.')); return isFinite(n) ? n : 0; };
 
 async function api(path, opts = {}) {
@@ -580,16 +589,21 @@ async function renderPagar() {
     api('/api/attachments/count/payable').catch(() => ({}))
   ]);
   const c = $('#content');
+  const FKEY = 'filters-pagar';
+  const saved = loadFilters(FKEY);
   c.innerHTML = `
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Buscar descrição, fornecedor…">
-      <select id="f-status"><option value="">Todos os status</option><option value="pendente">Pendentes</option>
-        <option value="vencido">Vencidos</option><option value="pago">Pagos</option></select>
-      <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option>${x}</option>`).join('')}</select>
+      <input type="search" id="q" placeholder="Buscar descrição, fornecedor…" value="${esc(saved.q || '')}">
+      <select id="f-status"><option value="">Todos os status</option>
+        <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
+        <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
+        <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
+      <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
       <div class="date-range">
-        <label>De <input type="date" id="f-de"></label>
-        <label>Até <input type="date" id="f-ate"></label>
+        <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
+        <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
       </div>
+      <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="btn-csv">Exportar CSV</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
@@ -600,6 +614,7 @@ async function renderPagar() {
   const draw = () => {
     const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, fc = $('#f-cat').value, today = todayISO();
     const de = $('#f-de').value, ate = $('#f-ate').value;
+    saveFilters(FKEY, { q: $('#q').value, status: fs, cat: fc, de, ate });
     const filtered = rows.filter(r => {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
@@ -643,6 +658,11 @@ async function renderPagar() {
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('título', `/api/payables/${b.dataset.del}`, renderPagar));
   };
   ['q', 'f-status', 'f-cat', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
+  $('#btn-clear').onclick = () => {
+    $('#q').value = ''; $('#f-status').value = ''; $('#f-cat').value = ''; $('#f-de').value = ''; $('#f-ate').value = '';
+    saveFilters(FKEY, {});
+    draw();
+  };
   $('#btn-new').onclick = () => formPagar(null, sups);
   $('#btn-csv').onclick = () => exportCSV('contas_a_pagar',
     ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','Valor','Status','Pagamento'],
@@ -702,15 +722,20 @@ async function renderReceber() {
     api('/api/attachments/count/receivable').catch(() => ({}))
   ]);
   const c = $('#content');
+  const FKEY = 'filters-receber';
+  const saved = loadFilters(FKEY);
   c.innerHTML = `
     <div class="toolbar">
-      <input type="search" id="q" placeholder="Buscar cliente, descrição…">
-      <select id="f-status"><option value="">Todos os status</option><option value="pendente">Pendentes</option>
-        <option value="vencido">Vencidos</option><option value="recebido">Recebidos</option></select>
+      <input type="search" id="q" placeholder="Buscar cliente, descrição…" value="${esc(saved.q || '')}">
+      <select id="f-status"><option value="">Todos os status</option>
+        <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
+        <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
+        <option value="recebido" ${saved.status === 'recebido' ? 'selected' : ''}>Recebidos</option></select>
       <div class="date-range">
-        <label>De <input type="date" id="f-de"></label>
-        <label>Até <input type="date" id="f-ate"></label>
+        <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
+        <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
       </div>
+      <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="btn-csv">Exportar CSV</button>
       <button class="btn primary" id="btn-new">+ Novo recebível</button>
@@ -721,6 +746,7 @@ async function renderReceber() {
   const draw = () => {
     const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, today = todayISO();
     const de = $('#f-de').value, ate = $('#f-ate').value;
+    saveFilters(FKEY, { q: $('#q').value, status: fs, de, ate });
     const filtered = rows.filter(r => {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
@@ -760,6 +786,11 @@ async function renderReceber() {
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('recebível', `/api/receivables/${b.dataset.del}`, renderReceber));
   };
   ['q', 'f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
+  $('#btn-clear').onclick = () => {
+    $('#q').value = ''; $('#f-status').value = ''; $('#f-de').value = ''; $('#f-ate').value = '';
+    saveFilters(FKEY, {});
+    draw();
+  };
   $('#btn-new').onclick = () => formReceber(null);
   $('#btn-csv').onclick = () => exportCSV('contas_a_receber',
     ['Vencimento','Cliente','Descricao','Categoria','Documento','Valor','Status','Recebimento'],
