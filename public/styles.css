@@ -355,3 +355,6 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .alert-item.red { background: #FBEAE7; color: #8A2A20; border: 1px solid #E3A79C; }
 .alert-item.warn { background: #FBF3E0; color: #8A6414; border: 1px solid #E3C078; }
 .alert-item.ok { background: var(--verde-050, #EAF5EC); color: var(--verde-700, #00783F); border: 1px solid #BFE0C9; }
+
+/* ===== Dashboard — alerta informativo (neutro) ===== */
+.alert-item.info { background: #EAF1F8; color: #1F4E78; border: 1px solid #B9CEE0; }
