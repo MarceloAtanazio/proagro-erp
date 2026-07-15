@@ -566,6 +566,7 @@ async function renderPagar() {
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
+  let lastFiltered = rows;
   const draw = () => {
     const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, fc = $('#f-cat').value, today = todayISO();
     const de = $('#f-de').value, ate = $('#f-ate').value;
@@ -579,6 +580,7 @@ async function renderPagar() {
       if (ate && r.due_date > ate) return false;
       return !q || (r.description + ' ' + (r.supplier_name || '') + ' ' + (r.document || '')).toLowerCase().includes(q);
     });
+    lastFiltered = filtered;
     const total = filtered.reduce((s, r) => s + r.amount, 0);
     $('#tbl').innerHTML = `
       <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Doc.</th>
@@ -614,7 +616,7 @@ async function renderPagar() {
   $('#btn-new').onclick = () => formPagar(null, sups);
   $('#btn-csv').onclick = () => exportCSV('contas_a_pagar',
     ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','Valor','Status','Pagamento'],
-    rows.map(r => [r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
+    lastFiltered.map(r => [r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
   draw();
 }
 
@@ -685,6 +687,7 @@ async function renderReceber() {
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
+  let lastFiltered = rows;
   const draw = () => {
     const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, today = todayISO();
     const de = $('#f-de').value, ate = $('#f-ate').value;
@@ -697,6 +700,7 @@ async function renderReceber() {
       if (ate && r.due_date > ate) return false;
       return !q || (r.description + ' ' + r.client_name + ' ' + (r.document || '')).toLowerCase().includes(q);
     });
+    lastFiltered = filtered;
     const total = filtered.reduce((s, r) => s + r.amount, 0);
     $('#tbl').innerHTML = `
       <thead><tr><th>Vencimento</th><th>Cliente</th><th>Descrição</th><th>Categoria</th><th>Doc.</th>
@@ -729,7 +733,7 @@ async function renderReceber() {
   $('#btn-new').onclick = () => formReceber(null);
   $('#btn-csv').onclick = () => exportCSV('contas_a_receber',
     ['Vencimento','Cliente','Descricao','Categoria','Documento','Valor','Status','Recebimento'],
-    rows.map(r => [r.due_date, r.client_name, r.description, r.category, r.document || '', String(r.amount).replace('.', ','), r.status, r.receipt_date || '']));
+    lastFiltered.map(r => [r.due_date, r.client_name, r.description, r.category, r.document || '', String(r.amount).replace('.', ','), r.status, r.receipt_date || '']));
   draw();
 }
 
