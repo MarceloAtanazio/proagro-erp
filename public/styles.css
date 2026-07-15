@@ -367,13 +367,17 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   position: sticky; z-index: 4;
 }
 
-/* ===== Contas a Pagar — linhas com altura uniforme ===== */
-/* Trunca texto longo com reticências (o nome completo aparece ao passar o mouse)
-   em vez de deixar a célula quebrar em várias linhas e desalinhar a tabela. */
-.col-desc, .col-fornecedor, .col-cat, .col-cc {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.col-desc { max-width: 240px; }
-.col-fornecedor { max-width: 320px; }
-.col-cat { max-width: 170px; }
-.col-cc { max-width: 170px; }
+/* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) ===== */
+.tbl-pagar { table-layout: fixed; }
+.tbl-pagar col.c-venc { width: 9%; }
+.tbl-pagar col.c-desc { width: 19%; }
+.tbl-pagar col.c-forn { width: 19%; }
+.tbl-pagar col.c-cat { width: 11%; }
+.tbl-pagar col.c-cc { width: 11%; }
+.tbl-pagar col.c-val { width: 9%; }
+.tbl-pagar col.c-status { width: 8%; }
+.tbl-pagar col.c-acoes { width: 14%; }
+.tbl-pagar td { white-space: normal; word-break: break-word; vertical-align: top; }
+.tbl-pagar td.num { white-space: nowrap; }
+.tbl-pagar td.actions { white-space: normal; }
+.tbl-pagar td.actions .btn { margin: 2px 4px 2px 0; }
