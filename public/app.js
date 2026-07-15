@@ -592,21 +592,24 @@ async function renderPagar() {
   const FKEY = 'filters-pagar';
   const saved = loadFilters(FKEY);
   c.innerHTML = `
-    <div class="toolbar">
-      <input type="search" id="q" placeholder="Buscar descrição, fornecedor…" value="${esc(saved.q || '')}">
-      <select id="f-status"><option value="">Todos os status</option>
-        <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
-        <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
-        <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
-      <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
-      <div class="date-range">
-        <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
-        <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
+    <div class="toolbar toolbar-spaced">
+      <div class="toolbar-row">
+        <input type="search" id="q" placeholder="Buscar descrição, fornecedor…" value="${esc(saved.q || '')}">
+        <select id="f-status"><option value="">Todos os status</option>
+          <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
+          <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
+          <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
+        <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+        <div class="date-range">
+          <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
+          <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
+        </div>
+        <button class="btn" id="btn-clear">Limpar filtros</button>
       </div>
-      <button class="btn" id="btn-clear">Limpar filtros</button>
-      <div class="spacer"></div>
-      <button class="btn" id="btn-csv">Exportar CSV</button>
-      <button class="btn primary" id="btn-new">+ Novo título</button>
+      <div class="toolbar-row toolbar-actions">
+        <button class="btn" id="btn-csv">Exportar CSV</button>
+        <button class="btn primary" id="btn-new">+ Novo título</button>
+      </div>
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
@@ -628,7 +631,7 @@ async function renderPagar() {
     lastFiltered = filtered;
     const total = filtered.reduce((s, r) => s + r.amount, 0);
     $('#tbl').innerHTML = `
-      <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Doc.</th>
+      <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Doc.</th>
         <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
@@ -637,6 +640,7 @@ async function renderPagar() {
           <td>${esc(r.description)}</td>
           <td>${esc(r.supplier_name || '—')}</td>
           <td>${esc(r.category)}</td>
+          <td>${esc(r.cost_center || '—')}</td>
           <td>${esc(r.document || '—')}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
@@ -648,8 +652,8 @@ async function renderPagar() {
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="8"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="6">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
 
     $('#tbl').querySelectorAll('[data-pay]').forEach(b => b.onclick = () => baixaPagar(rows.find(r => r.id == b.dataset.pay)));
     $('#tbl').querySelectorAll('[data-unpay]').forEach(b => b.onclick = async () => { await api(`/api/payables/${b.dataset.unpay}/unpay`, { method: 'POST' }); toast('Baixa estornada.'); renderPagar(); });
