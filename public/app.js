@@ -592,26 +592,27 @@ async function renderPagar() {
   const FKEY = 'filters-pagar';
   const saved = loadFilters(FKEY);
   c.innerHTML = `
-    <div class="toolbar toolbar-spaced">
-      <div class="toolbar-row">
-        <input type="search" id="q" placeholder="Buscar descrição, fornecedor…" value="${esc(saved.q || '')}">
-        <select id="f-status"><option value="">Todos os status</option>
-          <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
-          <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
-          <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
-        <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
-        <div class="date-range">
-          <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
-          <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
-        </div>
-        <button class="btn" id="btn-clear">Limpar filtros</button>
+    <div class="toolbar toolbar-spaced" id="pagar-toolbar">
+      <input type="search" id="q" placeholder="Buscar descrição, fornecedor…" value="${esc(saved.q || '')}">
+      <select id="f-status"><option value="">Todos os status</option>
+        <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
+        <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
+        <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
+      <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <div class="date-range">
+        <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
+        <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
       </div>
-      <div class="toolbar-row toolbar-actions">
-        <button class="btn" id="btn-csv">Exportar CSV</button>
-        <button class="btn primary" id="btn-new">+ Novo título</button>
-      </div>
+      <button class="btn" id="btn-clear">Limpar filtros</button>
+      <div class="spacer"></div>
+      <button class="btn" id="btn-csv">Exportar CSV</button>
+      <button class="btn primary" id="btn-new">+ Novo título</button>
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
+
+  // Mantém o painel de filtros fixo logo abaixo da barra superior ao rolar.
+  const topbarEl = document.querySelector('.topbar');
+  if (topbarEl) $('#pagar-toolbar').style.top = topbarEl.offsetHeight + 'px';
 
   let lastFiltered = rows;
   const draw = () => {
