@@ -366,3 +366,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   box-shadow: var(--shadow);
   position: sticky; z-index: 4;
 }
+
+/* ===== Contas a Pagar — linhas com altura uniforme ===== */
+/* Trunca texto longo com reticências (o nome completo aparece ao passar o mouse)
+   em vez de deixar a célula quebrar em várias linhas e desalinhar a tabela. */
+.col-desc, .col-fornecedor, .col-cat, .col-cc {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.col-desc { max-width: 240px; }
+.col-fornecedor { max-width: 320px; }
+.col-cat { max-width: 170px; }
+.col-cc { max-width: 170px; }
