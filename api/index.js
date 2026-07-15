@@ -792,6 +792,9 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   const today = iso(todayD);
   const in7 = iso(addDays(todayD, 7)), in15 = iso(addDays(todayD, 15)), in30 = iso(addDays(todayD, 30));
   const mesAtual = today.slice(0, 7);
+  const anoAtual = todayD.getFullYear(), mesNum = todayD.getMonth() + 1;
+  const monthStart = mesAtual + '-01';
+  const monthEnd = iso(new Date(anoAtual, mesNum, 0));
   // Janela móvel dos últimos 12 meses (inclui o mês corrente).
   const start12 = new Date(todayD.getFullYear(), todayD.getMonth() - 11, 1);
   const start12ISO = iso(start12);
@@ -799,7 +802,7 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   const one = async (sql, params) => (await query(sql, params))[0];
   const wrap = r => ({ v: n(r.v), n: r.c });
 
-  // ---- Posição de contas a pagar/receber (aberto, por horizonte) ----
+  // ---- Posição de contas a pagar (aberto, por horizonte) ----
   const pagarPend = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente'`);
   const pagarHoje = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente' AND due_date = $1`, [today]);
   const pagar7 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in7]);
@@ -807,32 +810,23 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   const pagar30 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in30]);
   const pagarVencido = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pendente' AND due_date < $1`, [today]);
 
-  const receberPend = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente'`);
+  // ---- Posição de contas a receber (aberto, por horizonte — alimenta o Fluxo de Caixa) ----
   const receberHoje = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date = $1`, [today]);
   const receber7 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in7]);
   const receber15 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in15]);
   const receber30 = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [today, in30]);
   const receberVencido = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='pendente' AND due_date < $1`, [today]);
 
+  // ---- Contas a receber com vencimento no mês atual (indicador principal) ----
+  const receberMesAtual = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE due_date BETWEEN $1 AND $2`, [monthStart, monthEnd]);
+  const receberMesRecebido = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE due_date BETWEEN $1 AND $2 AND status='recebido'`, [monthStart, monthEnd]);
+
   // ---- Caixa / bancos ----
   const naoConciliados = await one(`SELECT COUNT(*)::int AS c, COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE reconciled=false`);
   const saldoBanco = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions`);
-  const ultimaSinc = await one(`SELECT MAX(created_at) AS t FROM erp_bank_transactions`);
 
-  // ---- Resultado do mês ----
-  const recebidoMes = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_receivables WHERE status='recebido' AND to_char(receipt_date,'YYYY-MM')=$1`, [mesAtual]);
-  const pagoMes = await one(`SELECT COALESCE(SUM(amount),0) AS v, COUNT(*)::int AS c FROM erp_payables WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]);
-  const resultadoMes = n(recebidoMes.v) - n(pagoMes.v);
-
-  // ---- Vencimentos próximos (lista) ----
-  const vencendo = await query(`
-    SELECT 'pagar' AS tipo, p.description, p.amount, p.due_date, s.name AS party
-    FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id
-    WHERE p.status='pendente' AND p.due_date BETWEEN $1 AND $2
-    UNION ALL
-    SELECT 'receber', description, amount, due_date, client_name
-    FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2
-    ORDER BY due_date LIMIT 12`, [today, in30]);
+  // ---- Despesas do mês (indicador principal) ----
+  const pagoMes = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]);
 
   // ---- Evolução últimos 12 meses (receitas x despesas, regime de caixa) ----
   const recMensal = await query(`SELECT to_char(date_trunc('month', receipt_date),'YYYY-MM') AS ym, SUM(amount) AS total
@@ -851,22 +845,30 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
     });
   }
 
-  // ---- Despesas por categoria (últimos 12 meses) ----
+  // ---- Despesas por categoria (últimos 12 meses — gráfico de Receitas x Despesas) ----
   const despCatRows = await query(`SELECT category, SUM(amount) AS total FROM erp_payables
     WHERE status='pago' AND payment_date >= $1 GROUP BY category ORDER BY total DESC`, [start12ISO]);
   const despesasPorCategoria = despCatRows.map(r => ({ category: r.category, total: n(r.total) }));
 
-  // ---- Top centros de custo (últimos 12 meses) ----
-  const topCC = await query(`SELECT cost_center, SUM(amount) AS total FROM erp_payables
+  // ---- Análise por categoria: orçado x realizado do mês atual ----
+  const orcadoCatRows = await query(`SELECT category, amount FROM erp_budgets WHERE year=$1 AND month=$2 AND type='despesa'`, [anoAtual, mesNum]);
+  const realCatRows = await query(`SELECT category, SUM(amount) AS total FROM erp_payables
+    WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1 GROUP BY category`, [mesAtual]);
+  const catSet = new Set([...orcadoCatRows.map(r => r.category), ...realCatRows.map(r => r.category)]);
+  const categoriaMes = [...catSet].map(cat => {
+    const orcado = n((orcadoCatRows.find(r => r.category === cat) || {}).amount);
+    const realizado = n((realCatRows.find(r => r.category === cat) || {}).total);
+    return { category: cat, orcado, realizado, variacao: realizado - orcado,
+      variacaoPct: orcado > 0 ? ((realizado - orcado) / orcado) * 100 : (realizado > 0 ? null : 0) };
+  }).sort((a, b) => b.realizado - a.realizado);
+  const orcadoDespesaMes = orcadoCatRows.reduce((s, r) => s + n(r.amount), 0);
+
+  // ---- Análise por centro de custo (últimos 12 meses, ranking completo) ----
+  const centrosRows = await query(`SELECT cost_center, SUM(amount) AS total FROM erp_payables
     WHERE status='pago' AND payment_date >= $1 AND cost_center IS NOT NULL AND cost_center <> ''
-    GROUP BY cost_center ORDER BY total DESC LIMIT 5`, [start12ISO]);
-
-  // ---- Maiores despesas individuais (últimos 12 meses) ----
-  const maioresDespesas = await query(`SELECT description, category, cost_center, amount, payment_date FROM erp_payables
-    WHERE status='pago' AND payment_date >= $1 ORDER BY amount DESC LIMIT 6`, [start12ISO]);
-
-  // ---- Prazo médio de pagamento (dias entre vencimento e pagamento, 12m) ----
-  const pmp = await one(`SELECT AVG(payment_date - due_date) AS v FROM erp_payables WHERE status='pago' AND payment_date >= $1`, [start12ISO]);
+    GROUP BY cost_center ORDER BY total DESC`, [start12ISO]);
+  const centrosCusto = centrosRows.map(r => ({ centro: r.cost_center, total: n(r.total) }));
+  const centrosCustoTotal = centrosCusto.reduce((s, c) => s + c.total, 0);
 
   // ---- Projeção diária de caixa (30 dias) ----
   const saidasDia = await query(`SELECT due_date, SUM(amount) AS total FROM erp_payables
@@ -882,51 +884,65 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   }
   const saldoNegativoEm = projecaoDiaria.find(p => p.saldo < 0)?.date || null;
 
-  // ---- Aging de contas a receber vencidas ----
-  const receberVencidas = await query(`SELECT due_date, amount FROM erp_receivables WHERE status='pendente' AND due_date < $1`, [today]);
-  const agingBuckets = { '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
-  receberVencidas.forEach(r => {
+  // ---- Contas a pagar: vencimentos próximos e maiores títulos em aberto ----
+  const vencendoPagar = await query(`
+    SELECT p.description, p.amount, p.due_date, p.category, s.name AS party
+    FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id
+    WHERE p.status='pendente' AND p.due_date BETWEEN $1 AND $2
+    ORDER BY p.due_date LIMIT 12`, [today, in30]);
+  const maioresPagarAbertos = await query(`
+    SELECT p.description, p.category, p.cost_center, p.amount, p.due_date, s.name AS fornecedor
+    FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id
+    WHERE p.status='pendente' ORDER BY p.amount DESC LIMIT 8`);
+
+  // ---- Aging de contas a pagar vencidas ----
+  const pagarVencidas = await query(`SELECT due_date, amount FROM erp_payables WHERE status='pendente' AND due_date < $1`, [today]);
+  const agingPagar = { '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
+  pagarVencidas.forEach(r => {
     const dias = Math.floor((todayD - new Date(r.due_date + 'T00:00:00')) / 86400000);
     const b = dias <= 30 ? '1-30' : dias <= 60 ? '31-60' : dias <= 90 ? '61-90' : '90+';
-    agingBuckets[b] += n(r.amount);
+    agingPagar[b] += n(r.amount);
   });
 
-  const wrapPmp = pmp.v == null ? null : Math.round(n(pmp.v) * 10) / 10;
+  // ---- Insights para os Alertas ----
+  const maiorClienteRows = await query(`SELECT client_name, SUM(amount) AS total, MIN(due_date) AS desde
+    FROM erp_receivables WHERE status='pendente' AND due_date < $1 GROUP BY client_name ORDER BY total DESC LIMIT 1`, [today]);
+  const maiorFornecedorRows = await query(`SELECT s.name AS fornecedor, SUM(p.amount) AS total
+    FROM erp_payables p JOIN erp_suppliers s ON s.id=p.supplier_id
+    WHERE p.status='pendente' GROUP BY s.name ORDER BY total DESC LIMIT 1`);
 
   res.json({
     // KPIs principais
+    pagoMes: n(pagoMes.v),
+    pagarVencido: wrap(pagarVencido),
+    pagarAVencer: { v: n(pagarPend.v) - n(pagarVencido.v), n: pagarPend.c - pagarVencido.c },
+    receberMesAtual: wrap(receberMesAtual), receberMesRecebido: wrap(receberMesRecebido),
+
+    // Fluxo de caixa (mantém como já estava)
     saldoAtual: n(saldoBanco.v),
-    fluxoDisponivel: n(saldoBanco.v) - n(pagarVencido.v),
-    recebidoMes: n(recebidoMes.v), pagoMes: n(pagoMes.v), resultadoMes,
-    receberPend: wrap(receberPend), pagarPend: wrap(pagarPend),
-    inadimplenciaValor: n(receberVencido.v),
-    inadimplenciaPct: n(receberPend.v) > 0 ? (n(receberVencido.v) / n(receberPend.v)) * 100 : 0,
-
-    // Fluxo de caixa
-    pagarHoje: wrap(pagarHoje), pagar7: wrap(pagar7), pagar15: wrap(pagar15), pagar30: wrap(pagar30), pagarVencido: wrap(pagarVencido),
+    pagarHoje: wrap(pagarHoje), pagar7: wrap(pagar7), pagar15: wrap(pagar15), pagar30: wrap(pagar30),
     receberHoje: wrap(receberHoje), receber7: wrap(receber7), receber15: wrap(receber15), receber30: wrap(receber30), receberVencido: wrap(receberVencido),
-    projecaoDiaria,
-    saldoNegativoEm,
+    projecaoDiaria, saldoNegativoEm,
 
-    // Receitas x despesas
-    last12,
-    despesasPorCategoria,
+    // Receitas x despesas (mantém como já estava)
+    last12, despesasPorCategoria,
 
-    // Vencimentos e conciliação
-    vencendo: vencendo.map(v => ({ ...v, amount: n(v.amount) })),
+    // Contas a pagar (detalhado)
+    pagarPend: wrap(pagarPend),
+    vencendoPagar: vencendoPagar.map(v => ({ ...v, amount: n(v.amount) })),
+    maioresPagarAbertos: maioresPagarAbertos.map(v => ({ ...v, amount: n(v.amount) })),
+    agingPagar,
+
+    // Análises por categoria e centro de custo
+    categoriaMes, orcadoDespesaMes,
+    centrosCusto, centrosCustoTotal,
+
+    // Conciliação (usado apenas no alerta)
     naoConciliados: naoConciliados.c, naoConciliadosValor: n(naoConciliados.v),
-    ultimaSincronizacao: ultimaSinc.t,
 
-    // Análises financeiras
-    margemLucro: n(recebidoMes.v) > 0 ? (resultadoMes / n(recebidoMes.v)) * 100 : null,
-    ticketMedioRecebimento: recebidoMes.c > 0 ? n(recebidoMes.v) / recebidoMes.c : 0,
-    topCentrosCusto: topCC.map(r => ({ centro: r.cost_center, total: n(r.total) })),
-    maioresDespesas: maioresDespesas.map(r => ({ ...r, amount: n(r.amount) })),
-    aging: agingBuckets,
-
-    // Indicadores operacionais
-    pagamentosRealizadosMes: pagoMes.c, recebimentosMes: recebidoMes.c,
-    pmpDias: wrapPmp
+    // Insights para os alertas
+    maiorClienteInadimplente: maiorClienteRows[0] ? { cliente: maiorClienteRows[0].client_name, total: n(maiorClienteRows[0].total), desde: maiorClienteRows[0].desde } : null,
+    maiorFornecedorAberto: maiorFornecedorRows[0] ? { fornecedor: maiorFornecedorRows[0].fornecedor, total: n(maiorFornecedorRows[0].total) } : null
   });
 }));
 
