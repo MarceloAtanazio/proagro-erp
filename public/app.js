@@ -300,54 +300,71 @@ function injectReadonlyBanner() {
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
-  const d = await api('/api/reports/dashboard');
+  const anoAtual = new Date().getFullYear();
+  const [d, cf] = await Promise.all([api('/api/reports/dashboard'), api('/api/reports/cashflow/' + anoAtual)]);
   const c = $('#content');
   const fmtPct = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
-  const fmtDias = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' dias';
   const cur = d.last12[11], prev = d.last12[10];
   const deltaRec = prev.receitas ? ((cur.receitas - prev.receitas) / prev.receitas) * 100 : null;
   const deltaDesp = prev.despesas ? ((cur.despesas - prev.despesas) / prev.despesas) * 100 : null;
   const CAT_COLORS = ['#00783F','#3DAE43','#1F4E78','#6FBF87','#4A78A8','#A9CDB8','#C9922A','#8898A0','#0B3B24','#D3DFD8','#7A9E8B','#B23A2F'];
 
-  // ---- Alertas ----
+  // ---- Saldo acumulado do mês atual (mesmo cálculo exibido em Fluxo de Caixa) ----
+  const arr12 = () => Array(12).fill(0);
+  const entR = arr12(), entP = arr12(), saiR = arr12(), saiP = arr12();
+  cf.entradas.realizado.forEach(r => entR[r.month - 1] = r.total);
+  cf.entradas.projetado.forEach(r => entP[r.month - 1] = r.total);
+  cf.saidas.realizado.forEach(r => saiR[r.month - 1] = r.total);
+  cf.saidas.projetado.forEach(r => saiP[r.month - 1] = r.total);
+  const mesIdxAtual = new Date().getMonth();
+  let acumMes = 0;
+  for (let i = 0; i <= mesIdxAtual; i++) acumMes += (entR[i] + entP[i]) - (saiR[i] + saiP[i]);
+
+  // ---- Alertas (insights de gestão) ----
   const alerts = [];
   if (d.pagarVencido.n > 0) alerts.push({ sev: 'red', text: `${d.pagarVencido.n} conta(s) a pagar vencida(s), totalizando ${brl(d.pagarVencido.v)}.` });
   if (d.receberVencido.n > 0) alerts.push({ sev: 'red', text: `${d.receberVencido.n} conta(s) a receber vencida(s) (inadimplência), totalizando ${brl(d.receberVencido.v)}.` });
   if (d.saldoNegativoEm) alerts.push({ sev: 'red', text: `Projeção indica saldo de caixa negativo a partir de ${brDate(d.saldoNegativoEm)} caso não haja novas entradas.` });
   if (d.naoConciliados > 0) alerts.push({ sev: 'warn', text: `${d.naoConciliados} lançamento(s) bancário(s) aguardando conciliação, totalizando ${brl(d.naoConciliadosValor)}.` });
+  if (d.orcadoDespesaMes > 0) {
+    const varOrc = d.pagoMes - d.orcadoDespesaMes, pctOrc = (varOrc / d.orcadoDespesaMes) * 100;
+    if (Math.abs(pctOrc) >= 5) alerts.push({ sev: pctOrc > 0 ? 'warn' : 'info',
+      text: `Despesas do mês estão ${pctOrc > 0 ? 'acima' : 'abaixo'} do orçado em ${fmtPct(Math.abs(pctOrc))} (orçado ${brl(d.orcadoDespesaMes)}, realizado ${brl(d.pagoMes)}).` });
+  }
+  const totalCatMes = d.categoriaMes.reduce((s, x) => s + x.realizado, 0);
+  if (totalCatMes > 0) {
+    const topCat = d.categoriaMes[0];
+    const share = (topCat.realizado / totalCatMes) * 100;
+    if (share >= 35) alerts.push({ sev: 'info', text: `A categoria "${esc(topCat.category)}" concentra ${fmtPct(share)} das despesas do mês (${brl(topCat.realizado)}).` });
+  }
+  if (d.maiorClienteInadimplente) alerts.push({ sev: 'warn',
+    text: `Maior inadimplência individual: ${esc(d.maiorClienteInadimplente.cliente)}, ${brl(d.maiorClienteInadimplente.total)} vencido(s) desde ${brDate(d.maiorClienteInadimplente.desde)}.` });
+  if (d.maiorFornecedorAberto) alerts.push({ sev: 'info',
+    text: `Maior concentração de contas a pagar em aberto: ${esc(d.maiorFornecedorAberto.fornecedor)}, totalizando ${brl(d.maiorFornecedorAberto.total)}.` });
 
   c.innerHTML = `
     <div class="dash-section-title">Indicadores principais</div>
     <div class="grid kpis">
-      <div class="card kpi"><div class="label">Saldo atual (caixa e bancos)</div>
-        <div class="value ${d.saldoAtual < 0 ? 'neg' : ''}">${brl(d.saldoAtual)}</div>
-        <div class="detail">Considera todos os lançamentos bancários importados</div></div>
-      <div class="card kpi"><div class="label">Fluxo de caixa disponível</div>
-        <div class="value ${d.fluxoDisponivel < 0 ? 'neg' : ''}">${brl(d.fluxoDisponivel)}</div>
-        <div class="detail">Saldo atual menos contas a pagar já vencidas</div></div>
-      <div class="card kpi blue"><div class="label">Receitas do mês</div>
-        <div class="value">${brl(d.recebidoMes)}</div>
-        <div class="detail">${d.recebimentosMes} recebimento(s) no mês</div></div>
+      <div class="card kpi ${acumMes >= 0 ? '' : 'warn'}"><div class="label">Saldo acumulado do mês (Fluxo de Caixa)</div>
+        <div class="value ${acumMes >= 0 ? 'pos' : 'neg'}">${brl(acumMes)}</div>
+        <div class="detail">Realizado + projetado, acumulado de janeiro até ${MESES[mesIdxAtual]}/${anoAtual}</div></div>
       <div class="card kpi red"><div class="label">Despesas do mês</div>
         <div class="value">${brl(d.pagoMes)}</div>
-        <div class="detail">${d.pagamentosRealizadosMes} pagamento(s) no mês</div></div>
-      <div class="card kpi ${d.resultadoMes >= 0 ? '' : 'warn'}"><div class="label">Lucro / prejuízo do período</div>
-        <div class="value ${d.resultadoMes >= 0 ? 'pos' : 'neg'}">${brl(d.resultadoMes)}</div>
-        <div class="detail">Regime de caixa — mês corrente</div></div>
-      <div class="card kpi blue"><div class="label">Contas a receber (em aberto)</div>
-        <div class="value">${brl(d.receberPend.v)}</div>
-        <div class="detail">${d.receberPend.n} título(s) pendente(s)</div></div>
-      <div class="card kpi red"><div class="label">Contas a pagar (em aberto)</div>
-        <div class="value">${brl(d.pagarPend.v)}</div>
-        <div class="detail">${d.pagarPend.n} título(s) pendente(s)</div></div>
-      <div class="card kpi ${d.inadimplenciaPct > 15 ? 'red' : 'warn'}"><div class="label">Inadimplência</div>
-        <div class="value ${d.inadimplenciaValor > 0 ? 'neg' : ''}">${fmtPct(d.inadimplenciaPct)}</div>
-        <div class="detail">${brl(d.inadimplenciaValor)} vencido(s) sobre o total a receber</div></div>
+        <div class="detail">${d.orcadoDespesaMes > 0 ? 'Orçado: ' + brl(d.orcadoDespesaMes) : 'Regime de caixa — mês corrente'}</div></div>
+      <div class="card kpi ${d.pagarVencido.n > 0 ? 'red' : ''}"><div class="label">Pagamentos vencidos (total)</div>
+        <div class="value ${d.pagarVencido.n > 0 ? 'neg' : ''}">${brl(d.pagarVencido.v)}</div>
+        <div class="detail">${d.pagarVencido.n} título(s) em atraso</div></div>
+      <div class="card kpi"><div class="label">Pagamentos pendentes a vencer</div>
+        <div class="value">${brl(d.pagarAVencer.v)}</div>
+        <div class="detail">${d.pagarAVencer.n} título(s) dentro do prazo</div></div>
+      <div class="card kpi blue"><div class="label">Contas a receber no mês atual</div>
+        <div class="value">${brl(d.receberMesAtual.v)}</div>
+        <div class="detail">${d.receberMesAtual.n} título(s) · já recebido ${brl(d.receberMesRecebido.v)}</div></div>
     </div>
 
     <div class="dash-section-title">Alertas</div>
     <div class="card" style="margin-bottom:16px">
-      ${alerts.length ? `<div class="alert-list">${alerts.map(a => `<div class="alert-item ${a.sev}">${a.sev === 'red' ? '⚠️' : '🔔'} ${a.text}</div>`).join('')}</div>`
+      ${alerts.length ? `<div class="alert-list">${alerts.map(a => `<div class="alert-item ${a.sev}">${a.sev === 'red' ? '⚠️' : a.sev === 'warn' ? '🔔' : 'ℹ️'} ${a.text}</div>`).join('')}</div>`
         : '<div class="alert-item ok">✅ Nenhum alerta no momento — contas em dia e conciliação bancária em ordem.</div>'}
     </div>
 
@@ -388,86 +405,71 @@ async function renderDashboard() {
     <div class="card" style="margin-bottom:16px"><h3>Despesas por categoria — últimos 12 meses</h3>
       <div class="chart-box tall"><canvas id="ch-catdesp"></canvas></div></div>
 
-    <div class="dash-section-title">Contas a pagar e a receber</div>
+    <div class="dash-section-title">Contas a pagar — detalhado</div>
     <div class="grid kpis" style="margin-bottom:16px">
       <div class="card kpi"><div class="label">Vencendo hoje</div>
-        <div class="value">${brl(d.pagarHoje.v + d.receberHoje.v)}</div>
-        <div class="detail">A pagar ${brl(d.pagarHoje.v)} · A receber ${brl(d.receberHoje.v)}</div></div>
-      <div class="card kpi blue"><div class="label">Vencendo nos próximos 7 dias</div>
-        <div class="value">${brl(d.pagar7.v + d.receber7.v)}</div>
-        <div class="detail">A pagar ${brl(d.pagar7.v)} · A receber ${brl(d.receber7.v)}</div></div>
-      <div class="card kpi red"><div class="label">Em atraso (total)</div>
-        <div class="value neg">${brl(d.pagarVencido.v + d.receberVencido.v)}</div>
-        <div class="detail">A pagar ${brl(d.pagarVencido.v)} · A receber ${brl(d.receberVencido.v)}</div></div>
+        <div class="value">${brl(d.pagarHoje.v)}</div><div class="detail">${d.pagarHoje.n} título(s)</div></div>
+      <div class="card kpi"><div class="label">Próximos 7 dias</div>
+        <div class="value">${brl(d.pagar7.v)}</div><div class="detail">${d.pagar7.n} título(s)</div></div>
+      <div class="card kpi"><div class="label">Próximos 15 dias</div>
+        <div class="value">${brl(d.pagar15.v)}</div><div class="detail">${d.pagar15.n} título(s)</div></div>
+      <div class="card kpi blue"><div class="label">Próximos 30 dias</div>
+        <div class="value">${brl(d.pagar30.v)}</div><div class="detail">${d.pagar30.n} título(s)</div></div>
+      <div class="card kpi red"><div class="label">Em atraso</div>
+        <div class="value neg">${brl(d.pagarVencido.v)}</div><div class="detail">${d.pagarVencido.n} título(s)</div></div>
     </div>
     <div class="two-col" style="margin-bottom:16px">
       <div class="card"><h3>Valor total por status</h3>
-        <table><thead><tr><th>Status</th><th class="num">A pagar</th><th class="num">A receber</th></tr></thead>
+        <table><thead><tr><th>Status</th><th class="num">Valor</th><th class="num">Títulos</th></tr></thead>
           <tbody>
-            <tr><td>Em aberto (total)</td><td class="num">${brl(d.pagarPend.v)}</td><td class="num">${brl(d.receberPend.v)}</td></tr>
-            <tr><td>Vencendo em até 30 dias</td><td class="num">${brl(d.pagar30.v)}</td><td class="num">${brl(d.receber30.v)}</td></tr>
-            <tr><td>Em atraso</td><td class="num neg">${brl(d.pagarVencido.v)}</td><td class="num neg">${brl(d.receberVencido.v)}</td></tr>
-            <tr><td>Realizado no mês</td><td class="num">${brl(d.pagoMes)}</td><td class="num">${brl(d.recebidoMes)}</td></tr>
+            <tr><td>Em aberto (total)</td><td class="num">${brl(d.pagarPend.v)}</td><td class="num">${d.pagarPend.n}</td></tr>
+            <tr><td>Vencendo em até 7 dias</td><td class="num">${brl(d.pagar7.v)}</td><td class="num">${d.pagar7.n}</td></tr>
+            <tr><td>Vencendo em até 15 dias</td><td class="num">${brl(d.pagar15.v)}</td><td class="num">${d.pagar15.n}</td></tr>
+            <tr><td>Vencendo em até 30 dias</td><td class="num">${brl(d.pagar30.v)}</td><td class="num">${d.pagar30.n}</td></tr>
+            <tr><td>Em atraso</td><td class="num neg">${brl(d.pagarVencido.v)}</td><td class="num neg">${d.pagarVencido.n}</td></tr>
+            <tr><td>Pago no mês</td><td class="num">${brl(d.pagoMes)}</td><td class="num">—</td></tr>
           </tbody></table>
       </div>
-      <div class="card"><h3>Contas a receber por faixa de atraso (aging)</h3>
-        <div class="chart-box"><canvas id="ch-aging"></canvas></div></div>
+      <div class="card"><h3>Contas a pagar por faixa de atraso (aging)</h3>
+        <div class="chart-box"><canvas id="ch-agingpagar"></canvas></div></div>
     </div>
     <div class="card" style="margin-bottom:16px"><h3>Próximos vencimentos (30 dias)</h3>
-      ${d.vencendo.length ? `<div style="overflow-x:auto"><table>
-        <thead><tr><th>Venc.</th><th>Tipo</th><th>Descrição</th><th class="num">Valor</th></tr></thead>
-        <tbody>${d.vencendo.map(v => `<tr>
-          <td>${brDate(v.due_date)}</td>
-          <td><span class="badge ${v.tipo === 'pagar' ? 'late' : 'pend'}">${v.tipo === 'pagar' ? 'Pagar' : 'Receber'}</span></td>
-          <td>${esc(v.description)}${v.party ? '<br><small style="color:var(--muted)">' + esc(v.party) + '</small>' : ''}</td>
+      ${d.vencendoPagar.length ? `<div style="overflow-x:auto"><table>
+        <thead><tr><th>Venc.</th><th>Fornecedor</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+        <tbody>${d.vencendoPagar.map(v => `<tr>
+          <td>${brDate(v.due_date)}</td><td>${esc(v.party || '—')}</td><td>${esc(v.description)}</td><td>${esc(v.category)}</td>
           <td class="num">${brl(v.amount)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<div class="empty">Nenhum vencimento nos próximos 30 dias.</div>'}
     </div>
-
-    <div class="dash-section-title">Análises financeiras</div>
-    <div class="grid kpis" style="margin-bottom:16px">
-      <div class="card kpi ${d.margemLucro == null ? '' : d.margemLucro >= 0 ? '' : 'red'}"><div class="label">Margem de lucro (mês)</div>
-        <div class="value ${d.margemLucro == null ? '' : d.margemLucro >= 0 ? 'pos' : 'neg'}">${fmtPct(d.margemLucro)}</div>
-        <div class="detail">Resultado do mês sobre receitas do mês</div></div>
-      <div class="card kpi blue"><div class="label">Ticket médio de recebimento</div>
-        <div class="value">${brl(d.ticketMedioRecebimento)}</div>
-        <div class="detail">Média por recebimento no mês</div></div>
-      <div class="card kpi"><div class="label">Prazo médio de pagamento (PMP)</div>
-        <div class="value">${fmtDias(d.pmpDias)}</div>
-        <div class="detail">Últimos 12 meses (positivo = pago após o vencimento)</div></div>
+    <div class="card" style="margin-bottom:16px"><h3>Maiores contas a pagar em aberto</h3>
+      ${d.maioresPagarAbertos.length ? `<div style="overflow-x:auto"><table>
+        <thead><tr><th>Fornecedor</th><th>Descrição</th><th>Categoria</th><th>Venc.</th><th class="num">Valor</th></tr></thead>
+        <tbody>${d.maioresPagarAbertos.map(v => `<tr>
+          <td>${esc(v.fornecedor || '—')}</td><td>${esc(v.description)}</td><td>${esc(v.category)}</td>
+          <td>${brDate(v.due_date)}</td><td class="num">${brl(v.amount)}</td></tr>`).join('')}</tbody>
+      </table></div>` : '<div class="empty">Nenhum título em aberto.</div>'}
     </div>
+
+    <div class="dash-section-title">Análise por centro de custo</div>
     <div class="two-col" style="margin-bottom:16px">
-      <div class="card"><h3>Top centros de custo — últimos 12 meses</h3>
-        ${d.topCentrosCusto.length ? `<table><thead><tr><th>Centro de custo</th><th class="num">Total pago</th></tr></thead>
-          <tbody>${d.topCentrosCusto.map(x => `<tr><td>${esc(x.centro)}</td><td class="num">${brl(x.total)}</td></tr>`).join('')}</tbody></table>`
+      <div class="card"><h3>Ranking — últimos 12 meses</h3>
+        ${d.centrosCusto.length ? `<table><thead><tr><th>Centro de custo</th><th class="num">Total pago</th><th class="num">% do total</th></tr></thead>
+          <tbody>${d.centrosCusto.map(x => `<tr><td>${esc(x.centro)}</td><td class="num">${brl(x.total)}</td>
+            <td class="num">${fmtPct(d.centrosCustoTotal > 0 ? (x.total / d.centrosCustoTotal) * 100 : 0)}</td></tr>`).join('')}</tbody></table>`
           : '<div class="empty">Sem centros de custo lançados no período.</div>'}</div>
-      <div class="card"><h3>Maiores despesas individuais — últimos 12 meses</h3>
-        ${d.maioresDespesas.length ? `<table><thead><tr><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
-          <tbody>${d.maioresDespesas.map(x => `<tr><td>${esc(x.description)}</td><td>${esc(x.category)}</td><td class="num">${brl(x.amount)}</td></tr>`).join('')}</tbody></table>`
-          : '<div class="empty">Sem pagamentos registrados no período.</div>'}</div>
+      <div class="card"><h3>Distribuição por centro de custo</h3>
+        <div class="chart-box"><canvas id="ch-centros"></canvas></div></div>
     </div>
 
-    <div class="dash-section-title">Conciliação bancária</div>
-    <div class="grid kpis" style="margin-bottom:16px">
-      <div class="card kpi ${d.naoConciliados > 0 ? 'warn' : ''}"><div class="label">Movimentações pendentes</div>
-        <div class="value">${d.naoConciliados}</div>
-        <div class="detail">${brl(d.naoConciliadosValor)} aguardando conciliação</div></div>
-      <div class="card kpi"><div class="label">Última sincronização</div>
-        <div class="value" style="font-size:18px">${d.ultimaSincronizacao ? new Date(d.ultimaSincronizacao).toLocaleString('pt-BR') : '—'}</div>
-        <div class="detail">Data do último lançamento bancário importado</div></div>
-    </div>
-
-    <div class="dash-section-title">Indicadores operacionais</div>
-    <div class="grid kpis">
-      <div class="card kpi"><div class="label">Pagamentos realizados (mês)</div>
-        <div class="value">${d.pagamentosRealizadosMes}</div>
-        <div class="detail">Títulos baixados como pagos no mês</div></div>
-      <div class="card kpi"><div class="label">Recebimentos (mês)</div>
-        <div class="value">${d.recebimentosMes}</div>
-        <div class="detail">Títulos baixados como recebidos no mês</div></div>
-      <div class="card kpi"><div class="label">Prazo médio de pagamento</div>
-        <div class="value">${fmtDias(d.pmpDias)}</div>
-        <div class="detail">Últimos 12 meses</div></div>
+    <div class="dash-section-title">Análise por categoria</div>
+    <div class="two-col">
+      <div class="card"><h3>Orçado × Realizado — mês atual</h3>
+        ${d.categoriaMes.length ? `<table><thead><tr><th>Categoria</th><th class="num">Orçado</th><th class="num">Realizado</th><th class="num">Variação</th></tr></thead>
+          <tbody>${d.categoriaMes.map(x => `<tr><td>${esc(x.category)}</td><td class="num">${brl(x.orcado)}</td><td class="num">${brl(x.realizado)}</td>
+            <td class="num ${x.variacao > 0 ? 'neg' : x.variacao < 0 ? 'pos' : ''}">${x.variacaoPct == null ? brl(x.variacao) : (x.variacao >= 0 ? '+' : '') + fmtPct(x.variacaoPct)}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">Sem categorias orçadas ou realizadas no mês.</div>'}</div>
+      <div class="card"><h3>Orçado × Realizado por categoria</h3>
+        <div class="chart-box tall"><canvas id="ch-catmes"></canvas></div></div>
     </div>`;
 
   // ---- Gráfico: fluxo de caixa projetado (área, 30 dias) ----
@@ -516,11 +518,11 @@ async function renderDashboard() {
     }
   });
 
-  // ---- Gráfico: aging de contas a receber vencidas (barras) ----
-  makeChart($('#ch-aging'), {
+  // ---- Gráfico: aging de contas a pagar vencidas (barras) ----
+  makeChart($('#ch-agingpagar'), {
     type: 'bar',
     data: { labels: ['1–30 dias', '31–60 dias', '61–90 dias', 'Mais de 90 dias'],
-      datasets: [{ label: 'Valor vencido', data: ['1-30', '31-60', '61-90', '90+'].map(k => d.aging[k]),
+      datasets: [{ label: 'Valor vencido', data: ['1-30', '31-60', '61-90', '90+'].map(k => d.agingPagar[k]),
         backgroundColor: ['#C9922A', '#B23A2F', '#8A2A20', '#5C1B14'], borderRadius: 4 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -528,6 +530,34 @@ async function renderDashboard() {
       scales: { y: { ticks: { callback: v => (v / 1000).toLocaleString('pt-BR') + ' mil', font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } },
                 x: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } }
     }
+  });
+
+  // ---- Gráfico: distribuição por centro de custo (barras horizontais) ----
+  const ccTop = d.centrosCusto.slice(0, 10);
+  makeChart($('#ch-centros'), {
+    type: 'bar',
+    data: { labels: ccTop.map(x => x.centro), datasets: [
+      { label: 'Total pago', data: ccTop.map(x => x.total), backgroundColor: CAT_COLORS, borderRadius: 4 }
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.x) } } },
+      scales: {
+        x: { ticks: { callback: v => (v / 1000).toLocaleString('pt-BR') + ' mil', font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } },
+        y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } }
+    }
+  });
+
+  // ---- Gráfico: orçado x realizado por categoria (mês atual) ----
+  makeChart($('#ch-catmes'), {
+    type: 'bar',
+    data: { labels: d.categoriaMes.map(x => x.category), datasets: [
+      { label: 'Orçado', data: d.categoriaMes.map(x => x.orcado), backgroundColor: CORES.azul, borderRadius: 4 },
+      { label: 'Realizado', data: d.categoriaMes.map(x => x.realizado), backgroundColor: CORES.verdeMed, borderRadius: 4 }
+    ]},
+    options: chartOpts({ indexAxis: 'y', scales: {
+      x: { ticks: { callback: v => (v / 1000).toLocaleString('pt-BR') + ' mil', font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } },
+      y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } } })
   });
 }
 
