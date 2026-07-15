@@ -608,7 +608,7 @@ async function renderPagar() {
       <button class="btn" id="btn-csv">Exportar CSV</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
     </div>
-    <div class="table-wrap"><table id="tbl"></table></div>`;
+    <div class="table-wrap"><table id="tbl" class="tbl-pagar"></table></div>`;
 
   // Mantém o painel de filtros fixo logo abaixo da barra superior ao rolar.
   const topbarEl = document.querySelector('.topbar');
@@ -632,16 +632,20 @@ async function renderPagar() {
     lastFiltered = filtered;
     const total = filtered.reduce((s, r) => s + r.amount, 0);
     $('#tbl').innerHTML = `
-      <thead><tr><th>Vencimento</th><th class="col-desc">Descrição</th><th class="col-fornecedor">Fornecedor</th><th class="col-cat">Categoria</th><th class="col-cc">Centro de Custo</th>
+      <colgroup>
+        <col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc">
+        <col class="c-val"><col class="c-status"><col class="c-acoes">
+      </colgroup>
+      <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th>
         <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
           <td>${brDate(r.due_date)}</td>
-          <td class="col-desc" title="${esc(r.description)}">${esc(r.description)}</td>
-          <td class="col-fornecedor" title="${esc(r.supplier_name || '')}">${esc(r.supplier_name || '—')}</td>
-          <td class="col-cat" title="${esc(r.category)}">${esc(r.category)}</td>
-          <td class="col-cc" title="${esc(r.cost_center || '')}">${esc(r.cost_center || '—')}</td>
+          <td>${esc(r.description)}</td>
+          <td>${esc(r.supplier_name || '—')}</td>
+          <td>${esc(r.category)}</td>
+          <td>${esc(r.cost_center || '—')}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
