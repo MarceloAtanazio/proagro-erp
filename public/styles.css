@@ -359,11 +359,10 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* ===== Dashboard — alerta informativo (neutro) ===== */
 .alert-item.info { background: #EAF1F8; color: #1F4E78; border: 1px solid #B9CEE0; }
 
-/* ===== Toolbar mais espaçada (Contas a Pagar) ===== */
+/* ===== Toolbar mais espaçada e fixa ao rolar (Contas a Pagar) ===== */
 .toolbar-spaced {
-  flex-direction: column; align-items: stretch; gap: 16px;
+  gap: 16px; padding: 26px 30px;
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: var(--shadow); padding: 20px 22px;
+  box-shadow: var(--shadow);
+  position: sticky; z-index: 4;
 }
-.toolbar-spaced .toolbar-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-.toolbar-spaced .toolbar-actions { justify-content: flex-end; padding-top: 4px; border-top: 1px solid var(--line); }
