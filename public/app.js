@@ -631,12 +631,13 @@ async function renderPagar() {
     });
     lastFiltered = filtered;
     const total = filtered.reduce((s, r) => s + r.amount, 0);
+    const PM_LABELS = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
     $('#tbl').innerHTML = `
       <colgroup>
-        <col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc">
+        <col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc"><col class="c-pm">
         <col class="c-val"><col class="c-status"><col class="c-acoes">
       </colgroup>
-      <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th>
+      <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de Pagamento</th>
         <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
@@ -646,6 +647,7 @@ async function renderPagar() {
           <td>${esc(r.supplier_name || '—')}</td>
           <td>${esc(r.category)}</td>
           <td>${esc(r.cost_center || '—')}</td>
+          <td>${r.payment_method ? esc(PM_LABELS[r.payment_method] || r.payment_method) : '—'}${r.payment_method === 'pix' && r.pix_key ? `<br><small style="color:var(--muted)">${esc(r.pix_key)}</small>` : ''}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
@@ -656,8 +658,8 @@ async function renderPagar() {
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="8"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="6">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
 
 
 
@@ -675,8 +677,9 @@ async function renderPagar() {
   };
   $('#btn-new').onclick = () => formPagar(null, sups);
   $('#btn-csv').onclick = () => exportCSV('contas_a_pagar',
-    ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','Valor','Status','Pagamento'],
-    lastFiltered.map(r => [r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
+    ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','Valor','Status','Pagamento'],
+    lastFiltered.map(r => [r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
+      r.payment_method || '', r.payment_method === 'pix' ? (r.pix_key || '') : '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
   draw();
 }
 
@@ -693,6 +696,7 @@ function baixaPagar(r) {
 
 function formPagar(r, sups) {
   const isEdit = !!r; r = r || {};
+  const PM_LABELS = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
   openModal(isEdit ? 'Editar título' : 'Novo título a pagar', `
     ${fld('p-desc', 'Descrição *', 'text', r.description || '')}
     <div class="form-row">
@@ -707,13 +711,19 @@ function formPagar(r, sups) {
       ${fld('p-val', 'Valor (R$) *', 'number', r.amount || '', 'step="0.01" min="0.01"')}
       ${fld('p-due', 'Vencimento *', 'date', r.due_date || todayISO())}
     </div>
+    <div class="form-row">
+      ${fldSel('p-pm', 'Forma de pagamento', [{ v: '', t: '—' }, ...Object.entries(PM_LABELS).map(([v, t]) => ({ v, t }))], r.payment_method || '')}
+      <div id="p-pix-wrap" style="display:${r.payment_method === 'pix' ? 'block' : 'none'}">
+        ${fld('p-pix', 'Chave PIX *', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
+      </div>
+    </div>
     ${fld('p-notes', 'Observações', 'text', r.notes || '')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: isEdit ? 'Salvar alterações' : 'Criar título', cls: 'primary', onClick: async () => {
         const body = {
           description: $('#p-desc').value, supplier_id: $('#p-sup').value || null, category: $('#p-cat').value,
           cost_center: $('#p-cc').value, document: $('#p-doc').value, amount: $('#p-val').value,
-          due_date: $('#p-due').value, notes: $('#p-notes').value
+          due_date: $('#p-due').value, payment_method: $('#p-pm').value, pix_key: $('#p-pix').value, notes: $('#p-notes').value
         };
         try {
           if (isEdit) await api('/api/payables/' + r.id, { method: 'PUT', body });
@@ -721,6 +731,7 @@ function formPagar(r, sups) {
           closeModal(); toast(isEdit ? 'Título atualizado.' : 'Título criado.'); renderPagar();
         } catch (e) { modalError(e.message); }
      }}]);
+  $('#p-pm').onchange = () => { $('#p-pix-wrap').style.display = $('#p-pm').value === 'pix' ? 'block' : 'none'; };
 }
 
 // ============================================================
