@@ -39,6 +39,8 @@ const canEditPage = page => permLevel(page) === 'edit';
 
 // Busca categorias/centros de custo configurados e popula os arrays globais
 // usados em todos os formulários (Contas a Pagar/Receber, Fornecedores, Orçamento).
+const COMPANY_INFO = {};
+
 async function loadSettings() {
   try {
     const s = await api('/api/settings');
@@ -47,6 +49,10 @@ async function loadSettings() {
     CAT_FORNECEDOR.length = 0; CAT_FORNECEDOR.push(...s.categories.fornecedor);
     CENTROS.length = 0; CENTROS.push(...s.costCenters);
   } catch { /* segue com o que já estava carregado */ }
+  try {
+    const comp = await api('/api/company');
+    Object.assign(COMPANY_INFO, comp);
+  } catch { /* segue com os dados padrão do relatório */ }
 }
 
 // Gerador de senha forte (16 chars: maiúscula, minúscula, número e símbolo,
@@ -224,7 +230,8 @@ const ICONS = {
   vs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 20V10m6 10V4m6 16v-7"/></svg>',
   rep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6"/></svg>',
   usr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
-  cfg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 008 4.6a1.7 1.7 0 001.03-1.56V3a2 2 0 014 0v.09A1.7 1.7 0 0016 4.6a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 8a1.7 1.7 0 001.56 1.03H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>'
+  cfg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 008 4.6a1.7 1.7 0 001.03-1.56V3a2 2 0 014 0v.09A1.7 1.7 0 0016 4.6a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 8a1.7 1.7 0 001.56 1.03H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>',
+  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.6L12.7 4.7A2 2 0 0011.3 4H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9c.8.8 2 .8 2.8 0l5.3-5.3c.8-.8.8-2 0-2.8z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>'
 };
 
 const PAGES = [
@@ -233,23 +240,31 @@ const PAGES = [
   { hash: 'receber', title: 'Contas a Receber', icon: 'in' },
   { hash: 'fluxo', title: 'Fluxo de Caixa', icon: 'flow' },
   { hash: 'conciliacao', title: 'Conciliação Bancária', icon: 'bank' },
-  { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Cadastros' },
   { hash: 'orcamento', title: 'Orçamento Anual', icon: 'bud', section: 'Planejamento' },
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
-  { hash: 'usuarios', title: 'Usuários', icon: 'usr', section: 'Administração', super: true },
+  { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração', sub: 'Cadastros' },
+  { hash: 'usuarios', title: 'Usuários', icon: 'usr', sub: 'Cadastros', super: true },
+  { hash: 'categorias', title: 'Categorias', icon: 'tag', sub: 'Cadastros', super: true },
   { hash: 'config', title: 'Configurações', icon: 'cfg', super: true }
 ];
 
 function buildNav() {
   const nav = $('#nav'); nav.innerHTML = '';
-  let curSection = null, emitted = null;
+  let curSection = null, emittedSection = null, emittedSub = null;
   PAGES.forEach(p => {
     if (p.section) curSection = p.section;
     const visible = p.super ? !!USER.is_super : canViewPage(p.hash);
     if (!visible) return;
-    if (curSection && curSection !== emitted) { nav.appendChild(el('div', 'nav-section', curSection)); emitted = curSection; }
-    const a = el('a', '', ICONS[p.icon] + '<span>' + p.title + '</span>');
+    if (curSection && curSection !== emittedSection) {
+      nav.appendChild(el('div', 'nav-section', curSection));
+      emittedSection = curSection; emittedSub = null;
+    }
+    if (p.sub && p.sub !== emittedSub) {
+      nav.appendChild(el('div', 'nav-subsection', p.sub));
+      emittedSub = p.sub;
+    }
+    const a = el('a', p.sub ? 'nav-sub-item' : '', ICONS[p.icon] + '<span>' + p.title + '</span>');
     a.href = '#' + p.hash; a.dataset.hash = p.hash;
     nav.appendChild(a);
   });
@@ -290,7 +305,7 @@ function route() {
   const renderers = {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
-    orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, usuarios: renderUsuarios, config: renderConfig
+    orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, usuarios: renderUsuarios, categorias: renderCategorias, config: renderConfig
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
   renderers[page.hash]()
@@ -1599,7 +1614,7 @@ function openReset(u) {
 // ============================================================
 const CFG_TYPE_LABEL = { despesa: 'Categorias de Despesa', receita: 'Categorias de Receita', fornecedor: 'Categorias de Fornecedor' };
 
-async function renderConfig() {
+async function renderCategorias() {
   const data = await api('/api/settings/manage');
   const c = $('#content');
 
@@ -1626,7 +1641,7 @@ async function renderConfig() {
 
   c.innerHTML = `
     <div class="card" style="margin-bottom:16px">
-      <h3>Configurações da plataforma</h3>
+      <h3>Categorias e Centros de Custo</h3>
       <p style="font-size:13.5px; color:var(--ink-2)">Gerencie aqui as categorias de despesas, receitas e fornecedores, além dos centros de custo.
       Essas listas alimentam os formulários de <strong>Contas a Pagar</strong>, <strong>Contas a Receber</strong>, <strong>Fornecedores</strong> e <strong>Orçamento Anual</strong>,
       e toda movimentação lançada com elas aparece automaticamente em <strong>Orçado x Realizado</strong> e <strong>Relatórios Gerenciais</strong>.
@@ -1659,7 +1674,7 @@ async function renderConfig() {
     const input = c.querySelector(`[data-newcat="${type}"]`);
     const name = input.value.trim();
     if (!name) return toast('Digite o nome da categoria.');
-    try { await api('/api/settings/categories', { method: 'POST', body: { type, name } }); toast('Categoria adicionada.'); await loadSettings(); renderConfig(); }
+    try { await api('/api/settings/categories', { method: 'POST', body: { type, name } }); toast('Categoria adicionada.'); await loadSettings(); renderCategorias(); }
     catch (e) { toast(e.message); }
   });
   c.querySelectorAll('[data-newcat]').forEach(inp => inp.addEventListener('keydown', e => {
@@ -1674,7 +1689,7 @@ async function renderConfig() {
        { label: 'Salvar', cls: 'primary', onClick: async () => {
           const name = $('#cfg-catname').value.trim();
           if (!name) return modalError('Informe o nome.');
-          try { await api(`/api/settings/categories/${id}`, { method: 'PUT', body: { name } }); closeModal(); toast('Categoria renomeada — os lançamentos existentes foram atualizados.'); await loadSettings(); renderConfig(); }
+          try { await api(`/api/settings/categories/${id}`, { method: 'PUT', body: { name } }); closeModal(); toast('Categoria renomeada — os lançamentos existentes foram atualizados.'); await loadSettings(); renderCategorias(); }
           catch (e) { modalError(e.message); }
        }}]);
   });
@@ -1682,7 +1697,7 @@ async function renderConfig() {
   // --- Categorias: ativar/desativar ---
   c.querySelectorAll('[data-cattoggle]').forEach(b => b.onclick = async () => {
     const id = b.dataset.cattoggle, cur = data.categories.find(x => String(x.id) === id);
-    try { await api(`/api/settings/categories/${id}`, { method: 'PUT', body: { active: !cur.active } }); toast('Situação atualizada.'); await loadSettings(); renderConfig(); }
+    try { await api(`/api/settings/categories/${id}`, { method: 'PUT', body: { active: !cur.active } }); toast('Situação atualizada.'); await loadSettings(); renderCategorias(); }
     catch (e) { toast(e.message); }
   });
 
@@ -1692,7 +1707,7 @@ async function renderConfig() {
     openModal('Excluir categoria', `<p>Deseja excluir a categoria <strong>${esc(cur.name)}</strong>? Se ela estiver em uso em algum lançamento, será necessário desativá-la em vez de excluir.</p>`,
       [{ label: 'Cancelar', onClick: closeModal },
        { label: 'Excluir', cls: 'primary', onClick: async () => {
-          try { await api(`/api/settings/categories/${id}`, { method: 'DELETE' }); closeModal(); toast('Categoria excluída.'); await loadSettings(); renderConfig(); }
+          try { await api(`/api/settings/categories/${id}`, { method: 'DELETE' }); closeModal(); toast('Categoria excluída.'); await loadSettings(); renderCategorias(); }
           catch (e) { modalError(e.message); }
        }}]);
   });
@@ -1701,7 +1716,7 @@ async function renderConfig() {
   $('#cfg-addcc').onclick = async () => {
     const name = $('#cfg-newcc').value.trim();
     if (!name) return toast('Digite o nome do centro de custo.');
-    try { await api('/api/settings/cost-centers', { method: 'POST', body: { name } }); toast('Centro de custo adicionado.'); await loadSettings(); renderConfig(); }
+    try { await api('/api/settings/cost-centers', { method: 'POST', body: { name } }); toast('Centro de custo adicionado.'); await loadSettings(); renderCategorias(); }
     catch (e) { toast(e.message); }
   };
   $('#cfg-newcc').addEventListener('keydown', e => { if (e.key === 'Enter') $('#cfg-addcc').click(); });
@@ -1714,13 +1729,13 @@ async function renderConfig() {
        { label: 'Salvar', cls: 'primary', onClick: async () => {
           const name = $('#cfg-ccname').value.trim();
           if (!name) return modalError('Informe o nome.');
-          try { await api(`/api/settings/cost-centers/${id}`, { method: 'PUT', body: { name } }); closeModal(); toast('Centro de custo renomeado.'); await loadSettings(); renderConfig(); }
+          try { await api(`/api/settings/cost-centers/${id}`, { method: 'PUT', body: { name } }); closeModal(); toast('Centro de custo renomeado.'); await loadSettings(); renderCategorias(); }
           catch (e) { modalError(e.message); }
        }}]);
   });
   c.querySelectorAll('[data-cctoggle]').forEach(b => b.onclick = async () => {
     const id = b.dataset.cctoggle, cur = data.costCenters.find(x => String(x.id) === id);
-    try { await api(`/api/settings/cost-centers/${id}`, { method: 'PUT', body: { active: !cur.active } }); toast('Situação atualizada.'); await loadSettings(); renderConfig(); }
+    try { await api(`/api/settings/cost-centers/${id}`, { method: 'PUT', body: { active: !cur.active } }); toast('Situação atualizada.'); await loadSettings(); renderCategorias(); }
     catch (e) { toast(e.message); }
   });
   c.querySelectorAll('[data-ccdel]').forEach(b => b.onclick = () => {
@@ -1728,10 +1743,88 @@ async function renderConfig() {
     openModal('Excluir centro de custo', `<p>Deseja excluir <strong>${esc(cur.name)}</strong>? Se estiver em uso em algum título, será necessário desativá-lo em vez de excluir.</p>`,
       [{ label: 'Cancelar', onClick: closeModal },
        { label: 'Excluir', cls: 'primary', onClick: async () => {
-          try { await api(`/api/settings/cost-centers/${id}`, { method: 'DELETE' }); closeModal(); toast('Centro de custo excluído.'); await loadSettings(); renderConfig(); }
+          try { await api(`/api/settings/cost-centers/${id}`, { method: 'DELETE' }); closeModal(); toast('Centro de custo excluído.'); await loadSettings(); renderCategorias(); }
           catch (e) { modalError(e.message); }
        }}]);
   });
+}
+
+// ============================================================
+// CONFIGURAÇÕES (dados da empresa + log de auditoria)
+// ============================================================
+async function renderConfig() {
+  const [company, log] = await Promise.all([
+    api('/api/company').catch(() => ({})),
+    api('/api/audit-log').catch(() => [])
+  ]);
+  const c = $('#content');
+
+  c.innerHTML = `
+    <div class="dash-section-title">Dados da empresa</div>
+    <div class="card" style="margin-bottom:16px">
+      <p style="font-size:13.5px; color:var(--ink-2); margin-bottom:14px">Essas informações aparecem no cabeçalho e rodapé dos relatórios em PDF gerados pelo sistema (ex.: Contas a Pagar).</p>
+      <div class="form-row">
+        ${fld('cfg-legal', 'Razão social', 'text', company.legal_name || '')}
+        ${fld('cfg-trade', 'Nome fantasia', 'text', company.trade_name || '')}
+      </div>
+      <div class="form-row">
+        ${fld('cfg-cnpj', 'CNPJ', 'text', company.cnpj || '', 'placeholder="00.000.000/0000-00"')}
+        ${fld('cfg-phone', 'Telefone', 'text', company.phone || '')}
+      </div>
+      <div class="form-row">
+        ${fld('cfg-email', 'E-mail', 'email', company.email || '')}
+        ${fld('cfg-address', 'Endereço', 'text', company.address || '')}
+      </div>
+      <button class="btn primary" id="cfg-save-company">Salvar dados da empresa</button>
+    </div>
+
+    <div class="dash-section-title">Log de auditoria</div>
+    <div class="card">
+      <p style="font-size:13.5px; color:var(--ink-2); margin-bottom:12px">Registro de toda ação de escrita realizada na plataforma — data, hora, usuário e ação. Mostrando os 500 registros mais recentes que atendem aos filtros.</p>
+      <div class="toolbar" style="margin-bottom:14px">
+        <input type="search" id="al-q" placeholder="Buscar por usuário ou ação…">
+        <div class="date-range">
+          <label>De <input type="date" id="al-de"></label>
+          <label>Até <input type="date" id="al-ate"></label>
+        </div>
+        <button class="btn" id="al-filter">Filtrar</button>
+        <button class="btn" id="al-clear">Limpar</button>
+      </div>
+      <div id="al-list"></div>
+    </div>`;
+
+  const drawLog = rows => {
+    $('#al-list').innerHTML = rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Data/Hora</th><th>Usuário</th><th>Ação</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td style="white-space:nowrap">${new Date(r.created_at).toLocaleString('pt-BR')}</td>
+        <td>${esc(r.user_name)}</td>
+        <td>${esc(r.action)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>` : '<div class="empty">Nenhum registro encontrado para os filtros aplicados.</div>';
+  };
+  drawLog(log);
+
+  $('#cfg-save-company').onclick = async () => {
+    const body = {
+      legal_name: $('#cfg-legal').value, trade_name: $('#cfg-trade').value, cnpj: $('#cfg-cnpj').value,
+      phone: $('#cfg-phone').value, email: $('#cfg-email').value, address: $('#cfg-address').value
+    };
+    try { await api('/api/company', { method: 'PUT', body }); toast('Dados da empresa atualizados.'); await loadSettings(); }
+    catch (e) { toast(e.message); }
+  };
+
+  const applyLogFilter = async () => {
+    const params = new URLSearchParams();
+    if ($('#al-q').value) params.set('q', $('#al-q').value);
+    if ($('#al-de').value) params.set('de', $('#al-de').value);
+    if ($('#al-ate').value) params.set('ate', $('#al-ate').value);
+    try { drawLog(await api('/api/audit-log?' + params.toString())); }
+    catch (e) { toast(e.message); }
+  };
+  $('#al-filter').onclick = applyLogFilter;
+  $('#al-q').addEventListener('keydown', e => { if (e.key === 'Enter') applyLogFilter(); });
+  $('#al-clear').onclick = () => { $('#al-q').value = ''; $('#al-de').value = ''; $('#al-ate').value = ''; drawLog(log); };
 }
 
 function confirmAction(label, fn, okMsg) {
@@ -1999,7 +2092,7 @@ async function exportPagarPDF(rows, filtersLabel) {
         doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
         doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
         doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-        doc.text(COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
         doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
         doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
       }
