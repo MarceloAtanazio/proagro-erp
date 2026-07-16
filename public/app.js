@@ -606,6 +606,7 @@ async function renderPagar() {
       <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="btn-csv">Exportar CSV</button>
+      <button class="btn" id="btn-pdf">Exportar PDF</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
     </div>
     <div class="table-wrap"><table id="tbl" class="tbl-pagar"></table></div>`;
@@ -680,6 +681,14 @@ async function renderPagar() {
     ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','Valor','Status','Pagamento'],
     lastFiltered.map(r => [r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
       r.payment_method || '', r.payment_method === 'pix' ? (r.pix_key || '') : '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
+  $('#btn-pdf').onclick = () => {
+    const parts = [];
+    if ($('#q').value) parts.push(`Busca: "${$('#q').value}"`);
+    if ($('#f-status').value) parts.push('Status: ' + ({ pendente: 'Pendentes', vencido: 'Vencidos', pago: 'Pagos' }[$('#f-status').value]));
+    if ($('#f-cat').value) parts.push('Categoria: ' + $('#f-cat').value);
+    if ($('#f-de').value || $('#f-ate').value) parts.push(`Período: ${$('#f-de').value ? brDate($('#f-de').value) : '—'} a ${$('#f-ate').value ? brDate($('#f-ate').value) : '—'}`);
+    exportPagarPDF(lastFiltered, parts.join('   ·   '));
+  };
   draw();
 }
 
@@ -1874,6 +1883,145 @@ function exportCSV(name, headers, rows) {
   a.click();
   URL.revokeObjectURL(a.href);
   toast('CSV exportado.');
+}
+
+// Carrega uma imagem do próprio domínio e devolve como data URL (base64),
+// necessário para embutir a logo no PDF via jsPDF.
+function loadImageAsDataURL(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      resolve({ data: canvas.toDataURL('image/png'), w: img.naturalWidth, h: img.naturalHeight });
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+const COMPANY_LEGAL_NAME = 'PROTEÇÃO AGROPECUÁRIA SERVIÇOS TÉCNICOS E CORRETAGEM DE SEGUROS LTDA';
+const PM_LABELS_PDF = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
+
+// Relatório de Contas a Pagar em PDF — layout corporativo com logo, cabeçalho
+// e rodapé com numeração de página. Exporta exatamente o conjunto filtrado
+// exibido na tela (mesmo critério usado na exportação em CSV).
+async function exportPagarPDF(rows, filtersLabel) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  const btn = $('#btn-pdf');
+  const originalLabel = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Gerando PDF…'; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], AZUL = [31, 78, 120], CINZA = [110, 120, 114];
+    const MARGIN = 12;
+
+    // Faixa de destaque superior
+    doc.setFillColor(...VERDE);
+    doc.rect(0, 0, pageW, 3, 'F');
+
+    // Logo (fundo claro do documento → usa a versão colorida)
+    let logoW = 0;
+    try {
+      const logo = await loadImageAsDataURL('/logo.png');
+      logoW = 30;
+      const logoH = logoW * (logo.h / logo.w);
+      doc.addImage(logo.data, 'PNG', MARGIN, 9, logoW, logoH);
+    } catch { /* segue sem logo se não carregar */ }
+
+    // Nome da empresa e título do relatório
+    doc.setTextColor(30, 38, 32);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+    doc.text(COMPANY_LEGAL_NAME, MARGIN + logoW + (logoW ? 6 : 0), 14, { maxWidth: 130 });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    doc.text('ERP Financeiro · Módulo Contas a Pagar', MARGIN + logoW + (logoW ? 6 : 0), 19);
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...VERDE);
+    doc.text('Relatório de Contas a Pagar', pageW - MARGIN, 15, { align: 'right' });
+    const now = new Date();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...CINZA);
+    doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
+
+    // Linha separadora
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3);
+    doc.line(MARGIN, 25, pageW - MARGIN, 25);
+
+    // Filtros aplicados
+    let y = 30;
+    if (filtersLabel) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...AZUL);
+      doc.text('Filtros aplicados:', MARGIN, y);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(60, 68, 62);
+      doc.text(filtersLabel, MARGIN + 27, y);
+      y += 6;
+    }
+
+    const total = rows.reduce((s, r) => s + r.amount, 0);
+    const totalPago = rows.filter(r => r.status === 'pago').reduce((s, r) => s + r.amount, 0);
+    const totalPendente = total - totalPago;
+
+    const body = rows.map(r => [
+      brDate(r.due_date),
+      r.description,
+      r.supplier_name || '—',
+      r.category,
+      r.cost_center || '—',
+      r.payment_method ? (PM_LABELS_PDF[r.payment_method] || r.payment_method) + (r.payment_method === 'pix' && r.pix_key ? ` (${r.pix_key})` : '') : '—',
+      brl(r.amount),
+      r.status === 'pago' ? `Pago em ${brDate(r.payment_date)}` : (r.due_date < todayISO() ? 'Vencido' : 'Pendente')
+    ]);
+
+    doc.autoTable({
+      startY: y,
+      head: [['Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Forma de Pagamento', 'Valor', 'Status']],
+      body,
+      margin: { left: MARGIN, right: MARGIN },
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
+      alternateRowStyles: { fillColor: VERDE_CLARO },
+      columnStyles: {
+        0: { cellWidth: 20 }, 6: { cellWidth: 24, halign: 'right' }, 7: { cellWidth: 26 }
+      },
+      didParseCell: hook => {
+        if (hook.section === 'body' && hook.column.index === 7) {
+          const v = hook.cell.raw;
+          if (v === 'Vencido') hook.cell.styles.textColor = [178, 58, 47];
+          else if (v === 'Pendente') hook.cell.styles.textColor = [31, 78, 120];
+          else hook.cell.styles.textColor = [0, 120, 63];
+        }
+      },
+      didDrawPage: () => {
+        const pageH = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
+        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+        doc.text(COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
+      }
+    });
+
+    // Resumo final (após a tabela)
+    let yEnd = doc.lastAutoTable.finalY + 8;
+    const pageH = doc.internal.pageSize.getHeight();
+    if (yEnd > pageH - 26) { doc.addPage(); yEnd = 20; }
+    doc.setFillColor(...VERDE_CLARO);
+    doc.roundedRect(MARGIN, yEnd, pageW - MARGIN * 2, 16, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...VERDE);
+    doc.text(`Total filtrado: ${rows.length} título(s) · ${brl(total)}`, MARGIN + 5, yEnd + 6.5);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 68, 62);
+    doc.text(`Pago: ${brl(totalPago)}   ·   Pendente/vencido: ${brl(totalPendente)}`, MARGIN + 5, yEnd + 12);
+
+    doc.save(`contas_a_pagar_${todayISO()}.pdf`);
+    toast('PDF gerado com sucesso.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+  }
 }
 
 // ------------------ Inicialização ------------------
