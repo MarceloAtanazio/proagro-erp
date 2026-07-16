@@ -899,107 +899,234 @@ function formReceber(r) {
 // FLUXO DE CAIXA
 // ============================================================
 async function renderFluxo() {
-  const year = Number(sessionStorage.getItem('fluxo-year')) || new Date().getFullYear();
-  const [cf, alerta] = await Promise.all([
-    api('/api/reports/cashflow/' + year),
-    api('/api/reports/cashflow-alerta').catch(() => null)
-  ]);
+  const FKEY = 'filters-fluxo';
+  const saved = loadFilters(FKEY);
+  const todayISOv = todayISO();
+  const monthStart = todayISOv.slice(0, 8) + '01';
+  const monthEndD = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+  const monthEnd = monthEndD.toISOString().slice(0, 10);
+
+  const de = saved.de || monthStart, ate = saved.ate || monthEnd;
+  const granularidade = saved.gran || 'dia';
+  const centroCusto = saved.cc || '';
+  const situacao = saved.sit || '';
+
+  const params = new URLSearchParams({ de, ate, granularidade });
+  if (centroCusto) params.set('centro_custo', centroCusto);
+  if (situacao) params.set('situacao', situacao);
+  const d = await api('/api/reports/fluxo-caixa?' + params.toString());
   const c = $('#content');
 
-  const arr = () => Array(12).fill(0);
-  const entR = arr(), entP = arr(), saiR = arr(), saiP = arr();
-  cf.entradas.realizado.forEach(r => entR[r.month - 1] = r.total);
-  cf.entradas.projetado.forEach(r => entP[r.month - 1] = r.total);
-  cf.saidas.realizado.forEach(r => saiR[r.month - 1] = r.total);
-  cf.saidas.projetado.forEach(r => saiP[r.month - 1] = r.total);
-
-  const hoje = new Date();
-  const anoAtual = hoje.getFullYear(), mesIdxAtual = hoje.getMonth();
-  const ancorado = year === anoAtual && alerta;
-
-  // Por padrão o acumulado é relativo (parte de zero em janeiro). Quando a
-  // tela mostra o ano corrente, ancoramos no saldo bancário real de hoje,
-  // para que o valor represente literalmente "quanto vai ter no banco" —
-  // e não apenas uma tendência relativa desde janeiro.
-  let acum = 0;
-  if (ancorado) {
-    let somaAteMesAtual = 0;
-    for (let i = 0; i <= mesIdxAtual; i++) somaAteMesAtual += (entR[i] + entP[i]) - (saiR[i] + saiP[i]);
-    acum = alerta.saldoAtual - somaAteMesAtual;
-  }
-  const linhas = MESES.map((m, i) => {
-    const ent = entR[i] + entP[i], sai = saiR[i] + saiP[i], res = ent - sai;
-    acum += res;
-    return { m, entR: entR[i], entP: entP[i], saiR: saiR[i], saiP: saiP[i], res, acum };
-  });
-
-  const nomeMesAtual = MESES[hoje.getMonth()] + '/' + hoje.getFullYear();
-  let alertaHTML = '';
-  if (alerta) {
-    if (alerta.diaCritico) {
-      alertaHTML = `<div class="card" style="margin-bottom:16px"><div class="alert-item red">⚠️ <strong>Situação de caixa — ${nomeMesAtual}:</strong>
-        temos saldo disponível somente até <strong>${brDate(alerta.diaCritico)}</strong>. A partir dessa data o caixa fica negativo
-        considerando os títulos já lançados — seria necessário um aporte de <strong>${brl(alerta.necessidade)}</strong> para fechar o mês sem faltar caixa.</div></div>`;
-    } else {
-      alertaHTML = `<div class="card" style="margin-bottom:16px"><div class="alert-item ok">✅ <strong>Situação de caixa — ${nomeMesAtual}:</strong>
-        saldo suficiente até o fim do mês (${brDate(alerta.monthEnd)}), sem necessidade de aporte adicional — saldo projetado de
-        <strong>${brl(alerta.saldoFimMes)}</strong> ao final, considerando os títulos já lançados.</div></div>`;
-    }
-    // Além do mês corrente (que já tem a resposta com precisão de dia acima),
-    // avisa também se algum mês futuro deste ano fica no vermelho no acumulado.
-    if (ancorado) {
-      const futuro = linhas.slice(mesIdxAtual + 1).find(l => l.acum < 0);
-      if (futuro) {
-        alertaHTML += `<div class="card" style="margin-bottom:16px"><div class="alert-item warn">🔔 <strong>Atenção para os próximos meses:</strong>
-          mantendo apenas os títulos já lançados, o saldo acumulado projetado fica negativo a partir de <strong>${futuro.m}/${year}</strong>,
-          chegando a <strong>${brl(futuro.acum)}</strong>. Vale planejar um aporte ou revisar os lançamentos futuros.</div></div>`;
-      }
-    }
-  }
-
   c.innerHTML = `
-    ${alertaHTML}
-    <div class="toolbar">
-      <label style="font-weight:600; font-size:13px">Ano:</label>
-      <input type="number" id="f-year" value="${year}" min="2020" max="2100" style="width:100px">
+    <div class="toolbar toolbar-spaced" id="fluxo-toolbar">
+      <input type="date" id="fx-de" value="${de}">
+      <span style="color:var(--muted); font-size:13px">até</span>
+      <input type="date" id="fx-ate" value="${ate}">
+      <select id="fx-gran">
+        <option value="dia" ${granularidade === 'dia' ? 'selected' : ''}>Por dia</option>
+        <option value="semana" ${granularidade === 'semana' ? 'selected' : ''}>Por semana</option>
+        <option value="mes" ${granularidade === 'mes' ? 'selected' : ''}>Por mês</option>
+        <option value="ano" ${granularidade === 'ano' ? 'selected' : ''}>Por ano</option>
+      </select>
+      <select id="fx-cc"><option value="">Todos os centros de custo</option>${CENTROS.map(x => `<option ${centroCusto === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <select id="fx-sit">
+        <option value="">Todas as situações</option>
+        <option value="pago" ${situacao === 'pago' ? 'selected' : ''}>Pago</option>
+        <option value="recebido" ${situacao === 'recebido' ? 'selected' : ''}>Recebido</option>
+        <option value="pendente" ${situacao === 'pendente' ? 'selected' : ''}>Pendente</option>
+        <option value="vencido" ${situacao === 'vencido' ? 'selected' : ''}>Vencido</option>
+      </select>
+      <button class="btn" id="fx-clear">Limpar filtros</button>
       <div class="spacer"></div>
-      <button class="btn" id="btn-csv">Exportar CSV</button>
+      <button class="btn" id="fx-csv">CSV</button>
+      <button class="btn" id="fx-xlsx">Excel</button>
+      <button class="btn" id="fx-pdf">PDF</button>
     </div>
-    <div class="card" style="margin-bottom:16px"><h3>Evolução mensal ${year}</h3>
-      <div class="chart-box tall"><canvas id="ch"></canvas></div></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Mês</th><th class="num">Entradas realizadas</th><th class="num">Entradas projetadas</th>
-        <th class="num">Saídas realizadas</th><th class="num">Saídas projetadas</th>
-        <th class="num">Resultado do mês</th><th class="num">${ancorado ? 'Saldo projetado (real)' : 'Saldo acumulado (relativo)'}</th></tr></thead>
-      <tbody>${linhas.map(l => `<tr>
-        <td><strong>${l.m}</strong></td>
-        <td class="num">${brl(l.entR)}</td><td class="num" style="color:var(--muted)">${brl(l.entP)}</td>
-        <td class="num">${brl(l.saiR)}</td><td class="num" style="color:var(--muted)">${brl(l.saiP)}</td>
-        <td class="num ${l.res >= 0 ? 'pos' : 'neg'}">${brl(l.res)}</td>
-        <td class="num ${l.acum >= 0 ? 'pos' : 'neg'}">${brl(l.acum)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><td>Total</td>
-        <td class="num">${brl(entR.reduce((a, b) => a + b))}</td><td class="num">${brl(entP.reduce((a, b) => a + b))}</td>
-        <td class="num">${brl(saiR.reduce((a, b) => a + b))}</td><td class="num">${brl(saiP.reduce((a, b) => a + b))}</td>
-        <td class="num" colspan="2">${brl(linhas[11].acum)}</td></tr></tfoot>
-    </table></div>
-    <p class="hint">Projetado = títulos pendentes por data de vencimento. Realizado = pagamentos e recebimentos efetivados.
-      ${ancorado ? ' O saldo projetado parte do saldo bancário real de hoje — representa quanto você deve ter em caixa, mês a mês.'
-                 : ' Este ano não é o corrente, então o saldo acumulado é relativo (parte de zero em janeiro), não do saldo bancário real.'}</p>`;
 
-  $('#f-year').onchange = e => { sessionStorage.setItem('fluxo-year', e.target.value); renderFluxo(); };
-  $('#btn-csv').onclick = () => exportCSV('fluxo_de_caixa_' + year,
-    ['Mes','EntradasRealizadas','EntradasProjetadas','SaidasRealizadas','SaidasProjetadas','Resultado','Acumulado'],
-    linhas.map(l => [l.m, l.entR, l.entP, l.saiR, l.saiP, l.res, l.acum].map(v => String(v).replace('.', ','))));
+    ${d.alerta.diaCritico ? `
+    <div class="card" style="margin-bottom:16px"><div class="alert-item red">⚠️ <strong>Alerta de saldo negativo:</strong>
+      considerando o saldo real e os títulos já lançados, o caixa fica negativo a partir de <strong>${brDate(d.alerta.diaCritico)}</strong> —
+      seria necessário um aporte de <strong>${brl(d.alerta.necessidade)}</strong> até ${brDate(d.alerta.horizonte)} para não faltar caixa.</div></div>`
+      : `<div class="card" style="margin-bottom:16px"><div class="alert-item ok">✅ <strong>Sem risco de saldo negativo</strong> até ${brDate(d.alerta.horizonte)}, considerando o saldo real e os títulos já lançados.</div></div>`}
 
-  makeChart($('#ch'), {
-    type: 'bar',
-    data: { labels: MESES, datasets: [
-      { label: 'Entradas', data: linhas.map(l => l.entR + l.entP), backgroundColor: CORES.verdeMed, borderRadius: 4 },
-      { label: 'Saídas', data: linhas.map(l => l.saiR + l.saiP), backgroundColor: CORES.azul, borderRadius: 4 },
-      { label: ancorado ? 'Saldo projetado (real)' : 'Saldo acumulado (relativo)', type: 'line', data: linhas.map(l => l.acum), borderColor: CORES.verde, backgroundColor: CORES.verde, tension: .3 }
+    <div class="dash-section-title">Resumo financeiro</div>
+    <div class="grid kpis" style="margin-bottom:16px">
+      <div class="card kpi"><div class="label">Saldo inicial do período</div>
+        <div class="value ${d.resumo.saldoInicial >= 0 ? '' : 'neg'}">${brl(d.resumo.saldoInicial)}</div>
+        <div class="detail">Em ${brDate(d.de)}</div></div>
+      <div class="card kpi blue"><div class="label">Total de entradas</div>
+        <div class="value">${brl(d.resumo.totalEntradas)}</div>
+        <div class="detail">No período filtrado</div></div>
+      <div class="card kpi red"><div class="label">Total de saídas</div>
+        <div class="value">${brl(d.resumo.totalSaidas)}</div>
+        <div class="detail">No período filtrado</div></div>
+      <div class="card kpi"><div class="label">Saldo atual</div>
+        <div class="value ${d.resumo.saldoAtual >= 0 ? '' : 'neg'}">${brl(d.resumo.saldoAtual)}</div>
+        <div class="detail">Saldo bancário real, hoje</div></div>
+      <div class="card kpi ${d.resumo.saldoPrevisto >= 0 ? '' : 'warn'}"><div class="label">Saldo previsto</div>
+        <div class="value ${d.resumo.saldoPrevisto >= 0 ? 'pos' : 'neg'}">${brl(d.resumo.saldoPrevisto)}</div>
+        <div class="detail">Considerando todo o pendente a pagar e a receber</div></div>
+    </div>
+
+    <div class="dash-section-title">Fluxo por período</div>
+    <div class="two-col" style="margin-bottom:16px">
+      <div class="card"><h3>Evolução do saldo</h3>
+        <div class="chart-box"><canvas id="ch-saldo"></canvas></div></div>
+      <div class="card"><h3>Entradas × Saídas</h3>
+        <div class="chart-box"><canvas id="ch-entsai"></canvas></div></div>
+    </div>
+    <div class="table-wrap" style="margin-bottom:16px">
+      <table><thead><tr><th>Data</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo</th></tr></thead>
+        <tbody>${d.buckets.length ? d.buckets.map(b => `<tr>
+          <td>${esc(b.label)}</td>
+          <td class="num pos">${brl(b.entradas)}</td>
+          <td class="num neg">${brl(b.saidas)}</td>
+          <td class="num ${b.saldo >= 0 ? '' : 'neg'}"><strong>${brl(b.saldo)}</strong></td>
+        </tr>`).join('') : '<tr><td colspan="4"><div class="empty">Nenhum dado para o período e filtros selecionados.</div></td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <div class="dash-section-title">Distribuição por categoria (no período)</div>
+    <div class="two-col" style="margin-bottom:16px">
+      <div class="card"><h3>Despesas por categoria</h3>
+        <div class="chart-box">${d.categorias.despesas.length ? '<canvas id="ch-desp"></canvas>' : '<div class="empty">Sem despesas no período.</div>'}</div></div>
+      <div class="card"><h3>Receitas por categoria</h3>
+        <div class="chart-box">${d.categorias.receitas.length ? '<canvas id="ch-rec"></canvas>' : '<div class="empty">Sem receitas no período.</div>'}</div></div>
+    </div>
+
+    <div class="dash-section-title">Fluxo projetado</div>
+    <div class="two-col">
+      <div class="card"><h3>Contas a receber futuras</h3>
+        ${d.futuras.receber.length ? `<table><thead><tr><th>Venc.</th><th>Cliente</th><th class="num">Valor</th></tr></thead>
+          <tbody>${d.futuras.receber.map(r => `<tr><td>${brDate(r.due_date)}</td><td>${esc(r.client_name)} — ${esc(r.description)}</td><td class="num">${brl(r.amount)}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">Nenhuma conta a receber pendente.</div>'}</div>
+      <div class="card"><h3>Contas a pagar futuras</h3>
+        ${d.futuras.pagar.length ? `<table><thead><tr><th>Venc.</th><th>Fornecedor</th><th class="num">Valor</th></tr></thead>
+          <tbody>${d.futuras.pagar.map(r => `<tr><td>${brDate(r.due_date)}</td><td>${esc(r.party || '—')} — ${esc(r.description)}</td><td class="num">${brl(r.amount)}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">Nenhuma conta a pagar pendente.</div>'}</div>
+    </div>`;
+
+  const topbarEl = document.querySelector('.topbar');
+  if (topbarEl) $('#fluxo-toolbar').style.top = topbarEl.offsetHeight + 'px';
+
+  const saveAndReload = () => {
+    saveFilters(FKEY, { de: $('#fx-de').value, ate: $('#fx-ate').value, gran: $('#fx-gran').value, cc: $('#fx-cc').value, sit: $('#fx-sit').value });
+    renderFluxo();
+  };
+  ['fx-de', 'fx-ate', 'fx-gran', 'fx-cc', 'fx-sit'].forEach(id => $('#' + id).onchange = saveAndReload);
+  $('#fx-clear').onclick = () => { saveFilters(FKEY, {}); renderFluxo(); };
+
+  $('#fx-csv').onclick = () => exportCSV('fluxo_de_caixa',
+    ['Data', 'Entradas', 'Saidas', 'Saldo'],
+    d.buckets.map(b => [b.label, String(b.entradas).replace('.', ','), String(b.saidas).replace('.', ','), String(b.saldo).replace('.', ',')]));
+
+  $('#fx-xlsx').onclick = () => {
+    if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+    const wsData = [['Data', 'Entradas', 'Saídas', 'Saldo'], ...d.buckets.map(b => [b.label, b.entradas, b.saidas, b.saldo])];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Fluxo de Caixa');
+    XLSX.writeFile(wb, `fluxo_de_caixa_${todayISO()}.xlsx`);
+    toast('Excel exportado.');
+  };
+
+  $('#fx-pdf').onclick = () => exportFluxoPDF(d);
+
+  makeChart($('#ch-saldo'), {
+    type: 'line',
+    data: { labels: d.buckets.map(b => b.label), datasets: [
+      { label: 'Saldo', data: d.buckets.map(b => b.saldo), borderColor: CORES.verde, backgroundColor: 'rgba(0,120,63,0.12)', fill: true, tension: .25, pointRadius: d.buckets.length > 40 ? 0 : 3 }
     ]},
-    options: chartOpts()
+    options: chartOpts({ scales: { x: { ticks: { maxTicksLimit: 10, font: { family: 'DM Sans' } }, grid: { display: false } },
+      y: { ticks: { font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } } } })
   });
+
+  makeChart($('#ch-entsai'), {
+    type: 'bar',
+    data: { labels: d.buckets.map(b => b.label), datasets: [
+      { label: 'Entradas', data: d.buckets.map(b => b.entradas), backgroundColor: CORES.verdeMed, borderRadius: 4 },
+      { label: 'Saídas', data: d.buckets.map(b => b.saidas), backgroundColor: CORES.vermelho, borderRadius: 4 }
+    ]},
+    options: chartOpts({ scales: { x: { ticks: { maxTicksLimit: 10, font: { family: 'DM Sans' } }, grid: { display: false } },
+      y: { ticks: { font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } } } })
+  });
+
+  const CAT_COLORS = ['#00783F', '#3DAE43', '#1F4E78', '#6FBF87', '#4A78A8', '#A9CDB8', '#C9922A', '#8898A0', '#0B3B24', '#D3DFD8'];
+  if (d.categorias.despesas.length) {
+    makeChart($('#ch-desp'), {
+      type: 'bar',
+      data: { labels: d.categorias.despesas.map(x => x.category), datasets: [{ label: 'Despesas', data: d.categorias.despesas.map(x => x.total), backgroundColor: CAT_COLORS, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.x) } } },
+        scales: { x: { ticks: { font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } }, y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } } }
+    });
+  }
+  if (d.categorias.receitas.length) {
+    makeChart($('#ch-rec'), {
+      type: 'bar',
+      data: { labels: d.categorias.receitas.map(x => x.category), datasets: [{ label: 'Receitas', data: d.categorias.receitas.map(x => x.total), backgroundColor: CAT_COLORS, borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.x) } } },
+        scales: { x: { ticks: { font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } }, y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } } }
+    });
+  }
+}
+
+// Exporta o Fluxo de Caixa (resumo + tabela do período) em PDF, com o mesmo
+// padrão corporativo usado no relatório de Contas a Pagar.
+async function exportFluxoPDF(d) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
+    const MARGIN = 12;
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 34, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
+    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    doc.text('ERP Financeiro · Módulo Fluxo de Caixa', MARGIN + logoW + 6, 19);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...VERDE);
+    doc.text('Relatório de Fluxo de Caixa', pageW - MARGIN, 15, { align: 'right' });
+    const now = new Date();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...CINZA);
+    doc.text(`Período: ${brDate(d.de)} a ${brDate(d.ate)} · Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
+
+    doc.setFillColor(...VERDE_CLARO);
+    doc.roundedRect(MARGIN, 29, pageW - MARGIN * 2, 16, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
+    doc.text(`Saldo inicial: ${brl(d.resumo.saldoInicial)}   ·   Entradas: ${brl(d.resumo.totalEntradas)}   ·   Saídas: ${brl(d.resumo.totalSaidas)}   ·   Saldo atual: ${brl(d.resumo.saldoAtual)}   ·   Saldo previsto: ${brl(d.resumo.saldoPrevisto)}`, MARGIN + 5, 38);
+
+    doc.autoTable({
+      startY: 50,
+      head: [['Data', 'Entradas', 'Saídas', 'Saldo']],
+      body: d.buckets.map(b => [b.label, brl(b.entradas), brl(b.saidas), brl(b.saldo)]),
+      margin: { left: MARGIN, right: MARGIN },
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
+      alternateRowStyles: { fillColor: VERDE_CLARO },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      didDrawPage: () => {
+        const pageH = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
+        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
+      }
+    });
+
+    doc.save(`fluxo_de_caixa_${todayISO()}.pdf`);
+    toast('PDF gerado com sucesso.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
 }
 
 // ============================================================
