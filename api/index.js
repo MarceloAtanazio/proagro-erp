@@ -460,16 +460,23 @@ app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, re
 app.post('/api/payables/:id/pay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   const d = req.body.payment_date;
   if (!isDate(d)) return res.status(400).json({ error: 'Data de pagamento inválida.' });
+  const p = (await query('SELECT description, amount FROM erp_payables WHERE id=$1', [req.params.id]))[0];
+  if (!p) return res.status(404).json({ error: 'Título não encontrado.' });
   await query(`UPDATE erp_payables SET status='pago', payment_date=$1 WHERE id=$2`, [d, req.params.id]);
+  // Reflete a saída no saldo de caixa imediatamente (sem depender de importar extrato bancário).
+  await query(`INSERT INTO erp_bank_transactions (txn_date, description, amount, reconciled, matched_type, matched_id, auto_generated)
+    VALUES ($1,$2,$3,true,'payable',$4,true)`, [d, `Pagamento: ${p.description}`, -Math.abs(Number(p.amount)), req.params.id]);
   res.json({ ok: true });
 }));
 
 app.post('/api/payables/:id/unpay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
+  await query(`DELETE FROM erp_bank_transactions WHERE matched_type='payable' AND matched_id=$1 AND auto_generated=true`, [req.params.id]);
   await query(`UPDATE erp_payables SET status='pendente', payment_date=NULL WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
 }));
 
 app.delete('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, res) => {
+  await query(`DELETE FROM erp_bank_transactions WHERE matched_type='payable' AND matched_id=$1 AND auto_generated=true`, [req.params.id]);
   await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['payable', req.params.id]);
   await query('DELETE FROM erp_payables WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
@@ -522,16 +529,23 @@ app.put('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (re
 app.post('/api/receivables/:id/receive', requireAuth, requireEdit('receber'), h(async (req, res) => {
   const d = req.body.receipt_date;
   if (!isDate(d)) return res.status(400).json({ error: 'Data de recebimento inválida.' });
+  const r = (await query('SELECT description, amount FROM erp_receivables WHERE id=$1', [req.params.id]))[0];
+  if (!r) return res.status(404).json({ error: 'Recebível não encontrado.' });
   await query(`UPDATE erp_receivables SET status='recebido', receipt_date=$1 WHERE id=$2`, [d, req.params.id]);
+  // Reflete a entrada no saldo de caixa imediatamente (sem depender de importar extrato bancário).
+  await query(`INSERT INTO erp_bank_transactions (txn_date, description, amount, reconciled, matched_type, matched_id, auto_generated)
+    VALUES ($1,$2,$3,true,'receivable',$4,true)`, [d, `Recebimento: ${r.description}`, Math.abs(Number(r.amount)), req.params.id]);
   res.json({ ok: true });
 }));
 
 app.post('/api/receivables/:id/unreceive', requireAuth, requireEdit('receber'), h(async (req, res) => {
+  await query(`DELETE FROM erp_bank_transactions WHERE matched_type='receivable' AND matched_id=$1 AND auto_generated=true`, [req.params.id]);
   await query(`UPDATE erp_receivables SET status='pendente', receipt_date=NULL WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
 }));
 
 app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (req, res) => {
+  await query(`DELETE FROM erp_bank_transactions WHERE matched_type='receivable' AND matched_id=$1 AND auto_generated=true`, [req.params.id]);
   await query('UPDATE erp_bank_transactions SET reconciled=false, matched_type=NULL, matched_id=NULL WHERE matched_type=$1 AND matched_id=$2', ['receivable', req.params.id]);
   await query('DELETE FROM erp_receivables WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
