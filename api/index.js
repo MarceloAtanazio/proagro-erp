@@ -248,13 +248,30 @@ app.use((req, res, next) => {
     try {
       if (req.method !== 'GET' && req.user && res.statusCode < 400 && req.route) {
         const describe = AUDIT_MAP[`${req.method} ${req.route.path}`];
-        if (describe) logAudit(req.user, describe(req)).catch(() => {});
+        const action = req.auditAction || (describe && describe(req));
+        if (action) logAudit(req.user, action).catch(() => {});
       }
     } catch (e) { console.error('[audit-mw]', e.message); }
     return originalJson(body);
   };
   next();
 });
+
+const fmtBRL = v => 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
+const brDateBR = d => { if (!d) return ''; const s = (d instanceof Date) ? d.toISOString().slice(0, 10) : String(d).slice(0, 10); const [y, m, day] = s.split('-'); return `${day}/${m}/${y}`; };
+const PM_LABEL_PT = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
+
+// Compara valores antigos x novos e devolve uma lista de mudanças legíveis
+// (ex.: "Centro de custo: "Administrativo" → "Operação a Campo""), para o
+// log de auditoria citar exatamente o que foi alterado em vez de uma frase genérica.
+function describeFieldChanges(oldRow, newRow, fields) {
+  const changes = [];
+  for (const [key, label] of fields) {
+    const ov = oldRow[key] ?? '', nv = newRow[key] ?? '';
+    if (String(ov) !== String(nv)) changes.push(`${label}: "${ov || '—'}" → "${nv || '—'}"`);
+  }
+  return changes;
+}
 
 const h = fn => (req, res) => fn(req, res).catch(err => {
   console.error(err);
@@ -415,6 +432,25 @@ app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, re
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   const pm = b.payment_method || null;
+
+  // Registra exatamente o que mudou (para o log de auditoria).
+  const oldRows = await query('SELECT p.*, s.name AS supplier_name FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id WHERE p.id=$1', [req.params.id]);
+  const old = oldRows[0];
+  if (old) {
+    let newSupplierName = '';
+    if (b.supplier_id) newSupplierName = (await query('SELECT name FROM erp_suppliers WHERE id=$1', [b.supplier_id]))[0]?.name || '';
+    const changes = describeFieldChanges(
+      { ...old, supplier_name: old.supplier_name || '', amount: fmtBRL(old.amount), due_date: brDateBR(old.due_date), payment_method: PM_LABEL_PT[old.payment_method] || '' },
+      { supplier_name: newSupplierName, description: sanitize(b.description), category: sanitize(b.category), cost_center: sanitize(b.cost_center),
+        document: sanitize(b.document), amount: fmtBRL(b.amount), due_date: brDateBR(b.due_date), payment_method: PM_LABEL_PT[pm] || '', pix_key: pm === 'pix' ? sanitize(b.pix_key) : '', notes: sanitize(b.notes) },
+      [['supplier_name','Fornecedor'],['description','Descrição'],['category','Categoria'],['cost_center','Centro de custo'],
+       ['document','Documento'],['amount','Valor'],['due_date','Vencimento'],['payment_method','Forma de pagamento'],['pix_key','Chave PIX'],['notes','Observações']]
+    );
+    req.auditAction = changes.length
+      ? `Editou o título a pagar "${old.description}" (ID ${req.params.id}) — ${changes.join('; ')}`
+      : `Editou o título a pagar "${old.description}" (ID ${req.params.id}) sem alterações de campo`;
+  }
+
   await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, payment_method=$8, pix_key=$9, notes=$10 WHERE id=$11`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
      sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, sanitize(b.notes), req.params.id]);
@@ -461,6 +497,22 @@ app.put('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async (re
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   if (!sanitize(b.client_name)) return res.status(400).json({ error: 'Cliente é obrigatório.' });
+
+  const oldRows = await query('SELECT * FROM erp_receivables WHERE id=$1', [req.params.id]);
+  const old = oldRows[0];
+  if (old) {
+    const changes = describeFieldChanges(
+      { ...old, amount: fmtBRL(old.amount), due_date: brDateBR(old.due_date) },
+      { client_name: sanitize(b.client_name), description: sanitize(b.description), category: sanitize(b.category),
+        document: sanitize(b.document), amount: fmtBRL(b.amount), due_date: brDateBR(b.due_date), notes: sanitize(b.notes) },
+      [['client_name','Cliente'],['description','Descrição'],['category','Categoria'],['document','Documento'],
+       ['amount','Valor'],['due_date','Vencimento'],['notes','Observações']]
+    );
+    req.auditAction = changes.length
+      ? `Editou o recebível "${old.description}" (ID ${req.params.id}) — ${changes.join('; ')}`
+      : `Editou o recebível "${old.description}" (ID ${req.params.id}) sem alterações de campo`;
+  }
+
   await query(`UPDATE erp_receivables SET client_name=$1, description=$2, category=$3, document=$4, amount=$5, due_date=$6, notes=$7 WHERE id=$8`,
     [sanitize(b.client_name), sanitize(b.description), sanitize(b.category),
      sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.params.id]);
