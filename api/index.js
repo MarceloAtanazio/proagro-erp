@@ -1015,7 +1015,14 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
   payRows.filter(r => r.status === 'pago').forEach(r => { const d = dateKey(r.payment_date); dailyOutReal[d] = (dailyOutReal[d] || 0) + n(r.amount); });
   recRows.filter(r => r.status === 'recebido').forEach(r => { const d = dateKey(r.receipt_date); dailyInReal[d] = (dailyInReal[d] || 0) + n(r.amount); });
 
-  const saldoAtual = n((await query('SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions'))[0].v);
+  // Saldo real = todo o histórico de recebimentos e pagamentos já realizados
+  // (não depende de ter passado pela Conciliação Bancária) + quaisquer
+  // lançamentos bancários independentes (ex.: saldo de abertura, ajustes)
+  // que não tenham sido gerados automaticamente por uma baixa, para não contar em dobro.
+  const totalRecebidoHist = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='recebido'`))[0].v);
+  const totalPagoHist = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago'`))[0].v);
+  const ajustesBancoManuais = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE auto_generated=false`))[0].v);
+  const saldoAtual = totalRecebidoHist - totalPagoHist + ajustesBancoManuais;
 
   // saldoAtDate(D) = projeção do saldo no fim do dia D, considerando também
   // pendentes por vencimento — usada só na projeção do alerta (para frente).
@@ -1202,7 +1209,12 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
 
   // ---- Caixa / bancos ----
   const naoConciliados = await one(`SELECT COUNT(*)::int AS c, COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE reconciled=false`);
-  const saldoBanco = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions`);
+  // Saldo real = todo o histórico de recebimentos/pagamentos já realizados +
+  // ajustes bancários independentes (não gerados automaticamente por uma baixa).
+  const totalRecebidoHistD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='recebido'`);
+  const totalPagoHistD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago'`);
+  const ajustesBancoManuaisD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE auto_generated=false`);
+  const saldoBanco = { v: n(totalRecebidoHistD.v) - n(totalPagoHistD.v) + n(ajustesBancoManuaisD.v) };
 
   // ---- Despesas do mês (indicador principal) ----
   const pagoMes = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]);
