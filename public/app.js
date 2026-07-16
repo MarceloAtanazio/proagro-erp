@@ -913,14 +913,26 @@ async function renderFluxo() {
   cf.saidas.realizado.forEach(r => saiR[r.month - 1] = r.total);
   cf.saidas.projetado.forEach(r => saiP[r.month - 1] = r.total);
 
+  const hoje = new Date();
+  const anoAtual = hoje.getFullYear(), mesIdxAtual = hoje.getMonth();
+  const ancorado = year === anoAtual && alerta;
+
+  // Por padrão o acumulado é relativo (parte de zero em janeiro). Quando a
+  // tela mostra o ano corrente, ancoramos no saldo bancário real de hoje,
+  // para que o valor represente literalmente "quanto vai ter no banco" —
+  // e não apenas uma tendência relativa desde janeiro.
   let acum = 0;
+  if (ancorado) {
+    let somaAteMesAtual = 0;
+    for (let i = 0; i <= mesIdxAtual; i++) somaAteMesAtual += (entR[i] + entP[i]) - (saiR[i] + saiP[i]);
+    acum = alerta.saldoAtual - somaAteMesAtual;
+  }
   const linhas = MESES.map((m, i) => {
     const ent = entR[i] + entP[i], sai = saiR[i] + saiP[i], res = ent - sai;
     acum += res;
     return { m, entR: entR[i], entP: entP[i], saiR: saiR[i], saiP: saiP[i], res, acum };
   });
 
-  const hoje = new Date();
   const nomeMesAtual = MESES[hoje.getMonth()] + '/' + hoje.getFullYear();
   let alertaHTML = '';
   if (alerta) {
@@ -932,6 +944,16 @@ async function renderFluxo() {
       alertaHTML = `<div class="card" style="margin-bottom:16px"><div class="alert-item ok">✅ <strong>Situação de caixa — ${nomeMesAtual}:</strong>
         saldo suficiente até o fim do mês (${brDate(alerta.monthEnd)}), sem necessidade de aporte adicional — saldo projetado de
         <strong>${brl(alerta.saldoFimMes)}</strong> ao final, considerando os títulos já lançados.</div></div>`;
+    }
+    // Além do mês corrente (que já tem a resposta com precisão de dia acima),
+    // avisa também se algum mês futuro deste ano fica no vermelho no acumulado.
+    if (ancorado) {
+      const futuro = linhas.slice(mesIdxAtual + 1).find(l => l.acum < 0);
+      if (futuro) {
+        alertaHTML += `<div class="card" style="margin-bottom:16px"><div class="alert-item warn">🔔 <strong>Atenção para os próximos meses:</strong>
+          mantendo apenas os títulos já lançados, o saldo acumulado projetado fica negativo a partir de <strong>${futuro.m}/${year}</strong>,
+          chegando a <strong>${brl(futuro.acum)}</strong>. Vale planejar um aporte ou revisar os lançamentos futuros.</div></div>`;
+      }
     }
   }
 
@@ -948,7 +970,7 @@ async function renderFluxo() {
     <div class="table-wrap"><table>
       <thead><tr><th>Mês</th><th class="num">Entradas realizadas</th><th class="num">Entradas projetadas</th>
         <th class="num">Saídas realizadas</th><th class="num">Saídas projetadas</th>
-        <th class="num">Resultado do mês</th><th class="num">Saldo acumulado</th></tr></thead>
+        <th class="num">Resultado do mês</th><th class="num">${ancorado ? 'Saldo projetado (real)' : 'Saldo acumulado (relativo)'}</th></tr></thead>
       <tbody>${linhas.map(l => `<tr>
         <td><strong>${l.m}</strong></td>
         <td class="num">${brl(l.entR)}</td><td class="num" style="color:var(--muted)">${brl(l.entP)}</td>
@@ -960,7 +982,9 @@ async function renderFluxo() {
         <td class="num">${brl(saiR.reduce((a, b) => a + b))}</td><td class="num">${brl(saiP.reduce((a, b) => a + b))}</td>
         <td class="num" colspan="2">${brl(linhas[11].acum)}</td></tr></tfoot>
     </table></div>
-    <p class="hint">Projetado = títulos pendentes por data de vencimento. Realizado = pagamentos e recebimentos efetivados.</p>`;
+    <p class="hint">Projetado = títulos pendentes por data de vencimento. Realizado = pagamentos e recebimentos efetivados.
+      ${ancorado ? ' O saldo projetado parte do saldo bancário real de hoje — representa quanto você deve ter em caixa, mês a mês.'
+                 : ' Este ano não é o corrente, então o saldo acumulado é relativo (parte de zero em janeiro), não do saldo bancário real.'}</p>`;
 
   $('#f-year').onchange = e => { sessionStorage.setItem('fluxo-year', e.target.value); renderFluxo(); };
   $('#btn-csv').onclick = () => exportCSV('fluxo_de_caixa_' + year,
@@ -972,7 +996,7 @@ async function renderFluxo() {
     data: { labels: MESES, datasets: [
       { label: 'Entradas', data: linhas.map(l => l.entR + l.entP), backgroundColor: CORES.verdeMed, borderRadius: 4 },
       { label: 'Saídas', data: linhas.map(l => l.saiR + l.saiP), backgroundColor: CORES.azul, borderRadius: 4 },
-      { label: 'Saldo acumulado', type: 'line', data: linhas.map(l => l.acum), borderColor: CORES.verde, backgroundColor: CORES.verde, tension: .3 }
+      { label: ancorado ? 'Saldo projetado (real)' : 'Saldo acumulado (relativo)', type: 'line', data: linhas.map(l => l.acum), borderColor: CORES.verde, backgroundColor: CORES.verde, tension: .3 }
     ]},
     options: chartOpts()
   });
