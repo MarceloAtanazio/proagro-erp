@@ -274,19 +274,19 @@ app.get('/api/suppliers', requireAuth, requireViewAny(['fornecedores','pagar']),
 app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, status, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
     [sanitize(b.name), sanitize(b.cnpj), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
+     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
 app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, status=$8, notes=$9 WHERE id=$10`,
+  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10 WHERE id=$11`,
     [sanitize(b.name), sanitize(b.cnpj), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
+     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
   res.json({ ok: true });
 }));
 
