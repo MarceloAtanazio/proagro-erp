@@ -952,6 +952,43 @@ app.get('/api/reports/cashflow/:year', requireAuth, requireViewAny(['dashboard',
   });
 }));
 
+// Projeção diária do saldo de caixa até o fim do mês corrente — alimenta o
+// alerta de "até quando temos saldo" e "quanto falta para fechar o mês" em Fluxo de Caixa.
+app.get('/api/reports/cashflow-alerta', requireAuth, requireViewAny(['dashboard', 'fluxo']), h(async (req, res) => {
+  const todayD = new Date();
+  const iso = d => d.toISOString().slice(0, 10);
+  const today = iso(todayD);
+  const monthEnd = iso(new Date(todayD.getFullYear(), todayD.getMonth() + 1, 0));
+
+  const saldoBanco = n((await query('SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions'))[0].v);
+  const saidasDia = await query(`SELECT due_date, SUM(amount) AS total FROM erp_payables
+    WHERE status='pendente' AND due_date BETWEEN $1 AND $2 GROUP BY due_date`, [today, monthEnd]);
+  const entradasDia = await query(`SELECT due_date, SUM(amount) AS total FROM erp_receivables
+    WHERE status='pendente' AND due_date BETWEEN $1 AND $2 GROUP BY due_date`, [today, monthEnd]);
+
+  const dias = [];
+  let running = saldoBanco, minSaldo = saldoBanco, minData = today;
+  for (let d = new Date(todayD); iso(d) <= monthEnd; d.setDate(d.getDate() + 1)) {
+    const dateStr = iso(d);
+    if (dateStr !== today) {
+      running += n((entradasDia.find(r => r.due_date === dateStr) || {}).total)
+               - n((saidasDia.find(r => r.due_date === dateStr) || {}).total);
+    }
+    if (running < minSaldo) { minSaldo = running; minData = dateStr; }
+    dias.push({ date: dateStr, saldo: running });
+  }
+  const diaCritico = dias.find(d => d.saldo < 0)?.date || null;
+
+  res.json({
+    saldoAtual: saldoBanco,
+    monthEnd,
+    diaCritico,
+    necessidade: minSaldo < 0 ? Math.abs(minSaldo) : 0,
+    diaMinimo: minData,
+    saldoFimMes: dias[dias.length - 1].saldo
+  });
+}));
+
 // KPIs e análises do dashboard
 app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(async (req, res) => {
   const todayD = new Date();
