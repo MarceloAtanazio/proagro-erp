@@ -188,6 +188,74 @@ const sanitize = v => (typeof v === 'string' ? v.trim() : v);
 const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 
 // Envolve handlers async para propagar erros ao Express corretamente.
+// ------------------------------------------------------------
+// Log de auditoria
+// ------------------------------------------------------------
+// Registra a ação no banco (silenciosamente — uma falha ao logar nunca deve
+// quebrar a requisição principal).
+async function logAudit(user, action) {
+  try {
+    await query('INSERT INTO erp_audit_log (user_id, user_name, action) VALUES ($1,$2,$3)',
+      [user.id, user.name, action]);
+  } catch (e) { console.error('[audit]', e.message); }
+}
+
+// Traduz "MÉTODO padrão-da-rota" para uma descrição legível em português.
+// Cobre toda escrita da plataforma (criação, edição, exclusão e ações como
+// baixar/estornar/conciliar) sem precisar instrumentar cada rota manualmente.
+const AUDIT_MAP = {
+  'POST /api/auth/change-password': () => 'Alterou a própria senha',
+  'POST /api/suppliers': req => `Cadastrou o fornecedor "${req.body.name}"`,
+  'PUT /api/suppliers/:id': req => `Editou o fornecedor "${req.body.name}" (ID ${req.params.id})`,
+  'DELETE /api/suppliers/:id': req => `Excluiu o fornecedor ID ${req.params.id}`,
+  'POST /api/payables': req => `Criou o título a pagar "${req.body.description}"`,
+  'PUT /api/payables/:id': req => `Editou o título a pagar "${req.body.description}" (ID ${req.params.id})`,
+  'POST /api/payables/:id/pay': req => `Baixou o pagamento do título a pagar ID ${req.params.id}`,
+  'POST /api/payables/:id/unpay': req => `Estornou a baixa do título a pagar ID ${req.params.id}`,
+  'DELETE /api/payables/:id': req => `Excluiu o título a pagar ID ${req.params.id}`,
+  'POST /api/receivables': req => `Criou o recebível "${req.body.description}"`,
+  'PUT /api/receivables/:id': req => `Editou o recebível "${req.body.description}" (ID ${req.params.id})`,
+  'POST /api/receivables/:id/receive': req => `Baixou o recebimento do recebível ID ${req.params.id}`,
+  'POST /api/receivables/:id/unreceive': req => `Estornou a baixa do recebível ID ${req.params.id}`,
+  'DELETE /api/receivables/:id': req => `Excluiu o recebível ID ${req.params.id}`,
+  'POST /api/attachments/:type/:id': req => `Anexou um documento (${req.body.file_name || ''}) ao título ${req.params.type === 'payable' ? 'a pagar' : 'a receber'} ID ${req.params.id}`,
+  'DELETE /api/attachments/:id': req => `Excluiu o anexo ID ${req.params.id}`,
+  'POST /api/settings/categories': req => `Criou a categoria "${req.body.name}" (${req.body.type})`,
+  'PUT /api/settings/categories/:id': req => `Editou a categoria ID ${req.params.id}`,
+  'DELETE /api/settings/categories/:id': req => `Excluiu a categoria ID ${req.params.id}`,
+  'POST /api/settings/cost-centers': req => `Criou o centro de custo "${req.body.name}"`,
+  'PUT /api/settings/cost-centers/:id': req => `Editou o centro de custo ID ${req.params.id}`,
+  'DELETE /api/settings/cost-centers/:id': req => `Excluiu o centro de custo ID ${req.params.id}`,
+  'POST /api/bank': () => 'Lançou uma movimentação bancária manual',
+  'POST /api/bank/import': () => 'Importou lançamentos bancários (extrato)',
+  'POST /api/bank/:id/reconcile': req => `Conciliou a movimentação bancária ID ${req.params.id}`,
+  'POST /api/bank/:id/unreconcile': req => `Desfez a conciliação da movimentação bancária ID ${req.params.id}`,
+  'DELETE /api/bank/:id': req => `Excluiu a movimentação bancária ID ${req.params.id}`,
+  'POST /api/budgets/:year': req => `Atualizou o orçamento de ${req.params.year}`,
+  'DELETE /api/budgets/:year/category': req => `Removeu uma categoria do orçamento de ${req.params.year}`,
+  'POST /api/users': req => `Criou o usuário "${req.body.name}" (${req.body.email})`,
+  'PUT /api/users/:id/permissions': req => `Alterou permissões/perfil do usuário ID ${req.params.id}`,
+  'POST /api/users/:id/reset-password': req => `Redefiniu a senha do usuário ID ${req.params.id}`,
+  'POST /api/users/:id/toggle': req => `Ativou/desativou o usuário ID ${req.params.id}`,
+  'PUT /api/company': () => 'Atualizou os dados cadastrais da empresa'
+};
+
+// Intercepta res.json em toda requisição autenticada de escrita (POST/PUT/
+// DELETE) e grava um registro no log de auditoria com a descrição da ação.
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = body => {
+    try {
+      if (req.method !== 'GET' && req.user && res.statusCode < 400 && req.route) {
+        const describe = AUDIT_MAP[`${req.method} ${req.route.path}`];
+        if (describe) logAudit(req.user, describe(req)).catch(() => {});
+      }
+    } catch (e) { console.error('[audit-mw]', e.message); }
+    return originalJson(body);
+  };
+  next();
+});
+
 const h = fn => (req, res) => fn(req, res).catch(err => {
   console.error(err);
   res.status(500).json({ error: 'Erro interno. Tente novamente.' });
@@ -220,6 +288,7 @@ app.post('/api/auth/login', loginRateLimit, h(async (req, res) => {
     return res.status(403).json({ error: 'Conta inativa. Contate o administrador.' });
   }
   setAuthCookie(res, user);
+  logAudit(user, 'Login realizado');
   res.json({ ok: true, user: {
     id: user.id, name: user.name, email: user.email, role: user.role,
     status: user.status, permissions: user.permissions || {},
@@ -229,6 +298,15 @@ app.post('/api/auth/login', loginRateLimit, h(async (req, res) => {
 }));
 
 app.post('/api/auth/logout', (req, res) => {
+  const token = req.cookies && req.cookies[COOKIE_NAME];
+  if (token) {
+    try {
+      const payload = jwt.verify(token, JWT_SECRET);
+      query('SELECT id, name FROM erp_users WHERE id=$1', [payload.sub])
+        .then(rows => { if (rows[0]) logAudit(rows[0], 'Logout realizado'); })
+        .catch(() => {});
+    } catch { /* token inválido/expirado — nada a registrar */ }
+  }
   res.clearCookie(COOKIE_NAME, { path: '/' });
   res.json({ ok: true });
 });
@@ -618,6 +696,38 @@ app.delete('/api/settings/cost-centers/:id', requireAuth, requireSuperAdmin, h(a
   if (used > 0) return res.status(409).json({ error: `Este centro de custo está em uso em ${used} título(s). Desative-o em vez de excluir.` });
   await query('DELETE FROM erp_cost_centers WHERE id=$1', [id]);
   res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
+// Configurações gerais da empresa
+// ------------------------------------------------------------
+// Leitura liberada para qualquer usuário autenticado (o relatório em PDF de
+// Contas a Pagar usa esses dados no cabeçalho, mesmo para quem não é super-admin).
+app.get('/api/company', requireAuth, h(async (req, res) => {
+  const rows = await query('SELECT legal_name, trade_name, cnpj, address, phone, email FROM erp_company_settings WHERE id=1');
+  res.json(rows[0] || {});
+}));
+
+app.put('/api/company', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const b = req.body;
+  await query(`INSERT INTO erp_company_settings (id, legal_name, trade_name, cnpj, address, phone, email, updated_at)
+    VALUES (1,$1,$2,$3,$4,$5,$6,now())
+    ON CONFLICT (id) DO UPDATE SET legal_name=$1, trade_name=$2, cnpj=$3, address=$4, phone=$5, email=$6, updated_at=now()`,
+    [sanitize(b.legal_name), sanitize(b.trade_name), sanitize(b.cnpj), sanitize(b.address), sanitize(b.phone), sanitize(b.email)]);
+  res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
+// Log de auditoria (somente o super-administrador)
+// ------------------------------------------------------------
+app.get('/api/audit-log', requireAuth, requireSuperAdmin, h(async (req, res) => {
+  const conds = [], params = [];
+  if (req.query.de) { params.push(req.query.de); conds.push(`created_at >= $${params.length}::date`); }
+  if (req.query.ate) { params.push(req.query.ate); conds.push(`created_at < ($${params.length}::date + interval '1 day')`); }
+  if (req.query.q) { params.push('%' + req.query.q + '%'); conds.push(`(user_name ILIKE $${params.length} OR action ILIKE $${params.length})`); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const rows = await query(`SELECT id, user_name, action, created_at FROM erp_audit_log ${where} ORDER BY created_at DESC LIMIT 500`, params);
+  res.json(rows);
 }));
 
 // ------------------------------------------------------------
