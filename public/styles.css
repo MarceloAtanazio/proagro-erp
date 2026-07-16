@@ -82,6 +82,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 
 .nav { padding: 14px 10px; flex: 1; overflow-y: auto; }
 .nav-section { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.4); padding: 12px 12px 6px; }
+.nav-subsection { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.32); padding: 8px 12px 4px 22px; font-weight: 600; }
 .nav a {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 12px; border-radius: 8px; color: rgba(255,255,255,.82);
@@ -91,6 +92,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 .nav a:hover { background: rgba(255,255,255,.07); color: #fff; }
 .nav a.active { background: var(--verde-500); color: #fff; font-weight: 600; }
 .nav a.active svg { opacity: 1; }
+.nav a.nav-sub-item { padding-left: 22px; }
 
 .sidebar .userbox {
   padding: 14px 16px; border-top: 1px solid rgba(255,255,255,.08);
