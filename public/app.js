@@ -900,7 +900,10 @@ function formReceber(r) {
 // ============================================================
 async function renderFluxo() {
   const year = Number(sessionStorage.getItem('fluxo-year')) || new Date().getFullYear();
-  const cf = await api('/api/reports/cashflow/' + year);
+  const [cf, alerta] = await Promise.all([
+    api('/api/reports/cashflow/' + year),
+    api('/api/reports/cashflow-alerta').catch(() => null)
+  ]);
   const c = $('#content');
 
   const arr = () => Array(12).fill(0);
@@ -917,7 +920,23 @@ async function renderFluxo() {
     return { m, entR: entR[i], entP: entP[i], saiR: saiR[i], saiP: saiP[i], res, acum };
   });
 
+  const hoje = new Date();
+  const nomeMesAtual = MESES[hoje.getMonth()] + '/' + hoje.getFullYear();
+  let alertaHTML = '';
+  if (alerta) {
+    if (alerta.diaCritico) {
+      alertaHTML = `<div class="card" style="margin-bottom:16px"><div class="alert-item red">⚠️ <strong>Situação de caixa — ${nomeMesAtual}:</strong>
+        temos saldo disponível somente até <strong>${brDate(alerta.diaCritico)}</strong>. A partir dessa data o caixa fica negativo
+        considerando os títulos já lançados — seria necessário um aporte de <strong>${brl(alerta.necessidade)}</strong> para fechar o mês sem faltar caixa.</div></div>`;
+    } else {
+      alertaHTML = `<div class="card" style="margin-bottom:16px"><div class="alert-item ok">✅ <strong>Situação de caixa — ${nomeMesAtual}:</strong>
+        saldo suficiente até o fim do mês (${brDate(alerta.monthEnd)}), sem necessidade de aporte adicional — saldo projetado de
+        <strong>${brl(alerta.saldoFimMes)}</strong> ao final, considerando os títulos já lançados.</div></div>`;
+    }
+  }
+
   c.innerHTML = `
+    ${alertaHTML}
     <div class="toolbar">
       <label style="font-weight:600; font-size:13px">Ano:</label>
       <input type="number" id="f-year" value="${year}" min="2020" max="2100" style="width:100px">
