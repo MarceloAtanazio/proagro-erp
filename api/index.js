@@ -309,31 +309,37 @@ app.get('/api/payables', requireAuth, requireViewAny(['pagar']), h(async (req, r
   res.json(rows);
 }));
 
+const PAYMENT_METHODS = ['boleto', 'pix', 'transferencia'];
+
 function validateTitle(b) {
   if (!sanitize(b.description)) return 'Descrição é obrigatória.';
   if (!sanitize(b.category)) return 'Categoria é obrigatória.';
   const amount = Number(b.amount);
   if (!isFinite(amount) || amount <= 0) return 'Valor deve ser maior que zero.';
   if (!isDate(b.due_date)) return 'Data de vencimento inválida.';
+  if (b.payment_method && !PAYMENT_METHODS.includes(b.payment_method)) return 'Forma de pagamento inválida.';
+  if (b.payment_method === 'pix' && !sanitize(b.pix_key)) return 'Informe a chave PIX para essa forma de pagamento.';
   return null;
 }
 
 app.post('/api/payables', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
-  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+  const pm = b.payment_method || null;
+  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, payment_method, pix_key, notes, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.user.id]);
+     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, sanitize(b.notes), req.user.id]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
 app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
-  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, notes=$8 WHERE id=$9`,
+  const pm = b.payment_method || null;
+  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, payment_method=$8, pix_key=$9, notes=$10 WHERE id=$11`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, sanitize(b.notes), req.params.id]);
+     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, sanitize(b.notes), req.params.id]);
   res.json({ ok: true });
 }));
 
