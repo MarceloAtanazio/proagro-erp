@@ -1930,7 +1930,7 @@ async function exportPagarPDF(rows, filtersLabel) {
     const logoW = 34;
     const logoAspect = 139 / 600; // altura/largura do arquivo original
     const logoH = logoW * logoAspect;
-    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 8.5, logoW, logoH);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
 
     // Nome da empresa e título do relatório
     const textX = MARGIN + logoW + 6;
@@ -1970,7 +1970,7 @@ async function exportPagarPDF(rows, filtersLabel) {
       r.supplier_name || '—',
       r.category,
       r.cost_center || '—',
-      r.payment_method ? (PM_LABELS_PDF[r.payment_method] || r.payment_method) + (r.payment_method === 'pix' && r.pix_key ? ` (${r.pix_key})` : '') : '—',
+      r.payment_method ? (PM_LABELS_PDF[r.payment_method] || r.payment_method) : '—',
       brl(r.amount),
       r.status === 'pago' ? `Pago em ${brDate(r.payment_date)}` : (r.due_date < todayISO() ? 'Vencido' : 'Pendente')
     ]);
