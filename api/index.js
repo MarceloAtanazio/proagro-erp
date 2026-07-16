@@ -1001,21 +1001,43 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
 
   const dateKey = d => (d instanceof Date) ? iso(d) : String(d).slice(0, 10);
 
-  // ---- Série diária SEM filtro (usada só para ancorar o saldo real de hoje) ----
+  // ---- Série diária SEM filtro (usada para projetar o ALERTA para frente,
+  // considerando também os títulos pendentes por vencimento) ----
   const dailyOutAll = {}, dailyInAll = {};
   payRows.forEach(r => { const d = dateKey(r.status === 'pago' ? r.payment_date : r.due_date); dailyOutAll[d] = (dailyOutAll[d] || 0) + n(r.amount); });
   recRows.forEach(r => { const d = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date); dailyInAll[d] = (dailyInAll[d] || 0) + n(r.amount); });
 
+  // ---- Série diária SOMENTE do que já foi REALIZADO (pago/recebido) — usada
+  // para reconstruir o saldo real em datas passadas. Diferente da série acima,
+  // aqui não entram títulos pendentes: eles ainda não aconteceram de fato,
+  // então não devem "descontar" o saldo inicial de um período futuro. ----
+  const dailyOutReal = {}, dailyInReal = {};
+  payRows.filter(r => r.status === 'pago').forEach(r => { const d = dateKey(r.payment_date); dailyOutReal[d] = (dailyOutReal[d] || 0) + n(r.amount); });
+  recRows.filter(r => r.status === 'recebido').forEach(r => { const d = dateKey(r.receipt_date); dailyInReal[d] = (dailyInReal[d] || 0) + n(r.amount); });
+
   const saldoAtual = n((await query('SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions'))[0].v);
-  // saldoAtDate(D) = saldo real no fim do dia D, para qualquer D dentro de [minDate, maxDate].
+
+  // saldoAtDate(D) = projeção do saldo no fim do dia D, considerando também
+  // pendentes por vencimento — usada só na projeção do alerta (para frente).
   const allDays = [];
   for (let d = new Date(minDate + 'T00:00:00'); iso(d) <= maxDate; d.setDate(d.getDate() + 1)) allDays.push(iso(d));
   let cum = 0; const cumUpTo = {};
   allDays.forEach(d => { cum += (dailyInAll[d] || 0) - (dailyOutAll[d] || 0); cumUpTo[d] = cum; });
   const saldoAtDate = d => saldoAtual + (cumUpTo[d] ?? 0) - (cumUpTo[today] ?? 0);
 
-  const diaAntesDe = iso(new Date(new Date(de + 'T00:00:00').getTime() - 86400000));
-  const saldoInicial = allDays.includes(diaAntesDe) ? saldoAtDate(diaAntesDe) : saldoAtual;
+  // Saldo inicial do período: parte SEMPRE do saldo bancário real de hoje.
+  // Se o período começa no passado, reconstrói para trás usando só o que já
+  // foi realmente pago/recebido (fatos, não suposições). Se o período começa
+  // no futuro, o saldo inicial é simplesmente o saldo de hoje — sem assumir
+  // que pendências entre hoje e o início do período já foram resolvidas.
+  let saldoInicial = saldoAtual;
+  if (de <= today) {
+    let cumReal = 0;
+    const diasAteHoje = [];
+    for (let d2 = new Date(de + 'T00:00:00'); iso(d2) <= today; d2.setDate(d2.getDate() + 1)) diasAteHoje.push(iso(d2));
+    diasAteHoje.forEach(dstr => { cumReal += (dailyInReal[dstr] || 0) - (dailyOutReal[dstr] || 0); });
+    saldoInicial = saldoAtual - cumReal;
+  }
 
   // ---- Série filtrada (situação + centro de custo) para exibição ----
   const filtraPay = r => {
