@@ -984,69 +984,21 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
   const centroCusto = sanitize(req.query.centro_custo) || '';
   const situacao = ['pago', 'recebido', 'pendente', 'vencido'].includes(req.query.situacao) ? req.query.situacao : '';
 
-  const minDate = de < today ? de : today;
-  const maxDate = ate > today ? ate : today;
-
-  // Busca bruta de títulos que tenham QUALQUER data relevante (pagamento/recebimento
-  // realizado OU vencimento pendente) dentro da janela [minDate, maxDate]. O
-  // agrupamento por dia/semana/mês/ano e os filtros são aplicados em memória.
-  const payRows = await query(`
-    SELECT amount, due_date, payment_date, status, cost_center, category FROM erp_payables
-    WHERE (status='pago' AND payment_date BETWEEN $1 AND $2) OR (status='pendente' AND due_date BETWEEN $1 AND $2)`,
-    [minDate, maxDate]);
-  const recRows = await query(`
-    SELECT amount, due_date, receipt_date, status, category FROM erp_receivables
-    WHERE (status='recebido' AND receipt_date BETWEEN $1 AND $2) OR (status='pendente' AND due_date BETWEEN $1 AND $2)`,
-    [minDate, maxDate]);
+  // O saldo é o resultado acumulado de TODOS os lançamentos de Contas a Pagar e
+  // Contas a Receber já feitos no sistema — desde o primeiro registro — e não
+  // apenas do período selecionado. O filtro de período controla só o que é
+  // EXIBIDO na tabela; o saldo de cada linha continua sendo o valor real
+  // acumulado desde o início. Data efetiva de cada título: a de pagamento/
+  // recebimento se já realizado, ou a de vencimento se ainda pendente
+  // (isso projeta naturalmente pro futuro e também cobre vencidos ainda em aberto).
+  const payRows = await query(`SELECT amount, due_date, payment_date, status, cost_center, category FROM erp_payables`);
+  const recRows = await query(`SELECT amount, due_date, receipt_date, status, category FROM erp_receivables`);
 
   const dateKey = d => (d instanceof Date) ? iso(d) : String(d).slice(0, 10);
+  const effDatePay = r => dateKey(r.status === 'pago' ? r.payment_date : r.due_date);
+  const effDateRec = r => dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date);
 
-  // ---- Série diária SEM filtro (usada para projetar o ALERTA para frente,
-  // considerando também os títulos pendentes por vencimento) ----
-  const dailyOutAll = {}, dailyInAll = {};
-  payRows.forEach(r => { const d = dateKey(r.status === 'pago' ? r.payment_date : r.due_date); dailyOutAll[d] = (dailyOutAll[d] || 0) + n(r.amount); });
-  recRows.forEach(r => { const d = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date); dailyInAll[d] = (dailyInAll[d] || 0) + n(r.amount); });
-
-  // ---- Série diária SOMENTE do que já foi REALIZADO (pago/recebido) — usada
-  // para reconstruir o saldo real em datas passadas. Diferente da série acima,
-  // aqui não entram títulos pendentes: eles ainda não aconteceram de fato,
-  // então não devem "descontar" o saldo inicial de um período futuro. ----
-  const dailyOutReal = {}, dailyInReal = {};
-  payRows.filter(r => r.status === 'pago').forEach(r => { const d = dateKey(r.payment_date); dailyOutReal[d] = (dailyOutReal[d] || 0) + n(r.amount); });
-  recRows.filter(r => r.status === 'recebido').forEach(r => { const d = dateKey(r.receipt_date); dailyInReal[d] = (dailyInReal[d] || 0) + n(r.amount); });
-
-  // Saldo real = todo o histórico de recebimentos e pagamentos já realizados
-  // (não depende de ter passado pela Conciliação Bancária) + quaisquer
-  // lançamentos bancários independentes (ex.: saldo de abertura, ajustes)
-  // que não tenham sido gerados automaticamente por uma baixa, para não contar em dobro.
-  const totalRecebidoHist = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='recebido'`))[0].v);
-  const totalPagoHist = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago'`))[0].v);
-  const ajustesBancoManuais = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE auto_generated=false`))[0].v);
-  const saldoAtual = totalRecebidoHist - totalPagoHist + ajustesBancoManuais;
-
-  // saldoAtDate(D) = projeção do saldo no fim do dia D, considerando também
-  // pendentes por vencimento — usada só na projeção do alerta (para frente).
-  const allDays = [];
-  for (let d = new Date(minDate + 'T00:00:00'); iso(d) <= maxDate; d.setDate(d.getDate() + 1)) allDays.push(iso(d));
-  let cum = 0; const cumUpTo = {};
-  allDays.forEach(d => { cum += (dailyInAll[d] || 0) - (dailyOutAll[d] || 0); cumUpTo[d] = cum; });
-  const saldoAtDate = d => saldoAtual + (cumUpTo[d] ?? 0) - (cumUpTo[today] ?? 0);
-
-  // Saldo inicial do período: parte SEMPRE do saldo bancário real de hoje.
-  // Se o período começa no passado, reconstrói para trás usando só o que já
-  // foi realmente pago/recebido (fatos, não suposições). Se o período começa
-  // no futuro, o saldo inicial é simplesmente o saldo de hoje — sem assumir
-  // que pendências entre hoje e o início do período já foram resolvidas.
-  let saldoInicial = saldoAtual;
-  if (de <= today) {
-    let cumReal = 0;
-    const diasAteHoje = [];
-    for (let d2 = new Date(de + 'T00:00:00'); iso(d2) <= today; d2.setDate(d2.getDate() + 1)) diasAteHoje.push(iso(d2));
-    diasAteHoje.forEach(dstr => { cumReal += (dailyInReal[dstr] || 0) - (dailyOutReal[dstr] || 0); });
-    saldoInicial = saldoAtual - cumReal;
-  }
-
-  // ---- Série filtrada (situação + centro de custo) para exibição ----
+  // ---- Filtros de situação / centro de custo (afetam o que entra no ledger exibido) ----
   const filtraPay = r => {
     if (centroCusto && (r.cost_center || '') !== centroCusto) return false;
     if (!situacao) return true;
@@ -1065,9 +1017,38 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
     return true;
   };
 
+  const payFiltered = payRows.filter(filtraPay);
+  const recFiltered = recRows.filter(filtraRec);
+
+  // ---- Ledger diário único, desde o primeiro lançamento existente ----
   const dailyOut = {}, dailyIn = {};
-  payRows.filter(filtraPay).forEach(r => { const d = dateKey(r.status === 'pago' ? r.payment_date : r.due_date); dailyOut[d] = (dailyOut[d] || 0) + n(r.amount); });
-  recRows.filter(filtraRec).forEach(r => { const d = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date); dailyIn[d] = (dailyIn[d] || 0) + n(r.amount); });
+  payFiltered.forEach(r => { const d = effDatePay(r); dailyOut[d] = (dailyOut[d] || 0) + n(r.amount); });
+  recFiltered.forEach(r => { const d = effDateRec(r); dailyIn[d] = (dailyIn[d] || 0) + n(r.amount); });
+
+  const todasAsDatas = [...Object.keys(dailyIn), ...Object.keys(dailyOut)].sort();
+  const primeiraData = todasAsDatas.length ? todasAsDatas[0] : today;
+  // Horizonte do ledger: do primeiro lançamento até o maior entre `ate` e hoje+90 dias
+  // (garante que o alerta enxergue pelo menos 90 dias à frente, mesmo se o filtro for menor).
+  const horizonteAlerta = iso(new Date(todayD.getTime() + 90 * 86400000));
+  const fimLedger = [ate, horizonteAlerta].sort().pop();
+  const inicioLedger = [primeiraData, de].sort()[0];
+
+  let cum = 0;
+  const cumUpTo = {};
+  for (let d = new Date(inicioLedger + 'T00:00:00'); iso(d) <= fimLedger; d.setDate(d.getDate() + 1)) {
+    const dstr = iso(d);
+    cum += (dailyIn[dstr] || 0) - (dailyOut[dstr] || 0);
+    cumUpTo[dstr] = cum;
+  }
+  const saldoNaData = dstr => {
+    if (dstr in cumUpTo) return cumUpTo[dstr];
+    // fora do intervalo calculado (antes do primeiro lançamento): saldo é zero.
+    return dstr < inicioLedger ? 0 : cum;
+  };
+  const diaAnterior = dstr => iso(new Date(new Date(dstr + 'T00:00:00').getTime() - 86400000));
+
+  const saldoInicial = saldoNaData(diaAnterior(de));
+  const saldoAtual = saldoNaData(today);
 
   // ---- Agrupa em buckets conforme a granularidade escolhida, dentro de [de, ate] ----
   const bucketKey = dstr => {
@@ -1092,40 +1073,45 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
   const bucketsMap = new Map();
   diasNoPeriodo.forEach(dstr => {
     const { key, label } = bucketKey(dstr);
-    if (!bucketsMap.has(key)) bucketsMap.set(key, { key, label, entradas: 0, saidas: 0 });
+    if (!bucketsMap.has(key)) bucketsMap.set(key, { key, label, entradas: 0, saidas: 0, ultimoDia: dstr });
     const b = bucketsMap.get(key);
     b.entradas += (dailyIn[dstr] || 0);
     b.saidas += (dailyOut[dstr] || 0);
+    b.ultimoDia = dstr; // como percorremos em ordem, o último atribuído é o último dia do bucket
   });
-  let running = saldoInicial;
-  const buckets = [...bucketsMap.values()].sort((a, b) => a.key.localeCompare(b.key)).map(b => {
-    running += b.entradas - b.saidas;
-    return { ...b, saldo: running };
-  });
+  const buckets = [...bucketsMap.values()].sort((a, b) => a.key.localeCompare(b.key)).map(b => ({
+    key: b.key, label: b.label, entradas: b.entradas, saidas: b.saidas,
+    saldo: saldoNaData(b.ultimoDia)
+  }));
 
   const totalEntradas = buckets.reduce((s, b) => s + b.entradas, 0);
   const totalSaidas = buckets.reduce((s, b) => s + b.saidas, 0);
 
-  // ---- Saldo previsto: saldo atual considerando TODOS os pendentes (qualquer data) ----
+  // ---- Saldo previsto: saldo atual + TODOS os pendentes (qualquer data, sem filtro) ----
   const totalPendPagar = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pendente'`))[0].v);
   const totalPendReceber = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='pendente'`))[0].v);
   const saldoPrevisto = saldoAtual + totalPendReceber - totalPendPagar;
 
-  // ---- Alerta de saldo negativo (projeção diária real, sem filtro, de hoje até `ate` ou +90 dias) ----
-  const horizonte = ate > today ? ate : iso(new Date(todayD.getTime() + 90 * 86400000));
-  const diasAlerta = [];
-  for (let d = new Date(todayD); iso(d) <= horizonte; d.setDate(d.getDate() + 1)) diasAlerta.push(iso(d));
-  let diaCritico = null, necessidade = 0, minRun = saldoAtual;
-  if (diasAlerta.length) {
-    // Reaproveita cumUpTo se a janela já cobre o horizonte; senão calcula localmente.
-    let r2 = saldoAtual;
-    diasAlerta.forEach(d => {
-      if (d !== today) r2 += (dailyInAll[d] || 0) - (dailyOutAll[d] || 0);
-      if (r2 < minRun) minRun = r2;
-      if (r2 < 0 && !diaCritico) diaCritico = d;
-    });
-    necessidade = minRun < 0 ? Math.abs(minRun) : 0;
+  // ---- Alerta de saldo negativo: usa o ledger completo (sem filtro de situação/
+  // centro de custo, para o alerta sempre refletir o risco real), de hoje até o horizonte ----
+  const dailyOutAll = {}, dailyInAll = {};
+  payRows.forEach(r => { const d = effDatePay(r); dailyOutAll[d] = (dailyOutAll[d] || 0) + n(r.amount); });
+  recRows.forEach(r => { const d = effDateRec(r); dailyInAll[d] = (dailyInAll[d] || 0) + n(r.amount); });
+  const inicioLedgerAll = [primeiraData, today].sort()[0];
+  let cumAll = 0; const cumUpToAll = {};
+  for (let d = new Date(inicioLedgerAll + 'T00:00:00'); iso(d) <= horizonteAlerta; d.setDate(d.getDate() + 1)) {
+    const dstr = iso(d);
+    cumAll += (dailyInAll[dstr] || 0) - (dailyOutAll[dstr] || 0);
+    cumUpToAll[dstr] = cumAll;
   }
+  let diaCritico = null, minRun = cumUpToAll[today] ?? 0;
+  for (let d = new Date(todayD); iso(d) <= horizonteAlerta; d.setDate(d.getDate() + 1)) {
+    const dstr = iso(d);
+    const v = cumUpToAll[dstr] ?? minRun;
+    if (v < minRun) minRun = v;
+    if (v < 0 && !diaCritico) diaCritico = dstr;
+  }
+  const necessidade = minRun < 0 ? Math.abs(minRun) : 0;
 
   // ---- Contas a pagar / receber futuras (próximos títulos pendentes) ----
   const pagarFuturasQ = centroCusto
@@ -1136,21 +1122,12 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
   const receberFuturasQ = await query(`SELECT description, amount, due_date, client_name FROM erp_receivables
     WHERE status='pendente' ORDER BY due_date LIMIT 20`);
 
-  // ---- Distribuição por categoria dentro do período filtrado ----
-  // Usa os MESMOS registros já filtrados por situação/centro de custo acima,
-  // restritos à data efetiva dentro de [de, ate] (a janela de busca é mais
-  // ampla só para permitir a ancoragem do saldo real, ver acima).
+  // ---- Distribuição por categoria dentro do período filtrado (mesmos registros do ledger exibido) ----
   const dentroPeriodo = ds => ds >= de && ds <= ate;
   const despCatMap = {};
-  payRows.filter(filtraPay).forEach(r => {
-    const ds = dateKey(r.status === 'pago' ? r.payment_date : r.due_date);
-    if (dentroPeriodo(ds)) despCatMap[r.category] = (despCatMap[r.category] || 0) + n(r.amount);
-  });
+  payFiltered.forEach(r => { const ds = effDatePay(r); if (dentroPeriodo(ds)) despCatMap[r.category] = (despCatMap[r.category] || 0) + n(r.amount); });
   const recCatMap = {};
-  recRows.filter(filtraRec).forEach(r => {
-    const ds = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date);
-    if (dentroPeriodo(ds)) recCatMap[r.category] = (recCatMap[r.category] || 0) + n(r.amount);
-  });
+  recFiltered.forEach(r => { const ds = effDateRec(r); if (dentroPeriodo(ds)) recCatMap[r.category] = (recCatMap[r.category] || 0) + n(r.amount); });
   const despCatRows = Object.entries(despCatMap).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
   const recCatRows = Object.entries(recCatMap).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
 
@@ -1158,7 +1135,7 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
     de, ate, granularidade, centroCusto, situacao,
     resumo: { saldoInicial, totalEntradas, totalSaidas, saldoAtual, saldoPrevisto },
     buckets,
-    alerta: { diaCritico, necessidade, horizonte },
+    alerta: { diaCritico, necessidade, horizonte: horizonteAlerta },
     futuras: {
       pagar: pagarFuturasQ.map(r => ({ ...r, amount: n(r.amount) })),
       receber: receberFuturasQ.map(r => ({ ...r, amount: n(r.amount) }))
