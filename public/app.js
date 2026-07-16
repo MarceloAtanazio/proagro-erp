@@ -715,6 +715,7 @@ function formPagar(r, sups) {
       ${fldSel('p-pm', 'Forma de pagamento', [{ v: '', t: '—' }, ...Object.entries(PM_LABELS).map(([v, t]) => ({ v, t }))], r.payment_method || '')}
       <div id="p-pix-wrap" style="display:${r.payment_method === 'pix' ? 'block' : 'none'}">
         ${fld('p-pix', 'Chave PIX *', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
+        <small style="color:var(--muted); display:block; margin-top:-8px">Preenchida automaticamente com a chave cadastrada no fornecedor — pode editar se for diferente.</small>
       </div>
     </div>
     ${fld('p-notes', 'Observações', 'text', r.notes || '')}`,
@@ -731,7 +732,19 @@ function formPagar(r, sups) {
           closeModal(); toast(isEdit ? 'Título atualizado.' : 'Título criado.'); renderPagar();
         } catch (e) { modalError(e.message); }
      }}]);
-  $('#p-pm').onchange = () => { $('#p-pix-wrap').style.display = $('#p-pm').value === 'pix' ? 'block' : 'none'; };
+  $('#p-pm').onchange = () => {
+    $('#p-pix-wrap').style.display = $('#p-pm').value === 'pix' ? 'block' : 'none';
+    if ($('#p-pm').value === 'pix') {
+      const sup = sups.find(s => String(s.id) === $('#p-sup').value);
+      if (sup && sup.pix_key) $('#p-pix').value = sup.pix_key;
+    }
+  };
+  $('#p-sup').onchange = () => {
+    if ($('#p-pm').value === 'pix') {
+      const sup = sups.find(s => String(s.id) === $('#p-sup').value);
+      $('#p-pix').value = (sup && sup.pix_key) || '';
+    }
+  };
 }
 
 // ============================================================
@@ -978,6 +991,7 @@ function formFornecedor(r) {
       ${fld('s-email', 'E-mail', 'email', r.email || '')}
       ${fld('s-terms', 'Condição de pagamento', 'text', r.payment_terms || '', 'placeholder="30 dias"')}
     </div>
+    ${fld('s-pix', 'Chave PIX', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
     ${fldSel('s-status', 'Status', [{ v: 'ativo', t: 'Ativo' }, { v: 'inativo', t: 'Inativo' }], r.status || 'ativo')}
     ${fld('s-notes', 'Observações', 'text', r.notes || '')}`,
     [{ label: 'Cancelar', onClick: closeModal },
@@ -985,7 +999,7 @@ function formFornecedor(r) {
         const body = {
           name: $('#s-name').value, cnpj: $('#s-cnpj').value, category: $('#s-cat').value,
           contact_name: $('#s-contact').value, phone: $('#s-phone').value, email: $('#s-email').value,
-          payment_terms: $('#s-terms').value, status: $('#s-status').value, notes: $('#s-notes').value
+          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, status: $('#s-status').value, notes: $('#s-notes').value
         };
         try {
           if (isEdit) await api('/api/suppliers/' + r.id, { method: 'PUT', body });
