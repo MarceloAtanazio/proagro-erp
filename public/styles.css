@@ -142,7 +142,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
 .toolbar .spacer { flex: 1; }
-.toolbar input[type="search"], .toolbar select, .toolbar input[type="number"] {
+.toolbar input[type="search"], .toolbar select, .toolbar input[type="number"], .toolbar input[type="date"] {
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fff; min-width: 160px;
 }
 
