@@ -968,38 +968,176 @@ app.get('/api/reports/cashflow/:year', requireAuth, requireViewAny(['dashboard',
 
 // Projeção diária do saldo de caixa até o fim do mês corrente — alimenta o
 // alerta de "até quando temos saldo" e "quanto falta para fechar o mês" em Fluxo de Caixa.
-app.get('/api/reports/cashflow-alerta', requireAuth, requireViewAny(['dashboard', 'fluxo']), h(async (req, res) => {
-  const todayD = new Date();
+// ------------------------------------------------------------
+// Fluxo de Caixa — endpoint único e completo:
+// resumo financeiro, fluxo por período (dia/semana/mês/ano), projeção,
+// alertas de saldo negativo e distribuição por categoria.
+// ------------------------------------------------------------
+app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'fluxo']), h(async (req, res) => {
   const iso = d => d.toISOString().slice(0, 10);
+  const todayD = new Date(); todayD.setHours(0, 0, 0, 0);
   const today = iso(todayD);
-  const monthEnd = iso(new Date(todayD.getFullYear(), todayD.getMonth() + 1, 0));
 
-  const saldoBanco = n((await query('SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions'))[0].v);
-  const saidasDia = await query(`SELECT due_date, SUM(amount) AS total FROM erp_payables
-    WHERE status='pendente' AND due_date BETWEEN $1 AND $2 GROUP BY due_date`, [today, monthEnd]);
-  const entradasDia = await query(`SELECT due_date, SUM(amount) AS total FROM erp_receivables
-    WHERE status='pendente' AND due_date BETWEEN $1 AND $2 GROUP BY due_date`, [today, monthEnd]);
+  const de = isDate(req.query.de) ? req.query.de : iso(new Date(todayD.getFullYear(), todayD.getMonth(), 1));
+  const ate = isDate(req.query.ate) ? req.query.ate : iso(new Date(todayD.getFullYear(), todayD.getMonth() + 1, 0));
+  const granularidade = ['dia', 'semana', 'mes', 'ano'].includes(req.query.granularidade) ? req.query.granularidade : 'dia';
+  const centroCusto = sanitize(req.query.centro_custo) || '';
+  const situacao = ['pago', 'recebido', 'pendente', 'vencido'].includes(req.query.situacao) ? req.query.situacao : '';
 
-  const dias = [];
-  let running = saldoBanco, minSaldo = saldoBanco, minData = today;
-  for (let d = new Date(todayD); iso(d) <= monthEnd; d.setDate(d.getDate() + 1)) {
-    const dateStr = iso(d);
-    if (dateStr !== today) {
-      running += n((entradasDia.find(r => r.due_date === dateStr) || {}).total)
-               - n((saidasDia.find(r => r.due_date === dateStr) || {}).total);
+  const minDate = de < today ? de : today;
+  const maxDate = ate > today ? ate : today;
+
+  // Busca bruta de títulos que tenham QUALQUER data relevante (pagamento/recebimento
+  // realizado OU vencimento pendente) dentro da janela [minDate, maxDate]. O
+  // agrupamento por dia/semana/mês/ano e os filtros são aplicados em memória.
+  const payRows = await query(`
+    SELECT amount, due_date, payment_date, status, cost_center, category FROM erp_payables
+    WHERE (status='pago' AND payment_date BETWEEN $1 AND $2) OR (status='pendente' AND due_date BETWEEN $1 AND $2)`,
+    [minDate, maxDate]);
+  const recRows = await query(`
+    SELECT amount, due_date, receipt_date, status, category FROM erp_receivables
+    WHERE (status='recebido' AND receipt_date BETWEEN $1 AND $2) OR (status='pendente' AND due_date BETWEEN $1 AND $2)`,
+    [minDate, maxDate]);
+
+  const dateKey = d => (d instanceof Date) ? iso(d) : String(d).slice(0, 10);
+
+  // ---- Série diária SEM filtro (usada só para ancorar o saldo real de hoje) ----
+  const dailyOutAll = {}, dailyInAll = {};
+  payRows.forEach(r => { const d = dateKey(r.status === 'pago' ? r.payment_date : r.due_date); dailyOutAll[d] = (dailyOutAll[d] || 0) + n(r.amount); });
+  recRows.forEach(r => { const d = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date); dailyInAll[d] = (dailyInAll[d] || 0) + n(r.amount); });
+
+  const saldoAtual = n((await query('SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions'))[0].v);
+  // saldoAtDate(D) = saldo real no fim do dia D, para qualquer D dentro de [minDate, maxDate].
+  const allDays = [];
+  for (let d = new Date(minDate + 'T00:00:00'); iso(d) <= maxDate; d.setDate(d.getDate() + 1)) allDays.push(iso(d));
+  let cum = 0; const cumUpTo = {};
+  allDays.forEach(d => { cum += (dailyInAll[d] || 0) - (dailyOutAll[d] || 0); cumUpTo[d] = cum; });
+  const saldoAtDate = d => saldoAtual + (cumUpTo[d] ?? 0) - (cumUpTo[today] ?? 0);
+
+  const diaAntesDe = iso(new Date(new Date(de + 'T00:00:00').getTime() - 86400000));
+  const saldoInicial = allDays.includes(diaAntesDe) ? saldoAtDate(diaAntesDe) : saldoAtual;
+
+  // ---- Série filtrada (situação + centro de custo) para exibição ----
+  const filtraPay = r => {
+    if (centroCusto && (r.cost_center || '') !== centroCusto) return false;
+    if (!situacao) return true;
+    if (situacao === 'pago') return r.status === 'pago';
+    if (situacao === 'recebido') return false;
+    if (situacao === 'pendente') return r.status === 'pendente' && r.due_date >= today;
+    if (situacao === 'vencido') return r.status === 'pendente' && r.due_date < today;
+    return true;
+  };
+  const filtraRec = r => {
+    if (!situacao) return true;
+    if (situacao === 'recebido') return r.status === 'recebido';
+    if (situacao === 'pago') return false;
+    if (situacao === 'pendente') return r.status === 'pendente' && r.due_date >= today;
+    if (situacao === 'vencido') return r.status === 'pendente' && r.due_date < today;
+    return true;
+  };
+
+  const dailyOut = {}, dailyIn = {};
+  payRows.filter(filtraPay).forEach(r => { const d = dateKey(r.status === 'pago' ? r.payment_date : r.due_date); dailyOut[d] = (dailyOut[d] || 0) + n(r.amount); });
+  recRows.filter(filtraRec).forEach(r => { const d = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date); dailyIn[d] = (dailyIn[d] || 0) + n(r.amount); });
+
+  // ---- Agrupa em buckets conforme a granularidade escolhida, dentro de [de, ate] ----
+  const bucketKey = dstr => {
+    const d = new Date(dstr + 'T00:00:00');
+    if (granularidade === 'dia') return { key: dstr, label: brDateBR(dstr) };
+    if (granularidade === 'semana') {
+      const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      const key = iso(monday);
+      return { key, label: 'Sem. ' + brDateBR(key) };
     }
-    if (running < minSaldo) { minSaldo = running; minData = dateStr; }
-    dias.push({ date: dateStr, saldo: running });
+    if (granularidade === 'mes') {
+      const key = dstr.slice(0, 7);
+      return { key, label: MES_ABREV[d.getMonth()] + '/' + d.getFullYear() };
+    }
+    const key = String(d.getFullYear());
+    return { key, label: key };
+  };
+
+  const diasNoPeriodo = [];
+  for (let d = new Date(de + 'T00:00:00'); iso(d) <= ate; d.setDate(d.getDate() + 1)) diasNoPeriodo.push(iso(d));
+
+  const bucketsMap = new Map();
+  diasNoPeriodo.forEach(dstr => {
+    const { key, label } = bucketKey(dstr);
+    if (!bucketsMap.has(key)) bucketsMap.set(key, { key, label, entradas: 0, saidas: 0 });
+    const b = bucketsMap.get(key);
+    b.entradas += (dailyIn[dstr] || 0);
+    b.saidas += (dailyOut[dstr] || 0);
+  });
+  let running = saldoInicial;
+  const buckets = [...bucketsMap.values()].sort((a, b) => a.key.localeCompare(b.key)).map(b => {
+    running += b.entradas - b.saidas;
+    return { ...b, saldo: running };
+  });
+
+  const totalEntradas = buckets.reduce((s, b) => s + b.entradas, 0);
+  const totalSaidas = buckets.reduce((s, b) => s + b.saidas, 0);
+
+  // ---- Saldo previsto: saldo atual considerando TODOS os pendentes (qualquer data) ----
+  const totalPendPagar = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pendente'`))[0].v);
+  const totalPendReceber = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='pendente'`))[0].v);
+  const saldoPrevisto = saldoAtual + totalPendReceber - totalPendPagar;
+
+  // ---- Alerta de saldo negativo (projeção diária real, sem filtro, de hoje até `ate` ou +90 dias) ----
+  const horizonte = ate > today ? ate : iso(new Date(todayD.getTime() + 90 * 86400000));
+  const diasAlerta = [];
+  for (let d = new Date(todayD); iso(d) <= horizonte; d.setDate(d.getDate() + 1)) diasAlerta.push(iso(d));
+  let diaCritico = null, necessidade = 0, minRun = saldoAtual;
+  if (diasAlerta.length) {
+    // Reaproveita cumUpTo se a janela já cobre o horizonte; senão calcula localmente.
+    let r2 = saldoAtual;
+    diasAlerta.forEach(d => {
+      if (d !== today) r2 += (dailyInAll[d] || 0) - (dailyOutAll[d] || 0);
+      if (r2 < minRun) minRun = r2;
+      if (r2 < 0 && !diaCritico) diaCritico = d;
+    });
+    necessidade = minRun < 0 ? Math.abs(minRun) : 0;
   }
-  const diaCritico = dias.find(d => d.saldo < 0)?.date || null;
+
+  // ---- Contas a pagar / receber futuras (próximos títulos pendentes) ----
+  const pagarFuturasQ = centroCusto
+    ? await query(`SELECT p.description, p.amount, p.due_date, p.cost_center, s.name AS party FROM erp_payables p
+        LEFT JOIN erp_suppliers s ON s.id=p.supplier_id WHERE p.status='pendente' AND p.cost_center=$1 ORDER BY p.due_date LIMIT 20`, [centroCusto])
+    : await query(`SELECT p.description, p.amount, p.due_date, p.cost_center, s.name AS party FROM erp_payables p
+        LEFT JOIN erp_suppliers s ON s.id=p.supplier_id WHERE p.status='pendente' ORDER BY p.due_date LIMIT 20`);
+  const receberFuturasQ = await query(`SELECT description, amount, due_date, client_name FROM erp_receivables
+    WHERE status='pendente' ORDER BY due_date LIMIT 20`);
+
+  // ---- Distribuição por categoria dentro do período filtrado ----
+  // Usa os MESMOS registros já filtrados por situação/centro de custo acima,
+  // restritos à data efetiva dentro de [de, ate] (a janela de busca é mais
+  // ampla só para permitir a ancoragem do saldo real, ver acima).
+  const dentroPeriodo = ds => ds >= de && ds <= ate;
+  const despCatMap = {};
+  payRows.filter(filtraPay).forEach(r => {
+    const ds = dateKey(r.status === 'pago' ? r.payment_date : r.due_date);
+    if (dentroPeriodo(ds)) despCatMap[r.category] = (despCatMap[r.category] || 0) + n(r.amount);
+  });
+  const recCatMap = {};
+  recRows.filter(filtraRec).forEach(r => {
+    const ds = dateKey(r.status === 'recebido' ? r.receipt_date : r.due_date);
+    if (dentroPeriodo(ds)) recCatMap[r.category] = (recCatMap[r.category] || 0) + n(r.amount);
+  });
+  const despCatRows = Object.entries(despCatMap).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
+  const recCatRows = Object.entries(recCatMap).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
 
   res.json({
-    saldoAtual: saldoBanco,
-    monthEnd,
-    diaCritico,
-    necessidade: minSaldo < 0 ? Math.abs(minSaldo) : 0,
-    diaMinimo: minData,
-    saldoFimMes: dias[dias.length - 1].saldo
+    de, ate, granularidade, centroCusto, situacao,
+    resumo: { saldoInicial, totalEntradas, totalSaidas, saldoAtual, saldoPrevisto },
+    buckets,
+    alerta: { diaCritico, necessidade, horizonte },
+    futuras: {
+      pagar: pagarFuturasQ.map(r => ({ ...r, amount: n(r.amount) })),
+      receber: receberFuturasQ.map(r => ({ ...r, amount: n(r.amount) }))
+    },
+    categorias: {
+      despesas: despCatRows.map(r => ({ category: r.category, total: n(r.total) })),
+      receitas: recCatRows.map(r => ({ category: r.category, total: n(r.total) }))
+    }
   });
 }));
 
