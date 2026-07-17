@@ -2160,11 +2160,12 @@ async function renderConfig() {
     </div>`;
 
   const drawLog = rows => {
-    $('#al-list').innerHTML = rows.length ? `<div class="table-wrap"><table>
+    $('#al-list').innerHTML = rows.length ? `<div class="table-wrap"><table class="tbl-audit">
+      <colgroup><col class="c-audit-data"><col class="c-audit-user"><col class="c-audit-acao"></colgroup>
       <thead><tr><th>Data/Hora</th><th>Usuário</th><th>Ação</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td style="white-space:nowrap">${new Date(r.created_at).toLocaleString('pt-BR')}</td>
-        <td>${esc(r.user_name)}</td>
+        <td style="white-space:nowrap">${esc(r.user_name)}</td>
         <td>${esc(r.action)}</td>
       </tr>`).join('')}</tbody>
     </table></div>` : '<div class="empty">Nenhum registro encontrado para os filtros aplicados.</div>';
