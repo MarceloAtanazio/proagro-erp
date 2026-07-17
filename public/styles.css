@@ -384,3 +384,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
 .tbl-pagar td.actions .btn { margin: 2px 4px 2px 0; }
+
+/* ===== Botão de anexos — largura fixa para não quebrar o layout da linha,
+   com ou sem contagem exibida ===== */
+.att-btn { min-width: 44px; text-align: center; justify-content: center; }
