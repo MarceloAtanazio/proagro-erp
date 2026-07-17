@@ -373,15 +373,16 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 
 /* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) ===== */
 .tbl-pagar { table-layout: fixed; }
-.tbl-pagar col.c-venc { width: 8%; }
-.tbl-pagar col.c-desc { width: 17%; }
-.tbl-pagar col.c-forn { width: 17%; }
-.tbl-pagar col.c-cat { width: 10%; }
-.tbl-pagar col.c-cc { width: 10%; }
-.tbl-pagar col.c-pm { width: 10%; }
+.tbl-pagar col.c-id { width: 5%; }
+.tbl-pagar col.c-venc { width: 7%; }
+.tbl-pagar col.c-desc { width: 16%; }
+.tbl-pagar col.c-forn { width: 16%; }
+.tbl-pagar col.c-cat { width: 9%; }
+.tbl-pagar col.c-cc { width: 9%; }
+.tbl-pagar col.c-pm { width: 9%; }
 .tbl-pagar col.c-val { width: 8%; }
 .tbl-pagar col.c-status { width: 7%; }
-.tbl-pagar col.c-acoes { width: 13%; }
+.tbl-pagar col.c-acoes { width: 14%; }
 .tbl-pagar td { white-space: normal; word-break: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
