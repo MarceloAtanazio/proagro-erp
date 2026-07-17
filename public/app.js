@@ -599,10 +599,7 @@ function chartOpts(extra) {
 // CONTAS A PAGAR
 // ============================================================
 async function renderPagar() {
-  const [rows, sups, counts] = await Promise.all([
-    api('/api/payables'), api('/api/suppliers'),
-    api('/api/attachments/count/payable').catch(() => ({}))
-  ]);
+  const [rows, sups] = await Promise.all([api('/api/payables'), api('/api/suppliers')]);
   const c = $('#content');
   const FKEY = 'filters-pagar';
   const saved = loadFilters(FKEY);
@@ -670,7 +667,7 @@ async function renderPagar() {
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente' ? `<button class="btn sm primary" data-pay="${r.id}">Baixar</button>` : `<button class="btn sm" data-unpay="${r.id}">Estornar</button>`}
-            <button class="btn sm" data-att="payable:${r.id}">📎${counts[r.id] ? ' ' + counts[r.id] : ''}</button>
+            <button class="btn sm att-btn" data-att="payable:${r.id}">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
@@ -775,10 +772,7 @@ function formPagar(r, sups) {
 // CONTAS A RECEBER
 // ============================================================
 async function renderReceber() {
-  const [rows, counts] = await Promise.all([
-    api('/api/receivables'),
-    api('/api/attachments/count/receivable').catch(() => ({}))
-  ]);
+  const rows = await api('/api/receivables');
   const c = $('#content');
   const FKEY = 'filters-receber';
   const saved = loadFilters(FKEY);
@@ -830,7 +824,7 @@ async function renderReceber() {
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente' ? `<button class="btn sm primary" data-rec="${r.id}">Receber</button>` : `<button class="btn sm" data-unrec="${r.id}">Estornar</button>`}
-            <button class="btn sm" data-att="receivable:${r.id}">📎${counts[r.id] ? ' ' + counts[r.id] : ''}</button>
+            <button class="btn sm att-btn" data-att="receivable:${r.id}">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
@@ -2033,10 +2027,11 @@ async function openAttachmentFile(id) {
   const win = window.open('', '_blank');
   try {
     const r = await api(`/api/attachments/file/${id}`);
-    const blob = b64toBlob(r.data, r.mime_type);
-    const url = URL.createObjectURL(blob);
-    if (win) win.location.href = url;
-    else { const a = document.createElement('a'); a.href = url; a.download = r.file_name; a.click(); }
+    // Data URI em vez de Blob URL: evita falhas de abrir em outra janela que
+    // algumas versões de navegador apresentam com URLs blob: entre documentos.
+    const dataUrl = `data:${r.mime_type};base64,${r.data}`;
+    if (win) win.location.href = dataUrl;
+    else { const a = document.createElement('a'); a.href = dataUrl; a.download = r.file_name; a.click(); }
   } catch (e) {
     if (win) win.close();
     toast(e.message || 'Não foi possível abrir o anexo.');
