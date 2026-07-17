@@ -934,10 +934,8 @@ async function renderFluxo() {
       <button class="btn" id="fx-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="fx-csv">CSV</button>
-      <button class="btn" id="fx-xlsx">Excel Completo</button>
-      <button class="btn" id="fx-xlsx-resumo">Excel Resumido</button>
-      <button class="btn" id="fx-pdf">PDF Completo</button>
-      <button class="btn" id="fx-pdf-resumo">PDF Resumido</button>
+      <button class="btn" id="fx-xlsx">Excel</button>
+      <button class="btn" id="fx-pdf">PDF</button>
     </div>
 
     ${d.alerta.diaCritico ? `
@@ -1022,16 +1020,39 @@ async function renderFluxo() {
     return api('/api/reports/fluxo-caixa?' + p.toString());
   };
 
-  $('#fx-csv').onclick = () => exportCSV('fluxo_de_caixa',
+  const exportCSVCompleto = () => exportCSV('fluxo_de_caixa_completo',
     ['Data', 'Entradas', 'Saidas', 'Saldo'],
     d.buckets.map(b => [b.label, String(b.entradas).replace('.', ','), String(b.saidas).replace('.', ','), String(b.saldo).replace('.', ',')]));
+
+  const exportCSVResumo = async () => {
+    try {
+      const dm = await fetchResumoMensal();
+      const alertaTxt = dm.alerta.diaCritico
+        ? `Alerta: saldo fica negativo a partir de ${brDate(dm.alerta.diaCritico)} - aporte necessario de ${brl(dm.alerta.necessidade)} ate ${brDate(dm.alerta.horizonte)}.`
+        : `Sem risco de saldo negativo ate ${brDate(dm.alerta.horizonte)}.`;
+      const rows = [
+        [`Periodo: ${brDate(dm.de)} a ${brDate(dm.ate)}`],
+        [alertaTxt],
+        [],
+        ['Saldo inicial', String(dm.resumo.saldoInicial).replace('.', ',')],
+        ['Total de entradas', String(dm.resumo.totalEntradas).replace('.', ',')],
+        ['Total de saidas', String(dm.resumo.totalSaidas).replace('.', ',')],
+        ['Saldo atual', String(dm.resumo.saldoAtual).replace('.', ',')],
+        ['Saldo previsto', String(dm.resumo.saldoPrevisto).replace('.', ',')],
+        [],
+        ['Mes', 'Entradas', 'Saidas', 'Saldo'],
+        ...dm.buckets.map(b => [b.label, String(b.entradas).replace('.', ','), String(b.saidas).replace('.', ','), String(b.saldo).replace('.', ',')])
+      ];
+      exportCSV('fluxo_de_caixa_resumido', ['Relatorio de Fluxo de Caixa - Resumo Mensal'], rows);
+    } catch (e) { toast(e.message || 'Não foi possível gerar o CSV resumido.'); }
+  };
 
   // Formato numérico nativo do Excel: positivo em preto, negativo em vermelho
   // (usa o próprio motor de formatação do Excel — funciona mesmo na versão
   // gratuita da biblioteca, que não tem suporte a cor de célula customizada).
   const XLSX_MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
 
-  $('#fx-xlsx').onclick = () => {
+  const exportXLSXCompleto = () => {
     if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
     const wsData = [['Data', 'Entradas', 'Saídas', 'Saldo'], ...d.buckets.map(b => [b.label, b.entradas, b.saidas, b.saldo])];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -1044,7 +1065,7 @@ async function renderFluxo() {
     toast('Excel exportado.');
   };
 
-  $('#fx-xlsx-resumo').onclick = async () => {
+  const exportXLSXResumo = async () => {
     if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
     try {
       const dm = await fetchResumoMensal();
@@ -1075,11 +1096,26 @@ async function renderFluxo() {
     } catch (e) { toast(e.message || 'Não foi possível gerar o Excel resumido.'); }
   };
 
-  $('#fx-pdf').onclick = () => exportFluxoPDF(d);
-  $('#fx-pdf-resumo').onclick = async () => {
+  const exportPDFCompletoFn = () => exportFluxoPDF(d);
+  const exportPDFResumoFn = async () => {
     try { exportFluxoPDFResumo(await fetchResumoMensal()); }
     catch (e) { toast(e.message || 'Não foi possível gerar o PDF resumido.'); }
   };
+
+  // Um único botão por formato — pergunta Completo/Resumido num modal antes de exportar.
+  const askCompletoOuResumido = (formato, onCompleto, onResumido) => {
+    openModal(`Exportar ${formato}`,
+      `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o relatório <strong>completo</strong> (detalhado conforme a granularidade escolhida) ou o <strong>resumido</strong> (visão mensal com os alertas em destaque)?</p>`,
+      [
+        { label: 'Cancelar', onClick: closeModal },
+        { label: 'Resumido', onClick: () => { closeModal(); onResumido(); } },
+        { label: 'Completo', cls: 'primary', onClick: () => { closeModal(); onCompleto(); } }
+      ]);
+  };
+
+  $('#fx-csv').onclick = () => askCompletoOuResumido('CSV', exportCSVCompleto, exportCSVResumo);
+  $('#fx-xlsx').onclick = () => askCompletoOuResumido('Excel', exportXLSXCompleto, exportXLSXResumo);
+  $('#fx-pdf').onclick = () => askCompletoOuResumido('PDF', exportPDFCompletoFn, exportPDFResumoFn);
 
   makeChart($('#ch-saldo'), {
     type: 'line',
@@ -1202,24 +1238,30 @@ async function exportFluxoPDFResumo(dm) {
     doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
     doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-    doc.text('ERP Financeiro · Fluxo de Caixa (Resumo Mensal)', MARGIN + logoW + 6, 19);
+    doc.text('ERP Financeiro · Fluxo de Caixa', MARGIN + logoW + 6, 19);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12.5); doc.setTextColor(...VERDE);
+    doc.text('Relatório de Fluxo de Caixa Resumido', pageW - MARGIN, 15, { align: 'right' });
     const now = new Date();
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-    doc.text(`Período: ${brDate(dm.de)} a ${brDate(dm.ate)}  ·  Gerado em ${now.toLocaleDateString('pt-BR')} por ${USER.name}`, MARGIN, 27);
-    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 30, pageW - MARGIN, 30);
+    doc.text(`Período: ${brDate(dm.de)} a ${brDate(dm.ate)}  ·  Gerado em ${now.toLocaleDateString('pt-BR')} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
 
     // Alerta em destaque — o ponto central do relatório resumido.
-    let y = 37;
+    // (Sem emojis: a fonte padrão do jsPDF não tem esses glifos e imprime lixo no lugar.)
+    let y = 32;
     const alertRed = !!dm.alerta.diaCritico;
+    const alertText = alertRed
+      ? `Alerta: o saldo de caixa fica negativo a partir de ${brDate(dm.alerta.diaCritico)}. Seria necessário um aporte de ${brl(dm.alerta.necessidade)} até ${brDate(dm.alerta.horizonte)} para não faltar caixa.`
+      : `Sem risco de saldo negativo previsto até ${brDate(dm.alerta.horizonte)}, considerando os títulos já lançados.`;
+    const boxW = pageW - MARGIN * 2, boxPad = 5;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    const alertLines = doc.splitTextToSize(alertText, boxW - boxPad * 2);
+    const lineH = 5;
+    const boxH = boxPad * 2 + alertLines.length * lineH;
     doc.setFillColor(...(alertRed ? [251, 234, 231] : VERDE_CLARO));
-    const alertLines = alertRed
-      ? [`Alerta: o saldo de caixa fica negativo a partir de ${brDate(dm.alerta.diaCritico)}.`,
-         `Seria necessário um aporte de ${brl(dm.alerta.necessidade)} até ${brDate(dm.alerta.horizonte)} para não faltar caixa.`]
-      : [`Sem risco de saldo negativo previsto até ${brDate(dm.alerta.horizonte)}, considerando os títulos já lançados.`];
-    const boxH = 8 + alertLines.length * 5.5;
-    doc.roundedRect(MARGIN, y, pageW - MARGIN * 2, boxH, 2, 2, 'F');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...(alertRed ? VERMELHO : VERDE));
-    alertLines.forEach((line, i) => doc.text((alertRed ? '⚠ ' : '✓ ') + line, MARGIN + 5, y + 7 + i * 5.5));
+    doc.roundedRect(MARGIN, y, boxW, boxH, 2, 2, 'F');
+    doc.setTextColor(...(alertRed ? VERMELHO : VERDE));
+    alertLines.forEach((line, i) => doc.text(line, MARGIN + boxPad, y + boxPad + 3 + i * lineH));
     y += boxH + 8;
 
     // Resumo financeiro
