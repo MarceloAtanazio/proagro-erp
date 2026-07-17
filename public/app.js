@@ -650,14 +650,15 @@ async function renderPagar() {
     const PM_LABELS = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
     $('#tbl').innerHTML = `
       <colgroup>
-        <col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc"><col class="c-pm">
+        <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc"><col class="c-pm">
         <col class="c-val"><col class="c-status"><col class="c-acoes">
       </colgroup>
-      <thead><tr><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de Pagamento</th>
+      <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de Pagamento</th>
         <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
+          <td class="num" style="color:var(--muted)">${r.id}</td>
           <td>${brDate(r.due_date)}</td>
           <td>${esc(r.description)}</td>
           <td>${esc(r.supplier_name || '—')}</td>
@@ -674,8 +675,8 @@ async function renderPagar() {
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="6">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="10"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="7">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
 
 
 
@@ -693,8 +694,8 @@ async function renderPagar() {
   };
   $('#btn-new').onclick = () => formPagar(null, sups);
   $('#btn-csv').onclick = () => exportCSV('contas_a_pagar',
-    ['Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','Valor','Status','Pagamento'],
-    lastFiltered.map(r => [r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
+    ['ID','Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','Valor','Status','Pagamento'],
+    lastFiltered.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
       r.payment_method || '', r.payment_method === 'pix' ? (r.pix_key || '') : '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
   $('#btn-pdf').onclick = () => {
     const parts = [];
@@ -2440,6 +2441,7 @@ async function exportPagarPDF(rows, filtersLabel) {
     const totalPendente = total - totalPago;
 
     const body = rows.map(r => [
+      r.id,
       brDate(r.due_date),
       r.description,
       r.supplier_name || '—',
@@ -2452,17 +2454,17 @@ async function exportPagarPDF(rows, filtersLabel) {
 
     doc.autoTable({
       startY: y,
-      head: [['Venc.', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Forma de Pagamento', 'Valor', 'Status']],
+      head: [['ID', 'Venc.', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Forma de Pagamento', 'Valor', 'Status']],
       body,
       margin: { left: MARGIN, right: MARGIN },
       styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
       headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
       alternateRowStyles: { fillColor: VERDE_CLARO },
       columnStyles: {
-        0: { cellWidth: 20 }, 6: { cellWidth: 24, halign: 'right' }, 7: { cellWidth: 26 }
+        0: { cellWidth: 10, halign: 'right' }, 1: { cellWidth: 18 }, 7: { cellWidth: 22, halign: 'right' }, 8: { cellWidth: 24 }
       },
       didParseCell: hook => {
-        if (hook.section === 'body' && hook.column.index === 7) {
+        if (hook.section === 'body' && hook.column.index === 8) {
           const v = hook.cell.raw;
           if (v === 'Vencido') hook.cell.styles.textColor = [178, 58, 47];
           else if (v === 'Pendente') hook.cell.styles.textColor = [31, 78, 120];
