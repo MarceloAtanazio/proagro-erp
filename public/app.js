@@ -658,7 +658,7 @@ async function renderPagar() {
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
-          <td class="num" style="color:var(--muted)">${r.id}</td>
+          <td class="id-cell">${r.id}</td>
           <td>${brDate(r.due_date)}</td>
           <td>${esc(r.description)}</td>
           <td>${esc(r.supplier_name || '—')}</td>
