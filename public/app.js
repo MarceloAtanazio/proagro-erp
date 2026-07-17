@@ -190,7 +190,9 @@ $('#auth-submit').onclick = async () => {
 };
 $('#auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#auth-submit').click(); });
 
-$('#btn-logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }); USER = null; location.hash = ''; showLogin(); };
+const doLogout = async () => { await api('/api/auth/logout', { method: 'POST' }); USER = null; location.hash = ''; showLogin(); };
+$('#btn-logout').onclick = doLogout;
+$('#btn-logout-top').onclick = doLogout;
 
 // Troca obrigatória de senha no primeiro acesso (senha gerada pelo admin).
 function openForcedPasswordChange() {
