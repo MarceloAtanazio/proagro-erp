@@ -118,6 +118,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 }
 .topbar h2 { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
 .topbar .crumb { font-size: 12px; color: var(--muted); }
+.topbar-right { display: flex; align-items: center; gap: 14px; }
 .content { padding: 26px 32px 60px; width: 100%; max-width: 1800px; }
 
 /* ---------- Componentes ---------- */
