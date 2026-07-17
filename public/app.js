@@ -934,8 +934,10 @@ async function renderFluxo() {
       <button class="btn" id="fx-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="fx-csv">CSV</button>
-      <button class="btn" id="fx-xlsx">Excel</button>
-      <button class="btn" id="fx-pdf">PDF</button>
+      <button class="btn" id="fx-xlsx">Excel Completo</button>
+      <button class="btn" id="fx-xlsx-resumo">Excel Resumido</button>
+      <button class="btn" id="fx-pdf">PDF Completo</button>
+      <button class="btn" id="fx-pdf-resumo">PDF Resumido</button>
     </div>
 
     ${d.alerta.diaCritico ? `
@@ -1011,21 +1013,73 @@ async function renderFluxo() {
   ['fx-de', 'fx-ate', 'fx-gran', 'fx-cc', 'fx-sit'].forEach(id => $('#' + id).onchange = saveAndReload);
   $('#fx-clear').onclick = () => { saveFilters(FKEY, {}); renderFluxo(); };
 
+  // Busca os mesmos dados do período/filtros atuais, mas agrupados por MÊS —
+  // usado pelos relatórios "Resumido", independente da granularidade escolhida na tela.
+  const fetchResumoMensal = async () => {
+    const p = new URLSearchParams({ de, ate, granularidade: 'mes' });
+    if (centroCusto) p.set('centro_custo', centroCusto);
+    if (situacao) p.set('situacao', situacao);
+    return api('/api/reports/fluxo-caixa?' + p.toString());
+  };
+
   $('#fx-csv').onclick = () => exportCSV('fluxo_de_caixa',
     ['Data', 'Entradas', 'Saidas', 'Saldo'],
     d.buckets.map(b => [b.label, String(b.entradas).replace('.', ','), String(b.saidas).replace('.', ','), String(b.saldo).replace('.', ',')]));
+
+  // Formato numérico nativo do Excel: positivo em preto, negativo em vermelho
+  // (usa o próprio motor de formatação do Excel — funciona mesmo na versão
+  // gratuita da biblioteca, que não tem suporte a cor de célula customizada).
+  const XLSX_MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
 
   $('#fx-xlsx').onclick = () => {
     if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
     const wsData = [['Data', 'Entradas', 'Saídas', 'Saldo'], ...d.buckets.map(b => [b.label, b.entradas, b.saidas, b.saldo])];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
+    for (let i = 1; i <= d.buckets.length; i++) {
+      ['B', 'C', 'D'].forEach(col => { const cell = ws[col + (i + 1)]; if (cell) cell.z = XLSX_MONEY_FMT; });
+    }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Fluxo de Caixa');
-    XLSX.writeFile(wb, `fluxo_de_caixa_${todayISO()}.xlsx`);
+    XLSX.writeFile(wb, `fluxo_de_caixa_completo_${todayISO()}.xlsx`);
     toast('Excel exportado.');
   };
 
+  $('#fx-xlsx-resumo').onclick = async () => {
+    if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+    try {
+      const dm = await fetchResumoMensal();
+      const alertaTxt = dm.alerta.diaCritico
+        ? `Alerta: saldo fica negativo a partir de ${brDate(dm.alerta.diaCritico)} — aporte necessário de ${brl(dm.alerta.necessidade)} até ${brDate(dm.alerta.horizonte)}.`
+        : `Sem risco de saldo negativo até ${brDate(dm.alerta.horizonte)}.`;
+      const wsData = [
+        ['Relatório de Fluxo de Caixa — Resumo Mensal'],
+        [`Período: ${brDate(dm.de)} a ${brDate(dm.ate)}`],
+        [alertaTxt],
+        [],
+        ['Saldo inicial', dm.resumo.saldoInicial], ['Total de entradas', dm.resumo.totalEntradas],
+        ['Total de saídas', dm.resumo.totalSaidas], ['Saldo atual', dm.resumo.saldoAtual], ['Saldo previsto', dm.resumo.saldoPrevisto],
+        [],
+        ['Mês', 'Entradas', 'Saídas', 'Saldo'],
+        ...dm.buckets.map(b => [b.label, b.entradas, b.saidas, b.saldo])
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      [5, 6, 7, 8, 9].forEach(r => { const cell = ws['B' + r]; if (cell) cell.z = XLSX_MONEY_FMT; });
+      for (let i = 0; i < dm.buckets.length; i++) {
+        const r = 11 + i;
+        ['B', 'C', 'D'].forEach(col => { const cell = ws[col + r]; if (cell) cell.z = XLSX_MONEY_FMT; });
+      }
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Resumo Mensal');
+      XLSX.writeFile(wb, `fluxo_de_caixa_resumido_${todayISO()}.xlsx`);
+      toast('Excel resumido exportado.');
+    } catch (e) { toast(e.message || 'Não foi possível gerar o Excel resumido.'); }
+  };
+
   $('#fx-pdf').onclick = () => exportFluxoPDF(d);
+  $('#fx-pdf-resumo').onclick = async () => {
+    try { exportFluxoPDFResumo(await fetchResumoMensal()); }
+    catch (e) { toast(e.message || 'Não foi possível gerar o PDF resumido.'); }
+  };
 
   makeChart($('#ch-saldo'), {
     type: 'line',
@@ -1106,6 +1160,12 @@ async function exportFluxoPDF(d) {
       headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
       alternateRowStyles: { fillColor: VERDE_CLARO },
       columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      didParseCell: hook => {
+        if (hook.section === 'body' && hook.column.index === 3 && d.buckets[hook.row.index] && d.buckets[hook.row.index].saldo < 0) {
+          hook.cell.styles.textColor = [178, 58, 47];
+          hook.cell.styles.fontStyle = 'bold';
+        }
+      },
       didDrawPage: () => {
         const pageH = doc.internal.pageSize.getHeight();
         doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
@@ -1117,12 +1177,108 @@ async function exportFluxoPDF(d) {
       }
     });
 
-    doc.save(`fluxo_de_caixa_${todayISO()}.pdf`);
+    doc.save(`fluxo_de_caixa_completo_${todayISO()}.pdf`);
     toast('PDF gerado com sucesso.');
   } catch (e) {
     console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
   }
 }
+
+// Versão simplificada: resumo mensal (independente da granularidade escolhida
+// na tela) com os alertas em destaque — pensada para uma leitura rápida por
+// quem não precisa do detalhe dia a dia.
+async function exportFluxoPDFResumo(dm) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
+    const MARGIN = 14;
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 32, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
+    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text('ERP Financeiro · Fluxo de Caixa (Resumo Mensal)', MARGIN + logoW + 6, 19);
+    const now = new Date();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text(`Período: ${brDate(dm.de)} a ${brDate(dm.ate)}  ·  Gerado em ${now.toLocaleDateString('pt-BR')} por ${USER.name}`, MARGIN, 27);
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 30, pageW - MARGIN, 30);
+
+    // Alerta em destaque — o ponto central do relatório resumido.
+    let y = 37;
+    const alertRed = !!dm.alerta.diaCritico;
+    doc.setFillColor(...(alertRed ? [251, 234, 231] : VERDE_CLARO));
+    const alertLines = alertRed
+      ? [`Alerta: o saldo de caixa fica negativo a partir de ${brDate(dm.alerta.diaCritico)}.`,
+         `Seria necessário um aporte de ${brl(dm.alerta.necessidade)} até ${brDate(dm.alerta.horizonte)} para não faltar caixa.`]
+      : [`Sem risco de saldo negativo previsto até ${brDate(dm.alerta.horizonte)}, considerando os títulos já lançados.`];
+    const boxH = 8 + alertLines.length * 5.5;
+    doc.roundedRect(MARGIN, y, pageW - MARGIN * 2, boxH, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...(alertRed ? VERMELHO : VERDE));
+    alertLines.forEach((line, i) => doc.text((alertRed ? '⚠ ' : '✓ ') + line, MARGIN + 5, y + 7 + i * 5.5));
+    y += boxH + 8;
+
+    // Resumo financeiro
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 38, 32);
+    doc.text('Resumo financeiro', MARGIN, y); y += 6;
+    const kpis = [
+      ['Saldo inicial do período', dm.resumo.saldoInicial],
+      ['Total de entradas', dm.resumo.totalEntradas],
+      ['Total de saídas', dm.resumo.totalSaidas],
+      ['Saldo atual (real, hoje)', dm.resumo.saldoAtual],
+      ['Saldo previsto (c/ pendentes)', dm.resumo.saldoPrevisto]
+    ];
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, tableWidth: pageW - MARGIN * 2,
+      body: kpis.map(([label, val]) => [label, brl(val)]),
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+      didParseCell: hook => {
+        if (hook.column.index === 1 && kpis[hook.row.index][1] < 0) hook.cell.styles.textColor = VERMELHO;
+      }
+    });
+    y = doc.lastAutoTable.finalY + 10;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 38, 32);
+    doc.text('Evolução mensal', MARGIN, y); y += 4;
+
+    doc.autoTable({
+      startY: y,
+      head: [['Mês', 'Entradas', 'Saídas', 'Saldo']],
+      body: dm.buckets.map(b => [b.label, brl(b.entradas), brl(b.saidas), brl(b.saldo)]),
+      margin: { left: MARGIN, right: MARGIN },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 3, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 9 },
+      alternateRowStyles: { fillColor: VERDE_CLARO },
+      columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } },
+      didParseCell: hook => {
+        if (hook.section === 'body' && hook.column.index === 3 && dm.buckets[hook.row.index] && dm.buckets[hook.row.index].saldo < 0) {
+          hook.cell.styles.textColor = VERMELHO;
+          hook.cell.styles.fontStyle = 'bold';
+        }
+      },
+      didDrawPage: () => {
+        const pageH = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
+        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...CINZA);
+        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
+      }
+    });
+
+    doc.save(`fluxo_de_caixa_resumido_${todayISO()}.pdf`);
+    toast('PDF resumido gerado com sucesso.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF resumido: ' + e.message);
+  }
+}
+
 
 // ============================================================
 // FORNECEDORES
