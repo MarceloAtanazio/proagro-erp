@@ -564,17 +564,21 @@ const MAX_ATTACH_BYTES = 3 * 1024 * 1024; // 3 MB por arquivo (limite seguro p/ 
 
 function pageForType(type) { return ATTACH_TYPES[type] || null; }
 
-// Lista de anexos (metadados, sem o binário) de um título específico.
-app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
-  const page = pageForType(req.params.type);
-  if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
-  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão para visualizar.' });
-  const rows = await query(
-    `SELECT id, kind, file_name, mime_type, byte_size, created_at
-       FROM erp_attachments WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC`,
-    [req.params.type, Number(req.params.id)]
-  );
-  res.json(rows);
+// IMPORTANTE: rotas com segmento literal ("file", "count") precisam vir ANTES
+// da rota genérica "/:type/:id" — senão o Express casa "file"/"count" como se
+// fossem o próprio :type, e a rota certa nunca é alcançada.
+
+// Download / visualização de um anexo.
+// Retornamos em base64 dentro de um JSON (texto puro) em vez de enviar o
+// binário cru: funções serverless da Vercel às vezes corrompem respostas
+// binárias dependendo do Content-Type — texto nunca tem esse problema.
+app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
+  const rows = await query('SELECT entity_type, file_name, mime_type, data FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
+  const a = rows[0];
+  if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
+  const page = pageForType(a.entity_type);
+  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
+  res.json({ file_name: a.file_name, mime_type: a.mime_type || 'application/octet-stream', data: a.data.toString('base64') });
 }));
 
 // Contagem de anexos por título (para exibir o total na listagem).
@@ -589,6 +593,19 @@ app.get('/api/attachments/count/:type', requireAuth, h(async (req, res) => {
   const map = {};
   rows.forEach(r => { map[r.entity_id] = r.n; });
   res.json(map);
+}));
+
+// Lista de anexos (metadados, sem o binário) de um título específico.
+app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
+  const page = pageForType(req.params.type);
+  if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
+  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão para visualizar.' });
+  const rows = await query(
+    `SELECT id, kind, file_name, mime_type, byte_size, created_at
+       FROM erp_attachments WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC`,
+    [req.params.type, Number(req.params.id)]
+  );
+  res.json(rows);
 }));
 
 // Upload de um anexo (arquivo enviado em base64).
@@ -620,19 +637,6 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
     [req.params.type, Number(req.params.id), kind, fileName, mime, buf.length, buf, req.user.id]
   );
   res.json({ ok: true, id: ins[0].id });
-}));
-
-// Download / visualização de um anexo.
-// Retornamos em base64 dentro de um JSON (texto puro) em vez de enviar o
-// binário cru: funções serverless da Vercel às vezes corrompem respostas
-// binárias dependendo do Content-Type — texto nunca tem esse problema.
-app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
-  const rows = await query('SELECT entity_type, file_name, mime_type, data FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
-  const a = rows[0];
-  if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
-  const page = pageForType(a.entity_type);
-  if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
-  res.json({ file_name: a.file_name, mime_type: a.mime_type || 'application/octet-stream', data: a.data.toString('base64') });
 }));
 
 // Excluir um anexo.
