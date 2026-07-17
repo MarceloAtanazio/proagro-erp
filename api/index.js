@@ -1112,11 +1112,11 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
     cumAll += (dailyInAll[dstr] || 0) - (dailyOutAll[dstr] || 0);
     cumUpToAll[dstr] = cumAll;
   }
-  let diaCritico = null, minRun = cumUpToAll[today] ?? 0;
+  let diaCritico = null, minRun = cumUpToAll[today] ?? 0, diaPior = today;
   for (let d = new Date(todayD); iso(d) <= horizonteAlerta; d.setDate(d.getDate() + 1)) {
     const dstr = iso(d);
     const v = cumUpToAll[dstr] ?? minRun;
-    if (v < minRun) minRun = v;
+    if (v < minRun) { minRun = v; diaPior = dstr; }
     if (v < 0 && !diaCritico) diaCritico = dstr;
   }
   const necessidade = minRun < 0 ? Math.abs(minRun) : 0;
@@ -1143,7 +1143,7 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
     de, ate, granularidade, centroCusto, situacao,
     resumo: { saldoInicial, totalEntradas, totalSaidas, saldoAtual, saldoPrevisto },
     buckets,
-    alerta: { diaCritico, necessidade, horizonte: horizonteAlerta },
+    alerta: { diaCritico, necessidade, diaPior, horizonte: horizonteAlerta },
     futuras: {
       pagar: pagarFuturasQ.map(r => ({ ...r, amount: n(r.amount) })),
       receber: receberFuturasQ.map(r => ({ ...r, amount: n(r.amount) }))
