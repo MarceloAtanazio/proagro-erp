@@ -116,9 +116,10 @@ function destroyCharts() { charts.forEach(c => c.destroy()); charts = []; }
 function makeChart(canvas, cfg) { const c = new Chart(canvas, cfg); charts.push(c); return c; }
 
 // ------------------ Modal ------------------
-function openModal(title, bodyHTML, buttons) {
+function openModal(title, bodyHTML, buttons, opts) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHTML;
+  document.querySelector('.modal').classList.toggle('modal-wide', !!(opts && opts.wide));
   const foot = $('#modal-footer'); foot.innerHTML = '';
   (buttons || []).forEach(b => {
     const btn = el('button', 'btn ' + (b.cls || ''), b.label);
@@ -2022,20 +2023,31 @@ function b64toBlob(b64, mime) {
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Blob([bytes], { type: mime });
 }
-async function openAttachmentFile(id) {
+// Abre uma prévia do anexo dentro do próprio sistema (PDF/imagem embutidos
+// num modal largo), em vez de depender de uma aba nova do navegador — evita
+// os bloqueios de pop-up/segurança e deixa a pessoa ver antes de decidir
+// se baixa ou imprime.
+async function openAttachmentFile(attId, parentType, parentId, parentLabel) {
   try {
-    const r = await api(`/api/attachments/file/${id}`);
-    // Blob URL (não data:) — o Chrome bloqueia navegação de aba nova para data:
-    // URIs por segurança, fechando a aba sozinho. Abrimos a aba SÓ depois que o
-    // arquivo já está pronto, para não cair no bloqueio de pop-up do navegador.
+    const r = await api(`/api/attachments/file/${attId}`);
     const blob = b64toBlob(r.data, r.mime_type);
     const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank');
-    if (!win) {
-      // Pop-up bloqueado pelo navegador: cai para download direto.
-      const a = document.createElement('a'); a.href = url; a.download = r.file_name; a.click();
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    const previewable = r.mime_type === 'application/pdf' || r.mime_type.startsWith('image/');
+    const body = previewable
+      ? `<iframe id="att-preview-frame" src="${url}" class="att-preview-frame"></iframe>`
+      : `<div class="empty">Pré-visualização não disponível para "${esc(r.file_name)}". Use "Baixar" para abrir no seu computador.</div>`;
+
+    const voltar = () => { URL.revokeObjectURL(url); openAttachments(parentType, parentId, parentLabel); };
+    const baixar = () => { const a = document.createElement('a'); a.href = url; a.download = r.file_name; a.click(); };
+    const imprimir = () => {
+      const ifr = document.getElementById('att-preview-frame');
+      if (ifr && ifr.contentWindow) { try { ifr.contentWindow.focus(); ifr.contentWindow.print(); } catch { toast('Não foi possível imprimir. Tente baixar o arquivo.'); } }
+    };
+    const btns = [{ label: 'Voltar', onClick: voltar }, { label: 'Baixar', onClick: baixar }];
+    if (previewable) btns.push({ label: 'Imprimir', onClick: imprimir });
+    btns.push({ label: 'Fechar', cls: 'primary', onClick: () => { URL.revokeObjectURL(url); closeModal(); } });
+
+    openModal(r.file_name, body, btns, { wide: true });
   } catch (e) {
     toast(e.message || 'Não foi possível abrir o anexo.');
   }
@@ -2089,7 +2101,7 @@ function openAttachments(type, id, label) {
             ${editable ? `<button class="btn sm danger-ghost" data-attdel="${a.id}">Excluir</button>` : ''}
           </div>
         </div>`).join('');
-      box.querySelectorAll('[data-attview]').forEach(b => b.onclick = () => openAttachmentFile(b.dataset.attview));
+      box.querySelectorAll('[data-attview]').forEach(b => b.onclick = () => openAttachmentFile(b.dataset.attview, type, id, label));
       box.querySelectorAll('[data-attdel]').forEach(b => b.onclick = () => {
         openModal('Excluir anexo', '<p>Deseja excluir este documento? Esta ação não pode ser desfeita.</p>',
           [{ label: 'Cancelar', onClick: () => openAttachments(type, id, label) },
