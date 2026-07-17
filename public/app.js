@@ -940,8 +940,9 @@ async function renderFluxo() {
 
     ${d.alerta.diaCritico ? `
     <div class="card" style="margin-bottom:16px"><div class="alert-item red">⚠️ <strong>Alerta de saldo negativo:</strong>
-      considerando o saldo real e os títulos já lançados, o caixa fica negativo a partir de <strong>${brDate(d.alerta.diaCritico)}</strong> —
-      seria necessário um aporte de <strong>${brl(d.alerta.necessidade)}</strong> até ${brDate(d.alerta.horizonte)} para não faltar caixa.</div></div>`
+      considerando o saldo real e os títulos já lançados, o caixa fica negativo a partir de <strong>${brDate(d.alerta.diaCritico)}</strong>,
+      chegando ao pior momento em <strong>${brDate(d.alerta.diaPior)}</strong>, quando faltariam <strong>${brl(d.alerta.necessidade)}</strong> —
+      esse é o valor mínimo de aporte necessário para o caixa não faltar nos próximos 90 dias (até ${brDate(d.alerta.horizonte)}).</div></div>`
       : `<div class="card" style="margin-bottom:16px"><div class="alert-item ok">✅ <strong>Sem risco de saldo negativo</strong> até ${brDate(d.alerta.horizonte)}, considerando o saldo real e os títulos já lançados.</div></div>`}
 
     <div class="dash-section-title">Resumo financeiro</div>
@@ -1070,7 +1071,7 @@ async function renderFluxo() {
     try {
       const dm = await fetchResumoMensal();
       const alertaTxt = dm.alerta.diaCritico
-        ? `Alerta: saldo fica negativo a partir de ${brDate(dm.alerta.diaCritico)} — aporte necessário de ${brl(dm.alerta.necessidade)} até ${brDate(dm.alerta.horizonte)}.`
+        ? `Alerta: saldo fica negativo a partir de ${brDate(dm.alerta.diaCritico)}, chegando ao pior momento em ${brDate(dm.alerta.diaPior)} — aporte mínimo necessário de ${brl(dm.alerta.necessidade)} para não faltar caixa até ${brDate(dm.alerta.horizonte)}.`
         : `Sem risco de saldo negativo até ${brDate(dm.alerta.horizonte)}.`;
       const wsData = [
         ['Relatório de Fluxo de Caixa — Resumo Mensal'],
@@ -1251,7 +1252,7 @@ async function exportFluxoPDFResumo(dm) {
     let y = 32;
     const alertRed = !!dm.alerta.diaCritico;
     const alertText = alertRed
-      ? `Alerta: o saldo de caixa fica negativo a partir de ${brDate(dm.alerta.diaCritico)}. Seria necessário um aporte de ${brl(dm.alerta.necessidade)} até ${brDate(dm.alerta.horizonte)} para não faltar caixa.`
+      ? `Alerta: o saldo de caixa fica negativo a partir de ${brDate(dm.alerta.diaCritico)}, chegando ao pior momento em ${brDate(dm.alerta.diaPior)}, quando faltariam ${brl(dm.alerta.necessidade)}. Esse é o aporte mínimo necessário para o caixa não faltar até ${brDate(dm.alerta.horizonte)}.`
       : `Sem risco de saldo negativo previsto até ${brDate(dm.alerta.horizonte)}, considerando os títulos já lançados.`;
     const boxW = pageW - MARGIN * 2, boxPad = 5;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
