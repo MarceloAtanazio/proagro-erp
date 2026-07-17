@@ -398,7 +398,8 @@ app.delete('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(asy
 // ------------------------------------------------------------
 app.get('/api/payables', requireAuth, requireViewAny(['pagar']), h(async (req, res) => {
   const rows = await query(`
-    SELECT p.*, s.name AS supplier_name
+    SELECT p.*, s.name AS supplier_name,
+      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='payable' AND a.entity_id=p.id) AS attachment_count
     FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
     ORDER BY p.due_date`);
   res.json(rows);
@@ -486,7 +487,10 @@ app.delete('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req,
 // Contas a Receber
 // ------------------------------------------------------------
 app.get('/api/receivables', requireAuth, requireViewAny(['receber']), h(async (req, res) => {
-  res.json(await query('SELECT * FROM erp_receivables ORDER BY due_date'));
+  res.json(await query(`
+    SELECT r.*,
+      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='receivable' AND a.entity_id=r.id) AS attachment_count
+    FROM erp_receivables r ORDER BY r.due_date`));
 }));
 
 app.post('/api/receivables', requireAuth, requireEdit('receber'), h(async (req, res) => {
