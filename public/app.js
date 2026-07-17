@@ -2023,17 +2023,20 @@ function b64toBlob(b64, mime) {
   return new Blob([bytes], { type: mime });
 }
 async function openAttachmentFile(id) {
-  // Abre a aba ANTES do fetch (síncrono, no clique) para não ser bloqueada pelo navegador.
-  const win = window.open('', '_blank');
   try {
     const r = await api(`/api/attachments/file/${id}`);
-    // Data URI em vez de Blob URL: evita falhas de abrir em outra janela que
-    // algumas versões de navegador apresentam com URLs blob: entre documentos.
-    const dataUrl = `data:${r.mime_type};base64,${r.data}`;
-    if (win) win.location.href = dataUrl;
-    else { const a = document.createElement('a'); a.href = dataUrl; a.download = r.file_name; a.click(); }
+    // Blob URL (não data:) — o Chrome bloqueia navegação de aba nova para data:
+    // URIs por segurança, fechando a aba sozinho. Abrimos a aba SÓ depois que o
+    // arquivo já está pronto, para não cair no bloqueio de pop-up do navegador.
+    const blob = b64toBlob(r.data, r.mime_type);
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) {
+      // Pop-up bloqueado pelo navegador: cai para download direto.
+      const a = document.createElement('a'); a.href = url; a.download = r.file_name; a.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) {
-    if (win) win.close();
     toast(e.message || 'Não foi possível abrir o anexo.');
   }
 }
