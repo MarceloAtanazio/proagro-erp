@@ -208,12 +208,12 @@ const AUDIT_MAP = {
   'POST /api/suppliers': req => `Cadastrou o fornecedor "${req.body.name}"`,
   'PUT /api/suppliers/:id': req => `Editou o fornecedor "${req.body.name}" (ID ${req.params.id})`,
   'DELETE /api/suppliers/:id': req => `Excluiu o fornecedor ID ${req.params.id}`,
-  'POST /api/payables': req => `Criou o título a pagar "${req.body.description}"`,
+  'POST /api/payables': (req, body) => `Criou o título a pagar "${req.body.description}" (ID ${body && body.id})`,
   'PUT /api/payables/:id': req => `Editou o título a pagar "${req.body.description}" (ID ${req.params.id})`,
   'POST /api/payables/:id/pay': req => `Baixou o pagamento do título a pagar ID ${req.params.id}`,
   'POST /api/payables/:id/unpay': req => `Estornou a baixa do título a pagar ID ${req.params.id}`,
   'DELETE /api/payables/:id': req => `Excluiu o título a pagar ID ${req.params.id}`,
-  'POST /api/receivables': req => `Criou o recebível "${req.body.description}"`,
+  'POST /api/receivables': (req, body) => `Criou o recebível "${req.body.description}" (ID ${body && body.id})`,
   'PUT /api/receivables/:id': req => `Editou o recebível "${req.body.description}" (ID ${req.params.id})`,
   'POST /api/receivables/:id/receive': req => `Baixou o recebimento do recebível ID ${req.params.id}`,
   'POST /api/receivables/:id/unreceive': req => `Estornou a baixa do recebível ID ${req.params.id}`,
@@ -248,7 +248,7 @@ app.use((req, res, next) => {
     try {
       if (req.method !== 'GET' && req.user && res.statusCode < 400 && req.route) {
         const describe = AUDIT_MAP[`${req.method} ${req.route.path}`];
-        const action = req.auditAction || (describe && describe(req));
+        const action = req.auditAction || (describe && describe(req, body));
         if (action) logAudit(req.user, action).catch(() => {});
       }
     } catch (e) { console.error('[audit-mw]', e.message); }
