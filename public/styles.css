@@ -371,20 +371,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   position: sticky; z-index: 4;
 }
 
-/* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) =====
-   ID/Vencimento/Categoria/Centro de Custo/Forma de Pagamento/Valor/Status/Ações usam
-   largura em PIXELS (não crescem em telas largas). Descrição e Fornecedor ficam sem
-   largura definida e absorvem o espaço que sobrar — são os campos de texto livre que
-   realmente precisam de mais espaço. */
+/* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) ===== */
 .tbl-pagar { table-layout: fixed; }
-.tbl-pagar col.c-id { width: 56px; }
-.tbl-pagar col.c-venc { width: 88px; }
-.tbl-pagar col.c-cat { width: 130px; }
-.tbl-pagar col.c-cc { width: 130px; }
-.tbl-pagar col.c-pm { width: 92px; }
-.tbl-pagar col.c-val { width: 104px; }
-.tbl-pagar col.c-status { width: 92px; }
-.tbl-pagar col.c-acoes { width: 190px; }
+.tbl-pagar col.c-id { width: 5%; }
+.tbl-pagar col.c-venc { width: 7%; }
+.tbl-pagar col.c-desc { width: 18%; }
+.tbl-pagar col.c-forn { width: 18%; }
+.tbl-pagar col.c-cat { width: 10%; }
+.tbl-pagar col.c-cc { width: 10%; }
+.tbl-pagar col.c-pm { width: 6%; }
+.tbl-pagar col.c-val { width: 8%; }
+.tbl-pagar col.c-status { width: 7%; }
+.tbl-pagar col.c-acoes { width: 11%; }
 .tbl-pagar td { white-space: normal; word-break: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
