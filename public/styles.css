@@ -373,20 +373,26 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 
 /* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) ===== */
 .tbl-pagar { table-layout: fixed; }
-.tbl-pagar col.c-id { width: 5%; }
+/* Cabeçalhos centralizados e com quebra de linha permitida SÓ nesta tabela —
+   a regra geral do sistema (thead th) trava white-space:nowrap e alinha à
+   esquerda; aqui sobrescrevemos para "Forma de Pagamento" poder quebrar em
+   duas linhas em vez de estourar a largura da coluna. */
+.tbl-pagar thead th { text-align: center; white-space: normal; word-break: break-word; }
+.tbl-pagar col.c-id { width: 3%; }
 .tbl-pagar col.c-venc { width: 7%; }
-.tbl-pagar col.c-desc { width: 18%; }
+.tbl-pagar col.c-desc { width: 20%; }
 .tbl-pagar col.c-forn { width: 18%; }
 .tbl-pagar col.c-cat { width: 10%; }
 .tbl-pagar col.c-cc { width: 10%; }
-.tbl-pagar col.c-pm { width: 6%; }
-.tbl-pagar col.c-val { width: 8%; }
+.tbl-pagar col.c-pm { width: 4%; }
+.tbl-pagar col.c-val { width: 10%; }
 .tbl-pagar col.c-status { width: 7%; }
 .tbl-pagar col.c-acoes { width: 11%; }
 .tbl-pagar td { white-space: normal; word-break: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
 .tbl-pagar td.actions .btn { margin: 2px 4px 2px 0; }
+.tbl-pagar td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ===== Botão de anexos — largura fixa para não quebrar o layout da linha,
    com ou sem contagem exibida ===== */
