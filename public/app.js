@@ -664,7 +664,7 @@ async function renderPagar() {
           <td>${esc(r.supplier_name || '—')}</td>
           <td>${esc(r.category)}</td>
           <td>${esc(r.cost_center || '—')}</td>
-          <td>${r.payment_method ? esc(PM_LABELS[r.payment_method] || r.payment_method) : '—'}${r.payment_method === 'pix' && r.pix_key ? `<br><small style="color:var(--muted)">${esc(r.pix_key)}</small>` : ''}</td>
+          <td>${r.payment_method ? esc(PM_LABELS[r.payment_method] || r.payment_method) : '—'}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
