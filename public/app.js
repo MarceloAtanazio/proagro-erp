@@ -653,7 +653,7 @@ async function renderPagar() {
         <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc"><col class="c-pm">
         <col class="c-val"><col class="c-status"><col class="c-acoes">
       </colgroup>
-      <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de Pagamento</th>
+      <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de<br>Pagamento</th>
         <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
@@ -664,7 +664,7 @@ async function renderPagar() {
           <td>${esc(r.supplier_name || '—')}</td>
           <td>${esc(r.category)}</td>
           <td>${esc(r.cost_center || '—')}</td>
-          <td>${r.payment_method ? esc(PM_LABELS[r.payment_method] || r.payment_method) : '—'}</td>
+          <td class="pm-cell">${r.payment_method ? esc(PM_LABELS[r.payment_method] || r.payment_method) : '—'}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
