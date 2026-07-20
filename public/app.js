@@ -1325,6 +1325,131 @@ async function exportFluxoPDFResumo(dm) {
   }
 }
 
+// ============================================================
+// Exportação — Conciliação Bancária (PDF/Excel × Completo/Resumido)
+// ============================================================
+function askConciliacaoModo(formato, rows) {
+  openModal('Exportar Conciliação Bancária',
+    `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o relatório <strong>completo</strong> (lista de todos os lançamentos filtrados) ou o <strong>resumido</strong> (só os totais)?</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? exportConciliacaoPDF(rows, 'resumido') : exportConciliacaoExcel(rows, 'resumido'); } },
+      { label: 'Completo', cls: 'primary', onClick: () => { closeModal(); formato === 'pdf' ? exportConciliacaoPDF(rows, 'completo') : exportConciliacaoExcel(rows, 'completo'); } }
+    ]);
+}
+
+function conciliacaoResumo(rows) {
+  const conc = rows.filter(r => r.reconciled);
+  const pend = rows.filter(r => !r.reconciled);
+  const sum = arr => arr.reduce((s, r) => s + r.amount, 0);
+  return {
+    total: rows.length, saldo: sum(rows),
+    concQtd: conc.length, concValor: sum(conc),
+    pendQtd: pend.length, pendValor: sum(pend)
+  };
+}
+
+async function exportConciliacaoPDF(rows, modo) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: modo === 'completo' ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
+    const MARGIN = modo === 'completo' ? 12 : 14;
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = modo === 'completo' ? 34 : 32, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
+    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(modo === 'completo' ? 10.5 : 10);
+    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text('ERP Financeiro · Conciliação Bancária', MARGIN + logoW + 6, 19);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(modo === 'completo' ? 15 : 12.5); doc.setTextColor(...VERDE);
+    doc.text(`Relatório de Conciliação Bancária ${modo === 'resumido' ? 'Resumido' : ''}`.trim(), pageW - MARGIN, 15, { align: 'right' });
+    const now = new Date();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
+
+    const r = conciliacaoResumo(rows);
+    let y = 31;
+    doc.setFillColor(...VERDE_CLARO);
+    doc.roundedRect(MARGIN, y, pageW - MARGIN * 2, 16, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
+    doc.text(`Total: ${r.total} lançamento(s) · ${brl(r.saldo)}   ·   Conciliados: ${r.concQtd} (${brl(r.concValor)})   ·   Pendentes: ${r.pendQtd} (${brl(r.pendValor)})`, MARGIN + 5, y + 9.5);
+    y += 24;
+
+    if (modo === 'resumido') {
+      doc.save(`conciliacao_bancaria_resumido_${todayISO()}.pdf`);
+      toast('PDF resumido gerado com sucesso.');
+      return;
+    }
+
+    doc.autoTable({
+      startY: y,
+      head: [['Data', 'Descrição', 'Valor', 'Situação']],
+      body: rows.map(r2 => [brDate(r2.txn_date), r2.description, brl(r2.amount), r2.reconciled ? 'Conciliado' : 'Pendente']),
+      margin: { left: MARGIN, right: MARGIN },
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
+      alternateRowStyles: { fillColor: VERDE_CLARO },
+      columnStyles: { 0: { cellWidth: 22 }, 2: { cellWidth: 30, halign: 'right' }, 3: { cellWidth: 26 } },
+      didParseCell: hook => {
+        if (hook.section === 'body' && hook.column.index === 2 && rows[hook.row.index] && rows[hook.row.index].amount < 0) {
+          hook.cell.styles.textColor = VERMELHO;
+        }
+        if (hook.section === 'body' && hook.column.index === 3) {
+          hook.cell.styles.textColor = hook.cell.raw === 'Conciliado' ? VERDE : [138, 100, 20];
+        }
+      },
+      didDrawPage: () => {
+        const pageH = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
+        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
+      }
+    });
+
+    doc.save(`conciliacao_bancaria_completo_${todayISO()}.pdf`);
+    toast('PDF gerado com sucesso.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
+}
+
+function exportConciliacaoExcel(rows, modo) {
+  if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+  const r = conciliacaoResumo(rows);
+  const wb = XLSX.utils.book_new();
+
+  if (modo === 'resumido') {
+    const wsData = [
+      ['Relatório de Conciliação Bancária — Resumido'],
+      [`Gerado em ${todayISO().split('-').reverse().join('/')}`],
+      [],
+      ['Total de lançamentos', r.total], ['Saldo total', r.saldo],
+      ['Conciliados (qtd.)', r.concQtd], ['Conciliados (valor)', r.concValor],
+      ['Pendentes (qtd.)', r.pendQtd], ['Pendentes (valor)', r.pendValor]
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    [5, 7, 9].forEach(row => { const cell = ws['B' + row]; if (cell) cell.z = MONEY_FMT; });
+    XLSX.utils.book_append_sheet(wb, ws, 'Resumo');
+    XLSX.writeFile(wb, `conciliacao_bancaria_resumido_${todayISO()}.xlsx`);
+  } else {
+    const wsData = [['Data', 'Descrição', 'Valor', 'Situação'], ...rows.map(r2 => [r2.txn_date, r2.description, r2.amount, r2.reconciled ? 'Conciliado' : 'Pendente'])];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    for (let i = 1; i <= rows.length; i++) { const cell = ws['C' + (i + 1)]; if (cell) cell.z = MONEY_FMT; }
+    XLSX.utils.book_append_sheet(wb, ws, 'Conciliação Bancária');
+    XLSX.writeFile(wb, `conciliacao_bancaria_completo_${todayISO()}.xlsx`);
+  }
+  toast('Excel exportado.');
+}
+
 
 // ============================================================
 // FORNECEDORES
@@ -1408,6 +1533,8 @@ async function renderConciliacao() {
   const c = $('#content');
   const pend = rows.filter(r => !r.reconciled);
   const saldo = rows.reduce((s, r) => s + r.amount, 0);
+  const FKEY = 'filters-conciliacao';
+  const saved = loadFilters(FKEY);
 
   c.innerHTML = `
     <div class="grid kpis" style="margin-bottom:16px">
@@ -1417,17 +1544,37 @@ async function renderConciliacao() {
       <div class="card kpi blue"><div class="label">Conciliados</div><div class="value">${rows.length - pend.length}</div></div>
     </div>
     <div class="toolbar">
-      <select id="f-status"><option value="">Todos</option><option value="false" selected>Não conciliados</option><option value="true">Conciliados</option></select>
+      <select id="f-status">
+        <option value="">Todos</option>
+        <option value="false">Não conciliados</option>
+        <option value="true">Conciliados</option>
+      </select>
+      <div class="date-range">
+        <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
+        <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
+      </div>
+      <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
+      <button class="btn" id="btn-export">Exportar</button>
       <button class="btn" id="btn-manual">+ Lançamento manual</button>
       <button class="btn blue" id="btn-import">Importar extrato (CSV/Excel)</button>
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>
     <p class="hint">Importação: arquivo CSV com colunas <strong>data;descrição;valor</strong> (datas DD/MM/AAAA ou AAAA-MM-DD; valores negativos = débitos).</p>`;
 
+  $('#f-status').value = saved.fs ?? 'false';
+
+  let lastFiltered = rows;
   const draw = () => {
-    const fs = $('#f-status').value;
-    const filtered = rows.filter(r => fs === '' || String(r.reconciled) === fs);
+    const fs = $('#f-status').value, de = $('#f-de').value, ate = $('#f-ate').value;
+    saveFilters(FKEY, { fs, de, ate });
+    const filtered = rows.filter(r => {
+      if (fs !== '' && String(r.reconciled) !== fs) return false;
+      if (de && r.txn_date < de) return false;
+      if (ate && r.txn_date > ate) return false;
+      return true;
+    });
+    lastFiltered = filtered;
     $('#tbl').innerHTML = `
       <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => `<tr>
@@ -1454,7 +1601,21 @@ async function renderConciliacao() {
     $('#tbl').querySelectorAll('[data-unrec]').forEach(b => b.onclick = async () => { await api(`/api/bank/${b.dataset.unrec}/unreconcile`, { method: 'POST' }); toast('Conciliação desfeita.'); renderConciliacao(); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('lançamento', `/api/bank/${b.dataset.del}`, renderConciliacao));
   };
-  $('#f-status').oninput = draw;
+  ['f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
+  $('#btn-clear').onclick = () => {
+    $('#f-status').value = 'false'; $('#f-de').value = ''; $('#f-ate').value = '';
+    saveFilters(FKEY, {}); draw();
+  };
+
+  $('#btn-export').onclick = () => {
+    openModal('Exportar Conciliação Bancária',
+      `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar?</p>`,
+      [
+        { label: 'Cancelar', onClick: closeModal },
+        { label: 'Excel', onClick: () => { closeModal(); askConciliacaoModo('excel', lastFiltered); } },
+        { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); askConciliacaoModo('pdf', lastFiltered); } }
+      ]);
+  };
 
   $('#btn-manual').onclick = () => openModal('Lançamento manual', `
     ${fld('b-date', 'Data', 'date', todayISO())}
