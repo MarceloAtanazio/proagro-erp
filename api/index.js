@@ -464,11 +464,10 @@ app.post('/api/payables/:id/pay', requireAuth, requireEdit('pagar'), h(async (re
   const p = (await query('SELECT description, amount FROM erp_payables WHERE id=$1', [req.params.id]))[0];
   if (!p) return res.status(404).json({ error: 'Título não encontrado.' });
   await query(`UPDATE erp_payables SET status='pago', payment_date=$1 WHERE id=$2`, [d, req.params.id]);
-  // Reflete a saída no saldo de caixa imediatamente (sem depender de importar extrato bancário),
-  // mas fica PENDENTE de conciliação — só vira "Conciliado" quando o extrato real for
-  // importado e confirmado, para não dar falsa sensação de que já foi verificado no banco.
-  await query(`INSERT INTO erp_bank_transactions (txn_date, description, amount, reconciled, matched_type, matched_id, auto_generated)
-    VALUES ($1,$2,$3,false,'payable',$4,true)`, [d, `Pagamento: ${p.description}`, -Math.abs(Number(p.amount)), req.params.id]);
+  // Não criamos lançamento bancário aqui: o saldo (Dashboard/Fluxo de Caixa) já é
+  // calculado direto do status de Contas a Pagar/Receber. Conciliação Bancária
+  // fica reservada só para lançamentos manuais e para o extrato importado de
+  // verdade — assim ele bate exatamente com o que o banco mostra.
   res.json({ ok: true });
 }));
 
@@ -538,10 +537,8 @@ app.post('/api/receivables/:id/receive', requireAuth, requireEdit('receber'), h(
   const r = (await query('SELECT description, amount FROM erp_receivables WHERE id=$1', [req.params.id]))[0];
   if (!r) return res.status(404).json({ error: 'Recebível não encontrado.' });
   await query(`UPDATE erp_receivables SET status='recebido', receipt_date=$1 WHERE id=$2`, [d, req.params.id]);
-  // Reflete a entrada no saldo de caixa imediatamente, mas PENDENTE de conciliação
-  // (só confirma quando o extrato real for importado e verificado).
-  await query(`INSERT INTO erp_bank_transactions (txn_date, description, amount, reconciled, matched_type, matched_id, auto_generated)
-    VALUES ($1,$2,$3,false,'receivable',$4,true)`, [d, `Recebimento: ${r.description}`, Math.abs(Number(r.amount)), req.params.id]);
+  // Idem: sem lançamento bancário automático — o saldo já vem direto do status
+  // de Contas a Receber. Conciliação Bancária fica só para manual + extrato real.
   res.json({ ok: true });
 }));
 
