@@ -1417,7 +1417,7 @@ async function renderConciliacao() {
       <div class="card kpi blue"><div class="label">Conciliados</div><div class="value">${rows.length - pend.length}</div></div>
     </div>
     <div class="toolbar">
-      <select id="f-status"><option value="">Todos</option><option value="0" selected>Não conciliados</option><option value="1">Conciliados</option></select>
+      <select id="f-status"><option value="">Todos</option><option value="false" selected>Não conciliados</option><option value="true">Conciliados</option></select>
       <div class="spacer"></div>
       <button class="btn" id="btn-manual">+ Lançamento manual</button>
       <button class="btn blue" id="btn-import">Importar extrato (CSV/Excel)</button>
