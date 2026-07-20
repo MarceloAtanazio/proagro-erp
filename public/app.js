@@ -1420,7 +1420,7 @@ async function renderConciliacao() {
       <select id="f-status"><option value="">Todos</option><option value="0" selected>Não conciliados</option><option value="1">Conciliados</option></select>
       <div class="spacer"></div>
       <button class="btn" id="btn-manual">+ Lançamento manual</button>
-      <button class="btn blue" id="btn-import">Importar extrato (CSV)</button>
+      <button class="btn blue" id="btn-import">Importar extrato (CSV/Excel)</button>
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>
     <p class="hint">Importação: arquivo CSV com colunas <strong>data;descrição;valor</strong> (datas DD/MM/AAAA ou AAAA-MM-DD; valores negativos = débitos).</p>`;
@@ -1458,15 +1458,16 @@ async function renderConciliacao() {
      }}]);
 
   $('#btn-import').onclick = () => openModal('Importar extrato bancário', `
-    <div class="field"><label>Arquivo CSV</label><input type="file" id="b-file" accept=".csv,.txt"></div>
-    <p class="hint">Formato aceito: <code>data;descrição;valor</code> — uma linha por lançamento.<br>
-    Exemplo: <code>05/07/2026;PAG BOLETO REGUS;-12500,00</code></p>`,
+    <div class="field"><label>Arquivo (CSV ou Excel)</label><input type="file" id="b-file" accept=".csv,.txt,.xlsx,.xls"></div>
+    <p class="hint">CSV: <code>data;descrição;valor</code> — uma linha por lançamento (ex.: <code>05/07/2026;PAG BOLETO REGUS;-12500,00</code>).<br>
+    Excel: aceita a planilha de extrato como enviada pelo banco (colunas Data, Histórico e Valor, em qualquer posição — o sistema localiza o cabeçalho sozinho).</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Importar', cls: 'primary', onClick: async () => {
         const f = $('#b-file').files[0];
         if (!f) return modalError('Selecione um arquivo.');
-        const text = await f.text();
         try {
+          const isExcel = /\.xlsx?$/i.test(f.name);
+          const text = isExcel ? await excelToCSV(f) : await f.text();
           const r = await api('/api/bank/import', { method: 'POST', body: { csv: text } });
           closeModal(); toast(`${r.imported} lançamento(s) importado(s)${r.skipped ? ` · ${r.skipped} ignorado(s)` : ''}.`);
           renderConciliacao();
@@ -1474,6 +1475,65 @@ async function renderConciliacao() {
      }}]);
 
   draw();
+}
+
+// Converte uma planilha de extrato bancário (.xlsx/.xls) para o mesmo formato
+// texto "data;descrição;valor" que a importação por CSV já aceita — assim
+// reaproveitamos exatamente a mesma rota/validação do servidor, sem duplicar lógica.
+// Localiza o cabeçalho procurando colunas com "data" e "valor" no nome (em
+// qualquer posição da planilha), então funciona com extratos de bancos
+// diferentes, não só o formato de um banco específico.
+async function excelToCSV(file) {
+  if (!window.XLSX) throw new Error('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+
+  const norm = s => String(s ?? '').toLowerCase().trim();
+  let headerIdx = -1, colData = -1, colDesc = -1, colValor = -1;
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
+    const row = rows[i].map(norm);
+    const dCol = row.findIndex(c => c.includes('data'));
+    const vCol = row.findIndex(c => c.includes('valor'));
+    if (dCol > -1 && vCol > -1) {
+      headerIdx = i; colData = dCol; colValor = vCol;
+      colDesc = row.findIndex(c => c.includes('histor') || c.includes('descri'));
+      if (colDesc === -1) colDesc = dCol + 1; // melhor esforço se não achar o nome exato
+      break;
+    }
+  }
+  if (headerIdx === -1) throw new Error('Não foi possível identificar as colunas de Data e Valor nesta planilha.');
+
+  const excelSerialToISO = n => {
+    const d = new Date(Math.round((n - 25569) * 86400 * 1000));
+    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+  };
+  const toBRDate = v => {
+    if (v instanceof Date) return `${String(v.getDate()).padStart(2, '0')}/${String(v.getMonth() + 1).padStart(2, '0')}/${v.getFullYear()}`;
+    if (typeof v === 'number') return excelSerialToISO(v);
+    const s = String(v || '').trim();
+    return /^\d{2}\/\d{2}\/\d{4}$/.test(s) ? s : null;
+  };
+  const toValor = v => {
+    if (typeof v === 'number') return v;
+    let s = String(v ?? '').trim().replace(/[R$\s]/g, '');
+    if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+  };
+
+  const lines = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const date = toBRDate(row[colData]);
+    const valor = toValor(row[colValor]);
+    if (!date || valor === null) continue; // pula linhas de rodapé/resumo sem data+valor válidos
+    const desc = String(row[colDesc] ?? '').replace(/\s+/g, ' ').trim() || 'Lançamento importado';
+    lines.push(`${date};${desc.replace(/;/g, ',')};${String(valor).replace('.', ',')}`);
+  }
+  if (!lines.length) throw new Error('Nenhum lançamento válido encontrado na planilha.');
+  return lines.join('\n');
 }
 
 async function conciliar(t) {
