@@ -1432,16 +1432,25 @@ async function renderConciliacao() {
       <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => `<tr>
         <td>${brDate(r.txn_date)}</td>
-        <td>${esc(r.description)}<br><small style="color:var(--muted)">${esc(r.imported_batch || '')}</small></td>
+        <td>${esc(r.description)}<br><small style="color:var(--muted)">${r.auto_generated && !r.reconciled ? 'Gerado automaticamente — aguardando confirmação no extrato' : esc(r.imported_batch || '')}</small></td>
         <td class="num ${r.amount >= 0 ? 'pos' : 'neg'}">${brl(r.amount)}</td>
         <td>${r.reconciled ? '<span class="badge ok">Conciliado</span>' : '<span class="badge warn">Pendente</span>'}</td>
         <td class="actions">
           ${r.reconciled
             ? `<button class="btn sm" data-unrec="${r.id}">Desfazer</button>`
-            : `<button class="btn sm primary" data-rec="${r.id}">Conciliar</button>`}
+            : (r.matched_type && r.matched_id)
+              ? `<button class="btn sm primary" data-confirm="${r.id}">Confirmar</button>`
+              : `<button class="btn sm primary" data-rec="${r.id}">Conciliar</button>`}
           <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
         </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhum lançamento.</div></td></tr>'}</tbody>`;
     $('#tbl').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => conciliar(rows.find(r => r.id == b.dataset.rec)));
+    $('#tbl').querySelectorAll('[data-confirm]').forEach(b => b.onclick = async () => {
+      const t = rows.find(r => r.id == b.dataset.confirm);
+      try {
+        await api(`/api/bank/${t.id}/reconcile`, { method: 'POST', body: { matched_type: t.matched_type, matched_id: t.matched_id } });
+        toast('Conciliação confirmada.'); renderConciliacao();
+      } catch (e) { toast(e.message); }
+    });
     $('#tbl').querySelectorAll('[data-unrec]').forEach(b => b.onclick = async () => { await api(`/api/bank/${b.dataset.unrec}/unreconcile`, { method: 'POST' }); toast('Conciliação desfeita.'); renderConciliacao(); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('lançamento', `/api/bank/${b.dataset.del}`, renderConciliacao));
   };
