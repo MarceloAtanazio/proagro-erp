@@ -1529,20 +1529,13 @@ function formFornecedor(r) {
 // CONCILIAÇÃO BANCÁRIA
 // ============================================================
 async function renderConciliacao() {
-  const rows = await api('/api/bank');
+  const [rows, payRows] = await Promise.all([api('/api/bank'), api('/api/payables')]);
   const c = $('#content');
-  const pend = rows.filter(r => !r.reconciled);
-  const saldo = rows.reduce((s, r) => s + r.amount, 0);
   const FKEY = 'filters-conciliacao';
   const saved = loadFilters(FKEY);
 
   c.innerHTML = `
-    <div class="grid kpis" style="margin-bottom:16px">
-      <div class="card kpi"><div class="label">Saldo do extrato</div><div class="value ${saldo < 0 ? 'neg' : ''}">${brl(saldo)}</div></div>
-      <div class="card kpi warn"><div class="label">Não conciliados</div><div class="value">${pend.length}</div>
-        <div class="detail">${brl(pend.reduce((s, r) => s + r.amount, 0))}</div></div>
-      <div class="card kpi blue"><div class="label">Conciliados</div><div class="value">${rows.length - pend.length}</div></div>
-    </div>
+    <div class="grid kpis" style="margin-bottom:16px" id="conc-kpis"></div>
     <div class="toolbar">
       <select id="f-status">
         <option value="">Todos</option>
@@ -1568,6 +1561,32 @@ async function renderConciliacao() {
   const draw = () => {
     const fs = $('#f-status').value, de = $('#f-de').value, ate = $('#f-ate').value;
     saveFilters(FKEY, { fs, de, ate });
+
+    // KPIs: respeitam o período (De/Até), mas sempre mostram os dois lados
+    // (conciliado/pendente) juntos — o filtro de Situação abaixo só recorta
+    // a tabela, não o resumo.
+    const noPeriodo = rows.filter(r => (!de || r.txn_date >= de) && (!ate || r.txn_date <= ate));
+    const pend = noPeriodo.filter(r => !r.reconciled);
+    const saldo = noPeriodo.reduce((s, r) => s + r.amount, 0);
+
+    // Baixado em Contas a Pagar (status "Pago") dentro do mesmo período, que
+    // ainda não tem um lançamento bancário CONCILIADO vinculado a ele —
+    // ou seja, já foi dado como pago no ERP mas ainda não foi confirmado
+    // no extrato bancário importado.
+    const pagosNoPeriodo = payRows.filter(p => p.status === 'pago' && (!de || p.payment_date >= de) && (!ate || p.payment_date <= ate));
+    const semConciliar = pagosNoPeriodo.filter(p => !rows.some(r => r.reconciled && r.matched_type === 'payable' && String(r.matched_id) === String(p.id)));
+    const valorSemConciliar = semConciliar.reduce((s, p) => s + Number(p.amount), 0);
+
+    $('#conc-kpis').innerHTML = `
+      <div class="card kpi"><div class="label">Saldo do extrato</div><div class="value ${saldo < 0 ? 'neg' : ''}">${brl(saldo)}</div>
+        <div class="detail">Soma de todos os lançamentos desta tela no período${de || ate ? ' filtrado' : ''}</div></div>
+      <div class="card kpi warn"><div class="label">Não conciliados</div><div class="value">${pend.length}</div>
+        <div class="detail">${brl(pend.reduce((s, r) => s + r.amount, 0))}</div></div>
+      <div class="card kpi blue"><div class="label">Conciliados</div><div class="value">${noPeriodo.length - pend.length}</div></div>
+      <div class="card kpi ${semConciliar.length ? 'red' : ''}"><div class="label">Baixado sem conciliar (Contas a Pagar)</div>
+        <div class="value ${semConciliar.length ? 'neg' : ''}">${brl(valorSemConciliar)}</div>
+        <div class="detail">${semConciliar.length} título(s) pago(s) ainda sem confirmação no extrato</div></div>`;
+
     const filtered = rows.filter(r => {
       if (fs !== '' && String(r.reconciled) !== fs) return false;
       if (de && r.txn_date < de) return false;
