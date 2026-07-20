@@ -1639,7 +1639,7 @@ async function renderConciliacao() {
           const isExcel = /\.xlsx?$/i.test(f.name);
           const text = isExcel ? await excelToCSV(f) : await f.text();
           const r = await api('/api/bank/import', { method: 'POST', body: { csv: text } });
-          closeModal(); toast(`${r.imported} lançamento(s) importado(s)${r.skipped ? ` · ${r.skipped} ignorado(s)` : ''}.`);
+          closeModal(); toast(`${r.imported} lançamento(s) importado(s)${r.duplicated ? ` · ${r.duplicated} já existente(s) (ignorado)` : ''}${r.skipped ? ` · ${r.skipped} inválido(s)` : ''}.`);
           renderConciliacao();
         } catch (e) { modalError(e.message); }
      }}]);
