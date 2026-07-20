@@ -839,7 +839,7 @@ app.post('/api/bank/import', requireAuth, requireEdit('conciliacao'), h(async (r
     const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
   };
-  let ok = 0, skipped = 0;
+  let ok = 0, skipped = 0, duplicated = 0;
   for (const line of lines) {
     const sep = line.includes(';') ? ';' : ',';
     const parts = line.split(sep);
@@ -848,10 +848,18 @@ app.post('/api/bank/import', requireAuth, requireEdit('conciliacao'), h(async (r
     const amount = parseAmount(parts[parts.length - 1]);
     const desc = parts.slice(1, parts.length - 1).join(' ').replace(/"/g, '').trim();
     if (!date || !desc || !isFinite(amount) || amount === 0) { skipped++; continue; }
+    // Evita duplicar: se já existe um lançamento idêntico (mesma data,
+    // descrição e valor), pula — assim reimportar o mesmo extrato (ou um
+    // período que se sobrepõe a uma importação anterior) não duplica linhas.
+    const dup = await query(
+      'SELECT id FROM erp_bank_transactions WHERE txn_date=$1 AND amount=$2 AND description=$3 LIMIT 1',
+      [date, amount, desc]
+    );
+    if (dup.length) { duplicated++; continue; }
     await query('INSERT INTO erp_bank_transactions (txn_date, description, amount, imported_batch) VALUES ($1,$2,$3,$4)', [date, desc, amount, batch]);
     ok++;
   }
-  res.json({ ok: true, imported: ok, skipped });
+  res.json({ ok: true, imported: ok, skipped, duplicated });
 }));
 
 // Sugestões de conciliação: títulos com mesmo valor, em janela de ±7 dias
