@@ -464,9 +464,11 @@ app.post('/api/payables/:id/pay', requireAuth, requireEdit('pagar'), h(async (re
   const p = (await query('SELECT description, amount FROM erp_payables WHERE id=$1', [req.params.id]))[0];
   if (!p) return res.status(404).json({ error: 'Título não encontrado.' });
   await query(`UPDATE erp_payables SET status='pago', payment_date=$1 WHERE id=$2`, [d, req.params.id]);
-  // Reflete a saída no saldo de caixa imediatamente (sem depender de importar extrato bancário).
+  // Reflete a saída no saldo de caixa imediatamente (sem depender de importar extrato bancário),
+  // mas fica PENDENTE de conciliação — só vira "Conciliado" quando o extrato real for
+  // importado e confirmado, para não dar falsa sensação de que já foi verificado no banco.
   await query(`INSERT INTO erp_bank_transactions (txn_date, description, amount, reconciled, matched_type, matched_id, auto_generated)
-    VALUES ($1,$2,$3,true,'payable',$4,true)`, [d, `Pagamento: ${p.description}`, -Math.abs(Number(p.amount)), req.params.id]);
+    VALUES ($1,$2,$3,false,'payable',$4,true)`, [d, `Pagamento: ${p.description}`, -Math.abs(Number(p.amount)), req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -536,9 +538,10 @@ app.post('/api/receivables/:id/receive', requireAuth, requireEdit('receber'), h(
   const r = (await query('SELECT description, amount FROM erp_receivables WHERE id=$1', [req.params.id]))[0];
   if (!r) return res.status(404).json({ error: 'Recebível não encontrado.' });
   await query(`UPDATE erp_receivables SET status='recebido', receipt_date=$1 WHERE id=$2`, [d, req.params.id]);
-  // Reflete a entrada no saldo de caixa imediatamente (sem depender de importar extrato bancário).
+  // Reflete a entrada no saldo de caixa imediatamente, mas PENDENTE de conciliação
+  // (só confirma quando o extrato real for importado e verificado).
   await query(`INSERT INTO erp_bank_transactions (txn_date, description, amount, reconciled, matched_type, matched_id, auto_generated)
-    VALUES ($1,$2,$3,true,'receivable',$4,true)`, [d, `Recebimento: ${r.description}`, Math.abs(Number(r.amount)), req.params.id]);
+    VALUES ($1,$2,$3,false,'receivable',$4,true)`, [d, `Recebimento: ${r.description}`, Math.abs(Number(r.amount)), req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -892,6 +895,13 @@ app.post('/api/bank/:id/reconcile', requireAuth, requireEdit('conciliacao'), h(a
   }
   await query('UPDATE erp_bank_transactions SET reconciled=true, matched_type=$1, matched_id=$2 WHERE id=$3',
     [matched_type || 'manual', matched_id || null, req.params.id]);
+  // Se já existia um lançamento automático (gerado ao Baixar/Receber) para o
+  // mesmo título, ele foi substituído por este de verdade — remove o duplicado
+  // para não sobrar um "pendente" fantasma na lista.
+  if (matched_type && matched_id) {
+    await query(`DELETE FROM erp_bank_transactions WHERE matched_type=$1 AND matched_id=$2 AND auto_generated=true AND id<>$3`,
+      [matched_type, matched_id, req.params.id]);
+  }
   res.json({ ok: true });
 }));
 
