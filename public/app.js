@@ -1583,9 +1583,19 @@ async function renderConciliacao() {
       <div class="card kpi warn"><div class="label">Não conciliados</div><div class="value">${pend.length}</div>
         <div class="detail">${brl(pend.reduce((s, r) => s + r.amount, 0))}</div></div>
       <div class="card kpi blue"><div class="label">Conciliados</div><div class="value">${noPeriodo.length - pend.length}</div></div>
-      <div class="card kpi ${semConciliar.length ? 'red' : ''}"><div class="label">Baixado sem conciliar (Contas a Pagar)</div>
+      <div class="card kpi ${semConciliar.length ? 'red' : ''}" id="kpi-semconciliar" style="${semConciliar.length ? 'cursor:pointer' : ''}"><div class="label">Baixado sem conciliar (Contas a Pagar)</div>
         <div class="value ${semConciliar.length ? 'neg' : ''}">${brl(valorSemConciliar)}</div>
-        <div class="detail">${semConciliar.length} título(s) pago(s) ainda sem confirmação no extrato</div></div>`;
+        <div class="detail">${semConciliar.length} título(s) pago(s) ainda sem confirmação no extrato${semConciliar.length ? ' — clique para ver quais' : ''}</div></div>`;
+    if (semConciliar.length) {
+      $('#kpi-semconciliar').onclick = () => openModal('Contas a Pagar baixadas sem conciliação confirmada', `
+        <p style="font-size:13.5px; color:var(--ink-2)">Estes títulos estão marcados como "Pago" no período filtrado, mas não têm um lançamento
+        bancário <strong>vinculado e conciliado</strong> a eles especificamente (mesmo que exista algum lançamento de valor parecido no extrato,
+        ele só conta aqui se estiver de fato linkado a este título).</p>
+        <div class="table-wrap"><table><thead><tr><th>Pago em</th><th>Descrição</th><th>Fornecedor</th><th class="num">Valor</th></tr></thead>
+          <tbody>${semConciliar.map(p => `<tr><td>${brDate(p.payment_date)}</td><td>${esc(p.description)}</td><td>${esc(p.supplier_name || '—')}</td><td class="num">${brl(p.amount)}</td></tr>`).join('')}</tbody>
+        </table></div>`,
+        [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
+    }
 
     const filtered = rows.filter(r => {
       if (fs !== '' && String(r.reconciled) !== fs) return false;
