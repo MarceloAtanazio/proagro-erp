@@ -620,8 +620,7 @@ async function renderPagar() {
       </div>
       <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
-      <button class="btn" id="btn-csv">Exportar CSV</button>
-      <button class="btn" id="btn-pdf">Exportar PDF</button>
+      <button class="btn" id="btn-export">Exportar</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
     </div>
     <div class="table-wrap"><table id="tbl" class="tbl-pagar"></table></div>`;
@@ -693,11 +692,30 @@ async function renderPagar() {
     draw();
   };
   $('#btn-new').onclick = () => formPagar(null, sups);
-  $('#btn-csv').onclick = () => exportCSV('contas_a_pagar',
+
+  const exportarPagarCSV = () => exportCSV('contas_a_pagar',
     ['ID','Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','Valor','Status','Pagamento'],
     lastFiltered.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
       r.payment_method || '', r.payment_method === 'pix' ? (r.pix_key || '') : '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
-  $('#btn-pdf').onclick = () => {
+
+  const exportarPagarExcel = () => {
+    if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+    const PM_LABELS_XL = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
+    const wsData = [
+      ['ID', 'Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Documento', 'Forma de Pagamento', 'Chave PIX', 'Valor', 'Status', 'Pagamento'],
+      ...lastFiltered.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
+        r.payment_method ? (PM_LABELS_XL[r.payment_method] || r.payment_method) : '', r.payment_method === 'pix' ? (r.pix_key || '') : '',
+        Number(r.amount), r.status === 'pago' ? 'Pago' : (r.due_date < todayISO() ? 'Vencido' : 'Pendente'), r.payment_date || ''])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    for (let i = 1; i <= lastFiltered.length; i++) { const cell = ws['J' + (i + 1)]; if (cell) cell.z = '"R$" #,##0.00'; }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Contas a Pagar');
+    XLSX.writeFile(wb, `contas_a_pagar_${todayISO()}.xlsx`);
+    toast('Excel exportado.');
+  };
+
+  const exportarPagarPDF = () => {
     const parts = [];
     if ($('#q').value) parts.push(`Busca: "${$('#q').value}"`);
     if ($('#f-status').value) parts.push('Status: ' + ({ pendente: 'Pendentes', vencido: 'Vencidos', pago: 'Pagos' }[$('#f-status').value]));
@@ -705,6 +723,16 @@ async function renderPagar() {
     if ($('#f-de').value || $('#f-ate').value) parts.push(`Período: ${$('#f-de').value ? brDate($('#f-de').value) : '—'} a ${$('#f-ate').value ? brDate($('#f-ate').value) : '—'}`);
     exportPagarPDF(lastFiltered, parts.join('   ·   '));
   };
+
+  $('#btn-export').onclick = () => openModal('Exportar Contas a Pagar',
+    `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'CSV', onClick: () => { closeModal(); exportarPagarCSV(); } },
+      { label: 'Excel', onClick: () => { closeModal(); exportarPagarExcel(); } },
+      { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); exportarPagarPDF(); } }
+    ]);
+
   draw();
 }
 
