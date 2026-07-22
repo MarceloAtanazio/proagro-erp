@@ -2375,6 +2375,12 @@ async function viewSolicitacao(id) {
       renderViaticos();
     }});
   } else if (s.status !== 'arquivado') {
+    if (USER.role === 'admin') {
+      botoes.push({ label: 'Reabrir', onClick: async () => {
+        await api(`/api/viaticos/solicitacoes/${id}/reabrir`, { method: 'POST' });
+        toast('Comprovação reaberta.'); viewSolicitacao(id);
+      }});
+    }
     botoes.push({ label: 'Arquivar', cls: 'primary', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/arquivar`, { method: 'POST' }); closeModal(); toast('Arquivado.'); renderViaticos(); } });
   }
 
