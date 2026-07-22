@@ -1559,6 +1559,14 @@ app.post('/api/viaticos/solicitacoes/:id/arquivar', requireAuth, requireEdit('vi
   res.json({ ok: true });
 }));
 
+// Reabre uma comprovação já finalizada, para corrigir/editar despesas.
+// Restrito a administradores (não basta ter permissão de edição em Viáticos).
+app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(async (req, res) => {
+  await query(`UPDATE erp_viaticos_solicitacoes SET status='aguardando_comprovacao', valor_devolvido=0, valor_pendencia=0, pendencia_resolvida=true
+    WHERE id=$1 AND status IN ('comprovado','devolvido','divergente')`, [req.params.id]);
+  res.json({ ok: true });
+}));
+
 app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   await query('DELETE FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
