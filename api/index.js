@@ -1482,15 +1482,24 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
     valor_devolvido: n(r.valor_devolvido), valor_pendencia: n(r.valor_pendencia), valor_comprovado: n(r.valor_comprovado) })));
 }));
 
+const MOTIVO_OPTIONS = ['Monitoramento', 'Sinistro', 'Comercial'];
+
 function validateSolicitacao(b) {
   if (!b.colaborador_id) return 'Selecione o colaborador.';
   if (!['A', 'B'].includes(b.tier)) return 'Tier inválido.';
   if (!['interior', 'capital', 'sp_df_rj_intl'].includes(b.categoria_local)) return 'Categoria de local inválida.';
+  if (b.motivo && !MOTIVO_OPTIONS.includes(b.motivo)) return 'Motivo inválido.';
   if (!isDate(b.data_inicio) || !isDate(b.data_fim)) return 'Datas do período inválidas.';
   if (b.data_fim < b.data_inicio) return 'Data final não pode ser antes da inicial.';
   if (b.data_expiracao_flash && !isDate(b.data_expiracao_flash)) return 'Data de expiração no Flash inválida.';
   const liberado = Number(b.valor_liberado);
   if (!isFinite(liberado) || liberado < 0) return 'Valor liberado inválido.';
+  if (b.destinos !== undefined) {
+    if (!Array.isArray(b.destinos)) return 'Lista de destinos inválida.';
+    for (const d of b.destinos) {
+      if (!d || typeof d.uf !== 'string' || d.uf.length !== 2 || !sanitize(d.municipio)) return 'Lista de destinos inválida.';
+    }
+  }
   return null;
 }
 
@@ -1507,9 +1516,9 @@ app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(a
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
   const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
-    (colaborador_id, tier, categoria_local, destino, motivo, data_inicio, data_fim, data_expiracao_flash, valor_solicitado, valor_liberado, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-    [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.destino), sanitize(b.motivo), b.data_inicio, b.data_fim,
+    (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, data_inicio, data_fim, data_expiracao_flash, valor_solicitado, valor_liberado, notes, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+    [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo), b.data_inicio, b.data_fim,
      b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.user.id]);
   // Se o colaborador optou por descontar a pendência anterior automaticamente, marca como resolvida.
   if (b.descontar_pendencia_ids && Array.isArray(b.descontar_pendencia_ids) && b.descontar_pendencia_ids.length) {
@@ -1522,9 +1531,9 @@ app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(a
 app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
-  await query(`UPDATE erp_viaticos_solicitacoes SET colaborador_id=$1, tier=$2, categoria_local=$3, destino=$4, motivo=$5,
-    data_inicio=$6, data_fim=$7, data_expiracao_flash=$8, valor_solicitado=$9, valor_liberado=$10, notes=$11 WHERE id=$12`,
-    [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.destino), sanitize(b.motivo), b.data_inicio, b.data_fim,
+  await query(`UPDATE erp_viaticos_solicitacoes SET colaborador_id=$1, tier=$2, categoria_local=$3, ordem_trabalho=$4, destinos=$5, motivo=$6,
+    data_inicio=$7, data_fim=$8, data_expiracao_flash=$9, valor_solicitado=$10, valor_liberado=$11, notes=$12 WHERE id=$13`,
+    [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo), b.data_inicio, b.data_fim,
      b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.params.id]);
   res.json({ ok: true });
 }));
