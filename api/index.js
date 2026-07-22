@@ -1572,7 +1572,7 @@ app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny([
 
 app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body;
-  if (!['hospedagem', 'alimentacao', 'estacionamento', 'veiculo', 'outro'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
+  if (!['alimentacao', 'aluguel_carro', 'combustivel', 'estacionamento', 'hospedagem', 'outro', 'passagem_aviao', 'passagem_onibus', 'pedagio', 'taxi_uber', 'veiculo'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
   const valor = Number(b.valor);
   if (!isFinite(valor) || valor <= 0) return res.status(400).json({ error: 'Valor deve ser maior que zero.' });
