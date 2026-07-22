@@ -1924,6 +1924,18 @@ async function renderOrcadoReal() {
   const rec = build('receita', actuals.receitas);
   const desp = build('despesa', actuals.despesas);
 
+  // ---- KPIs corporativos (Despesas) ----
+  const despComOrc = desp.filter(r => r.orc > 0);
+  const tOrcDesp = desp.reduce((s, r) => s + r.orc, 0);
+  const tRealDesp = desp.reduce((s, r) => s + r.real, 0);
+  const varTotalDesp = tRealDesp - tOrcDesp;
+  const pctTotalDesp = tOrcDesp ? (tRealDesp / tOrcDesp) * 100 : null;
+  const acimaDoOrcado = despComOrc.filter(r => r.real > r.orc);
+  const maiorDesvioAbs = [...despComOrc].sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif))[0];
+  const maiorDesvioPct = [...despComOrc].sort((a, b) => b.pct - a.pct)[0];
+
+  const fmtPct = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
+
   const tableHTML = (rows, type) => {
     const tOrc = rows.reduce((s, r) => s + r.orc, 0), tReal = rows.reduce((s, r) => s + r.real, 0);
     const isReceita = type === 'receita';
@@ -1960,8 +1972,30 @@ async function renderOrcadoReal() {
       <div class="spacer"></div>
       <button class="btn" id="btn-csv">Exportar CSV</button>
     </div>
-    <div class="card" style="margin-bottom:16px"><h3>Despesas — orçado x realizado por categoria (${scope === 'ytd' ? 'Jan–' + MESES[maxM - 1] : 'ano completo'})</h3>
-      <div class="chart-box tall"><canvas id="ch"></canvas></div></div>
+    <div class="dash-section-title">Indicadores — Despesas (${scope === 'ytd' ? 'Jan–' + MESES[maxM - 1] : 'ano completo'})</div>
+    <div class="grid kpis" style="margin-bottom:16px">
+      <div class="card kpi"><div class="label">Total orçado</div><div class="value">${brl(tOrcDesp)}</div></div>
+      <div class="card kpi red"><div class="label">Total realizado</div><div class="value">${brl(tRealDesp)}</div></div>
+      <div class="card kpi ${varTotalDesp > 0 ? 'red' : ''}"><div class="label">Variação total</div>
+        <div class="value ${varTotalDesp > 0 ? 'neg' : 'pos'}">${varTotalDesp >= 0 ? '+' : ''}${brl(varTotalDesp)}</div>
+        <div class="detail">${fmtPct(pctTotalDesp)} do orçado</div></div>
+      <div class="card kpi ${acimaDoOrcado.length ? 'warn' : ''}"><div class="label">Categorias acima do orçado</div>
+        <div class="value">${acimaDoOrcado.length} / ${despComOrc.length}</div></div>
+      <div class="card kpi red"><div class="label">Maior desvio (R$)</div>
+        <div class="value neg">${maiorDesvioAbs ? brl(maiorDesvioAbs.dif) : '—'}</div>
+        <div class="detail">${maiorDesvioAbs ? esc(maiorDesvioAbs.cat) : 'Sem dados'}</div></div>
+      <div class="card kpi ${maiorDesvioPct && maiorDesvioPct.pct > 100 ? 'red' : ''}"><div class="label">Maior desvio (%)</div>
+        <div class="value ${maiorDesvioPct && maiorDesvioPct.pct > 100 ? 'neg' : ''}">${maiorDesvioPct ? fmtPct(maiorDesvioPct.pct) : '—'}</div>
+        <div class="detail">${maiorDesvioPct ? esc(maiorDesvioPct.cat) : 'Sem dados'}</div></div>
+    </div>
+    <div class="two-col" style="margin-bottom:16px">
+      <div class="card"><h3>% do orçamento utilizado por categoria</h3>
+        <p class="hint" style="margin-top:-4px">Verde = dentro do orçado · Âmbar = até 10% acima · Vermelho = mais de 10% acima. Independe do valor em R$ de cada categoria.</p>
+        <div class="chart-box tall"><canvas id="ch-pct"></canvas></div></div>
+      <div class="card"><h3>Maiores variações em R$ (orçado vs. realizado)</h3>
+        <p class="hint" style="margin-top:-4px">Categorias com maior impacto financeiro no desvio, para cima ou para baixo.</p>
+        <div class="chart-box tall"><canvas id="ch-var"></canvas></div></div>
+    </div>
     <h3 style="margin:6px 0 10px; font-size:15px">Receitas</h3>
     ${tableHTML(rec, 'receita')}
     <h3 style="margin:6px 0 10px; font-size:15px">Despesas</h3>
@@ -1975,15 +2009,41 @@ async function renderOrcadoReal() {
      ...desp.map(r => ['Despesa', r.cat, r.orc, r.real, r.dif, r.pct?.toFixed(1) ?? ''])]
       .map(row => row.map(v => String(v).replace('.', ','))));
 
-  makeChart($('#ch'), {
+  // % do orçamento utilizado — escala 0-100%+ (não depende do valor absoluto
+  // de cada categoria, resolvendo o problema de categorias grandes esmagarem
+  // as pequenas numa escala compartilhada de R$).
+  const pctOrdenado = [...despComOrc].sort((a, b) => b.pct - a.pct);
+  const corPct = p => p <= 100 ? CORES.verde : p <= 110 ? '#C9922A' : '#B23A2F';
+  makeChart($('#ch-pct'), {
     type: 'bar',
-    data: { labels: desp.map(r => r.cat), datasets: [
-      { label: 'Orçado', data: desp.map(r => r.orc), backgroundColor: '#B9D6C5', borderRadius: 4 },
-      { label: 'Realizado', data: desp.map(r => r.real), backgroundColor: CORES.verde, borderRadius: 4 }
+    data: { labels: pctOrdenado.map(r => r.cat), datasets: [
+      { label: '% do orçado', data: pctOrdenado.map(r => r.pct), backgroundColor: pctOrdenado.map(r => corPct(r.pct)), borderRadius: 4 }
     ]},
-    options: chartOpts({ indexAxis: 'y', scales: {
-      x: { ticks: { callback: v => (v / 1000).toLocaleString('pt-BR') + ' mil', font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } },
-      y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } } })
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtPct(ctx.parsed.x) } } },
+      scales: {
+        x: { ticks: { callback: v => v + '%', font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } },
+        y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } }
+    }
+  });
+
+  // Maiores variações em R$ — mostra o impacto financeiro real do desvio,
+  // complementando a visão percentual acima (uma categoria pequena pode estar
+  // 300% acima do orçado mas representar pouco dinheiro; aqui isso fica claro).
+  const varOrdenado = [...despComOrc].sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif)).slice(0, 10).reverse();
+  makeChart($('#ch-var'), {
+    type: 'bar',
+    data: { labels: varOrdenado.map(r => r.cat), datasets: [
+      { label: 'Variação (R$)', data: varOrdenado.map(r => r.dif), backgroundColor: varOrdenado.map(r => r.dif > 0 ? '#B23A2F' : CORES.verdeMed), borderRadius: 4 }
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.x) } } },
+      scales: {
+        x: { ticks: { callback: v => (v / 1000).toLocaleString('pt-BR') + ' mil', font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } },
+        y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } }
+    }
   });
 }
 
