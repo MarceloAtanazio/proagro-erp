@@ -2133,7 +2133,19 @@ async function renderRelatorios() {
 // ============================================================
 const TIER_LABEL = { A: 'A — Diretoria/Gerência', B: 'B — Coordenação/Técnicos' };
 const LOCAL_LABEL = { interior: 'Interior', capital: 'Capital', sp_df_rj_intl: 'SP/DF/RJ + Internacional' };
-const DESP_CAT_LABEL = { hospedagem: 'Hospedagem', alimentacao: 'Alimentação', estacionamento: 'Estacionamento', veiculo: 'Veículo próprio', outro: 'Outro' };
+const DESP_CAT_LABEL = {
+  alimentacao: 'Alimentação',
+  aluguel_carro: 'Aluguel de Carro',
+  combustivel: 'Combustível',
+  estacionamento: 'Estacionamento',
+  hospedagem: 'Hospedagem',
+  outro: 'Outro',
+  passagem_aviao: 'Passagem de Avião',
+  passagem_onibus: 'Passagem de Ônibus',
+  pedagio: 'Pedágio',
+  taxi_uber: 'Táxis / Uber',
+  veiculo: 'Veículo Próprio'
+};
 const VIA_STATUS_LABEL = {
   liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação',
   comprovado: 'Comprovado', devolvido: 'Devolvido (sobrou)', divergente: 'Divergente (estourou)', arquivado: 'Arquivado'
