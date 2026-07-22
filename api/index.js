@@ -62,7 +62,7 @@ function setAuthCookie(res, user) {
 
 // Páginas cujo acesso é configurável por usuário.
 // "usuarios" não entra aqui: é exclusiva do administrador.
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos'];
 
 // Normaliza o objeto de permissões recebido do frontend para o formato
 // { pagina: 'view' | 'edit' }, descartando páginas desconhecidas e níveis inválidos.
@@ -558,7 +558,7 @@ app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async 
 // ------------------------------------------------------------
 // Anexos (boletos, notas fiscais, comprovantes) — armazenados no banco
 // ------------------------------------------------------------
-const ATTACH_TYPES = { payable: 'pagar', receivable: 'receber' };
+const ATTACH_TYPES = { payable: 'pagar', receivable: 'receber', viatico: 'viaticos' };
 const ATTACH_KINDS = ['boleto', 'nota_fiscal', 'comprovante', 'contrato', 'outro'];
 const MAX_ATTACH_BYTES = 3 * 1024 * 1024; // 3 MB por arquivo (limite seguro p/ Vercel)
 
@@ -627,7 +627,7 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   if (buf.length > MAX_ATTACH_BYTES) return res.status(413).json({ error: 'Arquivo acima do limite de 3 MB.' });
 
   // Confirma que o título existe.
-  const table = req.params.type === 'payable' ? 'erp_payables' : 'erp_receivables';
+  const table = { payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas' }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
   if (!own.length) return res.status(404).json({ error: 'Título não encontrado.' });
 
@@ -1411,11 +1411,213 @@ app.post('/api/users/:id/toggle', requireAuth, requireSuperAdmin, h(async (req, 
 }));
 
 // ------------------------------------------------------------
+// Viáticos — controle interno (Colaboradores, TUD, Solicitações, Despesas)
+// Sem integração com o Flash: tudo alimentado manualmente. A "Carteira Flash"
+// é só um saldo calculado (repasses via Contas a Pagar categoria "Viáticos"
+// menos o que já foi liberado/gasto em solicitações).
+// ------------------------------------------------------------
+
+// ---- Colaboradores ----
+app.get('/api/colaboradores', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  res.json(await query('SELECT * FROM erp_colaboradores ORDER BY ativo DESC, name'));
+}));
+
+app.post('/api/colaboradores', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body;
+  if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
+  const ins = await query('INSERT INTO erp_colaboradores (name, cargo, tier) VALUES ($1,$2,$3) RETURNING id',
+    [sanitize(b.name), sanitize(b.cargo), b.tier]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body;
+  if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
+  await query('UPDATE erp_colaboradores SET name=$1, cargo=$2, tier=$3, ativo=$4 WHERE id=$5',
+    [sanitize(b.name), sanitize(b.cargo), b.tier, b.ativo !== false, req.params.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const used = (await query('SELECT COUNT(*)::int AS n FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1', [req.params.id]))[0].n;
+  if (used > 0) return res.status(409).json({ error: `Este colaborador tem ${used} solicitação(ões) vinculada(s). Inative-o em vez de excluir.` });
+  await query('DELETE FROM erp_colaboradores WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ---- TUD (Tarifa Única Diária) ----
+app.get('/api/viaticos/tud', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  res.json(await query('SELECT * FROM erp_viaticos_tud ORDER BY tier, categoria_local, tipo_despesa'));
+}));
+
+app.post('/api/viaticos/tud', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body;
+  if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido.' });
+  if (!['interior', 'capital', 'sp_df_rj_intl'].includes(b.categoria_local)) return res.status(400).json({ error: 'Categoria de local inválida.' });
+  if (!['hospedagem', 'alimentacao'].includes(b.tipo_despesa)) return res.status(400).json({ error: 'Tipo de despesa inválido.' });
+  const valor = Number(b.valor_diaria);
+  if (!isFinite(valor) || valor < 0) return res.status(400).json({ error: 'Valor inválido.' });
+  await query(`INSERT INTO erp_viaticos_tud (tier, categoria_local, tipo_despesa, valor_diaria) VALUES ($1,$2,$3,$4)
+    ON CONFLICT (tier, categoria_local, tipo_despesa) DO UPDATE SET valor_diaria=excluded.valor_diaria`,
+    [b.tier, b.categoria_local, b.tipo_despesa, valor]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/viaticos/tud/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  await query('DELETE FROM erp_viaticos_tud WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ---- Solicitações ----
+app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const rows = await query(`
+    SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
+      COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id), 0) AS valor_comprovado,
+      (SELECT COUNT(*)::int FROM erp_attachments a JOIN erp_viaticos_despesas d ON d.id=a.entity_id AND a.entity_type='viatico' WHERE d.solicitacao_id=s.id) AS anexos_count
+    FROM erp_viaticos_solicitacoes s JOIN erp_colaboradores c ON c.id=s.colaborador_id
+    ORDER BY s.data_inicio DESC, s.id DESC`);
+  res.json(rows.map(r => ({ ...r, valor_solicitado: n(r.valor_solicitado), valor_liberado: n(r.valor_liberado),
+    valor_devolvido: n(r.valor_devolvido), valor_pendencia: n(r.valor_pendencia), valor_comprovado: n(r.valor_comprovado) })));
+}));
+
+function validateSolicitacao(b) {
+  if (!b.colaborador_id) return 'Selecione o colaborador.';
+  if (!['A', 'B'].includes(b.tier)) return 'Tier inválido.';
+  if (!['interior', 'capital', 'sp_df_rj_intl'].includes(b.categoria_local)) return 'Categoria de local inválida.';
+  if (!isDate(b.data_inicio) || !isDate(b.data_fim)) return 'Datas do período inválidas.';
+  if (b.data_fim < b.data_inicio) return 'Data final não pode ser antes da inicial.';
+  if (b.data_expiracao_flash && !isDate(b.data_expiracao_flash)) return 'Data de expiração no Flash inválida.';
+  const liberado = Number(b.valor_liberado);
+  if (!isFinite(liberado) || liberado < 0) return 'Valor liberado inválido.';
+  return null;
+}
+
+// Verifica se o colaborador tem alguma pendência (estouro) de viagem anterior
+// ainda não descontada — usado para avisar/auto-preencher ao criar uma nova solicitação.
+app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const rows = await query(`SELECT id, destino, data_fim, valor_pendencia FROM erp_viaticos_solicitacoes
+    WHERE colaborador_id=$1 AND status='divergente' AND pendencia_resolvida=false ORDER BY data_fim`, [req.params.id]);
+  const total = rows.reduce((s, r) => s + n(r.valor_pendencia), 0);
+  res.json({ total, solicitacoes: rows.map(r => ({ ...r, valor_pendencia: n(r.valor_pendencia) })) });
+}));
+
+app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body, err = validateSolicitacao(b);
+  if (err) return res.status(400).json({ error: err });
+  const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
+    (colaborador_id, tier, categoria_local, destino, motivo, data_inicio, data_fim, data_expiracao_flash, valor_solicitado, valor_liberado, notes, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.destino), sanitize(b.motivo), b.data_inicio, b.data_fim,
+     b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.user.id]);
+  // Se o colaborador optou por descontar a pendência anterior automaticamente, marca como resolvida.
+  if (b.descontar_pendencia_ids && Array.isArray(b.descontar_pendencia_ids) && b.descontar_pendencia_ids.length) {
+    await query(`UPDATE erp_viaticos_solicitacoes SET pendencia_resolvida=true WHERE id = ANY($1::int[]) AND colaborador_id=$2`,
+      [b.descontar_pendencia_ids, b.colaborador_id]);
+  }
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body, err = validateSolicitacao(b);
+  if (err) return res.status(400).json({ error: err });
+  await query(`UPDATE erp_viaticos_solicitacoes SET colaborador_id=$1, tier=$2, categoria_local=$3, destino=$4, motivo=$5,
+    data_inicio=$6, data_fim=$7, data_expiracao_flash=$8, valor_solicitado=$9, valor_liberado=$10, notes=$11 WHERE id=$12`,
+    [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.destino), sanitize(b.motivo), b.data_inicio, b.data_fim,
+     b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Atualiza só o status (fluxo: liberado -> em_viagem -> aguardando_comprovacao), sem fechar ainda.
+app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const status = req.body.status;
+  if (!['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
+  await query('UPDATE erp_viaticos_solicitacoes SET status=$1 WHERE id=$2', [status, req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Fecha a solicitação: compara valor liberado x comprovado e resolve automaticamente
+// (devolvido / comprovado exato / divergente com pendência registrada).
+app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const s = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  const comprovado = n((await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id=$1', [req.params.id]))[0].v);
+  const liberado = n(s.valor_liberado);
+  const dif = liberado - comprovado; // >0 sobrou, <0 estourou
+  let status, valor_devolvido = 0, valor_pendencia = 0, pendencia_resolvida = true;
+  if (Math.abs(dif) < 0.005) { status = 'comprovado'; }
+  else if (dif > 0) { status = 'devolvido'; valor_devolvido = dif; }
+  else { status = 'divergente'; valor_pendencia = Math.abs(dif); pendencia_resolvida = false; }
+  await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5`,
+    [status, valor_devolvido, valor_pendencia, pendencia_resolvida, req.params.id]);
+  res.json({ ok: true, status, comprovado, valor_devolvido, valor_pendencia });
+}));
+
+app.post('/api/viaticos/solicitacoes/:id/arquivar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  await query(`UPDATE erp_viaticos_solicitacoes SET status='arquivado' WHERE id=$1 AND status IN ('comprovado','devolvido','divergente')`, [req.params.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  await query('DELETE FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ---- Despesas (itens de comprovação) ----
+app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const rows = await query('SELECT * FROM erp_viaticos_despesas WHERE solicitacao_id=$1 ORDER BY data', [req.params.id]);
+  res.json(rows.map(r => ({ ...r, valor: n(r.valor) })));
+}));
+
+app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body;
+  if (!['hospedagem', 'alimentacao', 'estacionamento', 'veiculo', 'outro'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
+  if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
+  const valor = Number(b.valor);
+  if (!isFinite(valor) || valor <= 0) return res.status(400).json({ error: 'Valor deve ser maior que zero.' });
+  const ins = await query(`INSERT INTO erp_viaticos_despesas (solicitacao_id, categoria, data, valor, descricao)
+    VALUES ($1,$2,$3,$4,$5) RETURNING id`, [req.params.id, b.categoria, b.data, valor, sanitize(b.descricao)]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  await query('DELETE FROM erp_viaticos_despesas WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ---- Dashboard / KPIs ----
+app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const todayD = new Date(), today = todayD.toISOString().slice(0, 10);
+  const mesAtual = today.slice(0, 7);
+
+  // Carteira Flash = total já repassado (Contas a Pagar, categoria "Viáticos", pago)
+  // menos o que está de fato alocado em solicitações (liberado - devolvido).
+  const transferido = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos'`))[0].v);
+  const transferidoMes = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]))[0].v);
+  const alocado = n((await query(`SELECT COALESCE(SUM(valor_liberado - valor_devolvido),0) AS v FROM erp_viaticos_solicitacoes WHERE status <> 'arquivado'`))[0].v);
+  const saldoCarteira = transferido - alocado;
+
+  const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado FROM erp_viaticos_solicitacoes
+    WHERE status IN ('liberado','em_viagem','aguardando_comprovacao')`);
+  const vencidas = aguardando.filter(r => r.data_expiracao_flash && r.data_expiracao_flash < today);
+  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false`);
+
+  res.json({
+    saldoCarteira, transferido, transferidoMes,
+    aguardandoComprovacao: { n: aguardando.length, v: aguardando.reduce((s, r) => s + n(r.valor_liberado), 0) },
+    vencidas: { n: vencidas.length, v: vencidas.reduce((s, r) => s + n(r.valor_liberado), 0) },
+    divergentes: { n: divergentes[0].n, v: n(divergentes[0].v) }
+  });
+}));
+
+// ------------------------------------------------------------
 // Rota não encontrada dentro de /api
 // (o arquivo estático index.html é servido pela própria Vercel via
 // vercel.json — não é preciso express.static aqui)
 // ------------------------------------------------------------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));
+
 
 // ------------------------------------------------------------
 // Frontend (servido pelo próprio Express, dentro da função)
