@@ -1581,6 +1581,17 @@ app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('vi
   res.json({ ok: true, id: ins[0].id });
 }));
 
+app.put('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body;
+  if (!['alimentacao', 'aluguel_carro', 'combustivel', 'estacionamento', 'hospedagem', 'outro', 'passagem_aviao', 'passagem_onibus', 'pedagio', 'taxi_uber', 'veiculo'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
+  if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
+  const valor = Number(b.valor);
+  if (!isFinite(valor) || valor <= 0) return res.status(400).json({ error: 'Valor deve ser maior que zero.' });
+  await query(`UPDATE erp_viaticos_despesas SET categoria=$1, data=$2, valor=$3, descricao=$4 WHERE id=$5`,
+    [b.categoria, b.data, valor, sanitize(b.descricao), req.params.id]);
+  res.json({ ok: true });
+}));
+
 app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   await query('DELETE FROM erp_viaticos_despesas WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
