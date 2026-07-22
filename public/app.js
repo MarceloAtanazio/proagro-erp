@@ -2132,6 +2132,7 @@ async function renderRelatorios() {
 // VIÁTICOS
 // ============================================================
 const TIER_LABEL = { A: 'A — Diretoria/Gerência', B: 'B — Coordenação/Técnicos' };
+const MOTIVO_OPTIONS = ['Monitoramento', 'Sinistro', 'Comercial'];
 const LOCAL_LABEL = { interior: 'Interior', capital: 'Capital', sp_df_rj_intl: 'SP/DF/RJ + Internacional' };
 const DESP_CAT_LABEL = {
   alimentacao: 'Alimentação',
@@ -2193,7 +2194,8 @@ async function renderViaticos() {
     const q = $('#q').value.toLowerCase(), st = $('#f-status').value, de = $('#f-de').value, ate = $('#f-ate').value;
     saveFilters(FKEY, { q, status: st, de, ate });
     const filtered = sols.filter(s => {
-      if (q && !(`${s.colaborador_name} ${s.destino || ''}`.toLowerCase().includes(q))) return false;
+      const destinosTxt = Array.isArray(s.destinos) ? s.destinos.map(d => `${d.municipio} ${d.uf}`).join(' ') : '';
+      if (q && !(`${s.colaborador_name} ${s.destino || ''} ${s.ordem_trabalho || ''} ${destinosTxt}`.toLowerCase().includes(q))) return false;
       if (st && s.status !== st) return false;
       if (de && s.data_inicio < de) return false;
       if (ate && s.data_inicio > ate) return false;
@@ -2208,7 +2210,8 @@ async function renderViaticos() {
         return `<tr>
           <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small style="color:var(--muted)">${esc(s.colaborador_cargo)}</small>` : ''}</td>
           <td>${s.tier}</td>
-          <td>${LOCAL_LABEL[s.categoria_local]}</td>
+          <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small style="color:var(--muted)">OT ${esc(s.ordem_trabalho)}</small>` : ''}
+            ${Array.isArray(s.destinos) && s.destinos.length ? `<br><small style="color:var(--muted)">${s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ')}</small>` : ''}</td>
           <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
           <td class="num">${brl(s.valor_liberado)}</td>
           <td class="num">${brl(s.valor_comprovado)}${s.anexos_count ? ` <small style="color:var(--muted)">(📎${s.anexos_count})</small>` : ''}</td>
@@ -2241,14 +2244,23 @@ async function formSolicitacao(existing) {
   }
   const isEdit = !!existing;
   const colabAtual = existing ? colaboradores.find(c => c.id === existing.colaborador_id) : ativos[0];
+  let destinosList = (isEdit && Array.isArray(existing.destinos)) ? [...existing.destinos] : [];
 
   const body = () => `
     ${fldSel('vs-colab', 'Colaborador', ativos.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), existing ? existing.colaborador_id : ativos[0].id)}
     <div id="vs-pendencia-alerta"></div>
     ${fldSel('vs-tier', 'Tier (TUD)', [{ v: 'A', t: TIER_LABEL.A }, { v: 'B', t: TIER_LABEL.B }], existing ? existing.tier : colabAtual.tier)}
     ${fldSel('vs-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), existing ? existing.categoria_local : 'interior')}
-    ${fld('vs-destino', 'Destino', 'text', existing ? existing.destino : '')}
-    ${fld('vs-motivo', 'Motivo', 'text', existing ? existing.motivo : '')}
+    ${fld('vs-ordem', 'Nº da Ordem de Trabalho', 'text', existing ? existing.ordem_trabalho || '' : '')}
+    <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
+      <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
+        ${fldSel('vs-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
+        ${fldSel('vs-mun', 'Município', [], null)}
+        <button class="btn primary" id="vs-add-dest" type="button">+ Adicionar</button>
+      </div>
+      <div id="vs-destinos-list"></div>
+    </div>
+    ${fldSel('vs-motivo', 'Motivo', MOTIVO_OPTIONS.map(m => ({ v: m, t: m })), existing ? existing.motivo : MOTIVO_OPTIONS[0])}
     <div class="field-row">
       ${fld('vs-inicio', 'Início da viagem', 'date', existing ? existing.data_inicio : todayISO())}
       ${fld('vs-fim', 'Fim da viagem', 'date', existing ? existing.data_fim : todayISO())}
@@ -2265,7 +2277,8 @@ async function formSolicitacao(existing) {
      { label: isEdit ? 'Salvar' : 'Criar', cls: 'primary', onClick: async () => {
         const b = {
           colaborador_id: Number($('#vs-colab').value), tier: $('#vs-tier').value, categoria_local: $('#vs-local').value,
-          destino: $('#vs-destino').value, motivo: $('#vs-motivo').value, data_inicio: $('#vs-inicio').value, data_fim: $('#vs-fim').value,
+          ordem_trabalho: $('#vs-ordem').value, destinos: destinosList, motivo: $('#vs-motivo').value,
+          data_inicio: $('#vs-inicio').value, data_fim: $('#vs-fim').value,
           data_expiracao_flash: $('#vs-expira').value || null, valor_solicitado: $('#vs-solicitado').value || null, valor_liberado: $('#vs-liberado').value || 0,
           notes: $('#vs-notes').value
         };
@@ -2276,6 +2289,33 @@ async function formSolicitacao(existing) {
           closeModal(); toast(isEdit ? 'Solicitação atualizada.' : 'Solicitação criada.'); renderViaticos();
         } catch (e) { modalError(e.message); }
      }}]);
+
+  // Estado -> Município em cascata, e lista acumulada de destinos já adicionados.
+  const popularMunicipios = () => {
+    const uf = $('#vs-uf').value;
+    const lista = (BR_LOCALIDADES.municipios[uf] || []);
+    $('#vs-mun').innerHTML = lista.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  };
+  const renderDestinosList = () => {
+    const box = $('#vs-destinos-list');
+    box.innerHTML = destinosList.length
+      ? `<div class="chip-row">${destinosList.map((d, i) => `<span class="chip">${esc(d.municipio)}/${esc(d.uf)} <button type="button" data-rmdest="${i}">×</button></span>`).join('')}</div>`
+      : '<span style="color:var(--muted); font-size:13px">Nenhuma cidade adicionada ainda.</span>';
+    box.querySelectorAll('[data-rmdest]').forEach(btn => btn.onclick = () => {
+      destinosList.splice(Number(btn.dataset.rmdest), 1);
+      renderDestinosList();
+    });
+  };
+  $('#vs-uf').onchange = popularMunicipios;
+  popularMunicipios();
+  renderDestinosList();
+  $('#vs-add-dest').onclick = () => {
+    const uf = $('#vs-uf').value, municipio = $('#vs-mun').value;
+    if (!municipio) return toast('Selecione um município.');
+    if (destinosList.some(d => d.uf === uf && d.municipio === municipio)) return toast('Essa cidade já foi adicionada.');
+    destinosList.push({ uf, municipio });
+    renderDestinosList();
+  };
 
   // Auto-preenche o tier ao trocar de colaborador, e checa pendência de estouro anterior.
   const checarPendencia = async () => {
