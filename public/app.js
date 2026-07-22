@@ -2349,6 +2349,7 @@ async function viewSolicitacao(id) {
       ${fld('de-data', 'Data', 'date', s.data_inicio)}
       ${fld('de-valor', 'Valor', 'number', '', 'step="0.01" min="0.01"')}
       <button class="btn primary" id="de-add" type="button">+ Adicionar</button>
+      <button class="btn" id="de-cancel" type="button" style="display:none">Cancelar edição</button>
     </div>
     <div class="field">${fld('de-desc', 'Descrição (opcional)', 'text', '')}</div>` : ''}
 
@@ -2359,7 +2360,7 @@ async function viewSolicitacao(id) {
         <td class="num">${brl(d.valor)}</td>
         <td class="actions">
           <button class="btn sm att-btn" data-att="${d.id}">📎</button>
-          ${!finalizada ? `<button class="btn sm danger-ghost" data-deldesp="${d.id}">Excluir</button>` : ''}
+          ${!finalizada ? `<button class="btn sm" data-editdesp="${d.id}">Editar</button><button class="btn sm danger-ghost" data-deldesp="${d.id}">Excluir</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhuma despesa lançada ainda.</div></td></tr>'}</tbody>
     </table></div>`;
 
@@ -2381,14 +2382,31 @@ async function viewSolicitacao(id) {
     body, botoes, { wide: true });
 
   if (!finalizada) {
+    let editingDespId = null;
+    const resetForm = () => {
+      editingDespId = null;
+      $('#de-cat').value = 'hospedagem'; $('#de-data').value = s.data_inicio; $('#de-valor').value = ''; $('#de-desc').value = '';
+      $('#de-add').textContent = '+ Adicionar';
+      $('#de-cancel').style.display = 'none';
+    };
     $('#de-add').onclick = async () => {
+      const b = { categoria: $('#de-cat').value, data: $('#de-data').value, valor: Number($('#de-valor').value), descricao: $('#de-desc').value };
       try {
-        await api(`/api/viaticos/solicitacoes/${id}/despesas`, { method: 'POST', body: {
-          categoria: $('#de-cat').value, data: $('#de-data').value, valor: Number($('#de-valor').value), descricao: $('#de-desc').value
-        }});
-        toast('Despesa adicionada.'); viewSolicitacao(id);
+        if (editingDespId) { await api(`/api/viaticos/despesas/${editingDespId}`, { method: 'PUT', body: b }); toast('Despesa atualizada.'); }
+        else { await api(`/api/viaticos/solicitacoes/${id}/despesas`, { method: 'POST', body: b }); toast('Despesa adicionada.'); }
+        viewSolicitacao(id);
       } catch (e) { toast(e.message); }
     };
+    $('#de-cancel').onclick = resetForm;
+    document.querySelectorAll('[data-editdesp]').forEach(b => b.onclick = () => {
+      const d = despesas.find(x => x.id == b.dataset.editdesp);
+      if (!d) return;
+      editingDespId = d.id;
+      $('#de-cat').value = d.categoria; $('#de-data').value = d.data; $('#de-valor').value = d.valor; $('#de-desc').value = d.descricao || '';
+      $('#de-add').textContent = 'Salvar edição';
+      $('#de-cancel').style.display = '';
+      $('#de-cat').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   }
   document.querySelectorAll('[data-deldesp]').forEach(b => b.onclick = () => confirmDelete('esta despesa', `/api/viaticos/despesas/${b.dataset.deldesp}`, () => viewSolicitacao(id)));
   document.querySelectorAll('[data-att]').forEach(b => b.onclick = () => openAttachments('viatico', b.dataset.att, DESP_CAT_LABEL[despesas.find(d => d.id == b.dataset.att)?.categoria] || 'Comprovante'));
