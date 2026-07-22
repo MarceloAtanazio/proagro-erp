@@ -234,7 +234,8 @@ const ICONS = {
   rep: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M9 13h6M9 17h6"/></svg>',
   usr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
   cfg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 008 4.6a1.7 1.7 0 001.03-1.56V3a2 2 0 014 0v.09A1.7 1.7 0 0016 4.6a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 8a1.7 1.7 0 001.56 1.03H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>',
-  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.6L12.7 4.7A2 2 0 0011.3 4H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9c.8.8 2 .8 2.8 0l5.3-5.3c.8-.8.8-2 0-2.8z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>'
+  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.6L12.7 4.7A2 2 0 0011.3 4H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9c.8.8 2 .8 2.8 0l5.3-5.3c.8-.8.8-2 0-2.8z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>',
+  via: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M3 12h18"/></svg>'
 };
 
 const PAGES = [
@@ -246,6 +247,7 @@ const PAGES = [
   { hash: 'orcamento', title: 'Orçamento Anual', icon: 'bud', section: 'Planejamento' },
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
+  { hash: 'viaticos', title: 'Viáticos', icon: 'via', super: true },
   { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração', sub: 'Cadastros' },
   { hash: 'usuarios', title: 'Usuários', icon: 'usr', sub: 'Cadastros', super: true },
   { hash: 'categorias', title: 'Categorias', icon: 'tag', sub: 'Cadastros', super: true },
@@ -308,7 +310,8 @@ function route() {
   const renderers = {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
-    orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, usuarios: renderUsuarios, categorias: renderCategorias, config: renderConfig
+    orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, viaticos: renderViaticos,
+    usuarios: renderUsuarios, categorias: renderCategorias, config: renderConfig
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
   renderers[page.hash]()
@@ -2126,6 +2129,321 @@ async function renderRelatorios() {
 }
 
 // ============================================================
+// VIÁTICOS
+// ============================================================
+const TIER_LABEL = { A: 'A — Diretoria/Gerência', B: 'B — Coordenação/Técnicos' };
+const LOCAL_LABEL = { interior: 'Interior', capital: 'Capital', sp_df_rj_intl: 'SP/DF/RJ + Internacional' };
+const DESP_CAT_LABEL = { hospedagem: 'Hospedagem', alimentacao: 'Alimentação', estacionamento: 'Estacionamento', veiculo: 'Veículo próprio', outro: 'Outro' };
+const VIA_STATUS_LABEL = {
+  liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação',
+  comprovado: 'Comprovado', devolvido: 'Devolvido (sobrou)', divergente: 'Divergente (estourou)', arquivado: 'Arquivado'
+};
+const VIA_STATUS_BADGE = {
+  liberado: 'off', em_viagem: 'pend', aguardando_comprovacao: 'warn',
+  comprovado: 'ok', devolvido: 'ok', divergente: 'late', arquivado: 'off'
+};
+
+async function renderViaticos() {
+  const [dash, sols] = await Promise.all([api('/api/viaticos/dashboard'), api('/api/viaticos/solicitacoes')]);
+  const c = $('#content');
+  const FKEY = 'filters-viaticos';
+  const saved = loadFilters(FKEY);
+
+  c.innerHTML = `
+    <div class="grid kpis" style="margin-bottom:16px">
+      <div class="card kpi ${dash.saldoCarteira < 0 ? 'red' : ''}"><div class="label">Saldo da Carteira Flash</div>
+        <div class="value ${dash.saldoCarteira < 0 ? 'neg' : ''}">${brl(dash.saldoCarteira)}</div>
+        <div class="detail">Transferido (total): ${brl(dash.transferido)}</div></div>
+      <div class="card kpi blue"><div class="label">Transferido no mês</div><div class="value">${brl(dash.transferidoMes)}</div>
+        <div class="detail">Contas a Pagar, categoria "Viáticos"</div></div>
+      <div class="card kpi warn"><div class="label">Aguardando comprovação</div><div class="value">${dash.aguardandoComprovacao.n}</div>
+        <div class="detail">${brl(dash.aguardandoComprovacao.v)}</div></div>
+      <div class="card kpi ${dash.vencidas.n ? 'red' : ''}"><div class="label">Vencidas (Flash expirado)</div>
+        <div class="value ${dash.vencidas.n ? 'neg' : ''}">${dash.vencidas.n}</div><div class="detail">${brl(dash.vencidas.v)}</div></div>
+      <div class="card kpi ${dash.divergentes.n ? 'red' : ''}"><div class="label">Divergentes (estouro)</div>
+        <div class="value ${dash.divergentes.n ? 'neg' : ''}">${dash.divergentes.n}</div><div class="detail">${brl(dash.divergentes.v)}</div></div>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Buscar colaborador, destino..." value="${esc(saved.q || '')}">
+      <select id="f-status"><option value="">Todos os status</option>${Object.entries(VIA_STATUS_LABEL).map(([v, t]) => `<option value="${v}" ${saved.status === v ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <div class="date-range">
+        <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
+        <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
+      </div>
+      <button class="btn" id="btn-clear">Limpar filtros</button>
+      <div class="spacer"></div>
+      <button class="btn" id="btn-config">Configurações</button>
+      <button class="btn primary" id="btn-new">+ Nova solicitação</button>
+    </div>
+    <div class="table-wrap"><table id="tbl"></table></div>`;
+
+  const draw = () => {
+    const q = $('#q').value.toLowerCase(), st = $('#f-status').value, de = $('#f-de').value, ate = $('#f-ate').value;
+    saveFilters(FKEY, { q, status: st, de, ate });
+    const filtered = sols.filter(s => {
+      if (q && !(`${s.colaborador_name} ${s.destino || ''}`.toLowerCase().includes(q))) return false;
+      if (st && s.status !== st) return false;
+      if (de && s.data_inicio < de) return false;
+      if (ate && s.data_inicio > ate) return false;
+      return true;
+    });
+    $('#tbl').innerHTML = `
+      <thead><tr><th>Colaborador</th><th>Tier</th><th>Local</th><th>Período</th><th class="num">Liberado</th>
+        <th class="num">Comprovado</th><th>Status</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${filtered.map(s => {
+        const dif = s.valor_liberado - s.valor_comprovado;
+        const vencida = ['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) && s.data_expiracao_flash && s.data_expiracao_flash < todayISO();
+        return `<tr>
+          <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small style="color:var(--muted)">${esc(s.colaborador_cargo)}</small>` : ''}</td>
+          <td>${s.tier}</td>
+          <td>${LOCAL_LABEL[s.categoria_local]}</td>
+          <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
+          <td class="num">${brl(s.valor_liberado)}</td>
+          <td class="num">${brl(s.valor_comprovado)}${s.anexos_count ? ` <small style="color:var(--muted)">(📎${s.anexos_count})</small>` : ''}</td>
+          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
+          <td class="actions">
+            <button class="btn sm primary" data-view="${s.id}">${['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status) ? 'Ver' : 'Comprovar'}</button>
+            <button class="btn sm" data-edit="${s.id}">Editar</button>
+            <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>
+          </td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="8"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
+    $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
+    $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
+    $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('a solicitação', `/api/viaticos/solicitacoes/${b.dataset.del}`, renderViaticos));
+  };
+
+  ['q', 'f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
+  $('#btn-clear').onclick = () => { saveFilters(FKEY, {}); renderViaticos(); };
+  $('#btn-new').onclick = () => formSolicitacao(null);
+  $('#btn-config').onclick = () => renderViaticosConfig();
+  draw();
+}
+
+async function formSolicitacao(existing) {
+  const colaboradores = await api('/api/colaboradores');
+  const ativos = colaboradores.filter(c => c.ativo);
+  if (!ativos.length) {
+    return openModal('Nenhum colaborador cadastrado', '<p>Cadastre ao menos um colaborador em Viáticos → Configurações antes de criar uma solicitação.</p>',
+      [{ label: 'Fechar', cls: 'primary', onClick: closeModal }]);
+  }
+  const isEdit = !!existing;
+  const colabAtual = existing ? colaboradores.find(c => c.id === existing.colaborador_id) : ativos[0];
+
+  const body = () => `
+    ${fldSel('vs-colab', 'Colaborador', ativos.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), existing ? existing.colaborador_id : ativos[0].id)}
+    <div id="vs-pendencia-alerta"></div>
+    ${fldSel('vs-tier', 'Tier (TUD)', [{ v: 'A', t: TIER_LABEL.A }, { v: 'B', t: TIER_LABEL.B }], existing ? existing.tier : colabAtual.tier)}
+    ${fldSel('vs-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), existing ? existing.categoria_local : 'interior')}
+    ${fld('vs-destino', 'Destino', 'text', existing ? existing.destino : '')}
+    ${fld('vs-motivo', 'Motivo', 'text', existing ? existing.motivo : '')}
+    <div class="field-row">
+      ${fld('vs-inicio', 'Início da viagem', 'date', existing ? existing.data_inicio : todayISO())}
+      ${fld('vs-fim', 'Fim da viagem', 'date', existing ? existing.data_fim : todayISO())}
+    </div>
+    ${fld('vs-expira', 'Dinheiro disponível no Flash até', 'date', existing ? (existing.data_expiracao_flash || '') : '')}
+    <div class="field-row">
+      ${fld('vs-solicitado', 'Valor solicitado (referência)', 'number', existing ? existing.valor_solicitado || '' : '', 'step="0.01" min="0"')}
+      ${fld('vs-liberado', 'Valor liberado no Flash', 'number', existing ? existing.valor_liberado : '', 'step="0.01" min="0"')}
+    </div>
+    ${fld('vs-notes', 'Observações', 'text', existing ? existing.notes || '' : '')}`;
+
+  openModal(isEdit ? 'Editar solicitação de viático' : 'Nova solicitação de viático', body(),
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: isEdit ? 'Salvar' : 'Criar', cls: 'primary', onClick: async () => {
+        const b = {
+          colaborador_id: Number($('#vs-colab').value), tier: $('#vs-tier').value, categoria_local: $('#vs-local').value,
+          destino: $('#vs-destino').value, motivo: $('#vs-motivo').value, data_inicio: $('#vs-inicio').value, data_fim: $('#vs-fim').value,
+          data_expiracao_flash: $('#vs-expira').value || null, valor_solicitado: $('#vs-solicitado').value || null, valor_liberado: $('#vs-liberado').value || 0,
+          notes: $('#vs-notes').value
+        };
+        const descIds = $('#vs-desc-ids'); if (descIds) b.descontar_pendencia_ids = JSON.parse(descIds.value || '[]');
+        try {
+          if (isEdit) await api(`/api/viaticos/solicitacoes/${existing.id}`, { method: 'PUT', body: b });
+          else await api('/api/viaticos/solicitacoes', { method: 'POST', body: b });
+          closeModal(); toast(isEdit ? 'Solicitação atualizada.' : 'Solicitação criada.'); renderViaticos();
+        } catch (e) { modalError(e.message); }
+     }}]);
+
+  // Auto-preenche o tier ao trocar de colaborador, e checa pendência de estouro anterior.
+  const checarPendencia = async () => {
+    const colabId = Number($('#vs-colab').value);
+    const colab = colaboradores.find(c => c.id === colabId);
+    if (colab && !isEdit) $('#vs-tier').value = colab.tier;
+    const alerta = $('#vs-pendencia-alerta');
+    if (!alerta) return;
+    alerta.innerHTML = '';
+    if (isEdit) return; // pendência só se aplica ao criar nova
+    try {
+      const r = await api(`/api/viaticos/colaboradores/${colabId}/pendencia`);
+      if (r.total > 0) {
+        alerta.innerHTML = `<div class="alert-item warn" style="margin-bottom:12px">⚠️ Este colaborador tem <strong>${brl(r.total)}</strong> em pendência de viagem(ns) anterior(es) ainda não descontada.
+          <label style="display:block;margin-top:6px;font-weight:400"><input type="checkbox" id="vs-desc-check" checked style="width:auto;margin-right:6px">Descontar automaticamente do valor liberado nesta solicitação</label></div>
+          <input type="hidden" id="vs-desc-ids" value='${JSON.stringify(r.solicitacoes.map(s => s.id))}'>`;
+        const applyDiscount = () => {
+          const liberadoEl = $('#vs-liberado');
+          const base = Number(liberadoEl.dataset.base ?? liberadoEl.value ?? 0);
+          liberadoEl.dataset.base = base;
+          liberadoEl.value = $('#vs-desc-check').checked ? Math.max(0, base - r.total).toFixed(2) : base.toFixed(2);
+        };
+        $('#vs-desc-check').onchange = applyDiscount;
+        applyDiscount();
+      }
+    } catch { /* silencioso */ }
+  };
+  $('#vs-colab').onchange = checarPendencia;
+  checarPendencia();
+}
+
+async function viewSolicitacao(id) {
+  const [s, despesas, tud] = await Promise.all([
+    api('/api/viaticos/solicitacoes').then(all => all.find(x => x.id === id)),
+    api(`/api/viaticos/solicitacoes/${id}/despesas`), api('/api/viaticos/tud')
+  ]);
+  const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
+  const comprovado = despesas.reduce((sum, d) => sum + d.valor, 0);
+  const dif = s.valor_liberado - comprovado;
+
+  // Validações: período autorizado + teto da TUD por categoria.
+  const limite = s.data_expiracao_flash || s.data_fim;
+  const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
+  const dias = Math.max(1, Math.round((new Date(s.data_fim) - new Date(s.data_inicio)) / 86400000) + 1);
+  const tetos = {};
+  ['hospedagem', 'alimentacao'].forEach(cat => {
+    const t = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === cat);
+    if (t) tetos[cat] = t.valor_diaria * dias;
+  });
+  const estouros = Object.entries(tetos).filter(([cat, teto]) => {
+    const gasto = despesas.filter(d => d.categoria === cat).reduce((sum, d) => sum + d.valor, 0);
+    return gasto > teto;
+  });
+
+  const alertas = [];
+  if (foraDoPeriodo.length) alertas.push(`${foraDoPeriodo.length} despesa(s) com data fora do período autorizado (${brDate(s.data_inicio)} a ${brDate(limite)}).`);
+  estouros.forEach(([cat]) => alertas.push(`Categoria "${DESP_CAT_LABEL[cat]}" acima do teto da TUD (${brl(tetos[cat])} para ${dias} dia(s)).`));
+
+  const body = `
+    <div class="grid kpis" style="margin-bottom:14px">
+      <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div></div>
+      <div class="card kpi blue"><div class="label">Comprovado</div><div class="value">${brl(comprovado)}</div></div>
+      <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
+        <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
+    </div>
+    ${alertas.length ? `<div class="alert-item late" style="margin-bottom:14px">⚠️ ${alertas.join('<br>⚠️ ')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
+
+    ${!finalizada ? `
+    <div class="field-row" style="align-items:flex-end">
+      ${fldSel('de-cat', 'Categoria', Object.entries(DESP_CAT_LABEL).map(([v, t]) => ({ v, t })), 'hospedagem')}
+      ${fld('de-data', 'Data', 'date', s.data_inicio)}
+      ${fld('de-valor', 'Valor', 'number', '', 'step="0.01" min="0.01"')}
+      <button class="btn primary" id="de-add" type="button">+ Adicionar</button>
+    </div>
+    <div class="field">${fld('de-desc', 'Descrição (opcional)', 'text', '')}</div>` : ''}
+
+    <div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>Data</th><th>Categoria</th><th>Descrição</th><th class="num">Valor</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${despesas.map(d => `<tr>
+        <td>${brDate(d.data)}</td><td>${DESP_CAT_LABEL[d.categoria]}</td><td>${esc(d.descricao || '—')}</td>
+        <td class="num">${brl(d.valor)}</td>
+        <td class="actions">
+          <button class="btn sm att-btn" data-att="${d.id}">📎</button>
+          ${!finalizada ? `<button class="btn sm danger-ghost" data-deldesp="${d.id}">Excluir</button>` : ''}
+        </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhuma despesa lançada ainda.</div></td></tr>'}</tbody>
+    </table></div>`;
+
+  const botoes = [{ label: 'Fechar', onClick: closeModal }];
+  if (!finalizada) {
+    if (s.status === 'liberado') botoes.push({ label: 'Marcar "Em viagem"', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: { status: 'em_viagem' } }); viewSolicitacao(id); } });
+    if (s.status === 'em_viagem') botoes.push({ label: 'Marcar "Aguardando comprovação"', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: { status: 'aguardando_comprovacao' } }); viewSolicitacao(id); } });
+    botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
+      const r = await api(`/api/viaticos/solicitacoes/${id}/fechar`, { method: 'POST' });
+      closeModal();
+      toast(r.status === 'divergente' ? `Encerrado com divergência: ${brl(r.valor_pendencia)} em pendência.` : r.status === 'devolvido' ? `Encerrado — ${brl(r.valor_devolvido)} devolvido à carteira.` : 'Encerrado — valores batem exatamente.');
+      renderViaticos();
+    }});
+  } else if (s.status !== 'arquivado') {
+    botoes.push({ label: 'Arquivar', cls: 'primary', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/arquivar`, { method: 'POST' }); closeModal(); toast('Arquivado.'); renderViaticos(); } });
+  }
+
+  openModal(`${finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(s.data_inicio)}–${brDate(s.data_fim)})`,
+    body, botoes, { wide: true });
+
+  if (!finalizada) {
+    $('#de-add').onclick = async () => {
+      try {
+        await api(`/api/viaticos/solicitacoes/${id}/despesas`, { method: 'POST', body: {
+          categoria: $('#de-cat').value, data: $('#de-data').value, valor: Number($('#de-valor').value), descricao: $('#de-desc').value
+        }});
+        toast('Despesa adicionada.'); viewSolicitacao(id);
+      } catch (e) { toast(e.message); }
+    };
+  }
+  document.querySelectorAll('[data-deldesp]').forEach(b => b.onclick = () => confirmDelete('esta despesa', `/api/viaticos/despesas/${b.dataset.deldesp}`, () => viewSolicitacao(id)));
+  document.querySelectorAll('[data-att]').forEach(b => b.onclick = () => openAttachments('viatico', b.dataset.att, DESP_CAT_LABEL[despesas.find(d => d.id == b.dataset.att)?.categoria] || 'Comprovante'));
+}
+
+async function renderViaticosConfig() {
+  const [colaboradores, tud] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud')]);
+
+  const tudGrid = tier => `<h4 style="margin:14px 0 8px">Tier ${tier}</h4>
+    <div class="table-wrap"><table><thead><tr><th>Categoria de local</th><th class="num">Hospedagem (dia)</th><th class="num">Alimentação (dia)</th></tr></thead>
+      <tbody>${Object.entries(LOCAL_LABEL).map(([local, label]) => {
+        const h = tud.find(t => t.tier === tier && t.categoria_local === local && t.tipo_despesa === 'hospedagem');
+        const a = tud.find(t => t.tier === tier && t.categoria_local === local && t.tipo_despesa === 'alimentacao');
+        return `<tr><td>${label}</td>
+          <td class="num"><input type="number" step="0.01" min="0" data-tud="${tier}:${local}:hospedagem" value="${h ? h.valor_diaria : ''}" style="width:110px;text-align:right"></td>
+          <td class="num"><input type="number" step="0.01" min="0" data-tud="${tier}:${local}:alimentacao" value="${a ? a.valor_diaria : ''}" style="width:110px;text-align:right"></td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
+
+  const body = `
+    <p class="hint">Estacionamento é sempre lançado "por recibo" (sem teto) e Veículo próprio fica fora da TUD — não precisam de configuração aqui.</p>
+    ${tudGrid('A')}${tudGrid('B')}
+    <h3 style="margin:20px 0 10px; font-size:15px">Colaboradores</h3>
+    <div class="field-row" style="align-items:flex-end">
+      ${fld('cb-nome', 'Nome', 'text', '')}
+      ${fld('cb-cargo', 'Cargo', 'text', '')}
+      ${fldSel('cb-tier', 'Tier', [{ v: 'A', t: 'A' }, { v: 'B', t: 'B' }], 'B')}
+      <button class="btn primary" id="cb-add" type="button">+ Adicionar</button>
+    </div>
+    <div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${colaboradores.map(c => `<tr>
+        <td>${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
+        <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
+        <td class="actions">
+          <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>
+          <button class="btn sm danger-ghost" data-del-colab="${c.id}">Excluir</button>
+        </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
+    </table></div>`;
+
+  openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
+
+  document.querySelectorAll('[data-tud]').forEach(inp => inp.onchange = async () => {
+    const [tier, categoria_local, tipo_despesa] = inp.dataset.tud.split(':');
+    const valor_diaria = Number(inp.value);
+    if (!isFinite(valor_diaria) || valor_diaria < 0) return toast('Valor inválido.');
+    try { await api('/api/viaticos/tud', { method: 'POST', body: { tier, categoria_local, tipo_despesa, valor_diaria } }); toast('TUD atualizada.'); }
+    catch (e) { toast(e.message); }
+  });
+
+  $('#cb-add').onclick = async () => {
+    const nome = $('#cb-nome').value.trim();
+    if (!nome) return toast('Informe o nome.');
+    try {
+      await api('/api/colaboradores', { method: 'POST', body: { name: nome, cargo: $('#cb-cargo').value, tier: $('#cb-tier').value } });
+      toast('Colaborador adicionado.'); renderViaticosConfig();
+    } catch (e) { toast(e.message); }
+  };
+  document.querySelectorAll('[data-toggle-colab]').forEach(b => b.onclick = async () => {
+    const c = colaboradores.find(x => x.id == b.dataset.toggleColab);
+    await api(`/api/colaboradores/${c.id}`, { method: 'PUT', body: { name: c.name, cargo: c.cargo, tier: c.tier, ativo: !c.ativo } });
+    renderViaticosConfig();
+  });
+  document.querySelectorAll('[data-del-colab]').forEach(b => b.onclick = () => confirmDelete('este colaborador', `/api/colaboradores/${b.dataset.delColab}`, renderViaticosConfig));
+}
+
+// ============================================================
 // USUÁRIOS (admin)
 // ============================================================
 async function renderUsuarios() {
@@ -2557,7 +2875,7 @@ function confirmAction(label, fn, okMsg) {
 const KIND_LABELS = { boleto: 'Boleto', nota_fiscal: 'Nota Fiscal', comprovante: 'Comprovante', contrato: 'Contrato', outro: 'Outro' };
 const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', contrato: '📑', outro: '📎' };
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
-const pageForType = t => (t === 'payable' ? 'pagar' : 'receber');
+const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos' }[t] || 'receber');
 
 function readFileAsBase64(file) {
   return new Promise((res, rej) => {
