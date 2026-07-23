@@ -2357,22 +2357,46 @@ async function viewSolicitacao(id) {
   const dif = s.valor_liberado - comprovado;
 
   // Validações: período autorizado + teto da TUD por categoria.
+  // Alimentação é checada DIA A DIA (não acumula entre dias — cada dia tem
+  // sua própria cota). Hospedagem continua acumulativa (soma das diárias
+  // contra o teto do período todo), já que uma diária de hotel normalmente
+  // cobre mais de uma noite numa linha só.
   const limite = s.data_expiracao_flash || s.data_fim;
   const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
   const dias = Math.max(1, Math.round((new Date(s.data_fim) - new Date(s.data_inicio)) / 86400000) + 1);
-  const tetos = {};
-  ['hospedagem', 'alimentacao'].forEach(cat => {
-    const t = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === cat);
-    if (t) tetos[cat] = t.valor_diaria * dias;
-  });
-  const estouros = Object.entries(tetos).filter(([cat, teto]) => {
-    const gasto = despesas.filter(d => d.categoria === cat).reduce((sum, d) => sum + d.valor, 0);
-    return gasto > teto;
-  });
+  const tudHosp = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'hospedagem');
+  const tudAlim = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'alimentacao');
 
-  const alertas = [];
-  if (foraDoPeriodo.length) alertas.push(`${foraDoPeriodo.length} despesa(s) com data fora do período autorizado (${brDate(s.data_inicio)} a ${brDate(limite)}).`);
-  estouros.forEach(([cat]) => alertas.push(`Categoria "${DESP_CAT_LABEL[cat]}" acima do teto da TUD (${brl(tetos[cat])} para ${dias} dia(s)).`));
+  const excessos = []; // { chave, msg, valor }
+  if (tudHosp) {
+    const gastoHosp = despesas.filter(d => d.categoria === 'hospedagem').reduce((sum, d) => sum + d.valor, 0);
+    const tetoHosp = tudHosp.valor_diaria * dias;
+    if (gastoHosp > tetoHosp) {
+      excessos.push({ chave: 'hospedagem', valor: gastoHosp - tetoHosp,
+        msg: `Hospedagem acima do teto da TUD: ${brl(gastoHosp)} gasto contra um limite de ${brl(tetoHosp)} (${brl(tudHosp.valor_diaria)}/dia × ${dias} dia(s)).` });
+    }
+  }
+  if (tudAlim) {
+    const porDia = {};
+    despesas.filter(d => d.categoria === 'alimentacao').forEach(d => { porDia[d.data] = (porDia[d.data] || 0) + d.valor; });
+    Object.keys(porDia).sort().forEach(data => {
+      const gasto = porDia[data];
+      if (gasto > tudAlim.valor_diaria) {
+        excessos.push({ chave: `alimentacao_${data}`, valor: gasto - tudAlim.valor_diaria,
+          msg: `Alimentação do dia ${brDate(data)} acima da TUD diária: ${brl(gasto)} gasto contra um limite de ${brl(tudAlim.valor_diaria)}/dia.` });
+      }
+    });
+  }
+  const aprovados = new Set(Array.isArray(s.excessos_aprovados) ? s.excessos_aprovados : []);
+
+  const alertBlocks = [];
+  if (foraDoPeriodo.length) alertBlocks.push(`<div class="alert-item late">⚠️ ${foraDoPeriodo.length} despesa(s) com data fora do período autorizado (${brDate(s.data_inicio)} a ${brDate(limite)}).</div>`);
+  excessos.forEach(ex => {
+    alertBlocks.push(aprovados.has(ex.chave)
+      ? `<div class="alert-item ok">✅ Aprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`
+      : `<div class="alert-item late">⚠️ ${ex.msg} Excesso de <strong>${brl(ex.valor)}</strong> — quer aprovar?
+          <button class="btn sm primary" data-aprovar="${ex.chave}" type="button" style="margin-left:8px">Aprovar excesso</button></div>`);
+  });
 
   const body = `
     <div class="grid kpis" style="margin-bottom:14px">
@@ -2381,7 +2405,7 @@ async function viewSolicitacao(id) {
       <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
     </div>
-    ${alertas.length ? `<div class="alert-item late" style="margin-bottom:14px">⚠️ ${alertas.join('<br>⚠️ ')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
+    ${alertBlocks.length ? `<div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px">${alertBlocks.join('')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
 
     ${!finalizada ? `
     <div class="field-row" style="align-items:flex-end">
@@ -2456,6 +2480,10 @@ async function viewSolicitacao(id) {
   }
   document.querySelectorAll('[data-deldesp]').forEach(b => b.onclick = () => confirmDelete('esta despesa', `/api/viaticos/despesas/${b.dataset.deldesp}`, () => viewSolicitacao(id)));
   document.querySelectorAll('[data-att]').forEach(b => b.onclick = () => openAttachments('viatico', b.dataset.att, DESP_CAT_LABEL[despesas.find(d => d.id == b.dataset.att)?.categoria] || 'Comprovante'));
+  document.querySelectorAll('[data-aprovar]').forEach(b => b.onclick = async () => {
+    try { await api(`/api/viaticos/solicitacoes/${id}/aprovar-excesso`, { method: 'POST', body: { chave: b.dataset.aprovar } }); toast('Excesso aprovado.'); viewSolicitacao(id); }
+    catch (e) { toast(e.message); }
+  });
 }
 
 async function renderViaticosConfig() {
