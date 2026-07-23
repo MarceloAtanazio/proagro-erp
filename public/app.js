@@ -2420,6 +2420,7 @@ async function viewSolicitacao(id) {
     ${alertBlocks.length ? `<div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px">${alertBlocks.join('')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
 
     ${!finalizada ? `
+    <div style="margin-bottom:10px"><button class="btn" id="btn-import-flash" type="button">📥 Importar lançamentos do Flash (Excel)</button></div>
     <div class="field-row" style="align-items:flex-end">
       ${fldSel('de-cat', 'Categoria', Object.entries(DESP_CAT_LABEL).map(([v, t]) => ({ v, t })), 'hospedagem')}
       ${fld('de-data', 'Data', 'date', s.data_inicio)}
@@ -2464,6 +2465,7 @@ async function viewSolicitacao(id) {
     body, botoes, { wide: true });
 
   if (!finalizada) {
+    $('#btn-import-flash').onclick = () => importarFlashModal(s);
     let editingDespId = null;
     const resetForm = () => {
       editingDespId = null;
@@ -2500,6 +2502,168 @@ async function viewSolicitacao(id) {
     try { await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.reprovar, status: 'reprovado' } }); toast('Excesso reprovado.'); viewSolicitacao(id); }
     catch (e) { toast(e.message); }
   });
+}
+
+// ============================================================
+// Importação de comprovação do Flash (Excel) — Viáticos
+// ============================================================
+// Palavras-conceito que o próprio extrato do Flash já usa no fim da coluna
+// "Movimentação" — mapeadas para as categorias que já temos. Conceitos fora
+// desta lista (ex.: algo específico de um estabelecimento) viram pendência,
+// para revisão manual — nunca tentamos adivinhar uma categoria incerta.
+const FLASH_CONCEITO_MAP = {
+  'combustivel': 'combustivel', 'pedagio': 'pedagio', 'hospedagem': 'hospedagem',
+  'alimentacao': 'alimentacao', 'refeicao': 'alimentacao',
+  'estacionamento': 'estacionamento', 'taxi': 'taxi_uber', 'uber': 'taxi_uber'
+};
+const normalizeTxt = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+
+// Extrai o nº da Ordem de Trabalho e o nome do colaborador a partir do nome
+// do arquivo (ex.: "Comprobación_de_Viáticos_-_OT_148_-_Gustavo_Fonseca.xlsx").
+function parseFlashFilename(filename) {
+  const semExt = filename.replace(/\.[^.]+$/, '');
+  const otMatch = semExt.match(/OT[\s_-]*([0-9]+)/i);
+  const partes = semExt.split(/\s*-\s*|_-_/).map(p => p.trim()).filter(Boolean);
+  const nome = partes.length ? partes[partes.length - 1].replace(/_/g, ' ').trim() : null;
+  return { ot: otMatch ? otMatch[1] : null, nome };
+}
+
+async function parseFlashXLSX(file) {
+  if (!window.XLSX) throw new Error('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+
+  const norm = s => String(s ?? '').toLowerCase().trim();
+  let headerIdx = -1, col = {};
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const row = rows[i].map(norm);
+    const dCol = row.findIndex(c => c.includes('data'));
+    const mCol = row.findIndex(c => c.includes('movimenta'));
+    const vCol = row.findIndex(c => c.includes('valor'));
+    if (dCol > -1 && mCol > -1 && vCol > -1) {
+      headerIdx = i;
+      col = { data: dCol, mov: mCol, valor: vCol,
+        pessoa: row.findIndex(c => c.includes('pessoa')),
+        status: row.findIndex(c => c.includes('presta')) };
+      break;
+    }
+  }
+  if (headerIdx === -1) throw new Error('Não foi possível reconhecer as colunas desta planilha (esperado: Data, Movimentação, Valor).');
+
+  const toDateISO = v => {
+    if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+    const s = String(v || '').trim();
+    const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+  };
+  const toValor = v => {
+    let s = String(v ?? '').replace(/\u00a0/g, ' ').replace(/[R$\s]/g, '').replace(/^-/, '');
+    if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
+    const n = Number(s);
+    return isFinite(n) ? n : null;
+  };
+
+  const out = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (col.status > -1) {
+      const st = normalizeTxt(row[col.status]);
+      if (st && !st.includes('finaliz')) continue; // pula lançamentos ainda não finalizados
+    }
+    const data = toDateISO(row[col.data]);
+    const valor = toValor(row[col.valor]);
+    const movRaw = String(row[col.mov] ?? '').trim();
+    if (!data || valor === null || !movRaw) continue;
+    const tokens = movRaw.split(/\s+/);
+    const conceitoOriginal = tokens[tokens.length - 1] || '';
+    const categoria = FLASH_CONCEITO_MAP[normalizeTxt(conceitoOriginal)] || '';
+    const pessoa = col.pessoa > -1 ? String(row[col.pessoa] ?? '').trim() : '';
+    out.push({ data, valor, descricao: movRaw, pessoa, conceitoOriginal, categoria });
+  }
+  return out;
+}
+
+async function importarFlashModal(s) {
+  openModal(`Importar lançamentos do Flash — ${esc(s.colaborador_name)}`, `
+    <div class="field"><label>Arquivo de comprovação do Flash (.xlsx)</label><input type="file" id="fl-file" accept=".xlsx,.xls"></div>
+    <div id="fl-preview"></div>`,
+    [{ label: 'Voltar', onClick: () => viewSolicitacao(s.id) }]);
+
+  let rows = [];
+  let avisos = [];
+
+  const draw = () => {
+    const box = $('#fl-preview');
+    const avisosHtml = avisos.length
+      ? `<div class="alert-item late" style="margin:12px 0">🚫 ${avisos.join('<br>🚫 ')}<br><br>Confira se é o arquivo certo antes de importar.</div>` : '';
+    if (!rows.length) { box.innerHTML = avisosHtml; return; }
+    const prontos = rows.filter(r => r.categoria).length;
+    const pendentes = rows.length - prontos;
+    box.innerHTML = avisosHtml + `
+      <div class="alert-item ${pendentes ? 'warn' : 'ok'}" style="margin:12px 0">
+        ${pendentes ? '⚠️' : '✅'} ${prontos} lançamento(s) prontos para importar${pendentes ? ` · ${pendentes} pendência(s) — escolha a categoria ou desmarque para ignorar` : ''}.
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Categoria</th><th>Incluir</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr>
+          <td>${brDate(r.data)}</td>
+          <td>${esc(r.descricao)}${!r.categoria ? `<br><small style="color:#B23A2F">Conceito "${esc(r.conceitoOriginal)}" não reconhecido</small>` : ''}</td>
+          <td class="num">${brl(r.valor)}</td>
+          <td><select class="fl-cat" data-idx="${i}">
+            <option value="">— Pendência —</option>
+            ${Object.entries(DESP_CAT_LABEL).map(([v, t]) => `<option value="${v}" ${r.categoria === v ? 'selected' : ''}>${t}</option>`).join('')}
+          </select></td>
+          <td><input type="checkbox" class="fl-inc" data-idx="${i}" ${r.categoria ? 'checked' : ''}></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <button class="btn primary" id="fl-confirm" type="button" style="margin-top:14px">Confirmar importação</button>`;
+
+    box.querySelectorAll('.fl-cat').forEach(sel => sel.onchange = () => {
+      const i = Number(sel.dataset.idx);
+      rows[i].categoria = sel.value;
+      box.querySelector(`.fl-inc[data-idx="${i}"]`).checked = !!sel.value;
+    });
+    box.querySelectorAll('.fl-inc').forEach(chk => chk.onchange = () => {
+      const i = Number(chk.dataset.idx);
+      if (chk.checked && !rows[i].categoria) { toast('Escolha uma categoria antes de incluir.'); chk.checked = false; }
+    });
+    $('#fl-confirm').onclick = async () => {
+      const selecionados = rows.filter((r, i) => box.querySelector(`.fl-inc[data-idx="${i}"]`).checked && r.categoria);
+      if (!selecionados.length) return toast('Nenhum lançamento selecionado.');
+      let ok = 0;
+      for (const r of selecionados) {
+        try {
+          await api(`/api/viaticos/solicitacoes/${s.id}/despesas`, { method: 'POST', body: { categoria: r.categoria, data: r.data, valor: r.valor, descricao: r.descricao } });
+          ok++;
+        } catch { /* segue tentando os demais */ }
+      }
+      toast(`${ok} de ${selecionados.length} lançamento(s) importado(s).`);
+      viewSolicitacao(s.id);
+    };
+  };
+
+  $('#fl-file').onchange = async () => {
+    const file = $('#fl-file').files[0];
+    if (!file) return;
+    try {
+      const { ot, nome } = parseFlashFilename(file.name);
+      avisos = [];
+      if (ot && s.ordem_trabalho && ot.replace(/\D/g, '') !== String(s.ordem_trabalho).replace(/\D/g, '')) {
+        avisos.push(`O nº da Ordem de Trabalho no arquivo (${esc(ot)}) é diferente do desta solicitação (${esc(s.ordem_trabalho)}).`);
+      }
+      if (nome) {
+        const nomeArq = normalizeTxt(nome), nomeColab = normalizeTxt(s.colaborador_name);
+        const bate = nomeArq === nomeColab || nomeColab.includes(nomeArq) || nomeArq.includes(nomeColab.split(' ')[0]);
+        if (!bate) avisos.push(`O nome no arquivo ("${esc(nome)}") não parece bater com o colaborador desta solicitação ("${esc(s.colaborador_name)}").`);
+      }
+      rows = await parseFlashXLSX(file);
+      const foraNome = s.colaborador_name ? rows.filter(r => r.pessoa && normalizeTxt(r.pessoa) !== normalizeTxt(s.colaborador_name)).length : 0;
+      if (foraNome) avisos.push(`${foraNome} linha(s) do arquivo têm um nome diferente na coluna "Pessoa" — confira se é mesmo o arquivo certo.`);
+      draw();
+    } catch (e) { toast(e.message); }
+  };
 }
 
 async function renderViaticosConfig() {
