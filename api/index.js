@@ -1582,11 +1582,17 @@ app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(
 app.post('/api/viaticos/solicitacoes/:id/aprovar-excesso', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const chave = String(req.body.chave || '').trim();
   if (!chave) return res.status(400).json({ error: 'Chave inválida.' });
-  const s = (await query('SELECT excessos_aprovados FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  const s = (await query('SELECT excessos_aprovados, status FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
   const atual = Array.isArray(s.excessos_aprovados) ? s.excessos_aprovados : [];
   if (!atual.includes(chave)) atual.push(chave);
   await query('UPDATE erp_viaticos_solicitacoes SET excessos_aprovados=$1 WHERE id=$2', [JSON.stringify(atual), req.params.id]);
+  // Aprovar um excesso da TUD é a autorização da Diretoria para o gasto a
+  // mais — por isso também resolve a pendência de estouro dessa solicitação,
+  // para não continuar cobrando o colaborador por algo já autorizado.
+  if (s.status === 'divergente') {
+    await query(`UPDATE erp_viaticos_solicitacoes SET pendencia_resolvida=true WHERE id=$1`, [req.params.id]);
+  }
   res.json({ ok: true });
 }));
 
