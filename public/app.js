@@ -2397,15 +2397,17 @@ async function viewSolicitacao(id) {
       }
     });
   }
-  const aprovados = new Set(Array.isArray(s.excessos_aprovados) ? s.excessos_aprovados : []);
+  const excessoStatus = (s.excessos_status && typeof s.excessos_status === 'object') ? s.excessos_status : {};
 
   const alertBlocks = [];
   if (foraDoPeriodo.length) alertBlocks.push(`<div class="alert-item late">⚠️ ${foraDoPeriodo.length} despesa(s) com data fora do período autorizado (${brDate(s.data_inicio)} a ${brDate(limite)}).</div>`);
   excessos.forEach(ex => {
-    alertBlocks.push(aprovados.has(ex.chave)
-      ? `<div class="alert-item ok">✅ Aprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`
-      : `<div class="alert-item late">⚠️ ${ex.msg} Excesso de <strong>${brl(ex.valor)}</strong> — quer aprovar?
-          <button class="btn sm primary" data-aprovar="${ex.chave}" type="button" style="margin-left:8px">Aprovar excesso</button></div>`);
+    const st = excessoStatus[ex.chave];
+    if (st === 'aprovado') alertBlocks.push(`<div class="alert-item ok">✅ Aprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`);
+    else if (st === 'reprovado') alertBlocks.push(`<div class="alert-item late">❌ Reprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`);
+    else alertBlocks.push(`<div class="alert-item late">⚠️ ${ex.msg} Excesso de <strong>${brl(ex.valor)}</strong> — quer aprovar?
+          <button class="btn sm primary" data-aprovar="${ex.chave}" type="button" style="margin-left:8px">Aprovar</button>
+          <button class="btn sm danger-ghost" data-reprovar="${ex.chave}" type="button" style="margin-left:6px">Reprovar</button></div>`);
   });
 
   const body = `
@@ -2491,7 +2493,11 @@ async function viewSolicitacao(id) {
   document.querySelectorAll('[data-deldesp]').forEach(b => b.onclick = () => confirmDelete('esta despesa', `/api/viaticos/despesas/${b.dataset.deldesp}`, () => viewSolicitacao(id)));
   document.querySelectorAll('[data-att]').forEach(b => b.onclick = () => openAttachments('viatico', b.dataset.att, DESP_CAT_LABEL[despesas.find(d => d.id == b.dataset.att)?.categoria] || 'Comprovante'));
   document.querySelectorAll('[data-aprovar]').forEach(b => b.onclick = async () => {
-    try { await api(`/api/viaticos/solicitacoes/${id}/aprovar-excesso`, { method: 'POST', body: { chave: b.dataset.aprovar } }); toast('Excesso aprovado.'); viewSolicitacao(id); }
+    try { await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.aprovar, status: 'aprovado' } }); toast('Excesso aprovado.'); viewSolicitacao(id); }
+    catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll('[data-reprovar]').forEach(b => b.onclick = async () => {
+    try { await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.reprovar, status: 'reprovado' } }); toast('Excesso reprovado.'); viewSolicitacao(id); }
     catch (e) { toast(e.message); }
   });
 }
