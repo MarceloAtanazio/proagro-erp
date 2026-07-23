@@ -1481,6 +1481,143 @@ function exportConciliacaoExcel(rows, modo) {
   toast('Excel exportado.');
 }
 
+// ============================================================
+// Exportação — Viáticos (PDF/Excel × Completo/Resumido)
+// ============================================================
+function viaticosResumo(rows) {
+  const sum = (arr, f) => arr.reduce((s, r) => s + f(r), 0);
+  const porStatus = {};
+  Object.keys(VIA_STATUS_LABEL).forEach(st => { porStatus[st] = rows.filter(r => r.status === st).length; });
+  return {
+    total: rows.length,
+    liberado: sum(rows, r => r.valor_liberado),
+    comprovado: sum(rows, r => r.valor_comprovado),
+    devolvido: sum(rows, r => r.valor_devolvido),
+    pendencia: sum(rows.filter(r => !r.pendencia_resolvida), r => r.valor_pendencia),
+    porStatus
+  };
+}
+const viaticosDestinoTxt = s => {
+  const partes = [];
+  if (s.ordem_trabalho) partes.push(`OT ${s.ordem_trabalho}`);
+  if (Array.isArray(s.destinos) && s.destinos.length) partes.push(s.destinos.map(d => `${d.municipio}/${d.uf}`).join(', '));
+  return partes.join(' — ');
+};
+
+async function exportViaticosPDF(rows, modo) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: modo === 'completo' ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
+    const MARGIN = modo === 'completo' ? 12 : 14;
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = modo === 'completo' ? 34 : 32, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
+    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(modo === 'completo' ? 10.5 : 10);
+    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text('ERP Financeiro · Viáticos', MARGIN + logoW + 6, 19);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(modo === 'completo' ? 15 : 12.5); doc.setTextColor(...VERDE);
+    doc.text(`Relatório de Viáticos ${modo === 'resumido' ? 'Resumido' : ''}`.trim(), pageW - MARGIN, 15, { align: 'right' });
+    const now = new Date();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
+
+    const r = viaticosResumo(rows);
+    let y = 31;
+    doc.setFillColor(...VERDE_CLARO);
+    doc.roundedRect(MARGIN, y, pageW - MARGIN * 2, 16, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
+    doc.text(`${r.total} solicitação(ões)  ·  Liberado: ${brl(r.liberado)}  ·  Comprovado: ${brl(r.comprovado)}  ·  Devolvido: ${brl(r.devolvido)}  ·  Pendência em aberto: ${brl(r.pendencia)}`, MARGIN + 5, y + 9.5);
+    y += 24;
+
+    if (modo === 'resumido') {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 38, 32);
+      doc.text('Por situação', MARGIN, y); y += 6;
+      doc.autoTable({
+        startY: y, margin: { left: MARGIN, right: MARGIN },
+        body: Object.entries(r.porStatus).filter(([, n2]) => n2 > 0).map(([st, n2]) => [VIA_STATUS_LABEL[st], String(n2)]),
+        styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+        columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } }
+      });
+      doc.save(`viaticos_resumido_${todayISO()}.pdf`);
+      toast('PDF resumido gerado com sucesso.');
+      return;
+    }
+
+    doc.autoTable({
+      startY: y,
+      head: [['Colaborador', 'Tier', 'Local / OT', 'Período', 'Liberado', 'Comprovado', 'Status']],
+      body: rows.map(s => [s.colaborador_name, s.tier, `${LOCAL_LABEL[s.categoria_local]}${viaticosDestinoTxt(s) ? ' — ' + viaticosDestinoTxt(s) : ''}`,
+        `${brDate(s.data_inicio)} a ${brDate(s.data_fim)}`, brl(s.valor_liberado), brl(s.valor_comprovado), VIA_STATUS_LABEL[s.status]]),
+      margin: { left: MARGIN, right: MARGIN },
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
+      alternateRowStyles: { fillColor: VERDE_CLARO },
+      columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
+      didParseCell: hook => {
+        if (hook.section === 'body' && hook.column.index === 6) {
+          const st = rows[hook.row.index]?.status;
+          hook.cell.styles.textColor = (st === 'divergente') ? VERMELHO : (st === 'comprovado' || st === 'devolvido') ? VERDE : [138, 100, 20];
+        }
+      },
+      didDrawPage: () => {
+        const pageH = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
+        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
+      }
+    });
+
+    doc.save(`viaticos_completo_${todayISO()}.pdf`);
+    toast('PDF gerado com sucesso.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
+}
+
+function exportViaticosExcel(rows, modo) {
+  if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+  const r = viaticosResumo(rows);
+  const wb = XLSX.utils.book_new();
+
+  if (modo === 'resumido') {
+    const wsData = [
+      ['Relatório de Viáticos — Resumido'],
+      [`Gerado em ${todayISO().split('-').reverse().join('/')}`],
+      [],
+      ['Total de solicitações', r.total], ['Total liberado', r.liberado], ['Total comprovado', r.comprovado],
+      ['Total devolvido à carteira', r.devolvido], ['Pendência em aberto', r.pendencia],
+      [], ['Por situação'],
+      ...Object.entries(r.porStatus).filter(([, n2]) => n2 > 0).map(([st, n2]) => [VIA_STATUS_LABEL[st], n2])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    [5, 6, 7, 8].forEach(row => { const cell = ws['B' + row]; if (cell) cell.z = MONEY_FMT; });
+    XLSX.utils.book_append_sheet(wb, ws, 'Resumo');
+    XLSX.writeFile(wb, `viaticos_resumido_${todayISO()}.xlsx`);
+  } else {
+    const wsData = [
+      ['Colaborador', 'Tier', 'Local', 'OT', 'Destinos', 'Início', 'Fim', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência', 'Status'],
+      ...rows.map(s => [s.colaborador_name, s.tier, LOCAL_LABEL[s.categoria_local], s.ordem_trabalho || '',
+        Array.isArray(s.destinos) ? s.destinos.map(d => `${d.municipio}/${d.uf}`).join(', ') : '',
+        s.data_inicio, s.data_fim, s.valor_liberado, s.valor_comprovado, s.valor_devolvido, s.pendencia_resolvida ? 0 : s.valor_pendencia, VIA_STATUS_LABEL[s.status]])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    for (let i = 1; i <= rows.length; i++) { ['H', 'I', 'J', 'K'].forEach(col => { const cell = ws[col + (i + 1)]; if (cell) cell.z = MONEY_FMT; }); }
+    XLSX.utils.book_append_sheet(wb, ws, 'Viáticos');
+    XLSX.writeFile(wb, `viaticos_completo_${todayISO()}.xlsx`);
+  }
+  toast('Excel exportado.');
+}
+
 
 // ============================================================
 // FORNECEDORES
@@ -2185,11 +2322,13 @@ async function renderViaticos() {
       </div>
       <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
+      <button class="btn" id="btn-export">Exportar</button>
       <button class="btn" id="btn-config">Configurações</button>
       <button class="btn primary" id="btn-new">+ Nova solicitação</button>
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
+  let lastFiltered = sols;
   const draw = () => {
     const q = $('#q').value.toLowerCase(), st = $('#f-status').value, de = $('#f-de').value, ate = $('#f-ate').value;
     saveFilters(FKEY, { q, status: st, de, ate });
@@ -2201,6 +2340,7 @@ async function renderViaticos() {
       if (ate && s.data_inicio > ate) return false;
       return true;
     });
+    lastFiltered = filtered;
     $('#tbl').innerHTML = `
       <thead><tr><th>Colaborador</th><th>Tier</th><th>Local</th><th>Período</th><th class="num">Liberado</th>
         <th class="num">Comprovado</th><th>Status</th><th class="actions">Ações</th></tr></thead>
@@ -2232,6 +2372,20 @@ async function renderViaticos() {
   $('#btn-clear').onclick = () => { saveFilters(FKEY, {}); renderViaticos(); };
   $('#btn-new').onclick = () => formSolicitacao(null);
   $('#btn-config').onclick = () => renderViaticosConfig();
+  $('#btn-export').onclick = () => openModal('Exportar Viáticos',
+    `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'Excel', onClick: () => { closeModal(); askViaticosModo('excel'); } },
+      { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); askViaticosModo('pdf'); } }
+    ]);
+  const askViaticosModo = formato => openModal('Exportar Viáticos',
+    `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o relatório <strong>completo</strong> (lista de todas as solicitações filtradas) ou o <strong>resumido</strong> (só os totais)?</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? exportViaticosPDF(lastFiltered, 'resumido') : exportViaticosExcel(lastFiltered, 'resumido'); } },
+      { label: 'Completo', cls: 'primary', onClick: () => { closeModal(); formato === 'pdf' ? exportViaticosPDF(lastFiltered, 'completo') : exportViaticosExcel(lastFiltered, 'completo'); } }
+    ]);
   draw();
 }
 
@@ -2410,6 +2564,7 @@ async function viewSolicitacao(id) {
           <button class="btn sm danger-ghost" data-reprovar="${ex.chave}" type="button" style="margin-left:6px">Reprovar</button></div>`);
   });
 
+  const STATUS_ATIVO_LABEL = { liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação' };
   const body = `
     <div class="grid kpis" style="margin-bottom:14px">
       <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div></div>
@@ -2417,6 +2572,12 @@ async function viewSolicitacao(id) {
       <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
     </div>
+    ${!finalizada ? `
+    <div class="field-row" style="align-items:flex-end; margin-bottom:14px">
+      ${fldSel('vs-status-sel', 'Status da viagem', Object.entries(STATUS_ATIVO_LABEL).map(([v, t]) => ({ v, t })), s.status)}
+      <button class="btn" id="vs-status-update" type="button">Atualizar status</button>
+      <span style="font-size:12px; color:var(--muted); padding-bottom:10px">${s.status_manual ? 'Definido manualmente' : 'Calculado automaticamente pelas datas'}</span>
+    </div>` : ''}
     ${alertBlocks.length ? `<div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px">${alertBlocks.join('')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
 
     ${!finalizada ? `
@@ -2443,8 +2604,6 @@ async function viewSolicitacao(id) {
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   if (!finalizada) {
-    if (s.status === 'liberado') botoes.push({ label: 'Marcar "Em viagem"', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: { status: 'em_viagem' } }); viewSolicitacao(id); } });
-    if (s.status === 'em_viagem') botoes.push({ label: 'Marcar "Aguardando comprovação"', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: { status: 'aguardando_comprovacao' } }); viewSolicitacao(id); } });
     botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
       const r = await api(`/api/viaticos/solicitacoes/${id}/fechar`, { method: 'POST' });
       closeModal();
@@ -2466,6 +2625,11 @@ async function viewSolicitacao(id) {
 
   if (!finalizada) {
     $('#btn-import-flash').onclick = () => importarFlashModal(s);
+    $('#vs-status-update').onclick = async () => {
+      const novo = $('#vs-status-sel').value;
+      try { await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: { status: novo } }); toast('Status atualizado.'); viewSolicitacao(id); }
+      catch (e) { toast(e.message); }
+    };
     let editingDespId = null;
     const resetForm = () => {
       editingDespId = null;
