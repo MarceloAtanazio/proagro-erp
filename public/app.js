@@ -1484,19 +1484,6 @@ function exportConciliacaoExcel(rows, modo) {
 // ============================================================
 // Exportação — Viáticos (PDF/Excel × Completo/Resumido)
 // ============================================================
-function viaticosResumo(rows) {
-  const sum = (arr, f) => arr.reduce((s, r) => s + f(r), 0);
-  const porStatus = {};
-  Object.keys(VIA_STATUS_LABEL).forEach(st => { porStatus[st] = rows.filter(r => r.status === st).length; });
-  return {
-    total: rows.length,
-    liberado: sum(rows, r => r.valor_liberado),
-    comprovado: sum(rows, r => r.valor_comprovado),
-    devolvido: sum(rows, r => r.valor_devolvido),
-    pendencia: sum(rows.filter(r => !r.pendencia_resolvida), r => r.valor_pendencia),
-    porStatus
-  };
-}
 const viaticosDestinoTxt = s => {
   const partes = [];
   if (s.ordem_trabalho) partes.push(`OT ${s.ordem_trabalho}`);
@@ -1504,53 +1491,53 @@ const viaticosDestinoTxt = s => {
   return partes.join(' — ');
 };
 
-async function exportViaticosPDF(rows, modo) {
+// Busca as despesas de cada solicitação filtrada e devolve uma lista "achatada"
+// (uma linha por despesa), ordenada por colaborador/OT e depois por data —
+// é o detalhamento completo, ordem de trabalho por ordem de trabalho.
+async function buildViaticosItens(sols) {
+  const comDespesas = await Promise.all(sols.map(async s => ({ s, despesas: await api(`/api/viaticos/solicitacoes/${s.id}/despesas`) })));
+  const itens = [];
+  comDespesas.forEach(({ s, despesas }) => {
+    despesas.forEach(d => itens.push({
+      colaborador: s.colaborador_name, ot: s.ordem_trabalho || '—', periodo: `${brDate(s.data_inicio)} a ${brDate(s.data_fim)}`,
+      status: VIA_STATUS_LABEL[s.status], data: d.data, categoria: DESP_CAT_LABEL[d.categoria] || d.categoria,
+      descricao: d.descricao || '', valor: d.valor
+    }));
+  });
+  return itens;
+}
+
+async function exportViaticosResumoPDF(rows) {
   if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
   try {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: modo === 'completo' ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
-    const MARGIN = modo === 'completo' ? 12 : 14;
+    const MARGIN = 12;
 
     doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
-    const logoW = modo === 'completo' ? 34 : 32, logoH = logoW * (139 / 600);
+    const logoW = 34, logoH = logoW * (139 / 600);
     doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
-    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(modo === 'completo' ? 10.5 : 10);
+    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
     doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
     doc.text('ERP Financeiro · Viáticos', MARGIN + logoW + 6, 19);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(modo === 'completo' ? 15 : 12.5); doc.setTextColor(...VERDE);
-    doc.text(`Relatório de Viáticos ${modo === 'resumido' ? 'Resumido' : ''}`.trim(), pageW - MARGIN, 15, { align: 'right' });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...VERDE);
+    doc.text('Relatório de Viáticos Resumido', pageW - MARGIN, 15, { align: 'right' });
     const now = new Date();
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
     doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
     doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
 
-    const r = viaticosResumo(rows);
-    let y = 31;
+    const totalLib = rows.reduce((s2, r) => s2 + r.valor_liberado, 0), totalComp = rows.reduce((s2, r) => s2 + r.valor_comprovado, 0);
     doc.setFillColor(...VERDE_CLARO);
-    doc.roundedRect(MARGIN, y, pageW - MARGIN * 2, 16, 2, 2, 'F');
+    doc.roundedRect(MARGIN, 29, pageW - MARGIN * 2, 16, 2, 2, 'F');
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
-    doc.text(`${r.total} solicitação(ões)  ·  Liberado: ${brl(r.liberado)}  ·  Comprovado: ${brl(r.comprovado)}  ·  Devolvido: ${brl(r.devolvido)}  ·  Pendência em aberto: ${brl(r.pendencia)}`, MARGIN + 5, y + 9.5);
-    y += 24;
-
-    if (modo === 'resumido') {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 38, 32);
-      doc.text('Por situação', MARGIN, y); y += 6;
-      doc.autoTable({
-        startY: y, margin: { left: MARGIN, right: MARGIN },
-        body: Object.entries(r.porStatus).filter(([, n2]) => n2 > 0).map(([st, n2]) => [VIA_STATUS_LABEL[st], String(n2)]),
-        styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
-        columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } }
-      });
-      doc.save(`viaticos_resumido_${todayISO()}.pdf`);
-      toast('PDF resumido gerado com sucesso.');
-      return;
-    }
+    doc.text(`${rows.length} solicitação(ões)  ·  Total liberado: ${brl(totalLib)}  ·  Total comprovado: ${brl(totalComp)}`, MARGIN + 5, 38);
 
     doc.autoTable({
-      startY: y,
+      startY: 50,
       head: [['Colaborador', 'Tier', 'Local / OT', 'Período', 'Liberado', 'Comprovado', 'Status']],
       body: rows.map(s => [s.colaborador_name, s.tier, `${LOCAL_LABEL[s.categoria_local]}${viaticosDestinoTxt(s) ? ' — ' + viaticosDestinoTxt(s) : ''}`,
         `${brDate(s.data_inicio)} a ${brDate(s.data_fim)}`, brl(s.valor_liberado), brl(s.valor_comprovado), VIA_STATUS_LABEL[s.status]]),
@@ -1576,6 +1563,80 @@ async function exportViaticosPDF(rows, modo) {
       }
     });
 
+    doc.save(`viaticos_resumido_${todayISO()}.pdf`);
+    toast('PDF gerado com sucesso.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
+}
+
+function exportViaticosResumoExcel(rows) {
+  if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+  const wsData = [
+    ['Colaborador', 'Tier', 'Local', 'OT', 'Destinos', 'Início', 'Fim', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência', 'Status'],
+    ...rows.map(s => [s.colaborador_name, s.tier, LOCAL_LABEL[s.categoria_local], s.ordem_trabalho || '',
+      Array.isArray(s.destinos) ? s.destinos.map(d => `${d.municipio}/${d.uf}`).join(', ') : '',
+      s.data_inicio, s.data_fim, s.valor_liberado, s.valor_comprovado, s.valor_devolvido, s.pendencia_resolvida ? 0 : s.valor_pendencia, VIA_STATUS_LABEL[s.status]])
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  for (let i = 1; i <= rows.length; i++) { ['H', 'I', 'J', 'K'].forEach(col => { const cell = ws[col + (i + 1)]; if (cell) cell.z = MONEY_FMT; }); }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Viáticos');
+  XLSX.writeFile(wb, `viaticos_resumido_${todayISO()}.xlsx`);
+  toast('Excel exportado.');
+}
+
+async function exportViaticosDetalhadoPDF(itens) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  if (!itens.length) { toast('Nenhuma despesa lançada nas solicitações filtradas.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
+    const MARGIN = 12;
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 34, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
+    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text('ERP Financeiro · Viáticos', MARGIN + logoW + 6, 19);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...VERDE);
+    doc.text('Relatório de Viáticos Completo', pageW - MARGIN, 15, { align: 'right' });
+    const now = new Date();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
+
+    const total = itens.reduce((s, i) => s + i.valor, 0);
+    doc.setFillColor(...VERDE_CLARO);
+    doc.roundedRect(MARGIN, 29, pageW - MARGIN * 2, 16, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
+    doc.text(`${itens.length} lançamento(s) de despesa  ·  Total comprovado: ${brl(total)}`, MARGIN + 5, 38);
+
+    doc.autoTable({
+      startY: 50,
+      head: [['Colaborador', 'OT', 'Período', 'Status', 'Data', 'Categoria', 'Descrição', 'Valor']],
+      body: itens.map(i => [i.colaborador, i.ot, i.periodo, i.status, brDate(i.data), i.categoria, i.descricao, brl(i.valor)]),
+      margin: { left: MARGIN, right: MARGIN },
+      styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8 },
+      alternateRowStyles: { fillColor: VERDE_CLARO },
+      columnStyles: { 7: { halign: 'right' } },
+      didDrawPage: () => {
+        const pageH = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
+        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
+        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
+      }
+    });
+
     doc.save(`viaticos_completo_${todayISO()}.pdf`);
     toast('PDF gerado com sucesso.');
   } catch (e) {
@@ -1583,38 +1644,19 @@ async function exportViaticosPDF(rows, modo) {
   }
 }
 
-function exportViaticosExcel(rows, modo) {
+function exportViaticosDetalhadoExcel(itens) {
   if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  if (!itens.length) { toast('Nenhuma despesa lançada nas solicitações filtradas.'); return; }
   const MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
-  const r = viaticosResumo(rows);
+  const wsData = [
+    ['Colaborador', 'OT', 'Período', 'Status', 'Data', 'Categoria', 'Descrição', 'Valor'],
+    ...itens.map(i => [i.colaborador, i.ot, i.periodo, i.status, i.data, i.categoria, i.descricao, i.valor])
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  for (let r = 1; r <= itens.length; r++) { const cell = ws['H' + (r + 1)]; if (cell) cell.z = MONEY_FMT; }
   const wb = XLSX.utils.book_new();
-
-  if (modo === 'resumido') {
-    const wsData = [
-      ['Relatório de Viáticos — Resumido'],
-      [`Gerado em ${todayISO().split('-').reverse().join('/')}`],
-      [],
-      ['Total de solicitações', r.total], ['Total liberado', r.liberado], ['Total comprovado', r.comprovado],
-      ['Total devolvido à carteira', r.devolvido], ['Pendência em aberto', r.pendencia],
-      [], ['Por situação'],
-      ...Object.entries(r.porStatus).filter(([, n2]) => n2 > 0).map(([st, n2]) => [VIA_STATUS_LABEL[st], n2])
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    [5, 6, 7, 8].forEach(row => { const cell = ws['B' + row]; if (cell) cell.z = MONEY_FMT; });
-    XLSX.utils.book_append_sheet(wb, ws, 'Resumo');
-    XLSX.writeFile(wb, `viaticos_resumido_${todayISO()}.xlsx`);
-  } else {
-    const wsData = [
-      ['Colaborador', 'Tier', 'Local', 'OT', 'Destinos', 'Início', 'Fim', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência', 'Status'],
-      ...rows.map(s => [s.colaborador_name, s.tier, LOCAL_LABEL[s.categoria_local], s.ordem_trabalho || '',
-        Array.isArray(s.destinos) ? s.destinos.map(d => `${d.municipio}/${d.uf}`).join(', ') : '',
-        s.data_inicio, s.data_fim, s.valor_liberado, s.valor_comprovado, s.valor_devolvido, s.pendencia_resolvida ? 0 : s.valor_pendencia, VIA_STATUS_LABEL[s.status]])
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    for (let i = 1; i <= rows.length; i++) { ['H', 'I', 'J', 'K'].forEach(col => { const cell = ws[col + (i + 1)]; if (cell) cell.z = MONEY_FMT; }); }
-    XLSX.utils.book_append_sheet(wb, ws, 'Viáticos');
-    XLSX.writeFile(wb, `viaticos_completo_${todayISO()}.xlsx`);
-  }
+  XLSX.utils.book_append_sheet(wb, ws, 'Viáticos - Detalhado');
+  XLSX.writeFile(wb, `viaticos_completo_${todayISO()}.xlsx`);
   toast('Excel exportado.');
 }
 
@@ -2380,11 +2422,18 @@ async function renderViaticos() {
       { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); askViaticosModo('pdf'); } }
     ]);
   const askViaticosModo = formato => openModal('Exportar Viáticos',
-    `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o relatório <strong>completo</strong> (lista de todas as solicitações filtradas) ou o <strong>resumido</strong> (só os totais)?</p>`,
+    `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o relatório <strong>resumido</strong> (uma linha por solicitação) ou o <strong>completo</strong> (todo o detalhamento de gastos, ordem por ordem)?</p>`,
     [
       { label: 'Cancelar', onClick: closeModal },
-      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? exportViaticosPDF(lastFiltered, 'resumido') : exportViaticosExcel(lastFiltered, 'resumido'); } },
-      { label: 'Completo', cls: 'primary', onClick: () => { closeModal(); formato === 'pdf' ? exportViaticosPDF(lastFiltered, 'completo') : exportViaticosExcel(lastFiltered, 'completo'); } }
+      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? exportViaticosResumoPDF(lastFiltered) : exportViaticosResumoExcel(lastFiltered); } },
+      { label: 'Completo', cls: 'primary', onClick: async () => {
+          closeModal();
+          try {
+            toast('Preparando relatório completo…');
+            const itens = await buildViaticosItens(lastFiltered);
+            formato === 'pdf' ? exportViaticosDetalhadoPDF(itens) : exportViaticosDetalhadoExcel(itens);
+          } catch (e) { toast(e.message || 'Não foi possível montar o relatório completo.'); }
+      } }
     ]);
   draw();
 }
