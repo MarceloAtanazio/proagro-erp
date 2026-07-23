@@ -2282,7 +2282,7 @@ async function formSolicitacao(existing) {
           data_expiracao_flash: $('#vs-expira').value || null, valor_solicitado: $('#vs-solicitado').value || null, valor_liberado: $('#vs-liberado').value || 0,
           notes: $('#vs-notes').value
         };
-        const descIds = $('#vs-desc-ids'); if (descIds) b.descontar_pendencia_ids = JSON.parse(descIds.value || '[]');
+        const descIds = $('#vs-desc-ids'); if (descIds && $('#vs-desc-aplicar')?.value === 'true') b.descontar_pendencia_ids = JSON.parse(descIds.value || '[]');
         try {
           if (isEdit) await api(`/api/viaticos/solicitacoes/${existing.id}`, { method: 'PUT', body: b });
           else await api('/api/viaticos/solicitacoes', { method: 'POST', body: b });
@@ -2330,15 +2330,25 @@ async function formSolicitacao(existing) {
       const r = await api(`/api/viaticos/colaboradores/${colabId}/pendencia`);
       if (r.total > 0) {
         alerta.innerHTML = `<div class="alert-item warn" style="margin-bottom:12px">⚠️ Este colaborador tem <strong>${brl(r.total)}</strong> em pendência de viagem(ns) anterior(es) ainda não descontada.
-          <label style="display:block;margin-top:6px;font-weight:400"><input type="checkbox" id="vs-desc-check" checked style="width:auto;margin-right:6px">Descontar automaticamente do valor liberado nesta solicitação</label></div>
-          <input type="hidden" id="vs-desc-ids" value='${JSON.stringify(r.solicitacoes.map(s => s.id))}'>`;
+          <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
+            <span style="font-size:13px">Descontar automaticamente do valor liberado nesta solicitação?</span>
+            <button type="button" class="btn sm" id="vs-desc-sim">Sim</button>
+            <button type="button" class="btn sm" id="vs-desc-nao">Não</button>
+          </div></div>
+          <input type="hidden" id="vs-desc-ids" value='${JSON.stringify(r.solicitacoes.map(s => s.id))}'>
+          <input type="hidden" id="vs-desc-aplicar" value="true">`;
+        const liberadoEl = $('#vs-liberado');
+        liberadoEl.dataset.base = Number(liberadoEl.value || 0);
+        let descontarAtivo = true;
         const applyDiscount = () => {
-          const liberadoEl = $('#vs-liberado');
-          const base = Number(liberadoEl.dataset.base ?? liberadoEl.value ?? 0);
-          liberadoEl.dataset.base = base;
-          liberadoEl.value = $('#vs-desc-check').checked ? Math.max(0, base - r.total).toFixed(2) : base.toFixed(2);
+          $('#vs-desc-aplicar').value = descontarAtivo ? 'true' : 'false';
+          $('#vs-desc-sim').classList.toggle('primary', descontarAtivo);
+          $('#vs-desc-nao').classList.toggle('primary', !descontarAtivo);
+          const base = Number(liberadoEl.dataset.base);
+          liberadoEl.value = descontarAtivo ? Math.max(0, base - r.total).toFixed(2) : base.toFixed(2);
         };
-        $('#vs-desc-check').onchange = applyDiscount;
+        $('#vs-desc-sim').onclick = () => { descontarAtivo = true; applyDiscount(); };
+        $('#vs-desc-nao').onclick = () => { descontarAtivo = false; applyDiscount(); };
         applyDiscount();
       }
     } catch { /* silencioso */ }
