@@ -1472,6 +1472,16 @@ app.delete('/api/viaticos/tud/:id', requireAuth, requireEdit('viaticos'), h(asyn
 
 // ---- Solicitações ----
 app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  // Atualiza sozinho o status pelas datas (antes da viagem = Liberado, dentro
+  // do período = Em viagem, depois = Aguardando comprovação) — mas só para
+  // quem NÃO teve o status alterado manualmente (status_manual=false),
+  // respeitando qualquer ajuste manual feito depois.
+  const today = new Date().toISOString().slice(0, 10);
+  await query(`
+    UPDATE erp_viaticos_solicitacoes
+    SET status = CASE WHEN $1 < data_inicio THEN 'liberado' WHEN $1 > data_fim THEN 'aguardando_comprovacao' ELSE 'em_viagem' END
+    WHERE status_manual = false AND status IN ('liberado','em_viagem','aguardando_comprovacao')`, [today]);
+
   const rows = await query(`
     SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
       COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id), 0) AS valor_comprovado,
@@ -1538,11 +1548,13 @@ app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), 
   res.json({ ok: true });
 }));
 
-// Atualiza só o status (fluxo: liberado -> em_viagem -> aguardando_comprovacao), sem fechar ainda.
+// Atualiza o status manualmente (Liberado / Em viagem / Aguardando comprovação,
+// em qualquer direção — não só avançando). A partir daqui, o recálculo
+// automático por data para de mexer nesta solicitação (status_manual=true).
 app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const status = req.body.status;
   if (!['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
-  await query('UPDATE erp_viaticos_solicitacoes SET status=$1 WHERE id=$2', [status, req.params.id]);
+  await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true WHERE id=$2', [status, req.params.id]);
   res.json({ ok: true });
 }));
 
