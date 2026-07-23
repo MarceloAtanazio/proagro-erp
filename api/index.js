@@ -1576,6 +1576,20 @@ app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(
   res.json({ ok: true });
 }));
 
+// Aprova manualmente um excesso da TUD (ex.: Diretoria autorizou passar do
+// limite diário). Marca só aquele alerta específico como resolvido — não
+// mexe no cálculo de liberado x comprovado, que é uma conferência separada.
+app.post('/api/viaticos/solicitacoes/:id/aprovar-excesso', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const chave = String(req.body.chave || '').trim();
+  if (!chave) return res.status(400).json({ error: 'Chave inválida.' });
+  const s = (await query('SELECT excessos_aprovados FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  const atual = Array.isArray(s.excessos_aprovados) ? s.excessos_aprovados : [];
+  if (!atual.includes(chave)) atual.push(chave);
+  await query('UPDATE erp_viaticos_solicitacoes SET excessos_aprovados=$1 WHERE id=$2', [JSON.stringify(atual), req.params.id]);
+  res.json({ ok: true });
+}));
+
 app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   await query('DELETE FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
