@@ -2327,11 +2327,11 @@ const DESP_CAT_LABEL = {
   veiculo: 'Veículo Próprio'
 };
 const VIA_STATUS_LABEL = {
-  liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação',
+  em_approvals: 'Em Approvals', liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação',
   comprovado: 'Comprovado', devolvido: 'Devolvido (sobrou)', divergente: 'Divergente (estourou)', arquivado: 'Arquivado'
 };
 const VIA_STATUS_BADGE = {
-  liberado: 'off', em_viagem: 'pend', aguardando_comprovacao: 'warn',
+  em_approvals: 'warn', liberado: 'off', em_viagem: 'pend', aguardando_comprovacao: 'warn',
   comprovado: 'ok', devolvido: 'ok', divergente: 'late', arquivado: 'off'
 };
 
@@ -2613,7 +2613,7 @@ async function viewSolicitacao(id) {
           <button class="btn sm danger-ghost" data-reprovar="${ex.chave}" type="button" style="margin-left:6px">Reprovar</button></div>`);
   });
 
-  const STATUS_ATIVO_LABEL = { liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação' };
+  const STATUS_ATIVO_LABEL = { em_approvals: 'Em Approvals', liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação' };
   const body = `
     <div class="grid kpis" style="margin-bottom:14px">
       <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div></div>
