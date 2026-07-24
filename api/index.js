@@ -1503,12 +1503,19 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
   // Atualiza sozinho o status pelas datas (antes da viagem = Liberado, dentro
   // do período = Em viagem, depois = Aguardando comprovação) — mas só para
   // quem NÃO teve o status alterado manualmente (status_manual=false),
-  // respeitando qualquer ajuste manual feito depois.
+  // respeitando qualquer ajuste manual feito depois. "Transferência Agendada"
+  // fica congelado até a data de início chegar — só a partir daí passa a
+  // seguir a mesma lógica automática das demais.
   const today = new Date().toISOString().slice(0, 10);
   await query(`
     UPDATE erp_viaticos_solicitacoes
-    SET status = CASE WHEN $1 < data_inicio THEN 'liberado' WHEN $1 > data_fim THEN 'aguardando_comprovacao' ELSE 'em_viagem' END
-    WHERE status_manual = false AND status IN ('liberado','em_viagem','aguardando_comprovacao')`, [today]);
+    SET status = CASE
+      WHEN status = 'transferencia_agendada' AND $1 < data_inicio THEN 'transferencia_agendada'
+      WHEN $1 < data_inicio THEN 'liberado'
+      WHEN $1 > data_fim THEN 'aguardando_comprovacao'
+      ELSE 'em_viagem'
+    END
+    WHERE status_manual = false AND status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada')`, [today]);
 
   const rows = await query(`
     SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
@@ -1581,7 +1588,7 @@ app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), 
 // automático por data para de mexer nesta solicitação (status_manual=true).
 app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const status = req.body.status;
-  if (!['em_approvals', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
+  if (!['em_approvals', 'transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
   await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true WHERE id=$2', [status, req.params.id]);
   res.json({ ok: true });
 }));
