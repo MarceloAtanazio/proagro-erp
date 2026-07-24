@@ -1553,7 +1553,7 @@ app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), 
 // automático por data para de mexer nesta solicitação (status_manual=true).
 app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const status = req.body.status;
-  if (!['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
+  if (!['em_approvals', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
   await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true WHERE id=$2', [status, req.params.id]);
   res.json({ ok: true });
 }));
@@ -1654,7 +1654,7 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
   // menos o que está de fato alocado em solicitações (liberado - devolvido).
   const transferido = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos'`))[0].v);
   const transferidoMes = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]))[0].v);
-  const alocado = n((await query(`SELECT COALESCE(SUM(valor_liberado - valor_devolvido),0) AS v FROM erp_viaticos_solicitacoes WHERE status <> 'arquivado'`))[0].v);
+  const alocado = n((await query(`SELECT COALESCE(SUM(valor_liberado - valor_devolvido),0) AS v FROM erp_viaticos_solicitacoes WHERE status NOT IN ('arquivado','em_approvals')`))[0].v);
   const saldoCarteira = transferido - alocado;
 
   const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado FROM erp_viaticos_solicitacoes
