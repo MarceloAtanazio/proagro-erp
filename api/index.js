@@ -237,7 +237,35 @@ const AUDIT_MAP = {
   'PUT /api/users/:id/permissions': req => `Alterou permissões/perfil do usuário ID ${req.params.id}`,
   'POST /api/users/:id/reset-password': req => `Redefiniu a senha do usuário ID ${req.params.id}`,
   'POST /api/users/:id/toggle': req => `Ativou/desativou o usuário ID ${req.params.id}`,
-  'PUT /api/company': () => 'Atualizou os dados cadastrais da empresa'
+  'PUT /api/company': () => 'Atualizou os dados cadastrais da empresa',
+
+  // Viáticos
+  'POST /api/colaboradores': req => `Cadastrou o colaborador de viáticos "${req.body.name}" (Tier ${req.body.tier})`,
+  'PUT /api/colaboradores/:id': req => `Editou o colaborador de viáticos ID ${req.params.id} ("${req.body.name}", Tier ${req.body.tier}${req.body.ativo === false ? ', inativado' : ''})`,
+  'DELETE /api/colaboradores/:id': req => `Excluiu o colaborador de viáticos ID ${req.params.id}`,
+  'POST /api/viaticos/tud': req => `Atualizou a TUD (Tier ${req.body.tier}, ${req.body.categoria_local}, ${req.body.tipo_despesa}) para ${fmtBRL(req.body.valor_diaria)}/dia`,
+  'DELETE /api/viaticos/tud/:id': req => `Excluiu uma faixa da TUD (ID ${req.params.id})`,
+  'POST /api/viaticos/solicitacoes': (req, body) => {
+    let msg = `Criou solicitação de viático (ID ${body && body.id}) para o colaborador ID ${req.body.colaborador_id}`;
+    const pi = req.body.pendencia_info;
+    if (pi && pi.valor > 0) {
+      msg += pi.decisao === 'descontar'
+        ? ` — descontou pendência de ${fmtBRL(pi.valor)} de viagem(ns) anterior(es) (ID ${(pi.ids || []).join(', ')}) do valor liberado`
+        : ` — optou por NÃO descontar a pendência de ${fmtBRL(pi.valor)} (mantida em aberto, viagem(ns) ID ${(pi.ids || []).join(', ')})`;
+    }
+    return msg;
+  },
+  'PUT /api/viaticos/solicitacoes/:id': req => `Editou a solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/status': req => `Alterou manualmente o status da solicitação de viático ID ${req.params.id} para "${req.body.status}"`,
+  'POST /api/viaticos/solicitacoes/:id/fechar': (req, body) => `Fechou/conferiu a solicitação de viático ID ${req.params.id} — resultado: ${body && body.status}` +
+    (body && body.status === 'divergente' ? ` (pendência de ${fmtBRL(body.valor_pendencia)})` : body && body.status === 'devolvido' ? ` (${fmtBRL(body.valor_devolvido)} devolvido à carteira)` : ''),
+  'POST /api/viaticos/solicitacoes/:id/arquivar': req => `Arquivou a solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/reabrir': req => `Reabriu (admin) a solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/excesso-status': req => `${req.body.status === 'aprovado' ? 'Aprovou' : 'Reprovou'} o excesso da TUD ("${req.body.chave}") na solicitação de viático ID ${req.params.id}`,
+  'DELETE /api/viaticos/solicitacoes/:id': req => `Excluiu a solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/despesas': req => `Lançou despesa de viático (${req.body.categoria}, ${fmtBRL(req.body.valor)}) na solicitação ID ${req.params.id}`,
+  'PUT /api/viaticos/despesas/:id': req => `Editou a despesa de viático ID ${req.params.id} (${req.body.categoria}, ${fmtBRL(req.body.valor)})`,
+  'DELETE /api/viaticos/despesas/:id': req => `Excluiu a despesa de viático ID ${req.params.id}`
 };
 
 // Intercepta res.json em toda requisição autenticada de escrita (POST/PUT/
