@@ -2482,10 +2482,21 @@ async function formSolicitacao(existing) {
           colaborador_id: Number($('#vs-colab').value), tier: $('#vs-tier').value, categoria_local: $('#vs-local').value,
           ordem_trabalho: $('#vs-ordem').value, destinos: destinosList, motivo: $('#vs-motivo').value,
           data_inicio: $('#vs-inicio').value, data_fim: $('#vs-fim').value,
-          data_expiracao_flash: $('#vs-expira').value || null, valor_solicitado: $('#vs-solicitado').value || null, valor_liberado: $('#vs-liberado').value || 0,
+          data_expiracao_flash: $('#vs-expira').value || null, valor_solicitado: $('#vs-solicitado').value || null,
+          valor_liberado: Number($('#vs-liberado').value) || 0,
           notes: $('#vs-notes').value
         };
-        const descIds = $('#vs-desc-ids'); if (descIds && $('#vs-desc-aplicar')?.value === 'true') b.descontar_pendencia_ids = JSON.parse(descIds.value || '[]');
+        // Pendência de viagem(ns) anterior(es): aplica o desconto de verdade (e não
+        // só na tela) e sempre informa a decisão tomada (descontar ou manter em
+        // aberto), pra ficar registrado no log de auditoria de forma clara.
+        const descIds = $('#vs-desc-ids');
+        if (descIds) {
+          const ids = JSON.parse(descIds.value || '[]');
+          const valorPend = Number($('#vs-desc-valor').value || 0);
+          const aplicar = $('#vs-desc-aplicar').value === 'true';
+          b.pendencia_info = { valor: valorPend, decisao: aplicar ? 'descontar' : 'manter', ids };
+          if (aplicar) { b.valor_liberado = Math.max(0, b.valor_liberado - valorPend); b.descontar_pendencia_ids = ids; }
+        }
         try {
           if (isEdit) await api(`/api/viaticos/solicitacoes/${existing.id}`, { method: 'PUT', body: b });
           else await api('/api/viaticos/solicitacoes', { method: 'POST', body: b });
@@ -2534,25 +2545,33 @@ async function formSolicitacao(existing) {
       if (r.total > 0) {
         alerta.innerHTML = `<div class="alert-item warn" style="margin-bottom:12px">⚠️ Este colaborador tem <strong>${brl(r.total)}</strong> em pendência de viagem(ns) anterior(es) ainda não descontada.
           <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
-            <span style="font-size:13px">Descontar automaticamente do valor liberado nesta solicitação?</span>
+            <span style="font-size:13px">Descontar do valor liberado nesta solicitação?</span>
             <button type="button" class="btn sm" id="vs-desc-sim">Sim</button>
             <button type="button" class="btn sm" id="vs-desc-nao">Não</button>
-          </div></div>
+          </div>
+          <div id="vs-desc-preview" style="margin-top:8px; font-size:13px; font-weight:600"></div></div>
           <input type="hidden" id="vs-desc-ids" value='${JSON.stringify(r.solicitacoes.map(s => s.id))}'>
-          <input type="hidden" id="vs-desc-aplicar" value="true">`;
+          <input type="hidden" id="vs-desc-aplicar" value="true">
+          <input type="hidden" id="vs-desc-valor" value="${r.total}">`;
+        // Não mexemos no valor digitado em "Valor liberado" — só mostramos uma prévia
+        // de quanto ficaria líquido, e a dedução de verdade só é aplicada no momento
+        // de enviar o formulário (evita o valor "sumir"/zerar por causa de uma
+        // captura antiga do campo antes de você terminar de digitar).
         const liberadoEl = $('#vs-liberado');
-        liberadoEl.dataset.base = Number(liberadoEl.value || 0);
         let descontarAtivo = true;
-        const applyDiscount = () => {
+        const atualizarPreview = () => {
           $('#vs-desc-aplicar').value = descontarAtivo ? 'true' : 'false';
           $('#vs-desc-sim').classList.toggle('primary', descontarAtivo);
           $('#vs-desc-nao').classList.toggle('primary', !descontarAtivo);
-          const base = Number(liberadoEl.dataset.base);
-          liberadoEl.value = descontarAtivo ? Math.max(0, base - r.total).toFixed(2) : base.toFixed(2);
+          const digitado = Number(liberadoEl.value || 0);
+          $('#vs-desc-preview').innerHTML = descontarAtivo
+            ? `✅ Será descontado <strong>${brl(r.total)}</strong> no envio. Valor líquido a liberar: <strong>${brl(Math.max(0, digitado - r.total))}</strong> (digitado: ${brl(digitado)}).`
+            : `➡️ A pendência de <strong>${brl(r.total)}</strong> NÃO será descontada — continua em aberto para uma próxima solicitação. Valor liberado: <strong>${brl(digitado)}</strong>.`;
         };
-        $('#vs-desc-sim').onclick = () => { descontarAtivo = true; applyDiscount(); };
-        $('#vs-desc-nao').onclick = () => { descontarAtivo = false; applyDiscount(); };
-        applyDiscount();
+        $('#vs-desc-sim').onclick = () => { descontarAtivo = true; atualizarPreview(); };
+        $('#vs-desc-nao').onclick = () => { descontarAtivo = false; atualizarPreview(); };
+        liberadoEl.oninput = atualizarPreview;
+        atualizarPreview();
       }
     } catch { /* silencioso */ }
   };
