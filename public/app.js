@@ -2407,7 +2407,19 @@ async function renderViaticos() {
       }).join('') || '<tr><td colspan="8"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
-    $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('a solicitação', `/api/viaticos/solicitacoes/${b.dataset.del}`, renderViaticos));
+    $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+      const s = filtered.find(x => x.id == b.dataset.del);
+      if (s && s.status === 'divergente' && !s.pendencia_resolvida) {
+        return openModal('⚠️ Atenção — pendência em aberto', `
+          <p style="font-size:13.5px; color:var(--ink-2)">Esta solicitação (<strong>${esc(s.colaborador_name)}</strong>) ainda tem uma
+          <strong>pendência de ${brl(s.valor_pendencia)}</strong> não descontada de nenhuma solicitação futura.</p>
+          <p style="font-size:13.5px; color:var(--ink-2)">Excluir agora <strong>apaga esse registro de dívida permanentemente</strong> — não fica
+          rastro em nenhum outro lugar do sistema. Tem certeza que quer excluir mesmo assim?</p>`,
+          [{ label: 'Cancelar', onClick: closeModal },
+           { label: 'Excluir mesmo assim', cls: 'danger-ghost', onClick: () => { closeModal(); confirmDelete('a solicitação', `/api/viaticos/solicitacoes/${s.id}`, renderViaticos); } }]);
+      }
+      confirmDelete('a solicitação', `/api/viaticos/solicitacoes/${b.dataset.del}`, renderViaticos);
+    });
   };
 
   ['q', 'f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
