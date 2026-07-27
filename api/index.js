@@ -255,6 +255,7 @@ const AUDIT_MAP = {
     }
     return msg;
   },
+  'POST /api/viaticos/solicitacoes/autosservico': (req, body) => `Colaborador enviou uma solicitação de viático via autosserviço (ID ${body && body.id})`,
   'PUT /api/viaticos/solicitacoes/:id': req => `Editou a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/status': req => `Alterou manualmente o status da solicitação de viático ID ${req.params.id} para "${req.body.status}"`,
   'POST /api/viaticos/solicitacoes/:id/fechar': (req, body) => `Fechou/conferiu a solicitação de viático ID ${req.params.id} — resultado: ${body && body.status}` +
@@ -1454,8 +1455,11 @@ app.post('/api/colaboradores', requireAuth, requireEdit('viaticos'), h(async (re
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
   if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
-  const ins = await query('INSERT INTO erp_colaboradores (name, cargo, tier) VALUES ($1,$2,$3) RETURNING id',
-    [sanitize(b.name), sanitize(b.cargo), b.tier]);
+  const ins = await query(`INSERT INTO erp_colaboradores
+    (name, cargo, tier, usuario_id, cidade_base_uf, cidade_base_municipio, veiculo_placa, veiculo_modelo, veiculo_consumo_kml)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    [sanitize(b.name), sanitize(b.cargo), b.tier, b.usuario_id || null, b.cidade_base_uf || null, sanitize(b.cidade_base_municipio) || null,
+     sanitize(b.veiculo_placa) || null, sanitize(b.veiculo_modelo) || null, b.veiculo_consumo_kml ? Number(b.veiculo_consumo_kml) : null]);
   res.json({ ok: true, id: ins[0].id });
 }));
 
@@ -1463,8 +1467,11 @@ app.put('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async 
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
   if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
-  await query('UPDATE erp_colaboradores SET name=$1, cargo=$2, tier=$3, ativo=$4 WHERE id=$5',
-    [sanitize(b.name), sanitize(b.cargo), b.tier, b.ativo !== false, req.params.id]);
+  await query(`UPDATE erp_colaboradores SET name=$1, cargo=$2, tier=$3, ativo=$4, usuario_id=$5,
+    cidade_base_uf=$6, cidade_base_municipio=$7, veiculo_placa=$8, veiculo_modelo=$9, veiculo_consumo_kml=$10 WHERE id=$11`,
+    [sanitize(b.name), sanitize(b.cargo), b.tier, b.ativo !== false, b.usuario_id || null, b.cidade_base_uf || null,
+     sanitize(b.cidade_base_municipio) || null, sanitize(b.veiculo_placa) || null, sanitize(b.veiculo_modelo) || null,
+     b.veiculo_consumo_kml ? Number(b.veiculo_consumo_kml) : null, req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -1473,6 +1480,40 @@ app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(asy
   if (used > 0) return res.status(409).json({ error: `Este colaborador tem ${used} solicitação(ões) vinculada(s). Inative-o em vez de excluir.` });
   await query('DELETE FROM erp_colaboradores WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
+}));
+
+// ---- Autosserviço (colaborador solicitando por conta própria) ----
+// Disponível para QUALQUER usuário autenticado vinculado a um colaborador —
+// não passa pela permissão de página 'viaticos' (essa é a de administração).
+app.get('/api/viaticos/autosservico/meu-colaborador', requireAuth, h(async (req, res) => {
+  const rows = await query('SELECT * FROM erp_colaboradores WHERE usuario_id=$1 AND ativo=true', [req.user.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Nenhum colaborador de viáticos vinculado a este usuário.' });
+  res.json(rows[0]);
+}));
+
+app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, h(async (req, res) => {
+  const colabRows = await query('SELECT * FROM erp_colaboradores WHERE usuario_id=$1 AND ativo=true', [req.user.id]);
+  if (!colabRows.length) return res.status(403).json({ error: 'Seu usuário não está vinculado a um colaborador de viáticos.' });
+  const colab = colabRows[0];
+  const b = req.body;
+  if (!['interior', 'capital', 'sp_df_rj_intl'].includes(b.categoria_local)) return res.status(400).json({ error: 'Categoria de local inválida.' });
+  if (b.motivo && !MOTIVO_OPTIONS.includes(b.motivo)) return res.status(400).json({ error: 'Motivo inválido.' });
+  if (!isDate(b.data_inicio) || !isDate(b.data_fim)) return res.status(400).json({ error: 'Datas do período inválidas.' });
+  if (b.data_fim < b.data_inicio) return res.status(400).json({ error: 'Data final não pode ser antes da inicial.' });
+  if (b.destinos !== undefined) {
+    if (!Array.isArray(b.destinos)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
+    for (const d of b.destinos) {
+      if (!d || typeof d.uf !== 'string' || d.uf.length !== 2 || !sanitize(d.municipio)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
+    }
+  }
+  const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
+    (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, objetivo, data_inicio, data_fim,
+     valor_liberado, previsao_por_categoria, transporte_detalhes, notes, created_by, origem)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,'colaborador') RETURNING id`,
+    [colab.id, colab.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo),
+     sanitize(b.objetivo), b.data_inicio, b.data_fim, JSON.stringify(b.previsao_por_categoria || {}), JSON.stringify(b.transporte_detalhes || {}),
+     sanitize(b.notes), req.user.id]);
+  res.json({ ok: true, id: ins[0].id });
 }));
 
 // ---- TUD (Tarifa Única Diária) ----
