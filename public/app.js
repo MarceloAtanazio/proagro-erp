@@ -2984,7 +2984,7 @@ async function renderSolicitacaoAutosservico() {
     transporte: {
       aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false, taxi_uber: false,
       aviao_trechos: [], onibus_trechos: [], alugueis: [], taxi_uber_corridas: [],
-      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [] }
+      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false }
     }
   };
   viaWizStep1();
@@ -3003,19 +3003,25 @@ function viaWizNoites(w) { return Math.max(0, viaWizDias(w) - 1); }
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
 // gratuito, sem chave de API). Devolve também o detalhamento perna a perna
 // (o OSRM já calcula isso no mesmo pedido). Pedágio ainda não é automático.
-async function viaCalcularRota(w) {
-  if (!w.colab.cidade_base_uf || !w.colab.cidade_base_municipio) throw new Error('Cadastre a cidade-base do colaborador antes de calcular a rota.');
-  if (!w.destinos.length) throw new Error('Adicione ao menos um destino na etapa "Viagem" antes de calcular a rota.');
+// pontoFixo = { uf, municipio } — cidade de partida E chegada (fecha o
+// circuito). intermediarios = array de { uf, municipio } — paradas na ordem
+// visitada. Generalizado assim pra servir tanto o trajeto da viagem inteira
+// (partida = cidade-base do colaborador) quanto um trajeto local de um
+// aluguel específico no destino (partida = cidade onde o carro foi retirado,
+// ex. a cidade do aeroporto onde a pessoa desembarcou).
+async function viaCalcularRota(pontoFixo, intermediarios) {
+  if (!pontoFixo || !pontoFixo.uf || !pontoFixo.municipio) throw new Error('Defina a cidade de partida/chegada antes de calcular a rota.');
+  if (!intermediarios || !intermediarios.length) throw new Error('Adicione ao menos um destino/parada antes de calcular a rota.');
   const buscarCoord = (uf, municipio) => {
     const c = BR_LOCALIDADES.coords[uf] && BR_LOCALIDADES.coords[uf][municipio];
     if (!c) throw new Error(`Não encontrei coordenadas para ${municipio}/${uf}.`);
     return c; // [lat, lng]
   };
-  const baseLabel = `${w.colab.cidade_base_municipio}/${w.colab.cidade_base_uf}`;
-  const baseCoord = buscarCoord(w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
+  const baseLabel = `${pontoFixo.municipio}/${pontoFixo.uf}`;
+  const baseCoord = buscarCoord(pontoFixo.uf, pontoFixo.municipio);
   const pontos = [
     { label: baseLabel, coord: baseCoord },
-    ...w.destinos.map(d => ({ label: `${d.municipio}/${d.uf}`, coord: buscarCoord(d.uf, d.municipio) })),
+    ...intermediarios.map(d => ({ label: `${d.municipio}/${d.uf}`, coord: buscarCoord(d.uf, d.municipio) })),
     { label: baseLabel, coord: baseCoord }
   ];
   const coordStr = pontos.map(p => `${p.coord[1]},${p.coord[0]}`).join(';');
@@ -3042,6 +3048,15 @@ function viaMesclarRepeticoes(novosTrechos, trechosAntigos) {
 // evento), o que o cálculo de rota simples (ida até cada destino e volta à
 // base) não capturaria sozinho.
 function viaKmPonderado(trechos) { return (trechos || []).reduce((s, t) => s + t.km * (t.repeticoes || 1), 0); }
+// Aceita "250.50" ou "250,50" — o campo de diária de aluguel virou texto
+// livre (sem as setinhas do input numérico) pra facilitar a digitação.
+function viaNum(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  let s = String(v).trim();
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const n = Number(s);
+  return isFinite(n) ? n : 0;
+}
 
 // Monta o HTML do detalhamento perna a perna + os controles pra reordenar
 // os destinos (o roteiro é o mesmo array w.destinos usado na etapa 2).
@@ -3072,7 +3087,7 @@ function viaAtualizarMapa(pontos, geometry) {
   VIA_MAP.fitBounds(line.getBounds(), { padding: [30, 30] });
 }
 
-function viaRenderRotaDetalhe(w, trechos, consumo, preco, idPrefix) {
+function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix) {
   const legsHtml = trechos.map((t, i) => {
     const comb = consumo ? (t.km * (t.repeticoes || 1) / consumo * preco) : 0;
     return `<tr>
@@ -3084,10 +3099,10 @@ function viaRenderRotaDetalhe(w, trechos, consumo, preco, idPrefix) {
   }).join('');
   const kmPonderado = viaKmPonderado(trechos);
   const combTotal = consumo ? (kmPonderado / consumo * preco) : 0;
-  const reorderHtml = w.destinos.map((d, i) => `
+  const reorderHtml = intermediarios.map((d, i) => `
     <span class="chip">${i + 1}º ${esc(d.municipio)}/${esc(d.uf)}
       <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover pra cima">▲</button>
-      <button type="button" data-mvdown="${i}" ${i === w.destinos.length - 1 ? 'disabled' : ''} title="Mover pra baixo">▼</button>
+      <button type="button" data-mvdown="${i}" ${i === intermediarios.length - 1 ? 'disabled' : ''} title="Mover pra baixo">▼</button>
       <button type="button" data-mvdel="${i}" title="Remover da rota">×</button>
     </span>`).join(' ');
   return `
@@ -3106,30 +3121,34 @@ function viaRenderRotaDetalhe(w, trechos, consumo, preco, idPrefix) {
 // Executa o cálculo (valida consumo/preço, chama o OSRM, desenha o mapa,
 // renderiza resultado + reordenação + repetições) e devolve o km ponderado
 // via callback pra quem chamou preencher seus próprios campos (Carro Próprio,
-// ou um aluguel específico). Ajustar uma repetição só recalcula localmente
-// (sem chamar o OSRM de novo); reordenar/remover uma cidade recalcula a rota
+// ou um aluguel específico). "pontoFixo" é a cidade de partida/chegada (a
+// cidade-base do colaborador, no trajeto da viagem inteira, ou a cidade de
+// retirada do carro, num trajeto local no destino) e "intermediarios" é o
+// array de paradas visitadas nesse trajeto (mutável — reordenar/remover aqui
+// dispara um novo cálculo). Ajustar uma repetição só recalcula localmente
+// (sem chamar o OSRM de novo); reordenar/remover uma parada recalcula a rota
 // inteira, preservando as repetições dos trechos que continuarem existindo.
-async function viaExecutarCalculoRota(w, colab, statusElId, idPrefix, trechosAntigos, onSucesso, onReorder) {
+async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, statusElId, idPrefix, trechosAntigos, onSucesso, onReorder) {
   const statusEl = document.getElementById(statusElId);
   if (!statusEl) return;
   if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
-  if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
+  if (!preco) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
   statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
   try {
-    const { total_km, legs, pontos, geometry } = await viaCalcularRota(w);
+    const { total_km, legs, pontos, geometry } = await viaCalcularRota(pontoFixo, intermediarios);
     const trechos = viaMesclarRepeticoes(legs, trechosAntigos);
     const kmPonderado = viaKmPonderado(trechos);
     onSucesso(kmPonderado, trechos);
     viaAtualizarMapa(pontos, geometry);
-    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km passando uma vez por trecho (ida até cada destino e volta à base). Ajuste as repetições abaixo se algum trecho foi percorrido mais vezes. Pedágio segue manual.</div>`
-      + viaRenderRotaDetalhe(w, trechos, colab.veiculo_consumo_kml, w.preco_combustivel, idPrefix);
-    const recalcular = () => { onReorder(); viaExecutarCalculoRota(w, colab, statusElId, idPrefix, trechos, onSucesso, onReorder); };
+    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km passando uma vez por trecho (ida até cada parada e volta ao ponto de partida). Ajuste as repetições abaixo se algum trecho foi percorrido mais vezes. Pedágio segue manual.</div>`
+      + viaRenderRotaDetalhe(intermediarios, trechos, colab.veiculo_consumo_kml, preco, idPrefix);
+    const recalcular = () => { onReorder(); viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, statusElId, idPrefix, trechos, onSucesso, onReorder); };
     statusEl.querySelectorAll('[data-legrep]').forEach(inp => {
       inp.onchange = () => {
         const i = Number(inp.dataset.legrep);
         trechos[i].repeticoes = Math.max(1, Math.round(Number(inp.value)) || 1);
         inp.value = trechos[i].repeticoes;
-        const consumo = colab.veiculo_consumo_kml, preco = w.preco_combustivel;
+        const consumo = colab.veiculo_consumo_kml;
         const comb = consumo ? (trechos[i].km * trechos[i].repeticoes / consumo * preco) : 0;
         const cellComb = document.getElementById(`${idPrefix}-legcomb-${i}`); if (cellComb) cellComb.textContent = comb > 0 ? brl(comb) : '—';
         const novoKm = viaKmPonderado(trechos);
@@ -3139,11 +3158,11 @@ async function viaExecutarCalculoRota(w, colab, statusElId, idPrefix, trechosAnt
         onSucesso(novoKm, trechos);
       };
     });
-    statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvup); [w.destinos[i - 1], w.destinos[i]] = [w.destinos[i], w.destinos[i - 1]]; recalcular(); });
-    statusEl.querySelectorAll('[data-mvdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvdown); [w.destinos[i], w.destinos[i + 1]] = [w.destinos[i + 1], w.destinos[i]]; recalcular(); });
-    statusEl.querySelectorAll('[data-mvdel]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.mvdel), 1); recalcular(); });
+    statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvup); [intermediarios[i - 1], intermediarios[i]] = [intermediarios[i], intermediarios[i - 1]]; recalcular(); });
+    statusEl.querySelectorAll('[data-mvdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvdown); [intermediarios[i], intermediarios[i + 1]] = [intermediarios[i + 1], intermediarios[i]]; recalcular(); });
+    statusEl.querySelectorAll('[data-mvdel]').forEach(b => b.onclick = () => { intermediarios.splice(Number(b.dataset.mvdel), 1); recalcular(); });
   } catch (e) {
-    statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
+    statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — marque "preencher manualmente" abaixo se preferir.</div>`;
   }
 }
 
@@ -3371,55 +3390,135 @@ function viaRenderAluguelBlock() {
   const w = VIA_WIZ, box = $('#w3-aluguel-block');
   box.style.display = w.transporte.aluguel_carro ? '' : 'none';
   if (!w.transporte.aluguel_carro) { box.innerHTML = ''; return; }
+  const estadosOpts = BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }));
   box.innerHTML = `<div class="via-subcard"><h4>🚗 Aluguel de Carro</h4>
-    ${w.transporte.alugueis.map((a, i) => `
+    ${w.transporte.alugueis.map((a, i) => {
+      const kmCombDisabled = a.manual_override ? '' : 'disabled';
+      return `
       <div class="via-item-row">
-        <div class="field-row">${fld(`al-locadora-${i}`, 'Locadora', 'text', a.locadora || '')}${fld(`al-diaria-${i}`, 'Valor da diária (R$)', 'number', a.valor_diaria || '', 'step="0.01" min="0"')}${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}</div>
+        <div class="field-row">
+          ${fld(`al-locadora-${i}`, 'Locadora', 'text', a.locadora || '')}
+          <div class="field"><label for="al-diaria-${i}">Valor da diária (R$)</label><input id="al-diaria-${i}" type="text" inputmode="decimal" placeholder="0,00" value="${esc(a.valor_diaria || '')}"></div>
+          ${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}
+        </div>
         <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
         <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
+
+        <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Carro usado localmente no destino (não parte da cidade-base — ex.: desembarquei de avião e aluguei um carro só pra rodar por lá)</label>
+
+        ${a.uso_local ? `
+        <div class="field"><label>Cidade onde o carro foi retirado (ponto de partida e devolução da rota)</label>
+          <div class="field-row">
+            ${fldSel(`al-partida-uf-${i}`, 'Estado', estadosOpts, a.partida_uf || estadosOpts[0].v)}
+            ${fldSel(`al-partida-mun-${i}`, 'Município', [], null)}
+          </div>
+        </div>
+        <div class="field"><label>Paradas locais (na ordem em que foram visitadas)</label>
+          <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
+            ${fldSel(`al-parada-uf-${i}`, 'Estado', estadosOpts, estadosOpts[0].v)}
+            ${fldSel(`al-parada-mun-${i}`, 'Município', [], null)}
+            <button class="btn primary" id="al-add-parada-${i}" type="button">+ Adicionar</button>
+          </div>
+          <div id="al-paradas-list-${i}"></div>
+        </div>` : ''}
+
         <button class="btn" id="al-calc-${i}" type="button">📍 Calcular rota automaticamente</button>
         <div id="al-status-${i}" style="margin-top:8px"></div>
-        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', 'step="0.1" min="0"')}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', 'step="0.01" min="0"')}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
-        <p class="hint">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
+        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
+        <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="al-manual-${i}" ${a.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
+        <p class="hint" style="margin-top:8px">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
         <div class="field-row">${fld(`al-estacqtd-${i}`, 'Estacionamento — Qtd.', 'number', a.estacionamento_qtd || 1, 'min="1"')}${fld(`al-estacvalor-${i}`, 'Valor unitário (R$)', 'number', a.estacionamento_valor || '', 'step="0.01" min="0"')}</div>
-        <p style="font-weight:600">Total da diária: ${brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))}</p>
+        <p style="font-weight:600">Total da diária: ${brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))}</p>
         <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
-      </div>`).join('') || '<p class="hint">Nenhum aluguel adicionado ainda.</p>'}
+      </div>`;
+    }).join('') || '<p class="hint">Nenhum aluguel adicionado ainda.</p>'}
     <button class="btn" id="w3-add-aluguel" type="button">+ Adicionar aluguel</button>
   </div>`;
-  const campos = { locadora: 'locadora', valor_diaria: 'diaria', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', distancia_km: 'km', combustivel_valor: 'comb', pedagio_valor: 'pedagio', estacionamento_qtd: 'estacqtd', estacionamento_valor: 'estacvalor' };
+  const campos = { locadora: 'locadora', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', pedagio_valor: 'pedagio', estacionamento_qtd: 'estacqtd', estacionamento_valor: 'estacvalor' };
   w.transporte.alugueis.forEach((a, i) => {
     Object.entries(campos).forEach(([campo, elKey]) => {
       const input = document.getElementById(`al-${elKey}-${i}`);
-      if (input) input.oninput = () => { a[campo] = input.value; if (['valor_diaria', 'dias'].includes(campo)) viaRenderAluguelBlock(); };
+      if (input) input.oninput = () => { a[campo] = input.value; if (campo === 'dias') viaRenderAluguelBlock(); };
     });
+    const diariaInput = document.getElementById(`al-diaria-${i}`);
+    if (diariaInput) diariaInput.oninput = () => { a.valor_diaria = diariaInput.value; };
+    diariaInput.onblur = () => viaRenderAluguelBlock(); // atualiza o "Total da diária" ao sair do campo
+
+    if (a.uso_local) {
+      const popularPartidaMun = () => {
+        const uf = document.getElementById(`al-partida-uf-${i}`).value;
+        document.getElementById(`al-partida-mun-${i}`).innerHTML = (BR_LOCALIDADES.municipios[uf] || []).map(m => `<option value="${esc(m)}" ${m === a.partida_municipio ? 'selected' : ''}>${esc(m)}</option>`).join('');
+        if (!a.partida_municipio) a.partida_municipio = (BR_LOCALIDADES.municipios[uf] || [])[0] || '';
+      };
+      const popularParadaMun = () => {
+        const uf = document.getElementById(`al-parada-uf-${i}`).value;
+        document.getElementById(`al-parada-mun-${i}`).innerHTML = (BR_LOCALIDADES.municipios[uf] || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+      };
+      const renderParadas = () => {
+        const listEl = document.getElementById(`al-paradas-list-${i}`);
+        listEl.innerHTML = (a.rota_pontos || []).length
+          ? `<div class="chip-row">${a.rota_pontos.map((p, j) => `<span class="chip">${esc(p.municipio)}/${esc(p.uf)} <button type="button" data-rmparada="${j}">×</button></span>`).join('')}</div>`
+          : '<span style="color:var(--muted); font-size:13px">Nenhuma parada adicionada ainda.</span>';
+        listEl.querySelectorAll('[data-rmparada]').forEach(b => b.onclick = () => { a.rota_pontos.splice(Number(b.dataset.rmparada), 1); renderParadas(); });
+      };
+      document.getElementById(`al-partida-uf-${i}`).onchange = () => { a.partida_uf = document.getElementById(`al-partida-uf-${i}`).value; a.partida_municipio = ''; popularPartidaMun(); };
+      a.partida_uf = a.partida_uf || document.getElementById(`al-partida-uf-${i}`).value;
+      popularPartidaMun();
+      document.getElementById(`al-partida-mun-${i}`).onchange = () => { a.partida_municipio = document.getElementById(`al-partida-mun-${i}`).value; };
+      document.getElementById(`al-parada-uf-${i}`).onchange = popularParadaMun; popularParadaMun();
+      document.getElementById(`al-add-parada-${i}`).onclick = () => {
+        const uf = document.getElementById(`al-parada-uf-${i}`).value, municipio = document.getElementById(`al-parada-mun-${i}`).value;
+        if (!municipio) return toast('Selecione um município.');
+        a.rota_pontos = a.rota_pontos || [];
+        if (a.rota_pontos.some(p => p.uf === uf && p.municipio === municipio)) return toast('Essa cidade já foi adicionada.');
+        a.rota_pontos.push({ uf, municipio }); renderParadas();
+      };
+      renderParadas();
+    }
+
+    const btnUsoLocal = document.getElementById(`al-usolocal-${i}`);
+    if (btnUsoLocal) btnUsoLocal.onchange = e => { a.uso_local = e.target.checked; viaRenderAluguelBlock(); };
+    const btnManual = document.getElementById(`al-manual-${i}`);
+    if (btnManual) btnManual.onchange = e => { a.manual_override = e.target.checked; viaRenderAluguelBlock(); };
+
     const btnCalc = document.getElementById(`al-calc-${i}`);
-    if (btnCalc) btnCalc.onclick = () => viaExecutarCalculoRota(w, w.colab, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos) => {
-      a.distancia_km = km.toFixed(1);
-      a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
-      a.trechos = trechos;
-      document.getElementById(`al-km-${i}`).value = a.distancia_km;
-      document.getElementById(`al-comb-${i}`).value = a.combustivel_valor;
-    }, () => viaRenderAluguelBlock());
+    if (btnCalc) btnCalc.onclick = () => {
+      const pontoFixo = a.uso_local
+        ? { uf: a.partida_uf, municipio: a.partida_municipio }
+        : { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
+      const intermediarios = a.uso_local ? (a.rota_pontos || []) : w.destinos;
+      viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos) => {
+        a.manual_override = false;
+        a.distancia_km = km.toFixed(1);
+        a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+        a.trechos = trechos;
+        const kmEl = document.getElementById(`al-km-${i}`), combEl = document.getElementById(`al-comb-${i}`), manualEl = document.getElementById(`al-manual-${i}`);
+        if (kmEl) { kmEl.value = a.distancia_km; kmEl.disabled = true; }
+        if (combEl) { combEl.value = a.combustivel_valor; combEl.disabled = true; }
+        if (manualEl) manualEl.checked = false;
+      }, () => viaRenderAluguelBlock());
+    };
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
-  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [] }); viaRenderAluguelBlock(); };
+  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false, uso_local: false, partida_uf: '', partida_municipio: '', rota_pontos: [] }); viaRenderAluguelBlock(); };
 }
 
 function viaRenderProprioBlock() {
   const w = VIA_WIZ, box = $('#w3-proprio-block'), colab = w.colab, rota = w.transporte.carro_proprio_rota;
   box.style.display = w.transporte.carro_proprio ? '' : 'none';
   if (!w.transporte.carro_proprio) { box.innerHTML = ''; return; }
+  const kmCombDisabled = rota.manual_override ? '' : 'disabled';
   box.innerHTML = `<div class="via-subcard"><h4>🚙 Carro Próprio</h4>
     <p class="hint">Veículo cadastrado: <strong>${esc(colab.veiculo_modelo || 'não informado')}</strong>${colab.veiculo_placa ? ' — placa ' + esc(colab.veiculo_placa) : ''}${colab.veiculo_consumo_kml ? ` (consumo ${colab.veiculo_consumo_kml} km/L)` : ''}</p>
     <button class="btn primary" id="w3-proprio-calc" type="button">📍 Calcular rota automaticamente</button>
     <div id="w3-proprio-status" style="margin-top:8px"></div>
     <div class="field-row" style="margin-top:10px">
-      ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', rota.distancia_km, 'step="0.1" min="0"')}
-      ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', rota.combustivel_valor, 'step="0.01" min="0"')}
+      ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', rota.distancia_km, `step="0.1" min="0" ${kmCombDisabled}`)}
+      ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', rota.combustivel_valor, `step="0.01" min="0" ${kmCombDisabled}`)}
       ${fld('w3-proprio-pedagio', 'Pedágio (R$)', 'number', rota.pedagio_valor, 'step="0.01" min="0"')}
     </div>
-    <p class="hint">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
+    <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="w3-proprio-manual" ${rota.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
+    <p class="hint" style="margin-top:8px">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
     <div class="field-row">
       ${fld('w3-proprio-estac-qtd', 'Estacionamento — Qtd.', 'number', rota.estacionamento_qtd, 'min="1"')}
       ${fld('w3-proprio-estac-valor', 'Valor unitário (R$)', 'number', rota.estacionamento_valor, 'step="0.01" min="0"')}
@@ -3430,13 +3529,18 @@ function viaRenderProprioBlock() {
   $('#w3-proprio-pedagio').oninput = e => rota.pedagio_valor = e.target.value;
   $('#w3-proprio-estac-qtd').oninput = e => rota.estacionamento_qtd = e.target.value;
   $('#w3-proprio-estac-valor').oninput = e => rota.estacionamento_valor = e.target.value;
-  $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(w, colab, 'w3-proprio-status', 'proprio', rota.trechos || [], (km, trechos) => {
-    rota.distancia_km = km.toFixed(1);
-    rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
-    rota.trechos = trechos;
-    $('#w3-proprio-km').value = rota.distancia_km;
-    $('#w3-proprio-comb').value = rota.combustivel_valor;
-  }, () => viaRenderProprioBlock());
+  $('#w3-proprio-manual').onchange = e => { rota.manual_override = e.target.checked; viaRenderProprioBlock(); };
+  $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(
+    { uf: colab.cidade_base_uf, municipio: colab.cidade_base_municipio }, w.destinos, colab, w.preco_combustivel,
+    'w3-proprio-status', 'proprio', rota.trechos || [], (km, trechos) => {
+      rota.manual_override = false;
+      rota.distancia_km = km.toFixed(1);
+      rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+      rota.trechos = trechos;
+      $('#w3-proprio-km').value = rota.distancia_km; $('#w3-proprio-km').disabled = true;
+      $('#w3-proprio-comb').value = rota.combustivel_valor; $('#w3-proprio-comb').disabled = true;
+      $('#w3-proprio-manual').checked = false;
+    }, () => viaRenderProprioBlock());
 }
 
 function viaWizStep4() {
@@ -3448,7 +3552,7 @@ function viaWizStep4() {
   const valorAlim = tudAlim ? tudAlim.valor_diaria : 0, totalAlim = valorAlim * dias;
   const aviaoTotal = w.transporte.aviao ? w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
   const onibusTotal = w.transporte.onibus ? w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
-  const aluguelTotal = w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0), 0) : 0;
+  const aluguelTotal = w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + viaNum(a.valor_diaria) * (Number(a.dias) || 0), 0) : 0;
   const combustivelTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0 : 0)
     + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.combustivel_valor) || 0), 0) : 0);
   const pedagioTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0 : 0)
@@ -3496,7 +3600,7 @@ function viaComputeResumo(w) {
   if (w.transporte.aviao) add('passagem_aviao', w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   if (w.transporte.onibus) add('passagem_onibus', w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   if (w.transporte.aluguel_carro) w.transporte.alugueis.forEach(a => {
-    add('aluguel_carro', (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0));
+    add('aluguel_carro', viaNum(a.valor_diaria) * (Number(a.dias) || 0));
     add('combustivel', Number(a.combustivel_valor) || 0);
     add('pedagio', Number(a.pedagio_valor) || 0);
     add('estacionamento', (Number(a.estacionamento_qtd) || 0) * (Number(a.estacionamento_valor) || 0));
@@ -3523,7 +3627,7 @@ function viaResumoAlugueisHtml(alugueis) {
   return `<h4 style="margin:18px 0 8px">🚗 Aluguel de Carro</h4>
     <div class="table-wrap"><table><thead><tr><th>Locadora</th><th>Retirada</th><th>Devolução</th><th class="num">Diária</th><th class="num">Dias</th><th class="num">Total</th></tr></thead>
     <tbody>${alugueis.map(a => `<tr><td>${esc(a.locadora || '—')}</td><td>${esc(a.retirada_local || '—')} (${brDate(a.retirada_data)})</td><td>${esc(a.devolucao_local || '—')} (${brDate(a.devolucao_data)})</td>
-    <td class="num">${brl(Number(a.valor_diaria) || 0)}</td><td class="num">${a.dias || 0}</td><td class="num">${brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))}</td></tr>`).join('')}</tbody></table></div>`;
+    <td class="num">${brl(viaNum(a.valor_diaria))}</td><td class="num">${a.dias || 0}</td><td class="num">${brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function viaResumoTaxiHtml(corridas) {
   return `<h4 style="margin:18px 0 8px">🚕 Táxi / Uber</h4>
@@ -3634,7 +3738,7 @@ function viaGerarPDF(w, r) {
     if (w.transporte.onibus && w.transporte.onibus_trechos.length) trechoTabela('🚌 Ônibus', ['Empresa', 'Origem', 'Destino', 'Data', 'Horário', 'Valor'],
       w.transporte.onibus_trechos.map(t => [t.empresa, t.origem, t.destino, brDate(t.data), t.horario, brl(Number(t.valor) || 0)]));
     if (w.transporte.aluguel_carro && w.transporte.alugueis.length) trechoTabela('🚗 Aluguel de Carro', ['Locadora', 'Retirada', 'Devolução', 'Diária', 'Dias', 'Total'],
-      w.transporte.alugueis.map(a => [a.locadora, `${a.retirada_local} (${brDate(a.retirada_data)})`, `${a.devolucao_local} (${brDate(a.devolucao_data)})`, brl(Number(a.valor_diaria) || 0), String(a.dias || 0), brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))]));
+      w.transporte.alugueis.map(a => [a.locadora, `${a.retirada_local} (${brDate(a.retirada_data)})`, `${a.devolucao_local} (${brDate(a.devolucao_data)})`, brl(viaNum(a.valor_diaria)), String(a.dias || 0), brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))]));
 
     if (y > 240) { doc.addPage(); y = 20; }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
