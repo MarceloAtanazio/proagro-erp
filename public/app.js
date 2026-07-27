@@ -2984,7 +2984,7 @@ async function renderSolicitacaoAutosservico() {
     transporte: {
       aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false, taxi_uber: false,
       aviao_trechos: [], onibus_trechos: [], alugueis: [], taxi_uber_corridas: [],
-      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '' }
+      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [] }
     }
   };
   viaWizStep1();
@@ -3029,6 +3029,20 @@ async function viaCalcularRota(w) {
   return { total_km: route.distance / 1000, legs, pontos, geometry };
 }
 
+// Quando o usuário refaz o cálculo (reordenar/remover cidade), os trechos
+// mudam de índice — casamos pelo rótulo "De → Para" pra manter o valor de
+// repetição que ele já tinha ajustado, em vez de resetar tudo pra 1.
+function viaMesclarRepeticoes(novosTrechos, trechosAntigos) {
+  const mapa = {};
+  (trechosAntigos || []).forEach(t => { mapa[`${t.de}→${t.para}`] = t.repeticoes; });
+  return novosTrechos.map(t => ({ ...t, repeticoes: mapa[`${t.de}→${t.para}`] || 1 }));
+}
+// Soma km × repetições — usado quando um trecho do roteiro foi percorrido
+// mais de uma vez (ex.: deslocamento diário entre a cidade do hotel e a do
+// evento), o que o cálculo de rota simples (ida até cada destino e volta à
+// base) não capturaria sozinho.
+function viaKmPonderado(trechos) { return (trechos || []).reduce((s, t) => s + t.km * (t.repeticoes || 1), 0); }
+
 // Monta o HTML do detalhamento perna a perna + os controles pra reordenar
 // os destinos (o roteiro é o mesmo array w.destinos usado na etapa 2).
 let VIA_MAP = null; // instância única do Leaflet, reaproveitada entre cálculos
@@ -3058,11 +3072,18 @@ function viaAtualizarMapa(pontos, geometry) {
   VIA_MAP.fitBounds(line.getBounds(), { padding: [30, 30] });
 }
 
-function viaRenderRotaDetalhe(w, legs, consumo, preco) {
-  const legsHtml = legs.map(l => {
-    const comb = consumo ? (l.km / consumo * preco) : 0;
-    return `<tr><td>${esc(l.de)} → ${esc(l.para)}</td><td class="num">${l.km.toFixed(1)} km</td><td class="num">${brl(comb)}</td></tr>`;
+function viaRenderRotaDetalhe(w, trechos, consumo, preco, idPrefix) {
+  const legsHtml = trechos.map((t, i) => {
+    const comb = consumo ? (t.km * (t.repeticoes || 1) / consumo * preco) : 0;
+    return `<tr>
+      <td>${esc(t.de)} → ${esc(t.para)}</td>
+      <td class="num">${t.km.toFixed(1)} km</td>
+      <td class="num" style="width:90px"><input type="number" min="1" step="1" value="${t.repeticoes || 1}" data-legrep="${i}" style="width:56px; text-align:center" title="Quantas vezes esse trecho foi percorrido no total (cada ida ou volta conta 1)"></td>
+      <td class="num" id="${idPrefix}-legcomb-${i}">${comb > 0 ? brl(comb) : '—'}</td>
+    </tr>`;
   }).join('');
+  const kmPonderado = viaKmPonderado(trechos);
+  const combTotal = consumo ? (kmPonderado / consumo * preco) : 0;
   const reorderHtml = w.destinos.map((d, i) => `
     <span class="chip">${i + 1}º ${esc(d.municipio)}/${esc(d.uf)}
       <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover pra cima">▲</button>
@@ -3070,18 +3091,25 @@ function viaRenderRotaDetalhe(w, legs, consumo, preco) {
       <button type="button" data-mvdel="${i}" title="Remover da rota">×</button>
     </span>`).join(' ');
   return `
-    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Combustível</th></tr></thead>
-    <tbody>${legsHtml}</tbody></table></div>
-    <p style="margin-top:10px; font-size:13px"><strong>Ordem do roteiro</strong> — mude a sequência ou remova uma cidade; o cálculo atualiza sozinho:</p>
+    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Repetições</th><th class="num">Combustível</th></tr></thead>
+    <tbody>${legsHtml}</tbody>
+    <tfoot><tr style="font-weight:700; background:var(--verde-050,#EAF5EC)">
+      <td colspan="2">Total considerando repetições</td>
+      <td class="num" id="${idPrefix}-totalkm">${kmPonderado.toFixed(1)} km</td>
+      <td class="num" id="${idPrefix}-totalcomb">${brl(combTotal)}</td>
+    </tr></tfoot></table></div>
+    <p class="hint" style="margin-top:8px">Se algum trecho foi percorrido mais de uma vez — por exemplo, deslocamentos diários entre a cidade do hotel e a do evento — aumente as "Repetições" dele. Cada unidade conta uma passagem (ida OU volta); um vaivém em 3 dias, por exemplo, são 6 repetições.</p>
+    <p style="margin-top:10px; font-size:13px"><strong>Ordem do roteiro</strong> — mude a sequência ou remova uma cidade; a rota é recalculada e as repetições já ajustadas são mantidas para os trechos que continuarem existindo:</p>
     <div class="chip-row">${reorderHtml}</div>`;
 }
 
 // Executa o cálculo (valida consumo/preço, chama o OSRM, desenha o mapa,
-// renderiza resultado + reordenação) e devolve o total via callback pra quem
-// chamou preencher seus próprios campos (Carro Próprio, ou um aluguel
-// específico). Reordenar/remover uma cidade recalcula sozinho, sem precisar
-// clicar de novo.
-async function viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder) {
+// renderiza resultado + reordenação + repetições) e devolve o km ponderado
+// via callback pra quem chamou preencher seus próprios campos (Carro Próprio,
+// ou um aluguel específico). Ajustar uma repetição só recalcula localmente
+// (sem chamar o OSRM de novo); reordenar/remover uma cidade recalcula a rota
+// inteira, preservando as repetições dos trechos que continuarem existindo.
+async function viaExecutarCalculoRota(w, colab, statusElId, idPrefix, trechosAntigos, onSucesso, onReorder) {
   const statusEl = document.getElementById(statusElId);
   if (!statusEl) return;
   if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
@@ -3089,11 +3117,28 @@ async function viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder
   statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
   try {
     const { total_km, legs, pontos, geometry } = await viaCalcularRota(w);
-    onSucesso(total_km);
+    const trechos = viaMesclarRepeticoes(legs, trechosAntigos);
+    const kmPonderado = viaKmPonderado(trechos);
+    onSucesso(kmPonderado, trechos);
     viaAtualizarMapa(pontos, geometry);
-    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km no total (ida e volta). Pedágio segue manual.</div>`
-      + viaRenderRotaDetalhe(w, legs, colab.veiculo_consumo_kml, w.preco_combustivel);
-    const recalcular = () => { onReorder(); viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder); };
+    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km passando uma vez por trecho (ida até cada destino e volta à base). Ajuste as repetições abaixo se algum trecho foi percorrido mais vezes. Pedágio segue manual.</div>`
+      + viaRenderRotaDetalhe(w, trechos, colab.veiculo_consumo_kml, w.preco_combustivel, idPrefix);
+    const recalcular = () => { onReorder(); viaExecutarCalculoRota(w, colab, statusElId, idPrefix, trechos, onSucesso, onReorder); };
+    statusEl.querySelectorAll('[data-legrep]').forEach(inp => {
+      inp.onchange = () => {
+        const i = Number(inp.dataset.legrep);
+        trechos[i].repeticoes = Math.max(1, Math.round(Number(inp.value)) || 1);
+        inp.value = trechos[i].repeticoes;
+        const consumo = colab.veiculo_consumo_kml, preco = w.preco_combustivel;
+        const comb = consumo ? (trechos[i].km * trechos[i].repeticoes / consumo * preco) : 0;
+        const cellComb = document.getElementById(`${idPrefix}-legcomb-${i}`); if (cellComb) cellComb.textContent = comb > 0 ? brl(comb) : '—';
+        const novoKm = viaKmPonderado(trechos);
+        const combTotal = consumo ? (novoKm / consumo * preco) : 0;
+        const cellTotalKm = document.getElementById(`${idPrefix}-totalkm`); if (cellTotalKm) cellTotalKm.textContent = `${novoKm.toFixed(1)} km`;
+        const cellTotalComb = document.getElementById(`${idPrefix}-totalcomb`); if (cellTotalComb) cellTotalComb.textContent = brl(combTotal);
+        onSucesso(novoKm, trechos);
+      };
+    });
     statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvup); [w.destinos[i - 1], w.destinos[i]] = [w.destinos[i], w.destinos[i - 1]]; recalcular(); });
     statusEl.querySelectorAll('[data-mvdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvdown); [w.destinos[i], w.destinos[i + 1]] = [w.destinos[i + 1], w.destinos[i]]; recalcular(); });
     statusEl.querySelectorAll('[data-mvdel]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.mvdel), 1); recalcular(); });
@@ -3349,15 +3394,16 @@ function viaRenderAluguelBlock() {
       if (input) input.oninput = () => { a[campo] = input.value; if (['valor_diaria', 'dias'].includes(campo)) viaRenderAluguelBlock(); };
     });
     const btnCalc = document.getElementById(`al-calc-${i}`);
-    if (btnCalc) btnCalc.onclick = () => viaExecutarCalculoRota(w, w.colab, `al-status-${i}`, km => {
+    if (btnCalc) btnCalc.onclick = () => viaExecutarCalculoRota(w, w.colab, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos) => {
       a.distancia_km = km.toFixed(1);
       a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+      a.trechos = trechos;
       document.getElementById(`al-km-${i}`).value = a.distancia_km;
       document.getElementById(`al-comb-${i}`).value = a.combustivel_valor;
     }, () => viaRenderAluguelBlock());
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
-  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '' }); viaRenderAluguelBlock(); };
+  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [] }); viaRenderAluguelBlock(); };
 }
 
 function viaRenderProprioBlock() {
@@ -3384,9 +3430,10 @@ function viaRenderProprioBlock() {
   $('#w3-proprio-pedagio').oninput = e => rota.pedagio_valor = e.target.value;
   $('#w3-proprio-estac-qtd').oninput = e => rota.estacionamento_qtd = e.target.value;
   $('#w3-proprio-estac-valor').oninput = e => rota.estacionamento_valor = e.target.value;
-  $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(w, colab, 'w3-proprio-status', km => {
+  $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(w, colab, 'w3-proprio-status', 'proprio', rota.trechos || [], (km, trechos) => {
     rota.distancia_km = km.toFixed(1);
     rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+    rota.trechos = trechos;
     $('#w3-proprio-km').value = rota.distancia_km;
     $('#w3-proprio-comb').value = rota.combustivel_valor;
   }, () => viaRenderProprioBlock());
