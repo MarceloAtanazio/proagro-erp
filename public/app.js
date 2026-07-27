@@ -3019,15 +3019,64 @@ async function viaGeocodificarEndereco(endereco) {
 
 // Resolve um ponto do roteiro pra { label, coord }, aceitando três formatos:
 // { uf, municipio } (cidade do IBGE, já com coordenada conhecida), ou
-// { endereco } (texto livre — geocodificado na hora via Nominatim).
+// { endereco, lat?, lng? } (texto livre — se lat/lng já vieram de uma
+// sugestão clicada no autocomplete, reaproveita; senão geocodifica na hora).
 async function viaResolverPonto(p) {
   if (p.endereco) {
+    if (p.lat != null && p.lng != null) return { label: p.endereco, coord: [p.lat, p.lng] };
     const g = await viaGeocodificarEndereco(p.endereco);
     return { label: p.endereco, coord: [g.lat, g.lng] };
   }
   const c = BR_LOCALIDADES.coords[p.uf] && BR_LOCALIDADES.coords[p.uf][p.municipio];
   if (!c) throw new Error(`Não encontrei coordenadas para ${p.municipio}/${p.uf}.`);
   return { label: `${p.municipio}/${p.uf}`, coord: c };
+}
+
+// Anexa um autocomplete de endereços/lugares (via Nominatim) a um <input>:
+// digitar (com uma pequena pausa) busca sugestões; clicar numa sugestão
+// preenche o campo com o endereço completo e já entrega lat/lng prontos
+// (evita ter que geocodificar de novo na hora de calcular a rota).
+// onDigitar(valorDigitado) roda a cada tecla; onSelecionar({endereco,lat,lng})
+// roda só quando uma sugestão é clicada.
+function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
+  if (!inputEl) return;
+  let timer = null, vivo = true;
+  const dropdown = document.createElement('div');
+  dropdown.className = 'via-addr-suggest';
+  inputEl.insertAdjacentElement('afterend', dropdown);
+  const esconder = () => { dropdown.style.display = 'none'; dropdown.innerHTML = ''; };
+  const buscar = async (q) => {
+    if (!vivo) return;
+    if (q.trim().length < 4) { esconder(); return; }
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=6&q=${encodeURIComponent(q)}`;
+      const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+      if (!resp.ok || !vivo || inputEl.value.trim() !== q.trim()) return;
+      const data = await resp.json();
+      if (!vivo || inputEl.value.trim() !== q.trim()) return;
+      if (!data.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
+      dropdown.innerHTML = data.map((r, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(r.display_name)}</div>`).join('');
+      dropdown.style.display = 'block';
+      dropdown.querySelectorAll('.via-addr-suggest-item').forEach(el => {
+        el.onmousedown = ev => ev.preventDefault(); // evita perder o clique pro blur do input
+        el.onclick = () => {
+          const r = data[Number(el.dataset.idx)];
+          inputEl.value = r.display_name;
+          onSelecionar({ endereco: r.display_name, lat: Number(r.lat), lng: Number(r.lon) });
+          esconder();
+        };
+      });
+    } catch (e) { /* falha de rede na sugestão não bloqueia a digitação livre */ }
+  };
+  inputEl.oninput = () => {
+    onDigitar(inputEl.value);
+    clearTimeout(timer);
+    const q = inputEl.value;
+    timer = setTimeout(() => buscar(q), 450);
+  };
+  inputEl.addEventListener('blur', () => setTimeout(esconder, 150));
+  inputEl.addEventListener('focus', () => { if (inputEl.value.trim().length >= 4) buscar(inputEl.value); });
+  return { destruir: () => { vivo = false; clearTimeout(timer); dropdown.remove(); } };
 }
 
 // pontoFixo = { uf, municipio } ou { endereco } — ponto de partida E chegada
@@ -3424,18 +3473,19 @@ function viaRenderAluguelBlock() {
           <div class="field"><label for="al-diaria-${i}">Valor da diária (R$)</label><input id="al-diaria-${i}" type="text" inputmode="decimal" placeholder="0,00" value="${esc(a.valor_diaria || '')}"></div>
           ${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}
         </div>
-        <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
-        <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
+        <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '', 'placeholder="Digite o nome do lugar ou o endereço…" autocomplete="off"')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
+        <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '', 'placeholder="Digite o nome do lugar ou o endereço…" autocomplete="off"')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
 
         <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Carro usado localmente no destino (não parte da cidade-base — ex.: desembarquei de avião e aluguei um carro só pra rodar por lá)</label>
 
         ${a.uso_local ? `
-        <p class="hint" style="margin:-4px 0 10px">A rota parte e retorna ao endereço preenchido acima em <strong>"Local de retirada"</strong> — capriche nele (rua, número, bairro, cidade) pra a distância sair certa.</p>
-        <div class="field"><label>Paradas visitadas (endereços completos, na ordem em que foram visitadas)</label>
+        <p class="hint" style="margin:-4px 0 10px">A rota parte e retorna ao endereço preenchido acima em <strong>"Local de retirada"</strong> — digite o nome do lugar (ex.: um hotel) e escolha da lista que aparece, ou digite o endereço completo.</p>
+        <div class="field"><label>Paradas visitadas (na ordem em que foram visitadas)</label>
           <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
-            <div class="field" style="flex:1; margin-bottom:0"><label for="al-parada-end-${i}">Endereço</label><input id="al-parada-end-${i}" type="text" placeholder="Ex.: SHS Quadra 6, Bloco A, Brasília/DF"></div>
+            <div class="field" style="flex:1; margin-bottom:0"><label for="al-parada-end-${i}">Nome do lugar ou endereço</label><input id="al-parada-end-${i}" type="text" placeholder="Ex.: Hotel Slaviero, ou SHS Quadra 6, Bloco A" autocomplete="off"></div>
             <button class="btn primary" id="al-add-parada-${i}" type="button">+ Adicionar</button>
           </div>
+          <p class="hint" style="margin:-2px 0 8px">Digite e escolha um resultado da lista pra maior precisão — ou clique em "+ Adicionar" pra usar o texto digitado do jeito que está.</p>
           <div id="al-paradas-list-${i}"></div>
         </div>` : ''}
 
@@ -3451,7 +3501,7 @@ function viaRenderAluguelBlock() {
     }).join('') || '<p class="hint">Nenhum aluguel adicionado ainda.</p>'}
     <button class="btn" id="w3-add-aluguel" type="button">+ Adicionar aluguel</button>
   </div>`;
-  const campos = { locadora: 'locadora', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', pedagio_valor: 'pedagio', estacionamento_qtd: 'estacqtd', estacionamento_valor: 'estacvalor' };
+  const campos = { locadora: 'locadora', dias: 'dias', retirada_data: 'retdata', devolucao_data: 'devdata', pedagio_valor: 'pedagio', estacionamento_qtd: 'estacqtd', estacionamento_valor: 'estacvalor' };
   w.transporte.alugueis.forEach((a, i) => {
     Object.entries(campos).forEach(([campo, elKey]) => {
       const input = document.getElementById(`al-${elKey}-${i}`);
@@ -3461,6 +3511,17 @@ function viaRenderAluguelBlock() {
     if (diariaInput) diariaInput.oninput = () => { a.valor_diaria = diariaInput.value; };
     diariaInput.onblur = () => viaRenderAluguelBlock(); // atualiza o "Total da diária" ao sair do campo
 
+    // Local de retirada/devolução: autocomplete de lugares/endereços. Se o
+    // texto for editado depois de escolher uma sugestão, o lat/lng cacheado
+    // é descartado (senão o cálculo usaria uma coordenada que não bate mais
+    // com o texto exibido).
+    viaAnexarAutocompleteEndereco(document.getElementById(`al-retlocal-${i}`),
+      v => { a.retirada_local = v; a.retirada_coord = null; },
+      s => { a.retirada_local = s.endereco; a.retirada_coord = { lat: s.lat, lng: s.lng }; });
+    viaAnexarAutocompleteEndereco(document.getElementById(`al-devlocal-${i}`),
+      v => { a.devolucao_local = v; },
+      s => { a.devolucao_local = s.endereco; });
+
     if (a.uso_local) {
       const renderParadas = () => {
         const listEl = document.getElementById(`al-paradas-list-${i}`);
@@ -3469,13 +3530,21 @@ function viaRenderAluguelBlock() {
           : '<span style="color:var(--muted); font-size:13px">Nenhuma parada adicionada ainda.</span>';
         listEl.querySelectorAll('[data-rmparada]').forEach(b => b.onclick = () => { a.paradas.splice(Number(b.dataset.rmparada), 1); renderParadas(); });
       };
+      const paradaInput = document.getElementById(`al-parada-end-${i}`);
+      viaAnexarAutocompleteEndereco(paradaInput,
+        () => {},
+        s => {
+          a.paradas = a.paradas || [];
+          a.paradas.push({ endereco: s.endereco, lat: s.lat, lng: s.lng });
+          paradaInput.value = '';
+          renderParadas();
+        });
       document.getElementById(`al-add-parada-${i}`).onclick = () => {
-        const endInput = document.getElementById(`al-parada-end-${i}`);
-        const endereco = endInput.value.trim();
-        if (!endereco) return toast('Digite um endereço.');
+        const endereco = paradaInput.value.trim();
+        if (!endereco) return toast('Digite o nome de um lugar ou um endereço.');
         a.paradas = a.paradas || [];
         a.paradas.push({ endereco });
-        endInput.value = '';
+        paradaInput.value = '';
         renderParadas();
       };
       renderParadas();
@@ -3490,7 +3559,7 @@ function viaRenderAluguelBlock() {
     if (btnCalc) btnCalc.onclick = () => {
       if (a.uso_local && !a.retirada_local) return toast('Preencha o "Local de retirada" com o endereço completo antes de calcular.');
       const pontoFixo = a.uso_local
-        ? { endereco: a.retirada_local }
+        ? { endereco: a.retirada_local, lat: a.retirada_coord && a.retirada_coord.lat, lng: a.retirada_coord && a.retirada_coord.lng }
         : { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
       const intermediarios = a.uso_local ? (a.paradas || []) : w.destinos;
       viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos) => {
@@ -3506,7 +3575,7 @@ function viaRenderAluguelBlock() {
     };
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
-  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false, uso_local: false, paradas: [] }); viaRenderAluguelBlock(); };
+  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, retirada_coord: null, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false, uso_local: false, paradas: [] }); viaRenderAluguelBlock(); };
 }
 
 function viaRenderProprioBlock() {
