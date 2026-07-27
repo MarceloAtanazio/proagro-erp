@@ -3073,47 +3073,51 @@ async function viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder
 function viaWizStep1() {
   const w = VIA_WIZ, c = $('#content');
   c.innerHTML = `
-    ${viaWizProgress(1)}
-    <div class="card" style="max-width:640px">
-      <h3 style="margin-bottom:14px">Seus dados</h3>
-      <div class="field-row">
-        <div class="field"><label>Nome</label><input value="${esc(w.colab.name)}" disabled></div>
-        <div class="field"><label>Cargo</label><input value="${esc(w.colab.cargo || '—')}" disabled></div>
+    <div class="via-wiz-container">
+      ${viaWizProgress(1)}
+      <div class="card">
+        <h3 style="margin-bottom:14px">Seus dados</h3>
+        <div class="field-row">
+          <div class="field"><label>Nome</label><input value="${esc(w.colab.name)}" disabled></div>
+          <div class="field"><label>Cargo</label><input value="${esc(w.colab.cargo || '—')}" disabled></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Tier (TUD)</label><input value="${TIER_LABEL[w.colab.tier]}" disabled></div>
+          <div class="field"><label>Cidade-base</label><input value="${w.colab.cidade_base_municipio ? esc(w.colab.cidade_base_municipio) + '/' + esc(w.colab.cidade_base_uf) : 'Não cadastrada'}" disabled></div>
+        </div>
+        <p class="hint" style="margin-top:8px">Esses dados vêm do seu cadastro. Para corrigir algo, fale com o administrador.</p>
       </div>
-      <div class="field-row">
-        <div class="field"><label>Tier (TUD)</label><input value="${TIER_LABEL[w.colab.tier]}" disabled></div>
-        <div class="field"><label>Cidade-base</label><input value="${w.colab.cidade_base_municipio ? esc(w.colab.cidade_base_municipio) + '/' + esc(w.colab.cidade_base_uf) : 'Não cadastrada'}" disabled></div>
-      </div>
-      <p class="hint" style="margin-top:8px">Esses dados vêm do seu cadastro. Para corrigir algo, fale com o administrador.</p>
-    </div>
-    <div class="wiz-actions"><span></span><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+      <div class="wiz-actions"><span></span><button class="btn primary" id="wiz-next">Avançar</button></div>
+    </div>`;
   $('#wiz-next').onclick = () => viaWizStep2();
 }
 
 function viaWizStep2() {
   const w = VIA_WIZ, c = $('#content');
   c.innerHTML = `
-    ${viaWizProgress(2)}
-    <div class="card" style="max-width:640px">
-      <h3 style="margin-bottom:14px">Dados da viagem</h3>
-      ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho)}
-      ${fldSel('w2-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), w.categoria_local)}
-      <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
-        <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
-          ${fldSel('w2-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
-          ${fldSel('w2-mun', 'Município', [], null)}
-          <button class="btn primary" id="w2-add-dest" type="button">+ Adicionar</button>
+    <div class="via-wiz-container">
+      ${viaWizProgress(2)}
+      <div class="card">
+        <h3 style="margin-bottom:14px">Dados da viagem</h3>
+        ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho)}
+        ${fldSel('w2-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), w.categoria_local)}
+        <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
+          <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
+            ${fldSel('w2-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
+            ${fldSel('w2-mun', 'Município', [], null)}
+            <button class="btn primary" id="w2-add-dest" type="button">+ Adicionar</button>
+          </div>
+          <div id="w2-destinos-list"></div>
         </div>
-        <div id="w2-destinos-list"></div>
+        <div class="field-row">
+          ${fld('w2-inicio', 'Data de saída', 'date', w.data_inicio)}
+          ${fld('w2-fim', 'Data de retorno', 'date', w.data_fim)}
+        </div>
+        ${fldSel('w2-motivo', 'Motivo', MOTIVO_OPTIONS.map(m => ({ v: m, t: m })), w.motivo)}
+        <div class="field"><label>Objetivo da viagem</label><textarea id="w2-objetivo" rows="3">${esc(w.objetivo)}</textarea></div>
       </div>
-      <div class="field-row">
-        ${fld('w2-inicio', 'Data de saída', 'date', w.data_inicio)}
-        ${fld('w2-fim', 'Data de retorno', 'date', w.data_fim)}
-      </div>
-      ${fldSel('w2-motivo', 'Motivo', MOTIVO_OPTIONS.map(m => ({ v: m, t: m })), w.motivo)}
-      <div class="field"><label>Objetivo da viagem</label><textarea id="w2-objetivo" rows="3">${esc(w.objetivo)}</textarea></div>
-    </div>
-    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+      <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>
+    </div>`;
 
   const popularMunicipios = () => {
     const uf = $('#w2-uf').value;
@@ -3148,31 +3152,33 @@ function viaWizStep3() {
   const w = VIA_WIZ, c = $('#content');
   VIA_MAP = null; // a div #via-map é recriada do zero a cada entrada nesta etapa
   c.innerHTML = `
-    ${viaWizProgress(3)}
-    <div style="display:flex; gap:20px; align-items:flex-start; max-width:1180px">
-      <div class="card" style="flex:1; min-width:0; max-width:760px">
-        <h3 style="margin-bottom:6px">Transporte</h3>
-        <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
-        <div class="chip-row" style="margin-bottom:16px">
-          <label class="check-chip"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}> ✈️ Avião</label>
-          <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
-          <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
-          <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
-          <label class="check-chip"><input type="checkbox" id="w3-taxiuber" ${w.transporte.taxi_uber ? 'checked' : ''}> 🚕 Táxi / Uber</label>
+    <div class="via-wiz-container-wide">
+      ${viaWizProgress(3)}
+      <div style="display:flex; gap:20px; align-items:flex-start">
+        <div class="card" style="flex:1.1; min-width:0">
+          <h3 style="margin-bottom:6px">Transporte</h3>
+          <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
+          <div class="chip-row" style="margin-bottom:16px">
+            <label class="check-chip"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}> ✈️ Avião</label>
+            <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
+            <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
+            <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
+            <label class="check-chip"><input type="checkbox" id="w3-taxiuber" ${w.transporte.taxi_uber ? 'checked' : ''}> 🚕 Táxi / Uber</label>
+          </div>
+          <div id="w3-aviao-block"></div>
+          <div id="w3-onibus-block"></div>
+          <div id="w3-aluguel-block"></div>
+          <div id="w3-proprio-block"></div>
+          <div id="w3-taxiuber-block"></div>
         </div>
-        <div id="w3-aviao-block"></div>
-        <div id="w3-onibus-block"></div>
-        <div id="w3-aluguel-block"></div>
-        <div id="w3-proprio-block"></div>
-        <div id="w3-taxiuber-block"></div>
+        <div class="card" style="flex:0.9; min-width:0; position:sticky; top:16px">
+          <h3 style="margin-bottom:10px">Mapa da rota</h3>
+          <div id="via-map" style="display:none; height:500px; border-radius:8px; overflow:hidden"></div>
+          <p class="hint" id="via-map-placeholder">O mapa aparece aqui depois de calcular uma rota (Carro Próprio ou Aluguel de Carro).</p>
+        </div>
       </div>
-      <div class="card" style="flex:1; min-width:0; position:sticky; top:16px">
-        <h3 style="margin-bottom:10px">Mapa da rota</h3>
-        <div id="via-map" style="display:none; height:500px; border-radius:8px; overflow:hidden"></div>
-        <p class="hint" id="via-map-placeholder">O mapa aparece aqui depois de calcular uma rota (Carro Próprio ou Aluguel de Carro).</p>
-      </div>
-    </div>
-    <div class="wiz-actions" style="max-width:1180px"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+      <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>
+    </div>`;
 
   viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock(); viaRenderTaxiUberBlock();
 
@@ -3359,24 +3365,26 @@ function viaWizStep4() {
   const total = totalHosp + totalAlim + aviaoTotal + onibusTotal + aluguelTotal + combustivelTotal + pedagioTotal + estacionamentoTotal + taxiTotal;
 
   c.innerHTML = `
-    ${viaWizProgress(4)}
-    <div class="card" style="max-width:640px">
-      <h3 style="margin-bottom:6px">Despesas previstas</h3>
-      <p class="hint" style="margin-bottom:16px">Visão somente leitura de tudo que foi definido nas etapas anteriores. Pra corrigir algum valor, use "Voltar".</p>
-      ${linha('🏨', `Hospedagem — ${noites} diária(s) × ${brl(valorHosp)} (teto da TUD)`, totalHosp)}
-      ${linha('🍽️', `Alimentação — ${dias} dia(s) × ${brl(valorAlim)} (teto da TUD)`, totalAlim)}
-      ${w.transporte.aviao ? linha('✈️', 'Passagem de Avião (soma dos trechos)', aviaoTotal) : ''}
-      ${w.transporte.onibus ? linha('🚌', 'Passagem de Ônibus (soma dos trechos)', onibusTotal) : ''}
-      ${w.transporte.aluguel_carro ? linha('🚗', 'Aluguel de Carro (soma das diárias)', aluguelTotal) : ''}
-      ${combustivelTotal > 0 ? linha('⛽', 'Combustível (calculado na rota)', combustivelTotal) : ''}
-      ${pedagioTotal > 0 ? linha('🛣️', 'Pedágio (informado na rota)', pedagioTotal) : ''}
-      ${estacionamentoTotal > 0 ? linha('🅿️', 'Estacionamento', estacionamentoTotal) : ''}
-      ${w.transporte.taxi_uber ? linha('🚕', 'Táxi/Uber (soma das corridas)', taxiTotal) : ''}
-      <div class="via-resumo-linha" style="border-top:2px solid var(--verde-700,#00783F); margin-top:10px; padding-top:12px; font-weight:700; font-size:15px">
-        <span>Total previsto</span><span>${brl(total)}</span>
+    <div class="via-wiz-container">
+      ${viaWizProgress(4)}
+      <div class="card">
+        <h3 style="margin-bottom:6px">Despesas previstas</h3>
+        <p class="hint" style="margin-bottom:16px">Visão somente leitura de tudo que foi definido nas etapas anteriores. Pra corrigir algum valor, use "Voltar".</p>
+        ${linha('🏨', `Hospedagem — ${noites} diária(s) × ${brl(valorHosp)} (teto da TUD)`, totalHosp)}
+        ${linha('🍽️', `Alimentação — ${dias} dia(s) × ${brl(valorAlim)} (teto da TUD)`, totalAlim)}
+        ${w.transporte.aviao ? linha('✈️', 'Passagem de Avião (soma dos trechos)', aviaoTotal) : ''}
+        ${w.transporte.onibus ? linha('🚌', 'Passagem de Ônibus (soma dos trechos)', onibusTotal) : ''}
+        ${w.transporte.aluguel_carro ? linha('🚗', 'Aluguel de Carro (soma das diárias)', aluguelTotal) : ''}
+        ${combustivelTotal > 0 ? linha('⛽', 'Combustível (calculado na rota)', combustivelTotal) : ''}
+        ${pedagioTotal > 0 ? linha('🛣️', 'Pedágio (informado na rota)', pedagioTotal) : ''}
+        ${estacionamentoTotal > 0 ? linha('🅿️', 'Estacionamento', estacionamentoTotal) : ''}
+        ${w.transporte.taxi_uber ? linha('🚕', 'Táxi/Uber (soma das corridas)', taxiTotal) : ''}
+        <div class="via-resumo-linha" style="border-top:2px solid var(--verde-700,#00783F); margin-top:10px; padding-top:12px; font-weight:700; font-size:15px">
+          <span>Total previsto</span><span>${brl(total)}</span>
+        </div>
       </div>
-    </div>
-    <div class="wiz-actions" style="max-width:640px"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+      <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>
+    </div>`;
 
   $('#wiz-back').onclick = () => viaWizStep3();
   $('#wiz-next').onclick = () => viaWizStep5();
@@ -3430,35 +3438,37 @@ function viaResumoTaxiHtml(corridas) {
 function viaWizStep5() {
   const w = VIA_WIZ, c = $('#content'), r = viaComputeResumo(w);
   c.innerHTML = `
-    ${viaWizProgress(5)}
-    <div class="card" style="max-width:760px">
-      <h3 style="margin-bottom:6px">Resumo — confira antes de enviar</h3>
-      <p class="hint" style="margin-bottom:14px">Esta etapa é só leitura. Se precisar corrigir algo, use "Voltar".</p>
-      <table class="via-resumo-tbl">
-        <tr><td>Solicitante</td><td>${esc(w.colab.name)} — ${esc(w.colab.cargo || '')}</td></tr>
-        <tr><td>Tier</td><td>${TIER_LABEL[w.colab.tier]}</td></tr>
-        <tr><td>Ordem de Trabalho</td><td>${esc(w.ordem_trabalho) || '—'}</td></tr>
-        <tr><td>Categoria de local</td><td>${LOCAL_LABEL[w.categoria_local]}</td></tr>
-        <tr><td>Destinos</td><td>${w.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ') || '—'}</td></tr>
-        <tr><td>Período</td><td>${brDate(w.data_inicio)} a ${brDate(w.data_fim)} (${r.dias} dia(s))</td></tr>
-        <tr><td>Motivo</td><td>${esc(w.motivo)}</td></tr>
-        <tr><td>Objetivo</td><td>${esc(w.objetivo) || '—'}</td></tr>
-      </table>
-      <h4 style="margin:18px 0 8px">Detalhamento de Viáticos</h4>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Descrição</th><th class="num">Total (R$)</th></tr></thead>
-        <tbody>${Object.entries(r.cat).map(([k, v]) => `<tr><td>${DESP_CAT_LABEL[k] || k}</td><td class="num">${brl(v)}</td></tr>`).join('') || '<tr><td colspan="2"><div class="empty">Nenhuma despesa prevista.</div></td></tr>'}
-        <tr style="font-weight:700; background:var(--verde-050)"><td>Total Geral</td><td class="num">${brl(r.total)}</td></tr></tbody>
-      </table></div>
-      ${w.transporte.aviao ? viaResumoTrechosHtml('✈️ Voos', w.transporte.aviao_trechos, ['cia', 'numero_voo', 'origem', 'destino', 'data', 'saida', 'chegada', 'classe', 'valor']) : ''}
-      ${w.transporte.onibus ? viaResumoTrechosHtml('🚌 Ônibus', w.transporte.onibus_trechos, ['empresa', 'origem', 'destino', 'data', 'horario', 'valor']) : ''}
-      ${w.transporte.aluguel_carro ? viaResumoAlugueisHtml(w.transporte.alugueis) : ''}
-      ${w.transporte.taxi_uber && w.transporte.taxi_uber_corridas.length ? viaResumoTaxiHtml(w.transporte.taxi_uber_corridas) : ''}
-    </div>
-    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button>
-      <div style="display:flex; gap:10px">
-        <button class="btn" id="wiz-pdf">Gerar PDF</button>
-        <button class="btn primary" id="wiz-enviar">Enviar solicitação</button>
+    <div class="via-wiz-container-lg">
+      ${viaWizProgress(5)}
+      <div class="card">
+        <h3 style="margin-bottom:6px">Resumo — confira antes de enviar</h3>
+        <p class="hint" style="margin-bottom:14px">Esta etapa é só leitura. Se precisar corrigir algo, use "Voltar".</p>
+        <table class="via-resumo-tbl">
+          <tr><td>Solicitante</td><td>${esc(w.colab.name)} — ${esc(w.colab.cargo || '')}</td></tr>
+          <tr><td>Tier</td><td>${TIER_LABEL[w.colab.tier]}</td></tr>
+          <tr><td>Ordem de Trabalho</td><td>${esc(w.ordem_trabalho) || '—'}</td></tr>
+          <tr><td>Categoria de local</td><td>${LOCAL_LABEL[w.categoria_local]}</td></tr>
+          <tr><td>Destinos</td><td>${w.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ') || '—'}</td></tr>
+          <tr><td>Período</td><td>${brDate(w.data_inicio)} a ${brDate(w.data_fim)} (${r.dias} dia(s))</td></tr>
+          <tr><td>Motivo</td><td>${esc(w.motivo)}</td></tr>
+          <tr><td>Objetivo</td><td>${esc(w.objetivo) || '—'}</td></tr>
+        </table>
+        <h4 style="margin:18px 0 8px">Detalhamento de Viáticos</h4>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Descrição</th><th class="num">Total (R$)</th></tr></thead>
+          <tbody>${Object.entries(r.cat).map(([k, v]) => `<tr><td>${DESP_CAT_LABEL[k] || k}</td><td class="num">${brl(v)}</td></tr>`).join('') || '<tr><td colspan="2"><div class="empty">Nenhuma despesa prevista.</div></td></tr>'}
+          <tr style="font-weight:700; background:var(--verde-050)"><td>Total Geral</td><td class="num">${brl(r.total)}</td></tr></tbody>
+        </table></div>
+        ${w.transporte.aviao ? viaResumoTrechosHtml('✈️ Voos', w.transporte.aviao_trechos, ['cia', 'numero_voo', 'origem', 'destino', 'data', 'saida', 'chegada', 'classe', 'valor']) : ''}
+        ${w.transporte.onibus ? viaResumoTrechosHtml('🚌 Ônibus', w.transporte.onibus_trechos, ['empresa', 'origem', 'destino', 'data', 'horario', 'valor']) : ''}
+        ${w.transporte.aluguel_carro ? viaResumoAlugueisHtml(w.transporte.alugueis) : ''}
+        ${w.transporte.taxi_uber && w.transporte.taxi_uber_corridas.length ? viaResumoTaxiHtml(w.transporte.taxi_uber_corridas) : ''}
+      </div>
+      <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button>
+        <div style="display:flex; gap:10px">
+          <button class="btn" id="wiz-pdf">Gerar PDF</button>
+          <button class="btn primary" id="wiz-enviar">Enviar solicitação</button>
+        </div>
       </div>
     </div>`;
 
