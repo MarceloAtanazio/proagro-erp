@@ -3017,24 +3017,49 @@ function viaFormatarEnderecoPhoton(props) {
   return partes.filter(Boolean).join(' - ') || 'Local sem nome';
 }
 
-// Geocodifica um endereço/nome de lugar em texto livre pra lat/lng usando o
-// Photon (komoot.io) — um serviço de busca sobre dados do OpenStreetMap,
-// gratuito e sem chave de API, com busca por nome de lugar (fuzzy/POI) mais
-// forte que o Nominatim puro. Em uso de alto volume, o ideal seria um
-// provedor pago (Google Places, Mapbox, HERE) ou uma instância própria.
-async function viaGeocodificarEndereco(endereco) {
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(endereco)}&limit=1&lang=pt`;
-  let resp;
-  try {
-    resp = await fetch(url);
-  } catch (e) {
-    throw new Error('Não consegui acessar o serviço de geocodificação (photon.komoot.io) — verifique a conexão ou se a rede/firewall bloqueia esse domínio.');
-  }
-  if (!resp.ok) throw new Error(`Serviço de geocodificação respondeu com erro (HTTP ${resp.status}).`);
+// Busca lugares/endereços no Photon (komoot.io), normalizado pro formato
+// { endereco, lat, lng }[]. O mantenedor do Photon relatou publicamente
+// (abr/2026) estar bloqueando parte do tráfego de navegador comum como
+// medida contra scraping — o que pode fazer o serviço público responder
+// 400/404 mesmo com consultas válidas. Isso está fora do nosso controle.
+async function viaBuscarPhoton(q, limit) {
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=${limit}&lang=pt`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`photon-http-${resp.status}`);
   const data = await resp.json();
-  if (!data.features || !data.features.length) throw new Error(`Não encontrei "${endereco}" — tente incluir rua, número, bairro e cidade, ou o nome completo do lugar.`);
-  const [lng, lat] = data.features[0].geometry.coordinates;
-  return { lat, lng };
+  return (data.features || []).map(f => ({ endereco: viaFormatarEnderecoPhoton(f.properties), lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] }));
+}
+// Busca no Nominatim, normalizado pro mesmo formato — usado como reserva
+// automática quando o Photon falha (rede bloqueada, HTTP de erro, etc.).
+async function viaBuscarNominatim(q, limit) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=${limit}&q=${encodeURIComponent(q)}`;
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+  if (!resp.ok) throw new Error(`nominatim-http-${resp.status}`);
+  const data = await resp.json();
+  return (data || []).map(r => ({ endereco: r.display_name, lat: Number(r.lat), lng: Number(r.lon) }));
+}
+// Tenta o Photon primeiro (melhor busca por nome de lugar); se falhar por
+// qualquer motivo (ou não achar nada), cai pro Nominatim automaticamente,
+// sem o usuário precisar fazer nada. Só propaga erro se os dois falharem.
+async function viaBuscarLugares(q, limit) {
+  try {
+    const r = await viaBuscarPhoton(q, limit);
+    if (r.length) return r;
+  } catch (e) { console.warn('Photon indisponível, tentando Nominatim como alternativa:', e.message); }
+  return viaBuscarNominatim(q, limit);
+}
+
+// Geocodifica um endereço/nome de lugar em texto livre pra lat/lng,
+// tentando Photon e depois Nominatim (ver viaBuscarLugares).
+async function viaGeocodificarEndereco(endereco) {
+  let resultados;
+  try {
+    resultados = await viaBuscarLugares(endereco, 1);
+  } catch (e) {
+    throw new Error('Não consegui acessar nenhum serviço de geocodificação (Photon ou Nominatim) — verifique a conexão ou se a rede/firewall bloqueia esses domínios.');
+  }
+  if (!resultados.length) throw new Error(`Não encontrei "${endereco}" — tente incluir rua, número, bairro e cidade, ou o nome completo do lugar.`);
+  return { lat: resultados[0].lat, lng: resultados[0].lng };
 }
 
 // Resolve um ponto do roteiro pra { label, coord }, aceitando três formatos:
@@ -3052,12 +3077,12 @@ async function viaResolverPonto(p) {
   return { label: `${p.municipio}/${p.uf}`, coord: c };
 }
 
-// Anexa um autocomplete de endereços/lugares (via Photon/komoot) a um
-// <input>: digitar (com uma pequena pausa) busca sugestões; clicar numa
-// sugestão preenche o campo com o endereço formatado e já entrega lat/lng
-// prontos (evita ter que geocodificar de novo na hora de calcular a rota).
-// onDigitar(valorDigitado) roda a cada tecla; onSelecionar({endereco,lat,lng})
-// roda só quando uma sugestão é clicada.
+// Anexa um autocomplete de endereços/lugares a um <input>: digitar (com uma
+// pequena pausa) busca sugestões (Photon, com reserva automática no
+// Nominatim — ver viaBuscarLugares); clicar numa sugestão preenche o campo
+// com o endereço formatado e já entrega lat/lng prontos (evita ter que
+// geocodificar de novo na hora de calcular a rota). onDigitar(valorDigitado)
+// roda a cada tecla; onSelecionar({endereco,lat,lng}) só quando clicada.
 function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
   if (!inputEl) return;
   let timer = null, vivo = true;
@@ -3069,36 +3094,24 @@ function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
   const buscar = async (q) => {
     if (!vivo) return;
     if (q.trim().length < 3) { esconder(); return; }
-    let resp;
+    let resultados;
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=pt`;
-      resp = await fetch(url);
+      resultados = await viaBuscarLugares(q, 7);
     } catch (e) {
-      console.error('Falha ao buscar sugestões de endereço (photon.komoot.io):', e);
-      mostrarErro('Não consegui acessar o serviço de busca de endereços (rede/firewall pode estar bloqueando photon.komoot.io). Você ainda pode digitar o endereço livremente.');
+      console.error('Falha ao buscar sugestões de endereço (Photon e Nominatim):', e);
+      if (vivo && inputEl.value.trim() === q.trim()) mostrarErro('Não consegui acessar nenhum serviço de busca de endereços agora. Você ainda pode digitar o endereço livremente.');
       return;
     }
     if (!vivo || inputEl.value.trim() !== q.trim()) return;
-    if (!resp.ok) {
-      console.error('Photon respondeu com erro HTTP', resp.status);
-      mostrarErro(`Serviço de busca respondeu com erro (HTTP ${resp.status}). Você ainda pode digitar o endereço livremente.`);
-      return;
-    }
-    let data;
-    try { data = await resp.json(); } catch (e) { mostrarErro('Resposta inesperada do serviço de busca.'); return; }
-    if (!vivo || inputEl.value.trim() !== q.trim()) return;
-    const features = data.features || [];
-    if (!features.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
-    dropdown.innerHTML = features.map((f, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(viaFormatarEnderecoPhoton(f.properties))}</div>`).join('');
+    if (!resultados.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
+    dropdown.innerHTML = resultados.map((r, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(r.endereco)}</div>`).join('');
     dropdown.style.display = 'block';
     dropdown.querySelectorAll('.via-addr-suggest-item').forEach(el => {
       el.onmousedown = ev => ev.preventDefault(); // evita perder o clique pro blur do input
       el.onclick = () => {
-        const f = features[Number(el.dataset.idx)];
-        const endereco = viaFormatarEnderecoPhoton(f.properties);
-        const [lng, lat] = f.geometry.coordinates;
-        inputEl.value = endereco;
-        onSelecionar({ endereco, lat, lng });
+        const r = resultados[Number(el.dataset.idx)];
+        inputEl.value = r.endereco;
+        onSelecionar(r);
         esconder();
       };
     });
