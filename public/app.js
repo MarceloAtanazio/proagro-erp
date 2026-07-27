@@ -2989,17 +2989,45 @@ async function viaCalcularRota(w) {
     { label: baseLabel, coord: baseCoord }
   ];
   const coordStr = pontos.map(p => `${p.coord[1]},${p.coord[0]}`).join(';');
-  const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=false`);
+  const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
   if (!resp.ok) throw new Error('Serviço de rotas indisponível no momento.');
   const data = await resp.json();
   if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('Não foi possível calcular a rota entre essas cidades.');
   const route = data.routes[0];
   const legs = route.legs.map((leg, i) => ({ de: pontos[i].label, para: pontos[i + 1].label, km: leg.distance / 1000 }));
-  return { total_km: route.distance / 1000, legs };
+  const geometry = (route.geometry && route.geometry.coordinates) ? route.geometry.coordinates.map(([lng, lat]) => [lat, lng]) : pontos.map(p => p.coord);
+  return { total_km: route.distance / 1000, legs, pontos, geometry };
 }
 
 // Monta o HTML do detalhamento perna a perna + os controles pra reordenar
 // os destinos (o roteiro é o mesmo array w.destinos usado na etapa 2).
+let VIA_MAP = null; // instância única do Leaflet, reaproveitada entre cálculos
+
+// Desenha o mapa com a rota real (segue as estradas, via geometria devolvida
+// pelo OSRM) e um marcador por parada — mesmo estilo visual usado na
+// ferramenta de viáticos que fizemos em maio, só que embutido na própria
+// tela em vez de um arquivo à parte.
+function viaAtualizarMapa(pontos, geometry) {
+  const container = $('#via-map');
+  if (!container) return;
+  container.style.display = '';
+  const placeholder = $('#via-map-placeholder');
+  if (placeholder) placeholder.style.display = 'none';
+  if (!VIA_MAP) VIA_MAP = L.map('via-map');
+  VIA_MAP.eachLayer(l => VIA_MAP.removeLayer(l));
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(VIA_MAP);
+
+  const mkBase = L.divIcon({ html: '<div style="width:24px;height:24px;border-radius:50%;background:#0d2b1e;border:3px solid white;box-shadow:0 1px 6px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff">B</div>', iconSize: [24, 24], iconAnchor: [12, 12], className: '' });
+  const mkStop = n => L.divIcon({ html: `<div style="width:22px;height:22px;border-radius:50%;background:#2a8055;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff">${n}</div>`, iconSize: [22, 22], iconAnchor: [11, 11], className: '' });
+
+  pontos.forEach((p, i) => {
+    const icon = (i === 0 || i === pontos.length - 1) ? mkBase : mkStop(i);
+    L.marker(p.coord, { icon }).addTo(VIA_MAP).bindPopup(`<strong>${esc(p.label)}</strong>`);
+  });
+  const line = L.polyline(geometry, { color: '#2a8055', weight: 4, opacity: 0.85 }).addTo(VIA_MAP);
+  VIA_MAP.fitBounds(line.getBounds(), { padding: [30, 30] });
+}
+
 function viaRenderRotaDetalhe(w, legs, consumo, preco) {
   const legsHtml = legs.map(l => {
     const comb = consumo ? (l.km / consumo * preco) : 0;
@@ -3009,39 +3037,36 @@ function viaRenderRotaDetalhe(w, legs, consumo, preco) {
     <span class="chip">${i + 1}º ${esc(d.municipio)}/${esc(d.uf)}
       <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover pra cima">▲</button>
       <button type="button" data-mvdown="${i}" ${i === w.destinos.length - 1 ? 'disabled' : ''} title="Mover pra baixo">▼</button>
+      <button type="button" data-mvdel="${i}" title="Remover da rota">×</button>
     </span>`).join(' ');
   return `
     <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Combustível</th></tr></thead>
     <tbody>${legsHtml}</tbody></table></div>
-    <p style="margin-top:10px; font-size:13px"><strong>Ordem do roteiro</strong> — ajuste se precisar mudar a sequência, depois calcule de novo:</p>
+    <p style="margin-top:10px; font-size:13px"><strong>Ordem do roteiro</strong> — mude a sequência ou remova uma cidade; o cálculo atualiza sozinho:</p>
     <div class="chip-row">${reorderHtml}</div>`;
 }
 
-// Executa o cálculo (valida consumo/preço, chama o OSRM, renderiza resultado
-// + reordenação) e devolve o total via callback pra quem chamou preencher
-// seus próprios campos (Carro Próprio, ou um aluguel específico).
+// Executa o cálculo (valida consumo/preço, chama o OSRM, desenha o mapa,
+// renderiza resultado + reordenação) e devolve o total via callback pra quem
+// chamou preencher seus próprios campos (Carro Próprio, ou um aluguel
+// específico). Reordenar/remover uma cidade recalcula sozinho, sem precisar
+// clicar de novo.
 async function viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder) {
   const statusEl = document.getElementById(statusElId);
+  if (!statusEl) return;
   if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
   if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
   statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
   try {
-    const { total_km, legs } = await viaCalcularRota(w);
+    const { total_km, legs, pontos, geometry } = await viaCalcularRota(w);
     onSucesso(total_km);
+    viaAtualizarMapa(pontos, geometry);
     statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km no total (ida e volta). Pedágio segue manual.</div>`
       + viaRenderRotaDetalhe(w, legs, colab.veiculo_consumo_kml, w.preco_combustivel);
-    statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => {
-      const i = Number(b.dataset.mvup);
-      [w.destinos[i - 1], w.destinos[i]] = [w.destinos[i], w.destinos[i - 1]];
-      statusEl.innerHTML = '<p class="hint">Roteiro reordenado — clique em "Calcular rota automaticamente" de novo pra atualizar as distâncias.</p>';
-      onReorder();
-    });
-    statusEl.querySelectorAll('[data-mvdown]').forEach(b => b.onclick = () => {
-      const i = Number(b.dataset.mvdown);
-      [w.destinos[i], w.destinos[i + 1]] = [w.destinos[i + 1], w.destinos[i]];
-      statusEl.innerHTML = '<p class="hint">Roteiro reordenado — clique em "Calcular rota automaticamente" de novo pra atualizar as distâncias.</p>';
-      onReorder();
-    });
+    const recalcular = () => { onReorder(); viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder); };
+    statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvup); [w.destinos[i - 1], w.destinos[i]] = [w.destinos[i], w.destinos[i - 1]]; recalcular(); });
+    statusEl.querySelectorAll('[data-mvdown]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvdown); [w.destinos[i], w.destinos[i + 1]] = [w.destinos[i + 1], w.destinos[i]]; recalcular(); });
+    statusEl.querySelectorAll('[data-mvdel]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.mvdel), 1); recalcular(); });
   } catch (e) {
     statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
   }
@@ -3123,23 +3148,31 @@ function viaWizStep2() {
 
 function viaWizStep3() {
   const w = VIA_WIZ, c = $('#content');
+  VIA_MAP = null; // a div #via-map é recriada do zero a cada entrada nesta etapa
   c.innerHTML = `
     ${viaWizProgress(3)}
-    <div class="card" style="max-width:760px">
-      <h3 style="margin-bottom:6px">Transporte</h3>
-      <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
-      <div class="chip-row" style="margin-bottom:16px">
-        <label class="check-chip"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}> ✈️ Avião</label>
-        <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
-        <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
-        <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
+    <div style="display:flex; gap:20px; align-items:flex-start; max-width:1180px">
+      <div class="card" style="flex:1; min-width:0; max-width:760px">
+        <h3 style="margin-bottom:6px">Transporte</h3>
+        <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
+        <div class="chip-row" style="margin-bottom:16px">
+          <label class="check-chip"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}> ✈️ Avião</label>
+          <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
+          <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
+          <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
+        </div>
+        <div id="w3-aviao-block"></div>
+        <div id="w3-onibus-block"></div>
+        <div id="w3-aluguel-block"></div>
+        <div id="w3-proprio-block"></div>
       </div>
-      <div id="w3-aviao-block"></div>
-      <div id="w3-onibus-block"></div>
-      <div id="w3-aluguel-block"></div>
-      <div id="w3-proprio-block"></div>
+      <div class="card" style="flex:1; min-width:0; position:sticky; top:16px">
+        <h3 style="margin-bottom:10px">Mapa da rota</h3>
+        <div id="via-map" style="display:none; height:500px; border-radius:8px; overflow:hidden"></div>
+        <p class="hint" id="via-map-placeholder">O mapa aparece aqui depois de calcular uma rota (Carro Próprio ou Aluguel de Carro).</p>
+      </div>
     </div>
-    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+    <div class="wiz-actions" style="max-width:1180px"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
 
   viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock();
 
