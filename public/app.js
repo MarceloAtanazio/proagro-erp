@@ -2944,9 +2944,9 @@ async function renderSolicitacaoAutosservico() {
       Peça ao administrador para vincular seu usuário em Viáticos → Configurações → Colaboradores.</p></div>`;
     return;
   }
-  const tud = await api('/api/viaticos/tud');
+  const [tud, viaConfig] = await Promise.all([api('/api/viaticos/tud'), api('/api/viaticos/config')]);
   VIA_WIZ = {
-    colab, tud,
+    colab, tud, preco_combustivel: viaConfig.preco_combustivel_litro,
     ordem_trabalho: '', categoria_local: 'interior', destinos: [], data_inicio: todayISO(), data_fim: todayISO(),
     motivo: MOTIVO_OPTIONS[0], objetivo: '',
     transporte: {
@@ -2968,6 +2968,28 @@ function viaWizProgress(atual) {
   return `<div class="via-wiz-steps">${nomes.map((n, i) => `<span class="via-wiz-step ${i + 1 === atual ? 'active' : i + 1 < atual ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
 }
 function viaWizDias(w) { return Math.max(1, Math.round((new Date(w.data_fim) - new Date(w.data_inicio)) / 86400000) + 1); }
+
+// Calcula a distância real de carro (cidade-base -> destinos na ordem
+// adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
+// gratuito, sem chave de API). Pedágio ainda não é automático — só a
+// quilometragem e, a partir dela, o combustível.
+async function viaCalcularRota(w) {
+  if (!w.colab.cidade_base_uf || !w.colab.cidade_base_municipio) throw new Error('Cadastre a cidade-base do colaborador antes de calcular a rota.');
+  if (!w.destinos.length) throw new Error('Adicione ao menos um destino na etapa "Viagem" antes de calcular a rota.');
+  const buscarCoord = (uf, municipio) => {
+    const c = BR_LOCALIDADES.coords[uf] && BR_LOCALIDADES.coords[uf][municipio];
+    if (!c) throw new Error(`Não encontrei coordenadas para ${municipio}/${uf}.`);
+    return c; // [lat, lng]
+  };
+  const base = buscarCoord(w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
+  const pontos = [base, ...w.destinos.map(d => buscarCoord(d.uf, d.municipio)), base];
+  const coordStr = pontos.map(([lat, lng]) => `${lng},${lat}`).join(';');
+  const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=false`);
+  if (!resp.ok) throw new Error('Serviço de rotas indisponível no momento.');
+  const data = await resp.json();
+  if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('Não foi possível calcular a rota entre essas cidades.');
+  return data.routes[0].distance / 1000; // metros -> km
+}
 
 function viaWizStep1() {
   const w = VIA_WIZ, c = $('#content');
@@ -3128,38 +3150,77 @@ function viaRenderAluguelBlock() {
         <div class="field-row">${fld(`al-locadora-${i}`, 'Locadora', 'text', a.locadora || '')}${fld(`al-diaria-${i}`, 'Valor da diária (R$)', 'number', a.valor_diaria || '', 'step="0.01" min="0"')}${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}</div>
         <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
         <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
-        <div class="alert-item warn">⚠️ Consulta automática de rota indisponível — se precisar de combustível/pedágio à parte da diária, preencha manualmente abaixo.</div>
-        <div class="field-row">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', 'step="0.1" min="0"')}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', 'step="0.01" min="0"')}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
+        <button class="btn" id="al-calc-${i}" type="button">📍 Calcular rota automaticamente</button>
+        <div id="al-status-${i}" style="margin-top:8px"></div>
+        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', 'step="0.1" min="0"')}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', 'step="0.01" min="0"')}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
+        <p class="hint">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
         <p style="font-weight:600">Total da diária: ${brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))}</p>
         <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
       </div>`).join('') || '<p class="hint">Nenhum aluguel adicionado ainda.</p>'}
     <button class="btn" id="w3-add-aluguel" type="button">+ Adicionar aluguel</button>
   </div>`;
   const campos = { locadora: 'locadora', valor_diaria: 'diaria', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', distancia_km: 'km', combustivel_valor: 'comb', pedagio_valor: 'pedagio' };
-  w.transporte.alugueis.forEach((a, i) => Object.entries(campos).forEach(([campo, elKey]) => {
-    const input = document.getElementById(`al-${elKey}-${i}`);
-    if (input) input.oninput = () => { a[campo] = input.value; if (['valor_diaria', 'dias'].includes(campo)) viaRenderAluguelBlock(); };
-  }));
+  w.transporte.alugueis.forEach((a, i) => {
+    Object.entries(campos).forEach(([campo, elKey]) => {
+      const input = document.getElementById(`al-${elKey}-${i}`);
+      if (input) input.oninput = () => { a[campo] = input.value; if (['valor_diaria', 'dias'].includes(campo)) viaRenderAluguelBlock(); };
+    });
+    const btnCalc = document.getElementById(`al-calc-${i}`);
+    if (btnCalc) btnCalc.onclick = async () => {
+      const statusEl = document.getElementById(`al-status-${i}`);
+      if (!w.colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) de um veículo de referência antes de calcular.</div>'; return; }
+      if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
+      statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
+      try {
+        const km = await viaCalcularRota(w);
+        a.distancia_km = km.toFixed(1);
+        a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+        document.getElementById(`al-km-${i}`).value = a.distancia_km;
+        document.getElementById(`al-comb-${i}`).value = a.combustivel_valor;
+        statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${km.toFixed(1)} km (ida e volta, passando pelos destinos na ordem informada). Pedágio segue manual.</div>`;
+      } catch (e) {
+        statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
+      }
+    };
+  });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
   $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '' }); viaRenderAluguelBlock(); };
 }
 
 function viaRenderProprioBlock() {
-  const w = VIA_WIZ, box = $('#w3-proprio-block'), colab = w.colab;
+  const w = VIA_WIZ, box = $('#w3-proprio-block'), colab = w.colab, rota = w.transporte.carro_proprio_rota;
   box.style.display = w.transporte.carro_proprio ? '' : 'none';
   if (!w.transporte.carro_proprio) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="via-subcard"><h4>🚙 Carro Próprio</h4>
     <p class="hint">Veículo cadastrado: <strong>${esc(colab.veiculo_modelo || 'não informado')}</strong>${colab.veiculo_placa ? ' — placa ' + esc(colab.veiculo_placa) : ''}${colab.veiculo_consumo_kml ? ` (consumo ${colab.veiculo_consumo_kml} km/L)` : ''}</p>
-    <div class="alert-item warn">⚠️ Consulta automática de rota indisponível no momento — preencha os dados abaixo manualmente.</div>
+    <button class="btn primary" id="w3-proprio-calc" type="button">📍 Calcular rota automaticamente</button>
+    <div id="w3-proprio-status" style="margin-top:8px"></div>
     <div class="field-row" style="margin-top:10px">
-      ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', w.transporte.carro_proprio_rota.distancia_km, 'step="0.1" min="0"')}
-      ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', w.transporte.carro_proprio_rota.combustivel_valor, 'step="0.01" min="0"')}
-      ${fld('w3-proprio-pedagio', 'Pedágio (R$)', 'number', w.transporte.carro_proprio_rota.pedagio_valor, 'step="0.01" min="0"')}
+      ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', rota.distancia_km, 'step="0.1" min="0"')}
+      ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', rota.combustivel_valor, 'step="0.01" min="0"')}
+      ${fld('w3-proprio-pedagio', 'Pedágio (R$)', 'number', rota.pedagio_valor, 'step="0.01" min="0"')}
     </div>
+    <p class="hint">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
   </div>`;
-  $('#w3-proprio-km').oninput = e => w.transporte.carro_proprio_rota.distancia_km = e.target.value;
-  $('#w3-proprio-comb').oninput = e => w.transporte.carro_proprio_rota.combustivel_valor = e.target.value;
-  $('#w3-proprio-pedagio').oninput = e => w.transporte.carro_proprio_rota.pedagio_valor = e.target.value;
+  $('#w3-proprio-km').oninput = e => rota.distancia_km = e.target.value;
+  $('#w3-proprio-comb').oninput = e => rota.combustivel_valor = e.target.value;
+  $('#w3-proprio-pedagio').oninput = e => rota.pedagio_valor = e.target.value;
+  $('#w3-proprio-calc').onclick = async () => {
+    const statusEl = $('#w3-proprio-status');
+    if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
+    if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
+    statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
+    try {
+      const km = await viaCalcularRota(w);
+      rota.distancia_km = km.toFixed(1);
+      rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+      $('#w3-proprio-km').value = rota.distancia_km;
+      $('#w3-proprio-comb').value = rota.combustivel_valor;
+      statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${km.toFixed(1)} km (ida e volta, passando pelos destinos na ordem informada). Pedágio segue manual.</div>`;
+    } catch (e) {
+      statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
+    }
+  };
 }
 
 function viaWizStep4() {
@@ -3431,7 +3492,7 @@ function viaGerarPDF(w, r) {
 }
 
 async function renderViaticosConfig() {
-  const [colaboradores, tud, usuarios] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud'), api('/api/users')]);
+  const [colaboradores, tud, usuarios, viaConfig] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud'), api('/api/users'), api('/api/viaticos/config')]);
 
   const tudGrid = tier => `<h4 style="margin:14px 0 8px">Tier ${tier}</h4>
     <div class="table-wrap"><table><thead><tr><th>Categoria de local</th><th class="num">Hospedagem (dia)</th><th class="num">Alimentação (dia)</th></tr></thead>
@@ -3445,6 +3506,11 @@ async function renderViaticosConfig() {
       }).join('')}</tbody></table></div>`;
 
   const body = `
+    <div class="field-row" style="align-items:flex-end; max-width:420px">
+      ${fld('cfg-combustivel', 'Preço do combustível (R$/litro)', 'number', viaConfig.preco_combustivel_litro || '', 'step="0.01" min="0"')}
+      <button class="btn primary" id="cfg-combustivel-save" type="button">Salvar</button>
+    </div>
+    <p class="hint" style="margin-bottom:16px">Usado no cálculo automático de rota (Carro Próprio / Aluguel de Carro). A busca automática do preço médio da ANP ainda não existe — ajuste manualmente aqui de vez em quando.</p>
     <p class="hint">Estacionamento é sempre lançado "por recibo" (sem teto) e Veículo próprio fica fora da TUD — não precisam de configuração aqui.</p>
     ${tudGrid('A')}${tudGrid('B')}
     <h3 style="margin:20px 0 10px; font-size:15px">Colaboradores</h3>
@@ -3472,6 +3538,13 @@ async function renderViaticosConfig() {
     </table></div>`;
 
   openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
+
+  $('#cfg-combustivel-save').onclick = async () => {
+    const v = Number($('#cfg-combustivel').value);
+    if (!isFinite(v) || v < 0) return toast('Valor inválido.');
+    try { await api('/api/viaticos/config', { method: 'PUT', body: { preco_combustivel_litro: v } }); toast('Preço do combustível atualizado.'); }
+    catch (e) { toast(e.message); }
+  };
 
   document.querySelectorAll('[data-tud]').forEach(inp => inp.onchange = async () => {
     const [tier, categoria_local, tipo_despesa] = inp.dataset.tud.split(':');
