@@ -3003,32 +3003,56 @@ function viaWizNoites(w) { return Math.max(0, viaWizDias(w) - 1); }
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
 // gratuito, sem chave de API). Devolve também o detalhamento perna a perna
 // (o OSRM já calcula isso no mesmo pedido). Pedágio ainda não é automático.
-// pontoFixo = { uf, municipio } — cidade de partida E chegada (fecha o
-// circuito). intermediarios = array de { uf, municipio } — paradas na ordem
-// visitada. Generalizado assim pra servir tanto o trajeto da viagem inteira
-// (partida = cidade-base do colaborador) quanto um trajeto local de um
-// aluguel específico no destino (partida = cidade onde o carro foi retirado,
-// ex. a cidade do aeroporto onde a pessoa desembarcou).
+// Geocodifica um endereço em texto livre (rua, número, bairro, cidade) pra
+// lat/lng usando o Nominatim (OpenStreetMap) — o mesmo provedor gratuito do
+// OSRM/Leaflet que já usamos no mapa, sem precisar de chave de API. Em uso
+// de alto volume, o ideal seria um provedor pago ou uma instância própria do
+// Nominatim (o serviço público tem limite de ~1 requisição por segundo).
+async function viaGeocodificarEndereco(endereco) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=1&q=${encodeURIComponent(endereco)}`;
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+  if (!resp.ok) throw new Error('Serviço de geocodificação indisponível no momento.');
+  const data = await resp.json();
+  if (!data.length) throw new Error(`Não encontrei o endereço "${endereco}" — tente incluir rua, número, bairro e cidade.`);
+  return { lat: Number(data[0].lat), lng: Number(data[0].lon) };
+}
+
+// Resolve um ponto do roteiro pra { label, coord }, aceitando três formatos:
+// { uf, municipio } (cidade do IBGE, já com coordenada conhecida), ou
+// { endereco } (texto livre — geocodificado na hora via Nominatim).
+async function viaResolverPonto(p) {
+  if (p.endereco) {
+    const g = await viaGeocodificarEndereco(p.endereco);
+    return { label: p.endereco, coord: [g.lat, g.lng] };
+  }
+  const c = BR_LOCALIDADES.coords[p.uf] && BR_LOCALIDADES.coords[p.uf][p.municipio];
+  if (!c) throw new Error(`Não encontrei coordenadas para ${p.municipio}/${p.uf}.`);
+  return { label: `${p.municipio}/${p.uf}`, coord: c };
+}
+
+// pontoFixo = { uf, municipio } ou { endereco } — ponto de partida E chegada
+// (fecha o circuito). intermediarios = array no mesmo formato — paradas na
+// ordem visitada. Generalizado assim pra servir tanto o trajeto da viagem
+// inteira (partida = cidade-base do colaborador, paradas = cidades da OT)
+// quanto um trajeto local de um aluguel específico no destino, registrado
+// por endereço (partida = onde o carro foi retirado, ex. o aeroporto onde a
+// pessoa desembarcou; paradas = os endereços visitados de carro por lá).
 async function viaCalcularRota(pontoFixo, intermediarios) {
-  if (!pontoFixo || !pontoFixo.uf || !pontoFixo.municipio) throw new Error('Defina a cidade de partida/chegada antes de calcular a rota.');
+  if (!pontoFixo || !(pontoFixo.endereco || (pontoFixo.uf && pontoFixo.municipio))) throw new Error('Defina a cidade/endereço de partida antes de calcular a rota.');
   if (!intermediarios || !intermediarios.length) throw new Error('Adicione ao menos um destino/parada antes de calcular a rota.');
-  const buscarCoord = (uf, municipio) => {
-    const c = BR_LOCALIDADES.coords[uf] && BR_LOCALIDADES.coords[uf][municipio];
-    if (!c) throw new Error(`Não encontrei coordenadas para ${municipio}/${uf}.`);
-    return c; // [lat, lng]
-  };
-  const baseLabel = `${pontoFixo.municipio}/${pontoFixo.uf}`;
-  const baseCoord = buscarCoord(pontoFixo.uf, pontoFixo.municipio);
-  const pontos = [
-    { label: baseLabel, coord: baseCoord },
-    ...intermediarios.map(d => ({ label: `${d.municipio}/${d.uf}`, coord: buscarCoord(d.uf, d.municipio) })),
-    { label: baseLabel, coord: baseCoord }
-  ];
+  const base = await viaResolverPonto(pontoFixo);
+  const resolvidos = [];
+  for (const p of intermediarios) {
+    resolvidos.push(await viaResolverPonto(p));
+    // Nominatim pede no máximo ~1 requisição/segundo no serviço público.
+    if (p.endereco) await new Promise(r => setTimeout(r, 1100));
+  }
+  const pontos = [base, ...resolvidos, base];
   const coordStr = pontos.map(p => `${p.coord[1]},${p.coord[0]}`).join(';');
   const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
   if (!resp.ok) throw new Error('Serviço de rotas indisponível no momento.');
   const data = await resp.json();
-  if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('Não foi possível calcular a rota entre essas cidades.');
+  if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('Não foi possível calcular a rota entre esses pontos.');
   const route = data.routes[0];
   const legs = route.legs.map((leg, i) => ({ de: pontos[i].label, para: pontos[i + 1].label, km: leg.distance / 1000 }));
   const geometry = (route.geometry && route.geometry.coordinates) ? route.geometry.coordinates.map(([lng, lat]) => [lat, lng]) : pontos.map(p => p.coord);
@@ -3100,7 +3124,7 @@ function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix)
   const kmPonderado = viaKmPonderado(trechos);
   const combTotal = consumo ? (kmPonderado / consumo * preco) : 0;
   const reorderHtml = intermediarios.map((d, i) => `
-    <span class="chip">${i + 1}º ${esc(d.municipio)}/${esc(d.uf)}
+    <span class="chip">${i + 1}º ${esc(d.endereco || `${d.municipio}/${d.uf}`)}
       <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover pra cima">▲</button>
       <button type="button" data-mvdown="${i}" ${i === intermediarios.length - 1 ? 'disabled' : ''} title="Mover pra baixo">▼</button>
       <button type="button" data-mvdel="${i}" title="Remover da rota">×</button>
@@ -3133,7 +3157,7 @@ async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, s
   if (!statusEl) return;
   if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
   if (!preco) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
-  statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
+  statusEl.innerHTML = '<div class="alert-item warn">Calculando rota (pode levar alguns segundos se houver endereços pra geocodificar)…</div>';
   try {
     const { total_km, legs, pontos, geometry } = await viaCalcularRota(pontoFixo, intermediarios);
     const trechos = viaMesclarRepeticoes(legs, trechosAntigos);
@@ -3390,7 +3414,6 @@ function viaRenderAluguelBlock() {
   const w = VIA_WIZ, box = $('#w3-aluguel-block');
   box.style.display = w.transporte.aluguel_carro ? '' : 'none';
   if (!w.transporte.aluguel_carro) { box.innerHTML = ''; return; }
-  const estadosOpts = BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }));
   box.innerHTML = `<div class="via-subcard"><h4>🚗 Aluguel de Carro</h4>
     ${w.transporte.alugueis.map((a, i) => {
       const kmCombDisabled = a.manual_override ? '' : 'disabled';
@@ -3407,16 +3430,10 @@ function viaRenderAluguelBlock() {
         <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Carro usado localmente no destino (não parte da cidade-base — ex.: desembarquei de avião e aluguei um carro só pra rodar por lá)</label>
 
         ${a.uso_local ? `
-        <div class="field"><label>Cidade onde o carro foi retirado (ponto de partida e devolução da rota)</label>
-          <div class="field-row">
-            ${fldSel(`al-partida-uf-${i}`, 'Estado', estadosOpts, a.partida_uf || estadosOpts[0].v)}
-            ${fldSel(`al-partida-mun-${i}`, 'Município', [], null)}
-          </div>
-        </div>
-        <div class="field"><label>Paradas locais (na ordem em que foram visitadas)</label>
+        <p class="hint" style="margin:-4px 0 10px">A rota parte e retorna ao endereço preenchido acima em <strong>"Local de retirada"</strong> — capriche nele (rua, número, bairro, cidade) pra a distância sair certa.</p>
+        <div class="field"><label>Paradas visitadas (endereços completos, na ordem em que foram visitadas)</label>
           <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
-            ${fldSel(`al-parada-uf-${i}`, 'Estado', estadosOpts, estadosOpts[0].v)}
-            ${fldSel(`al-parada-mun-${i}`, 'Município', [], null)}
+            <div class="field" style="flex:1; margin-bottom:0"><label for="al-parada-end-${i}">Endereço</label><input id="al-parada-end-${i}" type="text" placeholder="Ex.: SHS Quadra 6, Bloco A, Brasília/DF"></div>
             <button class="btn primary" id="al-add-parada-${i}" type="button">+ Adicionar</button>
           </div>
           <div id="al-paradas-list-${i}"></div>
@@ -3445,33 +3462,21 @@ function viaRenderAluguelBlock() {
     diariaInput.onblur = () => viaRenderAluguelBlock(); // atualiza o "Total da diária" ao sair do campo
 
     if (a.uso_local) {
-      const popularPartidaMun = () => {
-        const uf = document.getElementById(`al-partida-uf-${i}`).value;
-        document.getElementById(`al-partida-mun-${i}`).innerHTML = (BR_LOCALIDADES.municipios[uf] || []).map(m => `<option value="${esc(m)}" ${m === a.partida_municipio ? 'selected' : ''}>${esc(m)}</option>`).join('');
-        if (!a.partida_municipio) a.partida_municipio = (BR_LOCALIDADES.municipios[uf] || [])[0] || '';
-      };
-      const popularParadaMun = () => {
-        const uf = document.getElementById(`al-parada-uf-${i}`).value;
-        document.getElementById(`al-parada-mun-${i}`).innerHTML = (BR_LOCALIDADES.municipios[uf] || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
-      };
       const renderParadas = () => {
         const listEl = document.getElementById(`al-paradas-list-${i}`);
-        listEl.innerHTML = (a.rota_pontos || []).length
-          ? `<div class="chip-row">${a.rota_pontos.map((p, j) => `<span class="chip">${esc(p.municipio)}/${esc(p.uf)} <button type="button" data-rmparada="${j}">×</button></span>`).join('')}</div>`
+        listEl.innerHTML = (a.paradas || []).length
+          ? `<div class="chip-row">${a.paradas.map((p, j) => `<span class="chip">${esc(p.endereco)} <button type="button" data-rmparada="${j}">×</button></span>`).join('')}</div>`
           : '<span style="color:var(--muted); font-size:13px">Nenhuma parada adicionada ainda.</span>';
-        listEl.querySelectorAll('[data-rmparada]').forEach(b => b.onclick = () => { a.rota_pontos.splice(Number(b.dataset.rmparada), 1); renderParadas(); });
+        listEl.querySelectorAll('[data-rmparada]').forEach(b => b.onclick = () => { a.paradas.splice(Number(b.dataset.rmparada), 1); renderParadas(); });
       };
-      document.getElementById(`al-partida-uf-${i}`).onchange = () => { a.partida_uf = document.getElementById(`al-partida-uf-${i}`).value; a.partida_municipio = ''; popularPartidaMun(); };
-      a.partida_uf = a.partida_uf || document.getElementById(`al-partida-uf-${i}`).value;
-      popularPartidaMun();
-      document.getElementById(`al-partida-mun-${i}`).onchange = () => { a.partida_municipio = document.getElementById(`al-partida-mun-${i}`).value; };
-      document.getElementById(`al-parada-uf-${i}`).onchange = popularParadaMun; popularParadaMun();
       document.getElementById(`al-add-parada-${i}`).onclick = () => {
-        const uf = document.getElementById(`al-parada-uf-${i}`).value, municipio = document.getElementById(`al-parada-mun-${i}`).value;
-        if (!municipio) return toast('Selecione um município.');
-        a.rota_pontos = a.rota_pontos || [];
-        if (a.rota_pontos.some(p => p.uf === uf && p.municipio === municipio)) return toast('Essa cidade já foi adicionada.');
-        a.rota_pontos.push({ uf, municipio }); renderParadas();
+        const endInput = document.getElementById(`al-parada-end-${i}`);
+        const endereco = endInput.value.trim();
+        if (!endereco) return toast('Digite um endereço.');
+        a.paradas = a.paradas || [];
+        a.paradas.push({ endereco });
+        endInput.value = '';
+        renderParadas();
       };
       renderParadas();
     }
@@ -3483,10 +3488,11 @@ function viaRenderAluguelBlock() {
 
     const btnCalc = document.getElementById(`al-calc-${i}`);
     if (btnCalc) btnCalc.onclick = () => {
+      if (a.uso_local && !a.retirada_local) return toast('Preencha o "Local de retirada" com o endereço completo antes de calcular.');
       const pontoFixo = a.uso_local
-        ? { uf: a.partida_uf, municipio: a.partida_municipio }
+        ? { endereco: a.retirada_local }
         : { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
-      const intermediarios = a.uso_local ? (a.rota_pontos || []) : w.destinos;
+      const intermediarios = a.uso_local ? (a.paradas || []) : w.destinos;
       viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos) => {
         a.manual_override = false;
         a.distancia_km = km.toFixed(1);
@@ -3500,7 +3506,7 @@ function viaRenderAluguelBlock() {
     };
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
-  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false, uso_local: false, partida_uf: '', partida_municipio: '', rota_pontos: [] }); viaRenderAluguelBlock(); };
+  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false, uso_local: false, paradas: [] }); viaRenderAluguelBlock(); };
 }
 
 function viaRenderProprioBlock() {
