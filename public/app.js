@@ -3023,9 +3023,14 @@ function viaFormatarEnderecoPhoton(props) {
 // forte que o Nominatim puro. Em uso de alto volume, o ideal seria um
 // provedor pago (Google Places, Mapbox, HERE) ou uma instância própria.
 async function viaGeocodificarEndereco(endereco) {
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(endereco)}&limit=1&lang=pt&bbox=-74,-34,-34,6`;
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error('Serviço de geocodificação indisponível no momento.');
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(endereco)}&limit=1&lang=pt`;
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch (e) {
+    throw new Error('Não consegui acessar o serviço de geocodificação (photon.komoot.io) — verifique a conexão ou se a rede/firewall bloqueia esse domínio.');
+  }
+  if (!resp.ok) throw new Error(`Serviço de geocodificação respondeu com erro (HTTP ${resp.status}).`);
   const data = await resp.json();
   if (!data.features || !data.features.length) throw new Error(`Não encontrei "${endereco}" — tente incluir rua, número, bairro e cidade, ou o nome completo do lugar.`);
   const [lng, lat] = data.features[0].geometry.coordinates;
@@ -3060,31 +3065,43 @@ function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
   dropdown.className = 'via-addr-suggest';
   inputEl.insertAdjacentElement('afterend', dropdown);
   const esconder = () => { dropdown.style.display = 'none'; dropdown.innerHTML = ''; };
+  const mostrarErro = (msg) => { dropdown.innerHTML = `<div class="via-addr-suggest-empty">⚠️ ${esc(msg)}</div>`; dropdown.style.display = 'block'; };
   const buscar = async (q) => {
     if (!vivo) return;
     if (q.trim().length < 3) { esconder(); return; }
+    let resp;
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=pt&bbox=-74,-34,-34,6`;
-      const resp = await fetch(url);
-      if (!resp.ok || !vivo || inputEl.value.trim() !== q.trim()) return;
-      const data = await resp.json();
-      if (!vivo || inputEl.value.trim() !== q.trim()) return;
-      const features = data.features || [];
-      if (!features.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
-      dropdown.innerHTML = features.map((f, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(viaFormatarEnderecoPhoton(f.properties))}</div>`).join('');
-      dropdown.style.display = 'block';
-      dropdown.querySelectorAll('.via-addr-suggest-item').forEach(el => {
-        el.onmousedown = ev => ev.preventDefault(); // evita perder o clique pro blur do input
-        el.onclick = () => {
-          const f = features[Number(el.dataset.idx)];
-          const endereco = viaFormatarEnderecoPhoton(f.properties);
-          const [lng, lat] = f.geometry.coordinates;
-          inputEl.value = endereco;
-          onSelecionar({ endereco, lat, lng });
-          esconder();
-        };
-      });
-    } catch (e) { /* falha de rede na sugestão não bloqueia a digitação livre */ }
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=pt`;
+      resp = await fetch(url);
+    } catch (e) {
+      console.error('Falha ao buscar sugestões de endereço (photon.komoot.io):', e);
+      mostrarErro('Não consegui acessar o serviço de busca de endereços (rede/firewall pode estar bloqueando photon.komoot.io). Você ainda pode digitar o endereço livremente.');
+      return;
+    }
+    if (!vivo || inputEl.value.trim() !== q.trim()) return;
+    if (!resp.ok) {
+      console.error('Photon respondeu com erro HTTP', resp.status);
+      mostrarErro(`Serviço de busca respondeu com erro (HTTP ${resp.status}). Você ainda pode digitar o endereço livremente.`);
+      return;
+    }
+    let data;
+    try { data = await resp.json(); } catch (e) { mostrarErro('Resposta inesperada do serviço de busca.'); return; }
+    if (!vivo || inputEl.value.trim() !== q.trim()) return;
+    const features = data.features || [];
+    if (!features.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
+    dropdown.innerHTML = features.map((f, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(viaFormatarEnderecoPhoton(f.properties))}</div>`).join('');
+    dropdown.style.display = 'block';
+    dropdown.querySelectorAll('.via-addr-suggest-item').forEach(el => {
+      el.onmousedown = ev => ev.preventDefault(); // evita perder o clique pro blur do input
+      el.onclick = () => {
+        const f = features[Number(el.dataset.idx)];
+        const endereco = viaFormatarEnderecoPhoton(f.properties);
+        const [lng, lat] = f.geometry.coordinates;
+        inputEl.value = endereco;
+        onSelecionar({ endereco, lat, lng });
+        esconder();
+      };
+    });
   };
   inputEl.oninput = () => {
     onDigitar(inputEl.value);
