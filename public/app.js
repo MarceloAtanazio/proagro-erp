@@ -2950,15 +2950,11 @@ async function renderSolicitacaoAutosservico() {
     ordem_trabalho: '', categoria_local: 'interior', destinos: [], data_inicio: todayISO(), data_fim: todayISO(),
     motivo: MOTIVO_OPTIONS[0], objetivo: '',
     transporte: {
-      aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false,
-      aviao_trechos: [], onibus_trechos: [], alugueis: [],
+      aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false, taxi_uber: false,
+      aviao_trechos: [], onibus_trechos: [], alugueis: [], taxi_uber_corridas: [],
       carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '' }
     },
-    despesas: {
-      hospedagem_dia: '', alimentacao_dia: '',
-      combustivel: { qtd: 1, valor: '' }, pedagio: { qtd: 1, valor: '' }, estacionamento: { qtd: 1, valor: '' },
-      taxi_uber: []
-    }
+    despesas: { hospedagem_dia: null, alimentacao_dia: null, estacionamento: { qtd: 1, valor: '' } }
   };
   viaWizStep1();
 }
@@ -3160,11 +3156,13 @@ function viaWizStep3() {
           <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
           <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
           <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
+          <label class="check-chip"><input type="checkbox" id="w3-taxiuber" ${w.transporte.taxi_uber ? 'checked' : ''}> 🚕 Táxi / Uber</label>
         </div>
         <div id="w3-aviao-block"></div>
         <div id="w3-onibus-block"></div>
         <div id="w3-aluguel-block"></div>
         <div id="w3-proprio-block"></div>
+        <div id="w3-taxiuber-block"></div>
       </div>
       <div class="card" style="flex:1; min-width:0; position:sticky; top:16px">
         <h3 style="margin-bottom:10px">Mapa da rota</h3>
@@ -3174,14 +3172,39 @@ function viaWizStep3() {
     </div>
     <div class="wiz-actions" style="max-width:1180px"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
 
-  viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock();
+  viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock(); viaRenderTaxiUberBlock();
 
   $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); };
   $('#w3-onibus').onchange = e => { w.transporte.onibus = e.target.checked; viaRenderOnibusBlock(); };
   $('#w3-aluguel').onchange = e => { w.transporte.aluguel_carro = e.target.checked; viaRenderAluguelBlock(); };
   $('#w3-proprio').onchange = e => { w.transporte.carro_proprio = e.target.checked; viaRenderProprioBlock(); };
+  $('#w3-taxiuber').onchange = e => { w.transporte.taxi_uber = e.target.checked; viaRenderTaxiUberBlock(); };
   $('#wiz-back').onclick = () => viaWizStep2();
   $('#wiz-next').onclick = () => viaWizStep4();
+}
+
+function viaRenderTaxiUberBlock() {
+  const w = VIA_WIZ, box = $('#w3-taxiuber-block');
+  box.style.display = w.transporte.taxi_uber ? '' : 'none';
+  if (!w.transporte.taxi_uber) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="via-subcard"><h4>🚕 Táxi / Uber</h4>
+    <div id="w3-taxi-list"></div>
+    <button class="btn" id="w3-add-taxi" type="button">+ Adicionar corrida</button>
+  </div>`;
+  const renderLista = () => {
+    const listaEl = $('#w3-taxi-list');
+    listaEl.innerHTML = w.transporte.taxi_uber_corridas.map((t, i) => `
+      <div class="via-item-row">
+        <div class="field-row">${fld(`tx-origem-${i}`, 'De', 'text', t.origem || '')}${fld(`tx-destino-${i}`, 'Para', 'text', t.destino || '')}${fld(`tx-valor-${i}`, 'Valor (R$)', 'number', t.valor || '', 'step="0.01" min="0"')}</div>
+        <button class="btn sm danger-ghost" data-rmtaxi="${i}" type="button">Remover</button>
+      </div>`).join('') || '<p class="hint">Nenhuma corrida adicionada ainda.</p>';
+    w.transporte.taxi_uber_corridas.forEach((t, i) => ['origem', 'destino', 'valor'].forEach(f => {
+      const elx = document.getElementById(`tx-${f}-${i}`); if (elx) elx.oninput = () => t[f] = elx.value;
+    }));
+    listaEl.querySelectorAll('[data-rmtaxi]').forEach(b => b.onclick = () => { w.transporte.taxi_uber_corridas.splice(Number(b.dataset.rmtaxi), 1); renderLista(); });
+  };
+  renderLista();
+  $('#w3-add-taxi').onclick = () => { w.transporte.taxi_uber_corridas.push({ origem: '', destino: '', valor: '' }); renderLista(); };
 }
 
 function viaRenderAviaoBlock() {
@@ -3311,11 +3334,23 @@ function viaWizStep4() {
   const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');
   const temCarro = w.transporte.aluguel_carro || w.transporte.carro_proprio;
 
+  // Preenche Hospedagem/Alimentação já no teto máximo permitido pela TUD, pra
+  // ninguém correr o risco de digitar um valor errado — só na primeira vez
+  // que a etapa é aberta (se a pessoa já ajustou, mantém o que ela escolheu).
+  if (w.despesas.hospedagem_dia === null) w.despesas.hospedagem_dia = tudHosp ? tudHosp.valor_diaria : '';
+  if (w.despesas.alimentacao_dia === null) w.despesas.alimentacao_dia = tudAlim ? tudAlim.valor_diaria : '';
+
+  const combustivelTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0 : 0)
+    + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.combustivel_valor) || 0), 0) : 0);
+  const pedagioTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0 : 0)
+    + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.pedagio_valor) || 0), 0) : 0);
+  const taxiTotal = w.transporte.taxi_uber ? w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
+
   c.innerHTML = `
     ${viaWizProgress(4)}
     <div class="card" style="max-width:760px">
       <h3 style="margin-bottom:6px">Despesas previstas</h3>
-      <p class="hint" style="margin-bottom:14px">Preencha só o que for relevante pra esta viagem. Hospedagem e Alimentação têm teto diário pela TUD (${dias} dia(s) de viagem).</p>
+      <p class="hint" style="margin-bottom:14px">Hospedagem e Alimentação já vêm preenchidas no teto máximo da TUD (${dias} dia(s) de viagem) — ajuste só se for gastar menos.</p>
 
       <div class="field-row" style="align-items:flex-end">
         <div class="field"><label>Hospedagem — valor por diária (R$)${tudHosp ? ` <small style="color:var(--muted)">(teto: ${brl(tudHosp.valor_diaria)}/dia)</small>` : ''}</label>
@@ -3332,26 +3367,19 @@ function viaWizStep4() {
       <div id="w4-alim-alerta"></div>
 
       <hr style="margin:16px 0; border-color:var(--line)">
+      <p class="hint" style="margin-bottom:10px">O que já foi definido em "Transporte" aparece automaticamente aqui como resumo:</p>
       ${w.transporte.aviao ? `<p>✈️ Passagem de Avião (soma dos trechos): <strong>${brl(w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0))}</strong></p>` : ''}
       ${w.transporte.onibus ? `<p>🚌 Passagem de Ônibus (soma dos trechos): <strong>${brl(w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0))}</strong></p>` : ''}
       ${w.transporte.aluguel_carro ? `<p>🚗 Aluguel de Carro (soma das diárias): <strong>${brl(w.transporte.alugueis.reduce((s, a) => s + (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0), 0))}</strong></p>` : ''}
+      ${combustivelTotal > 0 ? `<p>⛽ Combustível (calculado na rota): <strong>${brl(combustivelTotal)}</strong></p>` : ''}
+      ${pedagioTotal > 0 ? `<p>🛣️ Pedágio (informado na rota): <strong>${brl(pedagioTotal)}</strong></p>` : ''}
+      ${w.transporte.taxi_uber ? `<p>🚕 Táxi/Uber (soma das corridas): <strong>${brl(taxiTotal)}</strong></p>` : ''}
+      ${!(w.transporte.aviao || w.transporte.onibus || w.transporte.aluguel_carro || w.transporte.carro_proprio || w.transporte.taxi_uber) ? '<p class="hint">Nenhum transporte foi selecionado na etapa anterior.</p>' : ''}
 
-      <div class="field-row">
-        ${fld('w4-comb-qtd', 'Combustível — Qtd.', 'number', w.despesas.combustivel.qtd, 'min="1"')}
-        ${fld('w4-comb-valor', 'Valor unitário (R$)', 'number', w.despesas.combustivel.valor, 'step="0.01" min="0"')}
-      </div>
-      <div class="field-row">
-        ${fld('w4-pedagio-qtd', 'Pedágio — Qtd.', 'number', w.despesas.pedagio.qtd, 'min="1"')}
-        ${fld('w4-pedagio-valor', 'Valor unitário (R$)', 'number', w.despesas.pedagio.valor, 'step="0.01" min="0"')}
-      </div>
-      ${temCarro ? `<div class="field-row">
+      ${temCarro ? `<div style="margin-top:12px"><div class="field-row">
         ${fld('w4-estac-qtd', 'Estacionamento — Qtd.', 'number', w.despesas.estacionamento.qtd, 'min="1"')}
         ${fld('w4-estac-valor', 'Valor unitário (R$)', 'number', w.despesas.estacionamento.valor, 'step="0.01" min="0"')}
-      </div>` : ''}
-
-      <div class="field"><label>Táxi / Uber</label></div>
-      <div id="w4-taxi-list"></div>
-      <button class="btn" id="w4-add-taxi" type="button">+ Adicionar corrida</button>
+      </div></div>` : ''}
     </div>
     <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
 
@@ -3370,27 +3398,10 @@ function viaWizStep4() {
   $('#w4-hosp').oninput = atualizarHosp; atualizarHosp();
   $('#w4-alim').oninput = atualizarAlim; atualizarAlim();
 
-  const simples = { comb: 'combustivel', pedagio: 'pedagio' };
-  if (temCarro) simples.estac = 'estacionamento';
-  Object.entries(simples).forEach(([pref, cat]) => {
-    $(`#w4-${pref}-qtd`).oninput = e => w.despesas[cat].qtd = e.target.value;
-    $(`#w4-${pref}-valor`).oninput = e => w.despesas[cat].valor = e.target.value;
-  });
-
-  const renderTaxi = () => {
-    const box = $('#w4-taxi-list');
-    box.innerHTML = w.despesas.taxi_uber.map((t, i) => `
-      <div class="via-item-row">
-        <div class="field-row">${fld(`tx-origem-${i}`, 'De', 'text', t.origem || '')}${fld(`tx-destino-${i}`, 'Para', 'text', t.destino || '')}${fld(`tx-valor-${i}`, 'Valor (R$)', 'number', t.valor || '', 'step="0.01" min="0"')}</div>
-        <button class="btn sm danger-ghost" data-rmtaxi="${i}" type="button">Remover</button>
-      </div>`).join('') || '<p class="hint">Nenhuma corrida adicionada.</p>';
-    w.despesas.taxi_uber.forEach((t, i) => ['origem', 'destino', 'valor'].forEach(f => {
-      const elx = document.getElementById(`tx-${f}-${i}`); if (elx) elx.oninput = () => t[f] = elx.value;
-    }));
-    box.querySelectorAll('[data-rmtaxi]').forEach(b => b.onclick = () => { w.despesas.taxi_uber.splice(Number(b.dataset.rmtaxi), 1); renderTaxi(); });
-  };
-  renderTaxi();
-  $('#w4-add-taxi').onclick = () => { w.despesas.taxi_uber.push({ origem: '', destino: '', valor: '' }); renderTaxi(); };
+  if (temCarro) {
+    $('#w4-estac-qtd').oninput = e => w.despesas.estacionamento.qtd = e.target.value;
+    $('#w4-estac-valor').oninput = e => w.despesas.estacionamento.valor = e.target.value;
+  }
 
   $('#wiz-back').onclick = () => viaWizStep3();
   $('#wiz-next').onclick = () => viaWizStep5();
@@ -3412,10 +3423,8 @@ function viaComputeResumo(w) {
     add('combustivel', Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0);
     add('pedagio', Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0);
   }
-  add('combustivel', (Number(w.despesas.combustivel.qtd) || 0) * (Number(w.despesas.combustivel.valor) || 0));
-  add('pedagio', (Number(w.despesas.pedagio.qtd) || 0) * (Number(w.despesas.pedagio.valor) || 0));
   add('estacionamento', (Number(w.despesas.estacionamento.qtd) || 0) * (Number(w.despesas.estacionamento.valor) || 0));
-  add('taxi_uber', w.despesas.taxi_uber.reduce((s, t) => s + (Number(t.valor) || 0), 0));
+  if (w.transporte.taxi_uber) add('taxi_uber', w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   const total = Object.values(cat).reduce((s, v) => s + v, 0);
   return { dias, cat, total };
 }
@@ -3466,7 +3475,7 @@ function viaWizStep5() {
       ${w.transporte.aviao ? viaResumoTrechosHtml('✈️ Voos', w.transporte.aviao_trechos, ['cia', 'numero_voo', 'origem', 'destino', 'data', 'saida', 'chegada', 'classe', 'valor']) : ''}
       ${w.transporte.onibus ? viaResumoTrechosHtml('🚌 Ônibus', w.transporte.onibus_trechos, ['empresa', 'origem', 'destino', 'data', 'horario', 'valor']) : ''}
       ${w.transporte.aluguel_carro ? viaResumoAlugueisHtml(w.transporte.alugueis) : ''}
-      ${w.despesas.taxi_uber.length ? viaResumoTaxiHtml(w.despesas.taxi_uber) : ''}
+      ${w.transporte.taxi_uber && w.transporte.taxi_uber_corridas.length ? viaResumoTaxiHtml(w.transporte.taxi_uber_corridas) : ''}
     </div>
     <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button>
       <div style="display:flex; gap:10px">
