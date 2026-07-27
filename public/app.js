@@ -2952,9 +2952,8 @@ async function renderSolicitacaoAutosservico() {
     transporte: {
       aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false, taxi_uber: false,
       aviao_trechos: [], onibus_trechos: [], alugueis: [], taxi_uber_corridas: [],
-      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '' }
-    },
-    despesas: { hospedagem_dia: null, alimentacao_dia: null, estacionamento: { qtd: 1, valor: '' } }
+      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '' }
+    }
   };
   viaWizStep1();
 }
@@ -3282,12 +3281,13 @@ function viaRenderAluguelBlock() {
         <div id="al-status-${i}" style="margin-top:8px"></div>
         <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', 'step="0.1" min="0"')}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', 'step="0.01" min="0"')}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
         <p class="hint">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
+        <div class="field-row">${fld(`al-estacqtd-${i}`, 'Estacionamento — Qtd.', 'number', a.estacionamento_qtd || 1, 'min="1"')}${fld(`al-estacvalor-${i}`, 'Valor unitário (R$)', 'number', a.estacionamento_valor || '', 'step="0.01" min="0"')}</div>
         <p style="font-weight:600">Total da diária: ${brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))}</p>
         <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
       </div>`).join('') || '<p class="hint">Nenhum aluguel adicionado ainda.</p>'}
     <button class="btn" id="w3-add-aluguel" type="button">+ Adicionar aluguel</button>
   </div>`;
-  const campos = { locadora: 'locadora', valor_diaria: 'diaria', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', distancia_km: 'km', combustivel_valor: 'comb', pedagio_valor: 'pedagio' };
+  const campos = { locadora: 'locadora', valor_diaria: 'diaria', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', distancia_km: 'km', combustivel_valor: 'comb', pedagio_valor: 'pedagio', estacionamento_qtd: 'estacqtd', estacionamento_valor: 'estacvalor' };
   w.transporte.alugueis.forEach((a, i) => {
     Object.entries(campos).forEach(([campo, elKey]) => {
       const input = document.getElementById(`al-${elKey}-${i}`);
@@ -3302,7 +3302,7 @@ function viaRenderAluguelBlock() {
     }, () => viaRenderAluguelBlock());
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
-  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '' }); viaRenderAluguelBlock(); };
+  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '' }); viaRenderAluguelBlock(); };
 }
 
 function viaRenderProprioBlock() {
@@ -3319,10 +3319,16 @@ function viaRenderProprioBlock() {
       ${fld('w3-proprio-pedagio', 'Pedágio (R$)', 'number', rota.pedagio_valor, 'step="0.01" min="0"')}
     </div>
     <p class="hint">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
+    <div class="field-row">
+      ${fld('w3-proprio-estac-qtd', 'Estacionamento — Qtd.', 'number', rota.estacionamento_qtd, 'min="1"')}
+      ${fld('w3-proprio-estac-valor', 'Valor unitário (R$)', 'number', rota.estacionamento_valor, 'step="0.01" min="0"')}
+    </div>
   </div>`;
   $('#w3-proprio-km').oninput = e => rota.distancia_km = e.target.value;
   $('#w3-proprio-comb').oninput = e => rota.combustivel_valor = e.target.value;
   $('#w3-proprio-pedagio').oninput = e => rota.pedagio_valor = e.target.value;
+  $('#w3-proprio-estac-qtd').oninput = e => rota.estacionamento_qtd = e.target.value;
+  $('#w3-proprio-estac-valor').oninput = e => rota.estacionamento_valor = e.target.value;
   $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(w, colab, 'w3-proprio-status', km => {
     rota.distancia_km = km.toFixed(1);
     rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
@@ -3335,105 +3341,67 @@ function viaWizStep4() {
   const w = VIA_WIZ, c = $('#content'), dias = viaWizDias(w), noites = viaWizNoites(w);
   const tudHosp = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'hospedagem');
   const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');
-  const temCarro = w.transporte.aluguel_carro || w.transporte.carro_proprio;
 
-  // Preenche Hospedagem/Alimentação já no teto máximo permitido pela TUD, pra
-  // ninguém correr o risco de digitar um valor errado — só na primeira vez
-  // que a etapa é aberta (se a pessoa já ajustou, mantém o que ela escolheu).
-  if (w.despesas.hospedagem_dia === null) w.despesas.hospedagem_dia = tudHosp ? tudHosp.valor_diaria : '';
-  if (w.despesas.alimentacao_dia === null) w.despesas.alimentacao_dia = tudAlim ? tudAlim.valor_diaria : '';
-
+  const valorHosp = tudHosp ? tudHosp.valor_diaria : 0, totalHosp = valorHosp * noites;
+  const valorAlim = tudAlim ? tudAlim.valor_diaria : 0, totalAlim = valorAlim * dias;
+  const aviaoTotal = w.transporte.aviao ? w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
+  const onibusTotal = w.transporte.onibus ? w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
+  const aluguelTotal = w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0), 0) : 0;
   const combustivelTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0 : 0)
     + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.combustivel_valor) || 0), 0) : 0);
   const pedagioTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0 : 0)
     + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.pedagio_valor) || 0), 0) : 0);
+  const estacionamentoTotal = (w.transporte.carro_proprio ? (Number(w.transporte.carro_proprio_rota.estacionamento_qtd) || 0) * (Number(w.transporte.carro_proprio_rota.estacionamento_valor) || 0) : 0)
+    + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.estacionamento_qtd) || 0) * (Number(a.estacionamento_valor) || 0), 0) : 0);
   const taxiTotal = w.transporte.taxi_uber ? w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
+
+  const linha = (emoji, label, valor) => `<div class="via-resumo-linha"><span>${emoji} ${label}</span><strong>${brl(valor)}</strong></div>`;
+  const total = totalHosp + totalAlim + aviaoTotal + onibusTotal + aluguelTotal + combustivelTotal + pedagioTotal + estacionamentoTotal + taxiTotal;
 
   c.innerHTML = `
     ${viaWizProgress(4)}
-    <div class="card" style="max-width:760px">
+    <div class="card" style="max-width:640px">
       <h3 style="margin-bottom:6px">Despesas previstas</h3>
-      <p class="hint" style="margin-bottom:14px">Hospedagem e Alimentação já vêm preenchidas no teto máximo da TUD — ajuste só se for gastar menos.
-        Alimentação conta por <strong>dia de viagem</strong> (${dias}); Hospedagem conta por <strong>noite</strong> (${noites}).</p>
-
-      <div class="field-row" style="align-items:flex-end">
-        <div class="field"><label>Hospedagem — valor por diária (R$)${tudHosp ? ` <small style="color:var(--muted)">(teto: ${brl(tudHosp.valor_diaria)}/dia)</small>` : ''}</label>
-          <input type="number" id="w4-hosp" step="0.01" min="0" value="${esc(w.despesas.hospedagem_dia)}"></div>
-        <div id="w4-hosp-total" style="padding-bottom:10px; font-weight:600; white-space:nowrap"></div>
+      <p class="hint" style="margin-bottom:16px">Visão somente leitura de tudo que foi definido nas etapas anteriores. Pra corrigir algum valor, use "Voltar".</p>
+      ${linha('🏨', `Hospedagem — ${noites} diária(s) × ${brl(valorHosp)} (teto da TUD)`, totalHosp)}
+      ${linha('🍽️', `Alimentação — ${dias} dia(s) × ${brl(valorAlim)} (teto da TUD)`, totalAlim)}
+      ${w.transporte.aviao ? linha('✈️', 'Passagem de Avião (soma dos trechos)', aviaoTotal) : ''}
+      ${w.transporte.onibus ? linha('🚌', 'Passagem de Ônibus (soma dos trechos)', onibusTotal) : ''}
+      ${w.transporte.aluguel_carro ? linha('🚗', 'Aluguel de Carro (soma das diárias)', aluguelTotal) : ''}
+      ${combustivelTotal > 0 ? linha('⛽', 'Combustível (calculado na rota)', combustivelTotal) : ''}
+      ${pedagioTotal > 0 ? linha('🛣️', 'Pedágio (informado na rota)', pedagioTotal) : ''}
+      ${estacionamentoTotal > 0 ? linha('🅿️', 'Estacionamento', estacionamentoTotal) : ''}
+      ${w.transporte.taxi_uber ? linha('🚕', 'Táxi/Uber (soma das corridas)', taxiTotal) : ''}
+      <div class="via-resumo-linha" style="border-top:2px solid var(--verde-700,#00783F); margin-top:10px; padding-top:12px; font-weight:700; font-size:15px">
+        <span>Total previsto</span><span>${brl(total)}</span>
       </div>
-      <div id="w4-hosp-alerta"></div>
-      <p style="font-size:13px; color:var(--ink-2); margin-bottom:14px">🏨 Hospedagem — ${noites} diária(s) (noite(s)): <strong id="w4-hosp-resumo"></strong></p>
-
-      <div class="field-row" style="align-items:flex-end">
-        <div class="field"><label>Alimentação — valor por dia (R$)${tudAlim ? ` <small style="color:var(--muted)">(teto: ${brl(tudAlim.valor_diaria)}/dia)</small>` : ''}</label>
-          <input type="number" id="w4-alim" step="0.01" min="0" value="${esc(w.despesas.alimentacao_dia)}"></div>
-        <div id="w4-alim-total" style="padding-bottom:10px; font-weight:600; white-space:nowrap"></div>
-      </div>
-      <div id="w4-alim-alerta"></div>
-      <p style="font-size:13px; color:var(--ink-2)">🍽️ Alimentação — ${dias} dia(s): <strong id="w4-alim-resumo"></strong></p>
-
-      <hr style="margin:16px 0; border-color:var(--line)">
-      <p class="hint" style="margin-bottom:10px">O que já foi definido em "Transporte" aparece automaticamente aqui como resumo:</p>
-      ${w.transporte.aviao ? `<p>✈️ Passagem de Avião (soma dos trechos): <strong>${brl(w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0))}</strong></p>` : ''}
-      ${w.transporte.onibus ? `<p>🚌 Passagem de Ônibus (soma dos trechos): <strong>${brl(w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0))}</strong></p>` : ''}
-      ${w.transporte.aluguel_carro ? `<p>🚗 Aluguel de Carro (soma das diárias): <strong>${brl(w.transporte.alugueis.reduce((s, a) => s + (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0), 0))}</strong></p>` : ''}
-      ${combustivelTotal > 0 ? `<p>⛽ Combustível (calculado na rota): <strong>${brl(combustivelTotal)}</strong></p>` : ''}
-      ${pedagioTotal > 0 ? `<p>🛣️ Pedágio (informado na rota): <strong>${brl(pedagioTotal)}</strong></p>` : ''}
-      ${w.transporte.taxi_uber ? `<p>🚕 Táxi/Uber (soma das corridas): <strong>${brl(taxiTotal)}</strong></p>` : ''}
-      ${!(w.transporte.aviao || w.transporte.onibus || w.transporte.aluguel_carro || w.transporte.carro_proprio || w.transporte.taxi_uber) ? '<p class="hint">Nenhum transporte foi selecionado na etapa anterior.</p>' : ''}
-
-      ${temCarro ? `<div style="margin-top:12px"><div class="field-row">
-        ${fld('w4-estac-qtd', 'Estacionamento — Qtd.', 'number', w.despesas.estacionamento.qtd, 'min="1"')}
-        ${fld('w4-estac-valor', 'Valor unitário (R$)', 'number', w.despesas.estacionamento.valor, 'step="0.01" min="0"')}
-      </div></div>` : ''}
     </div>
-    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
-
-  const atualizarHosp = () => {
-    const v = Number($('#w4-hosp').value) || 0;
-    w.despesas.hospedagem_dia = $('#w4-hosp').value;
-    const total = v * noites;
-    $('#w4-hosp-total').textContent = 'Total: ' + brl(total);
-    $('#w4-hosp-resumo').textContent = brl(total);
-    $('#w4-hosp-alerta').innerHTML = (tudHosp && v > tudHosp.valor_diaria) ? `<div class="alert-item late">⚠️ Limite de TUD excedido — o teto é ${brl(tudHosp.valor_diaria)}/dia.</div>` : '';
-  };
-  const atualizarAlim = () => {
-    const v = Number($('#w4-alim').value) || 0;
-    w.despesas.alimentacao_dia = $('#w4-alim').value;
-    const total = v * dias;
-    $('#w4-alim-total').textContent = 'Total: ' + brl(total);
-    $('#w4-alim-resumo').textContent = brl(total);
-    $('#w4-alim-alerta').innerHTML = (tudAlim && v > tudAlim.valor_diaria) ? `<div class="alert-item late">⚠️ Limite de TUD excedido — o teto é ${brl(tudAlim.valor_diaria)}/dia.</div>` : '';
-  };
-  $('#w4-hosp').oninput = atualizarHosp; atualizarHosp();
-  $('#w4-alim').oninput = atualizarAlim; atualizarAlim();
-
-  if (temCarro) {
-    $('#w4-estac-qtd').oninput = e => w.despesas.estacionamento.qtd = e.target.value;
-    $('#w4-estac-valor').oninput = e => w.despesas.estacionamento.valor = e.target.value;
-  }
+    <div class="wiz-actions" style="max-width:640px"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
 
   $('#wiz-back').onclick = () => viaWizStep3();
   $('#wiz-next').onclick = () => viaWizStep5();
 }
 
 function viaComputeResumo(w) {
-  const dias = viaWizDias(w), cat = {};
+  const dias = viaWizDias(w), noites = viaWizNoites(w), cat = {};
   const add = (k, v) => { if (v) cat[k] = (cat[k] || 0) + v; };
-  add('hospedagem', (Number(w.despesas.hospedagem_dia) || 0) * viaWizNoites(w));
-  add('alimentacao', (Number(w.despesas.alimentacao_dia) || 0) * dias);
+  const tudHosp = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'hospedagem');
+  const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');
+  add('hospedagem', (tudHosp ? tudHosp.valor_diaria : 0) * noites);
+  add('alimentacao', (tudAlim ? tudAlim.valor_diaria : 0) * dias);
   if (w.transporte.aviao) add('passagem_aviao', w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   if (w.transporte.onibus) add('passagem_onibus', w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   if (w.transporte.aluguel_carro) w.transporte.alugueis.forEach(a => {
     add('aluguel_carro', (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0));
     add('combustivel', Number(a.combustivel_valor) || 0);
     add('pedagio', Number(a.pedagio_valor) || 0);
+    add('estacionamento', (Number(a.estacionamento_qtd) || 0) * (Number(a.estacionamento_valor) || 0));
   });
   if (w.transporte.carro_proprio) {
     add('combustivel', Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0);
     add('pedagio', Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0);
+    add('estacionamento', (Number(w.transporte.carro_proprio_rota.estacionamento_qtd) || 0) * (Number(w.transporte.carro_proprio_rota.estacionamento_valor) || 0));
   }
-  add('estacionamento', (Number(w.despesas.estacionamento.qtd) || 0) * (Number(w.despesas.estacionamento.valor) || 0));
   if (w.transporte.taxi_uber) add('taxi_uber', w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   const total = Object.values(cat).reduce((s, v) => s + v, 0);
   return { dias, cat, total };
