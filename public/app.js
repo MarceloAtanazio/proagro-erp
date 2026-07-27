@@ -21,11 +21,11 @@ let CURRENT_PAGE = 'dashboard';
 let FORCE_MODAL = false;   // trava o modal (troca de senha obrigatória)
 
 // Páginas com acesso configurável (espelha PERM_PAGES do backend)
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos'];
 const PAGE_LABELS = {
   dashboard:'Dashboard', pagar:'Contas a Pagar', receber:'Contas a Receber', fluxo:'Fluxo de Caixa',
   conciliacao:'Conciliação Bancária', fornecedores:'Fornecedores', orcamento:'Orçamento Anual',
-  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais'
+  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais', viaticos:'Viáticos'
 };
 
 function permLevel(page) {
@@ -247,7 +247,7 @@ const PAGES = [
   { hash: 'orcamento', title: 'Orçamento Anual', icon: 'bud', section: 'Planejamento' },
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
-  { hash: 'viaticos', title: 'Viáticos', icon: 'via', super: true },
+  { hash: 'viaticos', title: 'Viáticos', icon: 'via' },
   { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração', sub: 'Cadastros' },
   { hash: 'usuarios', title: 'Usuários', icon: 'usr', sub: 'Cadastros', super: true },
   { hash: 'categorias', title: 'Categorias', icon: 'tag', sub: 'Cadastros', super: true },
