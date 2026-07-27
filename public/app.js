@@ -3188,11 +3188,23 @@ function viaRenderAviaoBlock() {
   const w = VIA_WIZ, box = $('#w3-aviao-block');
   box.style.display = w.transporte.aviao ? '' : 'none';
   if (!w.transporte.aviao) { box.innerHTML = ''; return; }
+  const CLASSES_VOO = ['Econômica', 'Econômica Premium', 'Executiva', 'Primeira Classe'];
+  const datalistCias = `<datalist id="via-cia-list">${BR_AVIACAO.companhias.map(c => `<option value="${esc(c.nome)}">`).join('')}</datalist>`;
+  const datalistAero = `<datalist id="via-aero-list">${BR_AVIACAO.aeroportos.map(a => `<option value="${a.iata}">${esc(a.nome)} — ${esc(a.cidade)} (${esc(a.pais)})</option>`).join('')}</datalist>`;
   box.innerHTML = `<div class="via-subcard"><h4>✈️ Voos</h4>
+    ${datalistCias}${datalistAero}
     ${w.transporte.aviao_trechos.map((t, i) => `
       <div class="via-item-row">
-        <div class="field-row">${fld(`av-cia-${i}`, 'Companhia', 'text', t.cia || '')}${fld(`av-voo-${i}`, 'Nº do Voo', 'text', t.numero_voo || '')}${fld(`av-classe-${i}`, 'Classe', 'text', t.classe || 'Econômica')}</div>
-        <div class="field-row">${fld(`av-origem-${i}`, 'Origem', 'text', t.origem || '')}${fld(`av-destino-${i}`, 'Destino', 'text', t.destino || '')}${fld(`av-data-${i}`, 'Data', 'date', t.data || w.data_inicio)}</div>
+        <div class="field-row">
+          ${fld(`av-cia-${i}`, 'Companhia', 'text', t.cia || '', 'list="via-cia-list" placeholder="Digite para buscar…"')}
+          ${fld(`av-voo-${i}`, 'Nº do Voo', 'text', t.numero_voo || '')}
+          ${fldSel(`av-classe-${i}`, 'Classe', CLASSES_VOO.map(c => ({ v: c, t: c })), t.classe || 'Econômica')}
+        </div>
+        <div class="field-row">
+          ${fld(`av-origem-${i}`, 'Origem', 'text', t.origem || '', 'list="via-aero-list" placeholder="Código ou cidade…"')}
+          ${fld(`av-destino-${i}`, 'Destino', 'text', t.destino || '', 'list="via-aero-list" placeholder="Código ou cidade…"')}
+          ${fld(`av-data-${i}`, 'Data', 'date', t.data || w.data_inicio)}
+        </div>
         <div class="field-row">${fld(`av-saida-${i}`, 'Horário de saída', 'time', t.saida || '')}${fld(`av-chegada-${i}`, 'Horário de chegada', 'time', t.chegada || '')}${fld(`av-valor-${i}`, 'Valor (R$)', 'number', t.valor || '', 'step="0.01" min="0"')}</div>
         <button class="btn sm danger-ghost" data-rmaviao="${i}" type="button">Remover trecho</button>
       </div>`).join('') || '<p class="hint">Nenhum trecho adicionado ainda.</p>'}
@@ -3202,6 +3214,7 @@ function viaRenderAviaoBlock() {
   w.transporte.aviao_trechos.forEach((t, i) => Object.entries(campos).forEach(([campo, elKey]) => {
     const input = document.getElementById(`av-${elKey}-${i}`);
     if (input) input.oninput = () => { t[campo] = input.value; };
+    if (input && elKey === 'classe') input.onchange = () => { t[campo] = input.value; };
   }));
   box.querySelectorAll('[data-rmaviao]').forEach(b => b.onclick = () => { w.transporte.aviao_trechos.splice(Number(b.dataset.rmaviao), 1); viaRenderAviaoBlock(); });
   $('#w3-add-aviao').onclick = () => { w.transporte.aviao_trechos.push({ cia: '', numero_voo: '', classe: 'Econômica', origem: '', destino: '', data: w.data_inicio, saida: '', chegada: '', valor: '' }); viaRenderAviaoBlock(); };
