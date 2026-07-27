@@ -3003,18 +3003,33 @@ function viaWizNoites(w) { return Math.max(0, viaWizDias(w) - 1); }
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
 // gratuito, sem chave de API). Devolve também o detalhamento perna a perna
 // (o OSRM já calcula isso no mesmo pedido). Pedágio ainda não é automático.
-// Geocodifica um endereço em texto livre (rua, número, bairro, cidade) pra
-// lat/lng usando o Nominatim (OpenStreetMap) — o mesmo provedor gratuito do
-// OSRM/Leaflet que já usamos no mapa, sem precisar de chave de API. Em uso
-// de alto volume, o ideal seria um provedor pago ou uma instância própria do
-// Nominatim (o serviço público tem limite de ~1 requisição por segundo).
+// Formata um resultado do Photon (properties do GeoJSON) num texto de
+// endereço legível — o Photon não devolve um "display_name" pronto como o
+// Nominatim, então montamos a partir dos campos que vierem preenchidos.
+function viaFormatarEnderecoPhoton(props) {
+  const partes = [];
+  if (props.name) partes.push(props.name);
+  const rua = [props.street, props.housenumber].filter(Boolean).join(', ');
+  if (rua && rua !== props.name) partes.push(rua);
+  if (props.district && props.district !== props.city) partes.push(props.district);
+  if (props.city) partes.push(props.city);
+  if (props.state) partes.push(props.state);
+  return partes.filter(Boolean).join(' - ') || 'Local sem nome';
+}
+
+// Geocodifica um endereço/nome de lugar em texto livre pra lat/lng usando o
+// Photon (komoot.io) — um serviço de busca sobre dados do OpenStreetMap,
+// gratuito e sem chave de API, com busca por nome de lugar (fuzzy/POI) mais
+// forte que o Nominatim puro. Em uso de alto volume, o ideal seria um
+// provedor pago (Google Places, Mapbox, HERE) ou uma instância própria.
 async function viaGeocodificarEndereco(endereco) {
-  const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=1&q=${encodeURIComponent(endereco)}`;
-  const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(endereco)}&limit=1&lang=pt&bbox=-74,-34,-34,6`;
+  const resp = await fetch(url);
   if (!resp.ok) throw new Error('Serviço de geocodificação indisponível no momento.');
   const data = await resp.json();
-  if (!data.length) throw new Error(`Não encontrei o endereço "${endereco}" — tente incluir rua, número, bairro e cidade.`);
-  return { lat: Number(data[0].lat), lng: Number(data[0].lon) };
+  if (!data.features || !data.features.length) throw new Error(`Não encontrei "${endereco}" — tente incluir rua, número, bairro e cidade, ou o nome completo do lugar.`);
+  const [lng, lat] = data.features[0].geometry.coordinates;
+  return { lat, lng };
 }
 
 // Resolve um ponto do roteiro pra { label, coord }, aceitando três formatos:
@@ -3032,10 +3047,10 @@ async function viaResolverPonto(p) {
   return { label: `${p.municipio}/${p.uf}`, coord: c };
 }
 
-// Anexa um autocomplete de endereços/lugares (via Nominatim) a um <input>:
-// digitar (com uma pequena pausa) busca sugestões; clicar numa sugestão
-// preenche o campo com o endereço completo e já entrega lat/lng prontos
-// (evita ter que geocodificar de novo na hora de calcular a rota).
+// Anexa um autocomplete de endereços/lugares (via Photon/komoot) a um
+// <input>: digitar (com uma pequena pausa) busca sugestões; clicar numa
+// sugestão preenche o campo com o endereço formatado e já entrega lat/lng
+// prontos (evita ter que geocodificar de novo na hora de calcular a rota).
 // onDigitar(valorDigitado) roda a cada tecla; onSelecionar({endereco,lat,lng})
 // roda só quando uma sugestão é clicada.
 function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
@@ -3047,22 +3062,25 @@ function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
   const esconder = () => { dropdown.style.display = 'none'; dropdown.innerHTML = ''; };
   const buscar = async (q) => {
     if (!vivo) return;
-    if (q.trim().length < 4) { esconder(); return; }
+    if (q.trim().length < 3) { esconder(); return; }
     try {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&countrycodes=br&limit=6&q=${encodeURIComponent(q)}`;
-      const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=pt&bbox=-74,-34,-34,6`;
+      const resp = await fetch(url);
       if (!resp.ok || !vivo || inputEl.value.trim() !== q.trim()) return;
       const data = await resp.json();
       if (!vivo || inputEl.value.trim() !== q.trim()) return;
-      if (!data.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
-      dropdown.innerHTML = data.map((r, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(r.display_name)}</div>`).join('');
+      const features = data.features || [];
+      if (!features.length) { dropdown.innerHTML = '<div class="via-addr-suggest-empty">Nenhum lugar encontrado — você ainda pode digitar o endereço livremente.</div>'; dropdown.style.display = 'block'; return; }
+      dropdown.innerHTML = features.map((f, idx) => `<div class="via-addr-suggest-item" data-idx="${idx}">${esc(viaFormatarEnderecoPhoton(f.properties))}</div>`).join('');
       dropdown.style.display = 'block';
       dropdown.querySelectorAll('.via-addr-suggest-item').forEach(el => {
         el.onmousedown = ev => ev.preventDefault(); // evita perder o clique pro blur do input
         el.onclick = () => {
-          const r = data[Number(el.dataset.idx)];
-          inputEl.value = r.display_name;
-          onSelecionar({ endereco: r.display_name, lat: Number(r.lat), lng: Number(r.lon) });
+          const f = features[Number(el.dataset.idx)];
+          const endereco = viaFormatarEnderecoPhoton(f.properties);
+          const [lng, lat] = f.geometry.coordinates;
+          inputEl.value = endereco;
+          onSelecionar({ endereco, lat, lng });
           esconder();
         };
       });
@@ -3072,10 +3090,10 @@ function viaAnexarAutocompleteEndereco(inputEl, onDigitar, onSelecionar) {
     onDigitar(inputEl.value);
     clearTimeout(timer);
     const q = inputEl.value;
-    timer = setTimeout(() => buscar(q), 450);
+    timer = setTimeout(() => buscar(q), 400);
   };
   inputEl.addEventListener('blur', () => setTimeout(esconder, 150));
-  inputEl.addEventListener('focus', () => { if (inputEl.value.trim().length >= 4) buscar(inputEl.value); });
+  inputEl.addEventListener('focus', () => { if (inputEl.value.trim().length >= 3) buscar(inputEl.value); });
   return { destruir: () => { vivo = false; clearTimeout(timer); dropdown.remove(); } };
 }
 
@@ -3093,8 +3111,8 @@ async function viaCalcularRota(pontoFixo, intermediarios) {
   const resolvidos = [];
   for (const p of intermediarios) {
     resolvidos.push(await viaResolverPonto(p));
-    // Nominatim pede no máximo ~1 requisição/segundo no serviço público.
-    if (p.endereco) await new Promise(r => setTimeout(r, 1100));
+    // Pequena pausa entre chamadas de geocodificação, por educação com o serviço público.
+    if (p.endereco && p.lat == null) await new Promise(r => setTimeout(r, 300));
   }
   const pontos = [base, ...resolvidos, base];
   const coordStr = pontos.map(p => `${p.coord[1]},${p.coord[0]}`).join(';');
