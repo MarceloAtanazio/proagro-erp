@@ -306,12 +306,19 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .chip button { border:none; background:none; color:inherit; cursor:pointer; font-size:13px; margin-left:4px; padding:0; line-height:1; }
 .chip button:hover { color:#B23A2F; }
 
-/* Assistente de Solicitação de Viáticos (autosserviço) */
-.via-wiz-steps { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
+/* Assistente de Solicitação de Viáticos (autosserviço)
+   Os steps ficam dentro de um invólucro centralizado (.via-wiz-container /
+   .via-wiz-container-lg / .via-wiz-container-wide) para que o conjunto
+   inteiro — progresso, card e botões — respire igual dos dois lados em
+   telas largas, em vez de ficar grudado na borda esquerda do .content. */
+.via-wiz-container { max-width: 760px; margin: 0 auto; }
+.via-wiz-container-lg { max-width: 920px; margin: 0 auto; }
+.via-wiz-container-wide { max-width: 1240px; margin: 0 auto; }
+.via-wiz-steps { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; margin-bottom:22px; }
 .via-wiz-step { font-size:12px; padding:5px 12px; border-radius:20px; background:#EEF1EF; color:var(--muted); font-weight:600; }
 .via-wiz-step.active { background:var(--verde-700,#00783F); color:#fff; }
 .via-wiz-step.done { background:var(--verde-050,#EAF5EC); color:var(--verde-700,#00783F); }
-.wiz-actions { display:flex; justify-content:space-between; align-items:center; max-width:760px; margin-top:18px; }
+.wiz-actions { display:flex; justify-content:space-between; align-items:center; margin-top:22px; }
 .check-chip { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; cursor:pointer; font-size:13.5px; background:#fff; }
 .check-chip input { width:auto; margin:0; }
 .via-subcard { border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; background:#FAFBFA; }
