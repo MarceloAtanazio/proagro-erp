@@ -194,6 +194,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; background: #fff;
 }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--verde-500); outline: none; box-shadow: 0 0 0 3px rgba(61,174,67,.14); }
+.field input:disabled, .field select:disabled, .field textarea:disabled { background: #F1F3F1; color: var(--muted); cursor: not-allowed; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-msg { font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; display: none; }
 .form-msg.err { display: block; background: var(--danger-050); color: var(--danger); }
