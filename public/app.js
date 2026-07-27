@@ -2971,8 +2971,8 @@ function viaWizDias(w) { return Math.max(1, Math.round((new Date(w.data_fim) - n
 
 // Calcula a distância real de carro (cidade-base -> destinos na ordem
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
-// gratuito, sem chave de API). Pedágio ainda não é automático — só a
-// quilometragem e, a partir dela, o combustível.
+// gratuito, sem chave de API). Devolve também o detalhamento perna a perna
+// (o OSRM já calcula isso no mesmo pedido). Pedágio ainda não é automático.
 async function viaCalcularRota(w) {
   if (!w.colab.cidade_base_uf || !w.colab.cidade_base_municipio) throw new Error('Cadastre a cidade-base do colaborador antes de calcular a rota.');
   if (!w.destinos.length) throw new Error('Adicione ao menos um destino na etapa "Viagem" antes de calcular a rota.');
@@ -2981,14 +2981,70 @@ async function viaCalcularRota(w) {
     if (!c) throw new Error(`Não encontrei coordenadas para ${municipio}/${uf}.`);
     return c; // [lat, lng]
   };
-  const base = buscarCoord(w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
-  const pontos = [base, ...w.destinos.map(d => buscarCoord(d.uf, d.municipio)), base];
-  const coordStr = pontos.map(([lat, lng]) => `${lng},${lat}`).join(';');
+  const baseLabel = `${w.colab.cidade_base_municipio}/${w.colab.cidade_base_uf}`;
+  const baseCoord = buscarCoord(w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
+  const pontos = [
+    { label: baseLabel, coord: baseCoord },
+    ...w.destinos.map(d => ({ label: `${d.municipio}/${d.uf}`, coord: buscarCoord(d.uf, d.municipio) })),
+    { label: baseLabel, coord: baseCoord }
+  ];
+  const coordStr = pontos.map(p => `${p.coord[1]},${p.coord[0]}`).join(';');
   const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=false`);
   if (!resp.ok) throw new Error('Serviço de rotas indisponível no momento.');
   const data = await resp.json();
   if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error('Não foi possível calcular a rota entre essas cidades.');
-  return data.routes[0].distance / 1000; // metros -> km
+  const route = data.routes[0];
+  const legs = route.legs.map((leg, i) => ({ de: pontos[i].label, para: pontos[i + 1].label, km: leg.distance / 1000 }));
+  return { total_km: route.distance / 1000, legs };
+}
+
+// Monta o HTML do detalhamento perna a perna + os controles pra reordenar
+// os destinos (o roteiro é o mesmo array w.destinos usado na etapa 2).
+function viaRenderRotaDetalhe(w, legs, consumo, preco) {
+  const legsHtml = legs.map(l => {
+    const comb = consumo ? (l.km / consumo * preco) : 0;
+    return `<tr><td>${esc(l.de)} → ${esc(l.para)}</td><td class="num">${l.km.toFixed(1)} km</td><td class="num">${brl(comb)}</td></tr>`;
+  }).join('');
+  const reorderHtml = w.destinos.map((d, i) => `
+    <span class="chip">${i + 1}º ${esc(d.municipio)}/${esc(d.uf)}
+      <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover pra cima">▲</button>
+      <button type="button" data-mvdown="${i}" ${i === w.destinos.length - 1 ? 'disabled' : ''} title="Mover pra baixo">▼</button>
+    </span>`).join(' ');
+  return `
+    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Combustível</th></tr></thead>
+    <tbody>${legsHtml}</tbody></table></div>
+    <p style="margin-top:10px; font-size:13px"><strong>Ordem do roteiro</strong> — ajuste se precisar mudar a sequência, depois calcule de novo:</p>
+    <div class="chip-row">${reorderHtml}</div>`;
+}
+
+// Executa o cálculo (valida consumo/preço, chama o OSRM, renderiza resultado
+// + reordenação) e devolve o total via callback pra quem chamou preencher
+// seus próprios campos (Carro Próprio, ou um aluguel específico).
+async function viaExecutarCalculoRota(w, colab, statusElId, onSucesso, onReorder) {
+  const statusEl = document.getElementById(statusElId);
+  if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
+  if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
+  statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
+  try {
+    const { total_km, legs } = await viaCalcularRota(w);
+    onSucesso(total_km);
+    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km no total (ida e volta). Pedágio segue manual.</div>`
+      + viaRenderRotaDetalhe(w, legs, colab.veiculo_consumo_kml, w.preco_combustivel);
+    statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => {
+      const i = Number(b.dataset.mvup);
+      [w.destinos[i - 1], w.destinos[i]] = [w.destinos[i], w.destinos[i - 1]];
+      statusEl.innerHTML = '<p class="hint">Roteiro reordenado — clique em "Calcular rota automaticamente" de novo pra atualizar as distâncias.</p>';
+      onReorder();
+    });
+    statusEl.querySelectorAll('[data-mvdown]').forEach(b => b.onclick = () => {
+      const i = Number(b.dataset.mvdown);
+      [w.destinos[i], w.destinos[i + 1]] = [w.destinos[i + 1], w.destinos[i]];
+      statusEl.innerHTML = '<p class="hint">Roteiro reordenado — clique em "Calcular rota automaticamente" de novo pra atualizar as distâncias.</p>';
+      onReorder();
+    });
+  } catch (e) {
+    statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
+  }
 }
 
 function viaWizStep1() {
@@ -3166,22 +3222,12 @@ function viaRenderAluguelBlock() {
       if (input) input.oninput = () => { a[campo] = input.value; if (['valor_diaria', 'dias'].includes(campo)) viaRenderAluguelBlock(); };
     });
     const btnCalc = document.getElementById(`al-calc-${i}`);
-    if (btnCalc) btnCalc.onclick = async () => {
-      const statusEl = document.getElementById(`al-status-${i}`);
-      if (!w.colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) de um veículo de referência antes de calcular.</div>'; return; }
-      if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
-      statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
-      try {
-        const km = await viaCalcularRota(w);
-        a.distancia_km = km.toFixed(1);
-        a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
-        document.getElementById(`al-km-${i}`).value = a.distancia_km;
-        document.getElementById(`al-comb-${i}`).value = a.combustivel_valor;
-        statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${km.toFixed(1)} km (ida e volta, passando pelos destinos na ordem informada). Pedágio segue manual.</div>`;
-      } catch (e) {
-        statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
-      }
-    };
+    if (btnCalc) btnCalc.onclick = () => viaExecutarCalculoRota(w, w.colab, `al-status-${i}`, km => {
+      a.distancia_km = km.toFixed(1);
+      a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+      document.getElementById(`al-km-${i}`).value = a.distancia_km;
+      document.getElementById(`al-comb-${i}`).value = a.combustivel_valor;
+    }, () => viaRenderAluguelBlock());
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
   $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '' }); viaRenderAluguelBlock(); };
@@ -3205,22 +3251,12 @@ function viaRenderProprioBlock() {
   $('#w3-proprio-km').oninput = e => rota.distancia_km = e.target.value;
   $('#w3-proprio-comb').oninput = e => rota.combustivel_valor = e.target.value;
   $('#w3-proprio-pedagio').oninput = e => rota.pedagio_valor = e.target.value;
-  $('#w3-proprio-calc').onclick = async () => {
-    const statusEl = $('#w3-proprio-status');
-    if (!colab.veiculo_consumo_kml) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Cadastre o consumo (km/L) do veículo antes de calcular.</div>'; return; }
-    if (!w.preco_combustivel) { statusEl.innerHTML = '<div class="alert-item late">⚠️ Preço do combustível ainda não configurado — peça ao administrador para definir em Viáticos → Configurações.</div>'; return; }
-    statusEl.innerHTML = '<div class="alert-item warn">Calculando rota…</div>';
-    try {
-      const km = await viaCalcularRota(w);
-      rota.distancia_km = km.toFixed(1);
-      rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
-      $('#w3-proprio-km').value = rota.distancia_km;
-      $('#w3-proprio-comb').value = rota.combustivel_valor;
-      statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${km.toFixed(1)} km (ida e volta, passando pelos destinos na ordem informada). Pedágio segue manual.</div>`;
-    } catch (e) {
-      statusEl.innerHTML = `<div class="alert-item late">⚠️ ${esc(e.message)} — preencha manualmente.</div>`;
-    }
-  };
+  $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(w, colab, 'w3-proprio-status', km => {
+    rota.distancia_km = km.toFixed(1);
+    rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+    $('#w3-proprio-km').value = rota.distancia_km;
+    $('#w3-proprio-comb').value = rota.combustivel_valor;
+  }, () => viaRenderProprioBlock());
 }
 
 function viaWizStep4() {
