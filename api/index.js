@@ -244,6 +244,7 @@ const AUDIT_MAP = {
   'PUT /api/colaboradores/:id': req => `Editou o colaborador de viáticos ID ${req.params.id} ("${req.body.name}", Tier ${req.body.tier}${req.body.ativo === false ? ', inativado' : ''})`,
   'DELETE /api/colaboradores/:id': req => `Excluiu o colaborador de viáticos ID ${req.params.id}`,
   'POST /api/viaticos/tud': req => `Atualizou a TUD (Tier ${req.body.tier}, ${req.body.categoria_local}, ${req.body.tipo_despesa}) para ${fmtBRL(req.body.valor_diaria)}/dia`,
+  'PUT /api/viaticos/config': req => `Atualizou o preço do combustível para ${fmtBRL(req.body.preco_combustivel_litro)}/L`,
   'DELETE /api/viaticos/tud/:id': req => `Excluiu uma faixa da TUD (ID ${req.params.id})`,
   'POST /api/viaticos/solicitacoes': (req, body) => {
     let msg = `Criou solicitação de viático (ID ${body && body.id}) para o colaborador ID ${req.body.colaborador_id}`;
@@ -1722,6 +1723,20 @@ app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h
 }));
 
 // ---- Dashboard / KPIs ----
+// ---- Configuração global (preço do combustível p/ cálculo de rota) ----
+app.get('/api/viaticos/config', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const rows = await query('SELECT preco_combustivel_litro FROM erp_viaticos_config WHERE id=1');
+  res.json({ preco_combustivel_litro: rows.length ? n(rows[0].preco_combustivel_litro) : null });
+}));
+
+app.put('/api/viaticos/config', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const v = Number(req.body.preco_combustivel_litro);
+  if (!isFinite(v) || v < 0) return res.status(400).json({ error: 'Preço do combustível inválido.' });
+  await query(`INSERT INTO erp_viaticos_config (id, preco_combustivel_litro, updated_at) VALUES (1,$1,now())
+    ON CONFLICT (id) DO UPDATE SET preco_combustivel_litro=excluded.preco_combustivel_litro, updated_at=now()`, [v]);
+  res.json({ ok: true });
+}));
+
 app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
   const todayD = new Date(), today = todayD.toISOString().slice(0, 10);
   const mesAtual = today.slice(0, 7);
