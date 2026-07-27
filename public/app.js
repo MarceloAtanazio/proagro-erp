@@ -2964,6 +2964,9 @@ function viaWizProgress(atual) {
   return `<div class="via-wiz-steps">${nomes.map((n, i) => `<span class="via-wiz-step ${i + 1 === atual ? 'active' : i + 1 < atual ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
 }
 function viaWizDias(w) { return Math.max(1, Math.round((new Date(w.data_fim) - new Date(w.data_inicio)) / 86400000) + 1); }
+// Alimentação conta por DIA de viagem; Hospedagem conta por NOITE (dias - 1) —
+// uma viagem de 30/07 a 31/07 tem 2 dias de alimentação mas só 1 noite de hospedagem.
+function viaWizNoites(w) { return Math.max(0, viaWizDias(w) - 1); }
 
 // Calcula a distância real de carro (cidade-base -> destinos na ordem
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
@@ -3329,7 +3332,7 @@ function viaRenderProprioBlock() {
 }
 
 function viaWizStep4() {
-  const w = VIA_WIZ, c = $('#content'), dias = viaWizDias(w);
+  const w = VIA_WIZ, c = $('#content'), dias = viaWizDias(w), noites = viaWizNoites(w);
   const tudHosp = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'hospedagem');
   const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');
   const temCarro = w.transporte.aluguel_carro || w.transporte.carro_proprio;
@@ -3350,7 +3353,8 @@ function viaWizStep4() {
     ${viaWizProgress(4)}
     <div class="card" style="max-width:760px">
       <h3 style="margin-bottom:6px">Despesas previstas</h3>
-      <p class="hint" style="margin-bottom:14px">Hospedagem e Alimentação já vêm preenchidas no teto máximo da TUD (${dias} dia(s) de viagem) — ajuste só se for gastar menos.</p>
+      <p class="hint" style="margin-bottom:14px">Hospedagem e Alimentação já vêm preenchidas no teto máximo da TUD — ajuste só se for gastar menos.
+        Alimentação conta por <strong>dia de viagem</strong> (${dias}); Hospedagem conta por <strong>noite</strong> (${noites}).</p>
 
       <div class="field-row" style="align-items:flex-end">
         <div class="field"><label>Hospedagem — valor por diária (R$)${tudHosp ? ` <small style="color:var(--muted)">(teto: ${brl(tudHosp.valor_diaria)}/dia)</small>` : ''}</label>
@@ -3358,6 +3362,7 @@ function viaWizStep4() {
         <div id="w4-hosp-total" style="padding-bottom:10px; font-weight:600; white-space:nowrap"></div>
       </div>
       <div id="w4-hosp-alerta"></div>
+      <p style="font-size:13px; color:var(--ink-2); margin-bottom:14px">🏨 Hospedagem — ${noites} diária(s) (noite(s)): <strong id="w4-hosp-resumo"></strong></p>
 
       <div class="field-row" style="align-items:flex-end">
         <div class="field"><label>Alimentação — valor por dia (R$)${tudAlim ? ` <small style="color:var(--muted)">(teto: ${brl(tudAlim.valor_diaria)}/dia)</small>` : ''}</label>
@@ -3365,6 +3370,7 @@ function viaWizStep4() {
         <div id="w4-alim-total" style="padding-bottom:10px; font-weight:600; white-space:nowrap"></div>
       </div>
       <div id="w4-alim-alerta"></div>
+      <p style="font-size:13px; color:var(--ink-2)">🍽️ Alimentação — ${dias} dia(s): <strong id="w4-alim-resumo"></strong></p>
 
       <hr style="margin:16px 0; border-color:var(--line)">
       <p class="hint" style="margin-bottom:10px">O que já foi definido em "Transporte" aparece automaticamente aqui como resumo:</p>
@@ -3386,13 +3392,17 @@ function viaWizStep4() {
   const atualizarHosp = () => {
     const v = Number($('#w4-hosp').value) || 0;
     w.despesas.hospedagem_dia = $('#w4-hosp').value;
-    $('#w4-hosp-total').textContent = 'Total: ' + brl(v * dias);
+    const total = v * noites;
+    $('#w4-hosp-total').textContent = 'Total: ' + brl(total);
+    $('#w4-hosp-resumo').textContent = brl(total);
     $('#w4-hosp-alerta').innerHTML = (tudHosp && v > tudHosp.valor_diaria) ? `<div class="alert-item late">⚠️ Limite de TUD excedido — o teto é ${brl(tudHosp.valor_diaria)}/dia.</div>` : '';
   };
   const atualizarAlim = () => {
     const v = Number($('#w4-alim').value) || 0;
     w.despesas.alimentacao_dia = $('#w4-alim').value;
-    $('#w4-alim-total').textContent = 'Total: ' + brl(v * dias);
+    const total = v * dias;
+    $('#w4-alim-total').textContent = 'Total: ' + brl(total);
+    $('#w4-alim-resumo').textContent = brl(total);
     $('#w4-alim-alerta').innerHTML = (tudAlim && v > tudAlim.valor_diaria) ? `<div class="alert-item late">⚠️ Limite de TUD excedido — o teto é ${brl(tudAlim.valor_diaria)}/dia.</div>` : '';
   };
   $('#w4-hosp').oninput = atualizarHosp; atualizarHosp();
@@ -3410,7 +3420,7 @@ function viaWizStep4() {
 function viaComputeResumo(w) {
   const dias = viaWizDias(w), cat = {};
   const add = (k, v) => { if (v) cat[k] = (cat[k] || 0) + v; };
-  add('hospedagem', (Number(w.despesas.hospedagem_dia) || 0) * dias);
+  add('hospedagem', (Number(w.despesas.hospedagem_dia) || 0) * viaWizNoites(w));
   add('alimentacao', (Number(w.despesas.alimentacao_dia) || 0) * dias);
   if (w.transporte.aviao) add('passagem_aviao', w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   if (w.transporte.onibus) add('passagem_onibus', w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
