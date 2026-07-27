@@ -289,6 +289,20 @@ function route() {
   destroyCharts();
   let hash = (location.hash || '').slice(1);
   if (!hash) hash = firstAllowedHash() || 'dashboard';
+
+  // Rota escondida (não aparece no menu) — tela de autosserviço em construção.
+  // Acessível manualmente via #via-solicitar, sem depender da permissão de
+  // página 'viaticos' (qualquer usuário logado e vinculado a um colaborador
+  // pode usar, uma vez lançada oficialmente).
+  if (hash === 'via-solicitar') {
+    document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+    CURRENT_PAGE = 'via-solicitar'; READONLY = false;
+    $('#page-title').textContent = 'Solicitação de Viáticos';
+    $('#content').innerHTML = '<div class="empty">Carregando…</div>';
+    renderSolicitacaoAutosservico().catch(err => { $('#content').innerHTML = `<div class="empty">${esc(err.message)}</div>`; });
+    return;
+  }
+
   const page = PAGES.find(p => p.hash === hash);
   const allowed = page && (page.super ? !!USER.is_super : canViewPage(page.hash));
 
@@ -2908,6 +2922,512 @@ async function importarFlashModal(s) {
       draw();
     } catch (e) { toast(e.message); }
   };
+}
+
+// ============================================================
+// SOLICITAÇÃO DE VIÁTICOS — Autosserviço (em construção)
+// Acessível só via #via-solicitar (rota escondida, fora do menu) até ser
+// oficialmente lançada. Fluxo em 5 etapas, cada uma alimentando a próxima;
+// a última é só leitura + geração de PDF (upload manual no Approvals, até
+// a integração automática existir).
+// ============================================================
+let VIA_WIZ = null;
+
+async function renderSolicitacaoAutosservico() {
+  const c = $('#content');
+  let colab;
+  try {
+    colab = await api('/api/viaticos/autosservico/meu-colaborador');
+  } catch (e) {
+    c.innerHTML = `<div class="card"><h3>Sem vínculo de colaborador</h3>
+      <p style="color:var(--ink-2); font-size:13.5px; margin-top:8px">Seu usuário ainda não está vinculado a um cadastro de colaborador de viáticos.
+      Peça ao administrador para vincular seu usuário em Viáticos → Configurações → Colaboradores.</p></div>`;
+    return;
+  }
+  const tud = await api('/api/viaticos/tud');
+  VIA_WIZ = {
+    colab, tud,
+    ordem_trabalho: '', categoria_local: 'interior', destinos: [], data_inicio: todayISO(), data_fim: todayISO(),
+    motivo: MOTIVO_OPTIONS[0], objetivo: '',
+    transporte: {
+      aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false,
+      aviao_trechos: [], onibus_trechos: [], alugueis: [],
+      carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '' }
+    },
+    despesas: {
+      hospedagem_dia: '', alimentacao_dia: '',
+      combustivel: { qtd: 1, valor: '' }, pedagio: { qtd: 1, valor: '' }, estacionamento: { qtd: 1, valor: '' },
+      taxi_uber: []
+    }
+  };
+  viaWizStep1();
+}
+
+function viaWizProgress(atual) {
+  const nomes = ['Solicitante', 'Viagem', 'Transporte', 'Despesas', 'Resumo'];
+  return `<div class="via-wiz-steps">${nomes.map((n, i) => `<span class="via-wiz-step ${i + 1 === atual ? 'active' : i + 1 < atual ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
+}
+function viaWizDias(w) { return Math.max(1, Math.round((new Date(w.data_fim) - new Date(w.data_inicio)) / 86400000) + 1); }
+
+function viaWizStep1() {
+  const w = VIA_WIZ, c = $('#content');
+  c.innerHTML = `
+    ${viaWizProgress(1)}
+    <div class="card" style="max-width:640px">
+      <h3 style="margin-bottom:14px">Seus dados</h3>
+      <div class="field-row">
+        <div class="field"><label>Nome</label><input value="${esc(w.colab.name)}" disabled></div>
+        <div class="field"><label>Cargo</label><input value="${esc(w.colab.cargo || '—')}" disabled></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Tier (TUD)</label><input value="${TIER_LABEL[w.colab.tier]}" disabled></div>
+        <div class="field"><label>Cidade-base</label><input value="${w.colab.cidade_base_municipio ? esc(w.colab.cidade_base_municipio) + '/' + esc(w.colab.cidade_base_uf) : 'Não cadastrada'}" disabled></div>
+      </div>
+      <p class="hint" style="margin-top:8px">Esses dados vêm do seu cadastro. Para corrigir algo, fale com o administrador.</p>
+    </div>
+    <div class="wiz-actions"><span></span><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+  $('#wiz-next').onclick = () => viaWizStep2();
+}
+
+function viaWizStep2() {
+  const w = VIA_WIZ, c = $('#content');
+  c.innerHTML = `
+    ${viaWizProgress(2)}
+    <div class="card" style="max-width:640px">
+      <h3 style="margin-bottom:14px">Dados da viagem</h3>
+      ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho)}
+      ${fldSel('w2-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), w.categoria_local)}
+      <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
+        <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
+          ${fldSel('w2-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
+          ${fldSel('w2-mun', 'Município', [], null)}
+          <button class="btn primary" id="w2-add-dest" type="button">+ Adicionar</button>
+        </div>
+        <div id="w2-destinos-list"></div>
+      </div>
+      <div class="field-row">
+        ${fld('w2-inicio', 'Data de saída', 'date', w.data_inicio)}
+        ${fld('w2-fim', 'Data de retorno', 'date', w.data_fim)}
+      </div>
+      ${fldSel('w2-motivo', 'Motivo', MOTIVO_OPTIONS.map(m => ({ v: m, t: m })), w.motivo)}
+      <div class="field"><label>Objetivo da viagem</label><textarea id="w2-objetivo" rows="3">${esc(w.objetivo)}</textarea></div>
+    </div>
+    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+
+  const popularMunicipios = () => {
+    const uf = $('#w2-uf').value;
+    $('#w2-mun').innerHTML = (BR_LOCALIDADES.municipios[uf] || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  };
+  const renderDestinos = () => {
+    const box = $('#w2-destinos-list');
+    box.innerHTML = w.destinos.length
+      ? `<div class="chip-row">${w.destinos.map((d, i) => `<span class="chip">${esc(d.municipio)}/${esc(d.uf)} <button type="button" data-rm="${i}">×</button></span>`).join('')}</div>`
+      : '<span style="color:var(--muted); font-size:13px">Nenhuma cidade adicionada ainda.</span>';
+    box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.rm), 1); renderDestinos(); });
+  };
+  $('#w2-uf').onchange = popularMunicipios; popularMunicipios(); renderDestinos();
+  $('#w2-add-dest').onclick = () => {
+    const uf = $('#w2-uf').value, municipio = $('#w2-mun').value;
+    if (!municipio) return toast('Selecione um município.');
+    if (w.destinos.some(d => d.uf === uf && d.municipio === municipio)) return toast('Essa cidade já foi adicionada.');
+    w.destinos.push({ uf, municipio }); renderDestinos();
+  };
+  $('#wiz-back').onclick = () => viaWizStep1();
+  $('#wiz-next').onclick = () => {
+    if (!$('#w2-inicio').value || !$('#w2-fim').value) return toast('Preencha as datas da viagem.');
+    if ($('#w2-fim').value < $('#w2-inicio').value) return toast('Data de retorno não pode ser antes da saída.');
+    w.ordem_trabalho = $('#w2-ot').value; w.categoria_local = $('#w2-local').value;
+    w.data_inicio = $('#w2-inicio').value; w.data_fim = $('#w2-fim').value;
+    w.motivo = $('#w2-motivo').value; w.objetivo = $('#w2-objetivo').value;
+    viaWizStep3();
+  };
+}
+
+function viaWizStep3() {
+  const w = VIA_WIZ, c = $('#content');
+  c.innerHTML = `
+    ${viaWizProgress(3)}
+    <div class="card" style="max-width:760px">
+      <h3 style="margin-bottom:6px">Transporte</h3>
+      <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
+      <div class="chip-row" style="margin-bottom:16px">
+        <label class="check-chip"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}> ✈️ Avião</label>
+        <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
+        <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
+        <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
+      </div>
+      <div id="w3-aviao-block"></div>
+      <div id="w3-onibus-block"></div>
+      <div id="w3-aluguel-block"></div>
+      <div id="w3-proprio-block"></div>
+    </div>
+    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+
+  viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock();
+
+  $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); };
+  $('#w3-onibus').onchange = e => { w.transporte.onibus = e.target.checked; viaRenderOnibusBlock(); };
+  $('#w3-aluguel').onchange = e => { w.transporte.aluguel_carro = e.target.checked; viaRenderAluguelBlock(); };
+  $('#w3-proprio').onchange = e => { w.transporte.carro_proprio = e.target.checked; viaRenderProprioBlock(); };
+  $('#wiz-back').onclick = () => viaWizStep2();
+  $('#wiz-next').onclick = () => viaWizStep4();
+}
+
+function viaRenderAviaoBlock() {
+  const w = VIA_WIZ, box = $('#w3-aviao-block');
+  box.style.display = w.transporte.aviao ? '' : 'none';
+  if (!w.transporte.aviao) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="via-subcard"><h4>✈️ Voos</h4>
+    ${w.transporte.aviao_trechos.map((t, i) => `
+      <div class="via-item-row">
+        <div class="field-row">${fld(`av-cia-${i}`, 'Companhia', 'text', t.cia || '')}${fld(`av-voo-${i}`, 'Nº do Voo', 'text', t.numero_voo || '')}${fld(`av-classe-${i}`, 'Classe', 'text', t.classe || 'Econômica')}</div>
+        <div class="field-row">${fld(`av-origem-${i}`, 'Origem', 'text', t.origem || '')}${fld(`av-destino-${i}`, 'Destino', 'text', t.destino || '')}${fld(`av-data-${i}`, 'Data', 'date', t.data || w.data_inicio)}</div>
+        <div class="field-row">${fld(`av-saida-${i}`, 'Horário de saída', 'time', t.saida || '')}${fld(`av-chegada-${i}`, 'Horário de chegada', 'time', t.chegada || '')}${fld(`av-valor-${i}`, 'Valor (R$)', 'number', t.valor || '', 'step="0.01" min="0"')}</div>
+        <button class="btn sm danger-ghost" data-rmaviao="${i}" type="button">Remover trecho</button>
+      </div>`).join('') || '<p class="hint">Nenhum trecho adicionado ainda.</p>'}
+    <button class="btn" id="w3-add-aviao" type="button">+ Adicionar trecho (ida, volta ou extra)</button>
+  </div>`;
+  const campos = { cia: 'cia', numero_voo: 'voo', classe: 'classe', origem: 'origem', destino: 'destino', data: 'data', saida: 'saida', chegada: 'chegada', valor: 'valor' };
+  w.transporte.aviao_trechos.forEach((t, i) => Object.entries(campos).forEach(([campo, elKey]) => {
+    const input = document.getElementById(`av-${elKey}-${i}`);
+    if (input) input.oninput = () => { t[campo] = input.value; };
+  }));
+  box.querySelectorAll('[data-rmaviao]').forEach(b => b.onclick = () => { w.transporte.aviao_trechos.splice(Number(b.dataset.rmaviao), 1); viaRenderAviaoBlock(); });
+  $('#w3-add-aviao').onclick = () => { w.transporte.aviao_trechos.push({ cia: '', numero_voo: '', classe: 'Econômica', origem: '', destino: '', data: w.data_inicio, saida: '', chegada: '', valor: '' }); viaRenderAviaoBlock(); };
+}
+
+function viaRenderOnibusBlock() {
+  const w = VIA_WIZ, box = $('#w3-onibus-block');
+  box.style.display = w.transporte.onibus ? '' : 'none';
+  if (!w.transporte.onibus) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="via-subcard"><h4>🚌 Ônibus</h4>
+    ${w.transporte.onibus_trechos.map((t, i) => `
+      <div class="via-item-row">
+        <div class="field-row">${fld(`ob-empresa-${i}`, 'Empresa', 'text', t.empresa || '')}${fld(`ob-origem-${i}`, 'Origem', 'text', t.origem || '')}${fld(`ob-destino-${i}`, 'Destino', 'text', t.destino || '')}</div>
+        <div class="field-row">${fld(`ob-data-${i}`, 'Data', 'date', t.data || w.data_inicio)}${fld(`ob-horario-${i}`, 'Horário', 'time', t.horario || '')}${fld(`ob-valor-${i}`, 'Valor (R$)', 'number', t.valor || '', 'step="0.01" min="0"')}</div>
+        <button class="btn sm danger-ghost" data-rmonibus="${i}" type="button">Remover trecho</button>
+      </div>`).join('') || '<p class="hint">Nenhum trecho adicionado ainda.</p>'}
+    <button class="btn" id="w3-add-onibus" type="button">+ Adicionar trecho</button>
+  </div>`;
+  const campos = { empresa: 'empresa', origem: 'origem', destino: 'destino', data: 'data', horario: 'horario', valor: 'valor' };
+  w.transporte.onibus_trechos.forEach((t, i) => Object.entries(campos).forEach(([campo, elKey]) => {
+    const input = document.getElementById(`ob-${elKey}-${i}`);
+    if (input) input.oninput = () => { t[campo] = input.value; };
+  }));
+  box.querySelectorAll('[data-rmonibus]').forEach(b => b.onclick = () => { w.transporte.onibus_trechos.splice(Number(b.dataset.rmonibus), 1); viaRenderOnibusBlock(); });
+  $('#w3-add-onibus').onclick = () => { w.transporte.onibus_trechos.push({ empresa: '', origem: '', destino: '', data: w.data_inicio, horario: '', valor: '' }); viaRenderOnibusBlock(); };
+}
+
+function viaRenderAluguelBlock() {
+  const w = VIA_WIZ, box = $('#w3-aluguel-block');
+  box.style.display = w.transporte.aluguel_carro ? '' : 'none';
+  if (!w.transporte.aluguel_carro) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="via-subcard"><h4>🚗 Aluguel de Carro</h4>
+    ${w.transporte.alugueis.map((a, i) => `
+      <div class="via-item-row">
+        <div class="field-row">${fld(`al-locadora-${i}`, 'Locadora', 'text', a.locadora || '')}${fld(`al-diaria-${i}`, 'Valor da diária (R$)', 'number', a.valor_diaria || '', 'step="0.01" min="0"')}${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}</div>
+        <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
+        <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
+        <div class="alert-item warn">⚠️ Consulta automática de rota indisponível — se precisar de combustível/pedágio à parte da diária, preencha manualmente abaixo.</div>
+        <div class="field-row">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', 'step="0.1" min="0"')}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', 'step="0.01" min="0"')}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
+        <p style="font-weight:600">Total da diária: ${brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))}</p>
+        <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
+      </div>`).join('') || '<p class="hint">Nenhum aluguel adicionado ainda.</p>'}
+    <button class="btn" id="w3-add-aluguel" type="button">+ Adicionar aluguel</button>
+  </div>`;
+  const campos = { locadora: 'locadora', valor_diaria: 'diaria', dias: 'dias', retirada_local: 'retlocal', retirada_data: 'retdata', devolucao_local: 'devlocal', devolucao_data: 'devdata', distancia_km: 'km', combustivel_valor: 'comb', pedagio_valor: 'pedagio' };
+  w.transporte.alugueis.forEach((a, i) => Object.entries(campos).forEach(([campo, elKey]) => {
+    const input = document.getElementById(`al-${elKey}-${i}`);
+    if (input) input.oninput = () => { a[campo] = input.value; if (['valor_diaria', 'dias'].includes(campo)) viaRenderAluguelBlock(); };
+  }));
+  box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
+  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '' }); viaRenderAluguelBlock(); };
+}
+
+function viaRenderProprioBlock() {
+  const w = VIA_WIZ, box = $('#w3-proprio-block'), colab = w.colab;
+  box.style.display = w.transporte.carro_proprio ? '' : 'none';
+  if (!w.transporte.carro_proprio) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="via-subcard"><h4>🚙 Carro Próprio</h4>
+    <p class="hint">Veículo cadastrado: <strong>${esc(colab.veiculo_modelo || 'não informado')}</strong>${colab.veiculo_placa ? ' — placa ' + esc(colab.veiculo_placa) : ''}${colab.veiculo_consumo_kml ? ` (consumo ${colab.veiculo_consumo_kml} km/L)` : ''}</p>
+    <div class="alert-item warn">⚠️ Consulta automática de rota indisponível no momento — preencha os dados abaixo manualmente.</div>
+    <div class="field-row" style="margin-top:10px">
+      ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', w.transporte.carro_proprio_rota.distancia_km, 'step="0.1" min="0"')}
+      ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', w.transporte.carro_proprio_rota.combustivel_valor, 'step="0.01" min="0"')}
+      ${fld('w3-proprio-pedagio', 'Pedágio (R$)', 'number', w.transporte.carro_proprio_rota.pedagio_valor, 'step="0.01" min="0"')}
+    </div>
+  </div>`;
+  $('#w3-proprio-km').oninput = e => w.transporte.carro_proprio_rota.distancia_km = e.target.value;
+  $('#w3-proprio-comb').oninput = e => w.transporte.carro_proprio_rota.combustivel_valor = e.target.value;
+  $('#w3-proprio-pedagio').oninput = e => w.transporte.carro_proprio_rota.pedagio_valor = e.target.value;
+}
+
+function viaWizStep4() {
+  const w = VIA_WIZ, c = $('#content'), dias = viaWizDias(w);
+  const tudHosp = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'hospedagem');
+  const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');
+  const temCarro = w.transporte.aluguel_carro || w.transporte.carro_proprio;
+
+  c.innerHTML = `
+    ${viaWizProgress(4)}
+    <div class="card" style="max-width:760px">
+      <h3 style="margin-bottom:6px">Despesas previstas</h3>
+      <p class="hint" style="margin-bottom:14px">Preencha só o que for relevante pra esta viagem. Hospedagem e Alimentação têm teto diário pela TUD (${dias} dia(s) de viagem).</p>
+
+      <div class="field-row" style="align-items:flex-end">
+        <div class="field"><label>Hospedagem — valor por diária (R$)${tudHosp ? ` <small style="color:var(--muted)">(teto: ${brl(tudHosp.valor_diaria)}/dia)</small>` : ''}</label>
+          <input type="number" id="w4-hosp" step="0.01" min="0" value="${esc(w.despesas.hospedagem_dia)}"></div>
+        <div id="w4-hosp-total" style="padding-bottom:10px; font-weight:600; white-space:nowrap"></div>
+      </div>
+      <div id="w4-hosp-alerta"></div>
+
+      <div class="field-row" style="align-items:flex-end">
+        <div class="field"><label>Alimentação — valor por dia (R$)${tudAlim ? ` <small style="color:var(--muted)">(teto: ${brl(tudAlim.valor_diaria)}/dia)</small>` : ''}</label>
+          <input type="number" id="w4-alim" step="0.01" min="0" value="${esc(w.despesas.alimentacao_dia)}"></div>
+        <div id="w4-alim-total" style="padding-bottom:10px; font-weight:600; white-space:nowrap"></div>
+      </div>
+      <div id="w4-alim-alerta"></div>
+
+      <hr style="margin:16px 0; border-color:var(--line)">
+      ${w.transporte.aviao ? `<p>✈️ Passagem de Avião (soma dos trechos): <strong>${brl(w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0))}</strong></p>` : ''}
+      ${w.transporte.onibus ? `<p>🚌 Passagem de Ônibus (soma dos trechos): <strong>${brl(w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0))}</strong></p>` : ''}
+      ${w.transporte.aluguel_carro ? `<p>🚗 Aluguel de Carro (soma das diárias): <strong>${brl(w.transporte.alugueis.reduce((s, a) => s + (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0), 0))}</strong></p>` : ''}
+
+      <div class="field-row">
+        ${fld('w4-comb-qtd', 'Combustível — Qtd.', 'number', w.despesas.combustivel.qtd, 'min="1"')}
+        ${fld('w4-comb-valor', 'Valor unitário (R$)', 'number', w.despesas.combustivel.valor, 'step="0.01" min="0"')}
+      </div>
+      <div class="field-row">
+        ${fld('w4-pedagio-qtd', 'Pedágio — Qtd.', 'number', w.despesas.pedagio.qtd, 'min="1"')}
+        ${fld('w4-pedagio-valor', 'Valor unitário (R$)', 'number', w.despesas.pedagio.valor, 'step="0.01" min="0"')}
+      </div>
+      ${temCarro ? `<div class="field-row">
+        ${fld('w4-estac-qtd', 'Estacionamento — Qtd.', 'number', w.despesas.estacionamento.qtd, 'min="1"')}
+        ${fld('w4-estac-valor', 'Valor unitário (R$)', 'number', w.despesas.estacionamento.valor, 'step="0.01" min="0"')}
+      </div>` : ''}
+
+      <div class="field"><label>Táxi / Uber</label></div>
+      <div id="w4-taxi-list"></div>
+      <button class="btn" id="w4-add-taxi" type="button">+ Adicionar corrida</button>
+    </div>
+    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>`;
+
+  const atualizarHosp = () => {
+    const v = Number($('#w4-hosp').value) || 0;
+    w.despesas.hospedagem_dia = $('#w4-hosp').value;
+    $('#w4-hosp-total').textContent = 'Total: ' + brl(v * dias);
+    $('#w4-hosp-alerta').innerHTML = (tudHosp && v > tudHosp.valor_diaria) ? `<div class="alert-item late">⚠️ Limite de TUD excedido — o teto é ${brl(tudHosp.valor_diaria)}/dia.</div>` : '';
+  };
+  const atualizarAlim = () => {
+    const v = Number($('#w4-alim').value) || 0;
+    w.despesas.alimentacao_dia = $('#w4-alim').value;
+    $('#w4-alim-total').textContent = 'Total: ' + brl(v * dias);
+    $('#w4-alim-alerta').innerHTML = (tudAlim && v > tudAlim.valor_diaria) ? `<div class="alert-item late">⚠️ Limite de TUD excedido — o teto é ${brl(tudAlim.valor_diaria)}/dia.</div>` : '';
+  };
+  $('#w4-hosp').oninput = atualizarHosp; atualizarHosp();
+  $('#w4-alim').oninput = atualizarAlim; atualizarAlim();
+
+  const simples = { comb: 'combustivel', pedagio: 'pedagio' };
+  if (temCarro) simples.estac = 'estacionamento';
+  Object.entries(simples).forEach(([pref, cat]) => {
+    $(`#w4-${pref}-qtd`).oninput = e => w.despesas[cat].qtd = e.target.value;
+    $(`#w4-${pref}-valor`).oninput = e => w.despesas[cat].valor = e.target.value;
+  });
+
+  const renderTaxi = () => {
+    const box = $('#w4-taxi-list');
+    box.innerHTML = w.despesas.taxi_uber.map((t, i) => `
+      <div class="via-item-row">
+        <div class="field-row">${fld(`tx-origem-${i}`, 'De', 'text', t.origem || '')}${fld(`tx-destino-${i}`, 'Para', 'text', t.destino || '')}${fld(`tx-valor-${i}`, 'Valor (R$)', 'number', t.valor || '', 'step="0.01" min="0"')}</div>
+        <button class="btn sm danger-ghost" data-rmtaxi="${i}" type="button">Remover</button>
+      </div>`).join('') || '<p class="hint">Nenhuma corrida adicionada.</p>';
+    w.despesas.taxi_uber.forEach((t, i) => ['origem', 'destino', 'valor'].forEach(f => {
+      const elx = document.getElementById(`tx-${f}-${i}`); if (elx) elx.oninput = () => t[f] = elx.value;
+    }));
+    box.querySelectorAll('[data-rmtaxi]').forEach(b => b.onclick = () => { w.despesas.taxi_uber.splice(Number(b.dataset.rmtaxi), 1); renderTaxi(); });
+  };
+  renderTaxi();
+  $('#w4-add-taxi').onclick = () => { w.despesas.taxi_uber.push({ origem: '', destino: '', valor: '' }); renderTaxi(); };
+
+  $('#wiz-back').onclick = () => viaWizStep3();
+  $('#wiz-next').onclick = () => viaWizStep5();
+}
+
+function viaComputeResumo(w) {
+  const dias = viaWizDias(w), cat = {};
+  const add = (k, v) => { if (v) cat[k] = (cat[k] || 0) + v; };
+  add('hospedagem', (Number(w.despesas.hospedagem_dia) || 0) * dias);
+  add('alimentacao', (Number(w.despesas.alimentacao_dia) || 0) * dias);
+  if (w.transporte.aviao) add('passagem_aviao', w.transporte.aviao_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
+  if (w.transporte.onibus) add('passagem_onibus', w.transporte.onibus_trechos.reduce((s, t) => s + (Number(t.valor) || 0), 0));
+  if (w.transporte.aluguel_carro) w.transporte.alugueis.forEach(a => {
+    add('aluguel_carro', (Number(a.valor_diaria) || 0) * (Number(a.dias) || 0));
+    add('combustivel', Number(a.combustivel_valor) || 0);
+    add('pedagio', Number(a.pedagio_valor) || 0);
+  });
+  if (w.transporte.carro_proprio) {
+    add('combustivel', Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0);
+    add('pedagio', Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0);
+  }
+  add('combustivel', (Number(w.despesas.combustivel.qtd) || 0) * (Number(w.despesas.combustivel.valor) || 0));
+  add('pedagio', (Number(w.despesas.pedagio.qtd) || 0) * (Number(w.despesas.pedagio.valor) || 0));
+  add('estacionamento', (Number(w.despesas.estacionamento.qtd) || 0) * (Number(w.despesas.estacionamento.valor) || 0));
+  add('taxi_uber', w.despesas.taxi_uber.reduce((s, t) => s + (Number(t.valor) || 0), 0));
+  const total = Object.values(cat).reduce((s, v) => s + v, 0);
+  return { dias, cat, total };
+}
+
+function viaResumoTrechosHtml(titulo, trechos, campos) {
+  if (!trechos.length) return '';
+  const labels = { cia: 'Cia', numero_voo: 'Nº Voo', origem: 'Origem', destino: 'Destino', data: 'Data', saida: 'Saída', chegada: 'Chegada', classe: 'Classe', valor: 'Valor', empresa: 'Empresa', horario: 'Horário' };
+  return `<h4 style="margin:18px 0 8px">${titulo}</h4>
+    <div class="table-wrap"><table><thead><tr>${campos.map(f => `<th>${labels[f]}</th>`).join('')}</tr></thead>
+    <tbody>${trechos.map(t => `<tr>${campos.map(f => `<td>${f === 'valor' ? brl(Number(t[f]) || 0) : (f === 'data' ? brDate(t[f]) : esc(t[f] || '—'))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function viaResumoAlugueisHtml(alugueis) {
+  if (!alugueis.length) return '';
+  return `<h4 style="margin:18px 0 8px">🚗 Aluguel de Carro</h4>
+    <div class="table-wrap"><table><thead><tr><th>Locadora</th><th>Retirada</th><th>Devolução</th><th class="num">Diária</th><th class="num">Dias</th><th class="num">Total</th></tr></thead>
+    <tbody>${alugueis.map(a => `<tr><td>${esc(a.locadora || '—')}</td><td>${esc(a.retirada_local || '—')} (${brDate(a.retirada_data)})</td><td>${esc(a.devolucao_local || '—')} (${brDate(a.devolucao_data)})</td>
+    <td class="num">${brl(Number(a.valor_diaria) || 0)}</td><td class="num">${a.dias || 0}</td><td class="num">${brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function viaResumoTaxiHtml(corridas) {
+  return `<h4 style="margin:18px 0 8px">🚕 Táxi / Uber</h4>
+    <div class="table-wrap"><table><thead><tr><th>De</th><th>Para</th><th class="num">Valor</th></tr></thead>
+    <tbody>${corridas.map(t => `<tr><td>${esc(t.origem || '—')}</td><td>${esc(t.destino || '—')}</td><td class="num">${brl(Number(t.valor) || 0)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function viaWizStep5() {
+  const w = VIA_WIZ, c = $('#content'), r = viaComputeResumo(w);
+  c.innerHTML = `
+    ${viaWizProgress(5)}
+    <div class="card" style="max-width:760px">
+      <h3 style="margin-bottom:6px">Resumo — confira antes de enviar</h3>
+      <p class="hint" style="margin-bottom:14px">Esta etapa é só leitura. Se precisar corrigir algo, use "Voltar".</p>
+      <table class="via-resumo-tbl">
+        <tr><td>Solicitante</td><td>${esc(w.colab.name)} — ${esc(w.colab.cargo || '')}</td></tr>
+        <tr><td>Tier</td><td>${TIER_LABEL[w.colab.tier]}</td></tr>
+        <tr><td>Ordem de Trabalho</td><td>${esc(w.ordem_trabalho) || '—'}</td></tr>
+        <tr><td>Categoria de local</td><td>${LOCAL_LABEL[w.categoria_local]}</td></tr>
+        <tr><td>Destinos</td><td>${w.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ') || '—'}</td></tr>
+        <tr><td>Período</td><td>${brDate(w.data_inicio)} a ${brDate(w.data_fim)} (${r.dias} dia(s))</td></tr>
+        <tr><td>Motivo</td><td>${esc(w.motivo)}</td></tr>
+        <tr><td>Objetivo</td><td>${esc(w.objetivo) || '—'}</td></tr>
+      </table>
+      <h4 style="margin:18px 0 8px">Detalhamento de Viáticos</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Descrição</th><th class="num">Total (R$)</th></tr></thead>
+        <tbody>${Object.entries(r.cat).map(([k, v]) => `<tr><td>${DESP_CAT_LABEL[k] || k}</td><td class="num">${brl(v)}</td></tr>`).join('') || '<tr><td colspan="2"><div class="empty">Nenhuma despesa prevista.</div></td></tr>'}
+        <tr style="font-weight:700; background:var(--verde-050)"><td>Total Geral</td><td class="num">${brl(r.total)}</td></tr></tbody>
+      </table></div>
+      ${w.transporte.aviao ? viaResumoTrechosHtml('✈️ Voos', w.transporte.aviao_trechos, ['cia', 'numero_voo', 'origem', 'destino', 'data', 'saida', 'chegada', 'classe', 'valor']) : ''}
+      ${w.transporte.onibus ? viaResumoTrechosHtml('🚌 Ônibus', w.transporte.onibus_trechos, ['empresa', 'origem', 'destino', 'data', 'horario', 'valor']) : ''}
+      ${w.transporte.aluguel_carro ? viaResumoAlugueisHtml(w.transporte.alugueis) : ''}
+      ${w.despesas.taxi_uber.length ? viaResumoTaxiHtml(w.despesas.taxi_uber) : ''}
+    </div>
+    <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button>
+      <div style="display:flex; gap:10px">
+        <button class="btn" id="wiz-pdf">Gerar PDF</button>
+        <button class="btn primary" id="wiz-enviar">Enviar solicitação</button>
+      </div>
+    </div>`;
+
+  $('#wiz-back').onclick = () => viaWizStep4();
+  $('#wiz-pdf').onclick = () => viaGerarPDF(w, r);
+  $('#wiz-enviar').onclick = async () => {
+    try {
+      await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
+        ordem_trabalho: w.ordem_trabalho, categoria_local: w.categoria_local, destinos: w.destinos,
+        data_inicio: w.data_inicio, data_fim: w.data_fim, motivo: w.motivo, objetivo: w.objetivo,
+        previsao_por_categoria: r.cat, transporte_detalhes: w.transporte, notes: ''
+      }});
+      toast('Solicitação enviada! Ela segue para aprovação.');
+      renderSolicitacaoAutosservico();
+    } catch (e) { toast(e.message); }
+  };
+}
+
+function viaGerarPDF(w, r) {
+  if (!window.jspdf) return toast('Biblioteca de PDF ainda carregando. Tente novamente em instantes.');
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
+    const MARGIN = 14;
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 30, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', pageW - MARGIN - logoW, 10, logoW, logoH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30, 38, 32);
+    doc.text('Solicitação de Viáticos', MARGIN, 18);
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 24, pageW - MARGIN, 24);
+
+    let y = 32;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid',
+      body: [
+        ['Nome do Solicitante', w.colab.name, 'Data', new Date().toLocaleDateString('pt-BR')],
+        ['Cargo', w.colab.cargo || '—', 'Tier', w.colab.tier],
+        ['Data de Saída', brDate(w.data_inicio), 'Data de Retorno', brDate(w.data_fim)],
+        ['Ordem de Trabalho', w.ordem_trabalho || '—', 'Categoria de Local', LOCAL_LABEL[w.categoria_local]],
+        ['Destinos', w.destinos.map(d => `${d.municipio}/${d.uf}`).join(', ') || '—', 'Motivo', w.motivo]
+      ],
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42] },
+      columnStyles: { 0: { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 38 }, 2: { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 38 } }
+    });
+    y = doc.lastAutoTable.finalY + 8;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...VERDE);
+    doc.text('Objetivo da Viagem', MARGIN, y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    const objLines = doc.splitTextToSize(w.objetivo || '—', pageW - MARGIN * 2 - 6);
+    const objH = Math.max(12, objLines.length * 4.5 + 6);
+    doc.setDrawColor(210, 218, 213); doc.rect(MARGIN, y, pageW - MARGIN * 2, objH);
+    doc.text(objLines, MARGIN + 3, y + 6);
+    y += objH + 10;
+
+    const trechoTabela = (titulo, head, body) => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...VERDE); doc.text(titulo, MARGIN, y); y += 4;
+      doc.autoTable({ startY: y, margin: { left: MARGIN, right: MARGIN }, head: [head], body,
+        styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 2 }, headStyles: { fillColor: VERDE, textColor: 255, fontSize: 7.5 } });
+      y = doc.lastAutoTable.finalY + 8;
+    };
+    if (w.transporte.aviao && w.transporte.aviao_trechos.length) trechoTabela('✈ Voos', ['Cia', 'Nº Voo', 'Origem', 'Destino', 'Data', 'Saída', 'Chegada', 'Classe', 'Valor'],
+      w.transporte.aviao_trechos.map(t => [t.cia, t.numero_voo, t.origem, t.destino, brDate(t.data), t.saida, t.chegada, t.classe, brl(Number(t.valor) || 0)]));
+    if (w.transporte.onibus && w.transporte.onibus_trechos.length) trechoTabela('🚌 Ônibus', ['Empresa', 'Origem', 'Destino', 'Data', 'Horário', 'Valor'],
+      w.transporte.onibus_trechos.map(t => [t.empresa, t.origem, t.destino, brDate(t.data), t.horario, brl(Number(t.valor) || 0)]));
+    if (w.transporte.aluguel_carro && w.transporte.alugueis.length) trechoTabela('🚗 Aluguel de Carro', ['Locadora', 'Retirada', 'Devolução', 'Diária', 'Dias', 'Total'],
+      w.transporte.alugueis.map(a => [a.locadora, `${a.retirada_local} (${brDate(a.retirada_data)})`, `${a.devolucao_local} (${brDate(a.devolucao_data)})`, brl(Number(a.valor_diaria) || 0), String(a.dias || 0), brl((Number(a.valor_diaria) || 0) * (Number(a.dias) || 0))]));
+
+    if (y > 240) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
+    doc.text('Detalhamento de Viáticos', MARGIN, y); y += 5;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN },
+      head: [['Descrição', 'Total (R$)']],
+      body: Object.entries(r.cat).map(([k, v]) => [DESP_CAT_LABEL[k] || k, brl(v)]),
+      foot: [['Total Geral', brl(r.total)]],
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5 }, headStyles: { fillColor: VERDE, textColor: 255 },
+      footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
+      columnStyles: { 1: { halign: 'right' } }
+    });
+    y = doc.lastAutoTable.finalY + 12;
+
+    if (y > 255) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    const decl = doc.splitTextToSize(`Declaro que me comprometo a utilizar os valores destinados às despesas de viagem exclusivamente de acordo com o objetivo da viagem que me foi atribuído pela ${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}. Estou ciente de que a verificação e a validação dessas despesas serão realizadas após a data de retorno.`, pageW - MARGIN * 2);
+    doc.text(decl, MARGIN, y); y += decl.length * 4 + 10;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    doc.text(`Assinado eletronicamente por ${w.colab.name} em ${new Date().toLocaleDateString('pt-BR')}`, MARGIN, y);
+
+    const safeName = String(w.colab.name || 'colaborador').replace(/\s+/g, '_');
+    const safeOt = String(w.ordem_trabalho || 'sem_OT').replace(/\s+/g, '_');
+    doc.save(`Solicitacao_Viaticos_${safeOt}_${safeName}.pdf`);
+    toast('PDF gerado — confira e envie manualmente ao Approvals por enquanto.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
 }
 
 async function renderViaticosConfig() {
