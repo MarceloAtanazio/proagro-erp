@@ -3431,7 +3431,7 @@ function viaGerarPDF(w, r) {
 }
 
 async function renderViaticosConfig() {
-  const [colaboradores, tud] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud')]);
+  const [colaboradores, tud, usuarios] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud'), api('/api/users')]);
 
   const tudGrid = tier => `<h4 style="margin:14px 0 8px">Tier ${tier}</h4>
     <div class="table-wrap"><table><thead><tr><th>Categoria de local</th><th class="num">Hospedagem (dia)</th><th class="num">Alimentação (dia)</th></tr></thead>
@@ -3454,15 +3454,21 @@ async function renderViaticosConfig() {
       ${fldSel('cb-tier', 'Tier', [{ v: 'A', t: 'A' }, { v: 'B', t: 'B' }], 'B')}
       <button class="btn primary" id="cb-add" type="button">+ Adicionar</button>
     </div>
+    <p class="hint" style="margin-top:6px">Vínculo com usuário, cidade-base e veículo (pro autosserviço) se ajustam depois, clicando em "Editar".</p>
     <div class="table-wrap" style="margin-top:10px"><table>
-      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th class="actions">Ações</th></tr></thead>
-      <tbody>${colaboradores.map(c => `<tr>
+      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Usuário vinculado</th><th>Ativo</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${colaboradores.map(c => {
+        const u = usuarios.find(x => x.id === c.usuario_id);
+        return `<tr>
         <td>${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
+        <td>${u ? esc(u.name) : '<span style="color:var(--muted)">— nenhum —</span>'}</td>
         <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
         <td class="actions">
+          <button class="btn sm" data-editar-colab="${c.id}">Editar</button>
           <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>
           <button class="btn sm danger-ghost" data-del-colab="${c.id}">Excluir</button>
-        </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
+        </td></tr>`;
+      }).join('') || '<tr><td colspan="6"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
     </table></div>`;
 
   openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
@@ -3475,6 +3481,11 @@ async function renderViaticosConfig() {
     catch (e) { toast(e.message); }
   });
 
+  document.querySelectorAll('[data-editar-colab]').forEach(b => b.onclick = () => {
+    const c = colaboradores.find(x => x.id == b.dataset.editarColab);
+    formEditarColaborador(c, usuarios);
+  });
+
   $('#cb-add').onclick = async () => {
     const nome = $('#cb-nome').value.trim();
     if (!nome) return toast('Informe o nome.');
@@ -3485,10 +3496,46 @@ async function renderViaticosConfig() {
   };
   document.querySelectorAll('[data-toggle-colab]').forEach(b => b.onclick = async () => {
     const c = colaboradores.find(x => x.id == b.dataset.toggleColab);
-    await api(`/api/colaboradores/${c.id}`, { method: 'PUT', body: { name: c.name, cargo: c.cargo, tier: c.tier, ativo: !c.ativo } });
+    await api(`/api/colaboradores/${c.id}`, { method: 'PUT', body: {
+      name: c.name, cargo: c.cargo, tier: c.tier, ativo: !c.ativo, usuario_id: c.usuario_id,
+      cidade_base_uf: c.cidade_base_uf, cidade_base_municipio: c.cidade_base_municipio,
+      veiculo_placa: c.veiculo_placa, veiculo_modelo: c.veiculo_modelo, veiculo_consumo_kml: c.veiculo_consumo_kml
+    }});
     renderViaticosConfig();
   });
   document.querySelectorAll('[data-del-colab]').forEach(b => b.onclick = () => confirmDelete('este colaborador', `/api/colaboradores/${b.dataset.delColab}`, renderViaticosConfig));
+}
+
+async function formEditarColaborador(c, usuarios) {
+  const body = `
+    ${fld('ec-nome', 'Nome', 'text', c.name)}
+    ${fld('ec-cargo', 'Cargo', 'text', c.cargo || '')}
+    ${fldSel('ec-tier', 'Tier', [{ v: 'A', t: 'A' }, { v: 'B', t: 'B' }], c.tier)}
+    ${fldSel('ec-usuario', 'Vincular a um usuário (autosserviço)', [{ v: '', t: '— nenhum —' }, ...usuarios.map(u => ({ v: u.id, t: `${u.name} (${u.email})` }))], c.usuario_id || '')}
+    <div class="field-row">
+      ${fldSel('ec-uf', 'Estado (cidade-base)', [{ v: '', t: '— não informado —' }, ...BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }))], c.cidade_base_uf || '')}
+      ${fld('ec-municipio', 'Município (cidade-base)', 'text', c.cidade_base_municipio || '')}
+    </div>
+    <h4 style="margin:14px 0 8px">Veículo próprio (pra Solicitação de Viáticos)</h4>
+    <div class="field-row">
+      ${fld('ec-placa', 'Placa', 'text', c.veiculo_placa || '')}
+      ${fld('ec-modelo', 'Modelo', 'text', c.veiculo_modelo || '')}
+      ${fld('ec-consumo', 'Consumo (km/L)', 'number', c.veiculo_consumo_kml || '', 'step="0.1" min="0"')}
+    </div>`;
+
+  openModal(`Editar colaborador — ${esc(c.name)}`, body,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        try {
+          await api(`/api/colaboradores/${c.id}`, { method: 'PUT', body: {
+            name: $('#ec-nome').value, cargo: $('#ec-cargo').value, tier: $('#ec-tier').value, ativo: c.ativo,
+            usuario_id: $('#ec-usuario').value || null, cidade_base_uf: $('#ec-uf').value || null,
+            cidade_base_municipio: $('#ec-municipio').value || null, veiculo_placa: $('#ec-placa').value || null,
+            veiculo_modelo: $('#ec-modelo').value || null, veiculo_consumo_kml: $('#ec-consumo').value || null
+          }});
+          closeModal(); toast('Colaborador atualizado.'); renderViaticosConfig();
+        } catch (e) { modalError(e.message); }
+     }}]);
 }
 
 // ============================================================
