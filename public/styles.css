@@ -321,6 +321,8 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .via-resumo-tbl { width:100%; border-collapse:collapse; margin-bottom:8px; }
 .via-resumo-tbl td { padding:6px 10px; border-bottom:1px solid var(--line); font-size:13.5px; }
 .via-resumo-tbl td:first-child { font-weight:600; color:var(--ink-2); width:180px; }
+.via-resumo-linha { display:flex; justify-content:space-between; align-items:center; padding:9px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+.via-resumo-linha:last-of-type { border-bottom:none; }
 @media (max-width: 720px) {
   .user-row { grid-template-columns:1fr; }
   .user-meta, .user-actions { justify-content:flex-start; }
