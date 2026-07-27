@@ -2327,6 +2327,38 @@ async function renderRelatorios() {
 const TIER_LABEL = { A: 'A — Diretoria/Gerência', B: 'B — Coordenação/Técnicos' };
 const MOTIVO_OPTIONS = ['Monitoramento', 'Sinistro', 'Comercial'];
 const LOCAL_LABEL = { interior: 'Interior', capital: 'Capital', sp_df_rj_intl: 'SP/DF/RJ + Internacional' };
+
+// Capital de cada UF — usada para calcular automaticamente a "Categoria de
+// local" a partir dos destinos escolhidos na etapa "Viagem", em vez de
+// depender de o usuário selecionar a categoria manualmente (fonte de erro).
+const CAPITAIS_BR = {
+  AC: 'Rio Branco', AL: 'Maceió', AP: 'Macapá', AM: 'Manaus', BA: 'Salvador', CE: 'Fortaleza',
+  DF: 'Brasília', ES: 'Vitória', GO: 'Goiânia', MA: 'São Luís', MT: 'Cuiabá', MS: 'Campo Grande',
+  MG: 'Belo Horizonte', PA: 'Belém', PB: 'João Pessoa', PR: 'Curitiba', PE: 'Recife', PI: 'Teresina',
+  RJ: 'Rio de Janeiro', RN: 'Natal', RS: 'Porto Alegre', RO: 'Porto Velho', RR: 'Boa Vista',
+  SC: 'Florianópolis', SE: 'Aracaju', SP: 'São Paulo', TO: 'Palmas'
+};
+// São Paulo, Rio de Janeiro e Brasília têm teto próprio (mais alto que as demais capitais).
+const CATEGORIA_TOPO = new Set(['SP:São Paulo', 'RJ:Rio de Janeiro', 'DF:Brasília']);
+const CATEGORIA_PRIORIDADE = { interior: 0, capital: 1, sp_df_rj_intl: 2 };
+
+function viaCategoriaDestino(uf, municipio) {
+  if (CATEGORIA_TOPO.has(`${uf}:${municipio}`)) return 'sp_df_rj_intl';
+  if (CAPITAIS_BR[uf] === municipio) return 'capital';
+  return 'interior';
+}
+// Categoria final = a mais alta entre todos os destinos da viagem (mais o
+// próprio flag de "viagem internacional", já que não há seleção de cidades
+// no exterior no passo de destinos).
+function viaCalcularCategoriaLocal(destinos, internacional) {
+  let cat = internacional ? 'sp_df_rj_intl' : 'interior';
+  (destinos || []).forEach(d => {
+    const c = viaCategoriaDestino(d.uf, d.municipio);
+    if (CATEGORIA_PRIORIDADE[c] > CATEGORIA_PRIORIDADE[cat]) cat = c;
+  });
+  return cat;
+}
+
 const DESP_CAT_LABEL = {
   alimentacao: 'Alimentação',
   aluguel_carro: 'Aluguel de Carro',
@@ -2947,7 +2979,7 @@ async function renderSolicitacaoAutosservico() {
   const [tud, viaConfig] = await Promise.all([api('/api/viaticos/tud'), api('/api/viaticos/config')]);
   VIA_WIZ = {
     colab, tud, preco_combustivel: viaConfig.preco_combustivel_litro,
-    ordem_trabalho: '', categoria_local: 'interior', destinos: [], data_inicio: todayISO(), data_fim: todayISO(),
+    ordem_trabalho: '', categoria_local: 'interior', internacional: false, destinos: [], data_inicio: todayISO(), data_fim: todayISO(),
     motivo: MOTIVO_OPTIONS[0], objetivo: '',
     transporte: {
       aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false, taxi_uber: false,
@@ -3100,7 +3132,6 @@ function viaWizStep2() {
       <div class="card">
         <h3 style="margin-bottom:14px">Dados da viagem</h3>
         ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho)}
-        ${fldSel('w2-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), w.categoria_local)}
         <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
           <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
             ${fldSel('w2-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
@@ -3108,6 +3139,11 @@ function viaWizStep2() {
             <button class="btn primary" id="w2-add-dest" type="button">+ Adicionar</button>
           </div>
           <div id="w2-destinos-list"></div>
+        </div>
+        <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="w2-internacional" ${w.internacional ? 'checked' : ''}> ✈️ Esta viagem inclui trecho internacional</label>
+        <div class="field">
+          <label>Categoria de local (calculada automaticamente)</label>
+          <div class="via-cat-badge" id="w2-cat-badge"></div>
         </div>
         <div class="field-row">
           ${fld('w2-inicio', 'Data de saída', 'date', w.data_inicio)}
@@ -3123,12 +3159,23 @@ function viaWizStep2() {
     const uf = $('#w2-uf').value;
     $('#w2-mun').innerHTML = (BR_LOCALIDADES.municipios[uf] || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
   };
+  // A categoria de local não é mais escolhida manualmente: ela é recalculada
+  // sempre que um destino é adicionado/removido ou o flag de viagem
+  // internacional muda, pegando sempre o teto mais alto entre os destinos —
+  // isso elimina o risco de o usuário selecionar a categoria errada.
+  const renderCategoria = () => {
+    const cat = viaCalcularCategoriaLocal(w.destinos, w.internacional);
+    w.categoria_local = cat;
+    $('#w2-cat-badge').innerHTML = `<span class="tag ${cat}">${LOCAL_LABEL[cat]}</span>
+      <span class="txt">${w.destinos.length ? 'Definida pelo destino de maior teto entre os selecionados acima' : 'Nenhum destino selecionado ainda — assumindo Interior'}${w.internacional ? ' + viagem internacional marcada.' : '.'}</span>`;
+  };
   const renderDestinos = () => {
     const box = $('#w2-destinos-list');
     box.innerHTML = w.destinos.length
       ? `<div class="chip-row">${w.destinos.map((d, i) => `<span class="chip">${esc(d.municipio)}/${esc(d.uf)} <button type="button" data-rm="${i}">×</button></span>`).join('')}</div>`
       : '<span style="color:var(--muted); font-size:13px">Nenhuma cidade adicionada ainda.</span>';
-    box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.rm), 1); renderDestinos(); });
+    box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.rm), 1); renderDestinos(); renderCategoria(); });
+    renderCategoria();
   };
   $('#w2-uf').onchange = popularMunicipios; popularMunicipios(); renderDestinos();
   $('#w2-add-dest').onclick = () => {
@@ -3137,11 +3184,13 @@ function viaWizStep2() {
     if (w.destinos.some(d => d.uf === uf && d.municipio === municipio)) return toast('Essa cidade já foi adicionada.');
     w.destinos.push({ uf, municipio }); renderDestinos();
   };
+  $('#w2-internacional').onchange = e => { w.internacional = e.target.checked; renderCategoria(); };
   $('#wiz-back').onclick = () => viaWizStep1();
   $('#wiz-next').onclick = () => {
     if (!$('#w2-inicio').value || !$('#w2-fim').value) return toast('Preencha as datas da viagem.');
     if ($('#w2-fim').value < $('#w2-inicio').value) return toast('Data de retorno não pode ser antes da saída.');
-    w.ordem_trabalho = $('#w2-ot').value; w.categoria_local = $('#w2-local').value;
+    if (!w.destinos.length) return toast('Adicione ao menos um destino antes de avançar.');
+    w.ordem_trabalho = $('#w2-ot').value; w.categoria_local = viaCalcularCategoriaLocal(w.destinos, w.internacional);
     w.data_inicio = $('#w2-inicio').value; w.data_fim = $('#w2-fim').value;
     w.motivo = $('#w2-motivo').value; w.objetivo = $('#w2-objetivo').value;
     viaWizStep3();
