@@ -78,3 +78,15 @@
 ### Correção pós-validação (mesmo dia)
 - **Bug:** ao recolher, o botão de expandir sumia. Causa: o logo da sidebar tinha `style="display:block"` inline, que vence a regra CSS de ocultação — o logo ficava espremido nos 64px e empurrava o botão para fora da área visível (medido: botão em x=62 num sidebar de 64px).
 - **Correção:** estilo do logo movido do inline para o CSS (`.sidebar .brand img`), permitindo ao modo recolhido ocultá-lo. Verificado: recolhido → logo oculto, botão centralizado (x=19, largura 26, dentro dos 64px); expandido → tudo restaurado.
+
+## 2026-07-28 — UX da Solicitação de Viáticos (etapa Transporte)
+
+**Solicitação:** (1) melhorar os controles de "Ordem do roteiro" (muito texto junto); (2) mapa acompanhar a rolagem / ocupar mais altura; (3) melhorar a escolha de transportes.
+
+### Implementação (`public/app.js` + `styles.css`)
+1. **Ordem do roteiro:** chips apertados (`1º Cidade ▲▼×` inline) viraram lista vertical `.via-route-list` — cada parada em uma linha com número em círculo verde (mesma cor dos marcadores do mapa), nome com reticências + tooltip para endereços longos, e botões ↑ ↓ × de 26×26px com estados de hover (verde para mover, vermelho para remover). Texto explicativo encurtado.
+2. **Mapa:** card com `position:sticky; top:88px` (topbar mede 78px) — acompanha a rolagem da coluna esquerda; altura dinâmica `calc(100vh - 240px)` com mínimo de 460px (antes: 500px fixos, sticky em top:16px que ficava sob a topbar).
+3. **Transportes:** checkboxes pequenos viraram grade de cartões selecionáveis `.via-transport-tile` (ícone grande + nome), com estado marcado em verde + badge ✓, hover com sombra e foco acessível. IDs dos inputs preservados — nenhuma mudança de lógica.
+
+### Verificação
+- Medido no navegador local (estrutura da etapa 3 injetada no DOM): `:has(input:checked)` aplica fundo verde e ✓ (opacity 1); botões 26×26; ellipsis ativa em nome longo; sticky funciona (card fixo em y=88 após rolar 800px); mapa 480px no viewport de teste. Sem erros de console; `node --check` OK.

@@ -3236,12 +3236,19 @@ function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix)
   }).join('');
   const kmPonderado = viaKmPonderado(trechos);
   const combTotal = consumo ? (kmPonderado / consumo * preco) : 0;
-  const reorderHtml = intermediarios.map((d, i) => `
-    <span class="chip">${i + 1}º ${esc(d.endereco || `${d.municipio}/${d.uf}`)}
-      <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover pra cima">▲</button>
-      <button type="button" data-mvdown="${i}" ${i === intermediarios.length - 1 ? 'disabled' : ''} title="Mover pra baixo">▼</button>
-      <button type="button" data-mvdel="${i}" title="Remover da rota">×</button>
-    </span>`).join(' ');
+  const reorderHtml = intermediarios.map((d, i) => {
+    const nome = esc(d.endereco || `${d.municipio}/${d.uf}`);
+    return `
+    <div class="via-route-stop">
+      <span class="via-route-num">${i + 1}</span>
+      <span class="via-route-name" title="${nome}">${nome}</span>
+      <span class="via-route-actions">
+        <button type="button" data-mvup="${i}" ${i === 0 ? 'disabled' : ''} title="Mover para cima" aria-label="Mover para cima">↑</button>
+        <button type="button" data-mvdown="${i}" ${i === intermediarios.length - 1 ? 'disabled' : ''} title="Mover para baixo" aria-label="Mover para baixo">↓</button>
+        <button type="button" class="rm" data-mvdel="${i}" title="Remover da rota" aria-label="Remover da rota">×</button>
+      </span>
+    </div>`;
+  }).join('');
   return `
     <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Repetições</th><th class="num">Combustível</th></tr></thead>
     <tbody>${legsHtml}</tbody>
@@ -3251,8 +3258,9 @@ function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix)
       <td class="num" id="${idPrefix}-totalcomb">${brl(combTotal)}</td>
     </tr></tfoot></table></div>
     <p class="hint" style="margin-top:8px">Se algum trecho foi percorrido mais de uma vez — por exemplo, deslocamentos diários entre a cidade do hotel e a do evento — aumente as "Repetições" dele. Cada unidade conta uma passagem (ida OU volta); um vaivém em 3 dias, por exemplo, são 6 repetições.</p>
-    <p style="margin-top:10px; font-size:13px"><strong>Ordem do roteiro</strong> — mude a sequência ou remova uma cidade; a rota é recalculada e as repetições já ajustadas são mantidas para os trechos que continuarem existindo:</p>
-    <div class="chip-row">${reorderHtml}</div>`;
+    <p style="margin-top:12px; font-size:13px; margin-bottom:2px"><strong>Ordem do roteiro</strong></p>
+    <p class="hint" style="margin-top:0">Use as setas para mudar a sequência ou o × para remover uma parada — a rota é recalculada na hora.</p>
+    <div class="via-route-list">${reorderHtml}</div>`;
 }
 
 // Executa o cálculo (valida consumo/preço, chama o OSRM, desenha o mapa,
@@ -3408,12 +3416,12 @@ function viaWizStep3() {
         <div class="card" style="flex:1.1; min-width:0">
           <h3 style="margin-bottom:6px">Transporte</h3>
           <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
-          <div class="chip-row" style="margin-bottom:16px">
-            <label class="check-chip"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}> ✈️ Avião</label>
-            <label class="check-chip"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}> 🚌 Ônibus</label>
-            <label class="check-chip"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}> 🚗 Aluguel de Carro</label>
-            <label class="check-chip"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}> 🚙 Carro Próprio</label>
-            <label class="check-chip"><input type="checkbox" id="w3-taxiuber" ${w.transporte.taxi_uber ? 'checked' : ''}> 🚕 Táxi / Uber</label>
+          <div class="via-transport-grid">
+            <label class="via-transport-tile"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}><span class="vt-icon">✈️</span><span class="vt-name">Avião</span></label>
+            <label class="via-transport-tile"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}><span class="vt-icon">🚌</span><span class="vt-name">Ônibus</span></label>
+            <label class="via-transport-tile"><input type="checkbox" id="w3-aluguel" ${w.transporte.aluguel_carro ? 'checked' : ''}><span class="vt-icon">🚗</span><span class="vt-name">Aluguel de Carro</span></label>
+            <label class="via-transport-tile"><input type="checkbox" id="w3-proprio" ${w.transporte.carro_proprio ? 'checked' : ''}><span class="vt-icon">🚙</span><span class="vt-name">Carro Próprio</span></label>
+            <label class="via-transport-tile"><input type="checkbox" id="w3-taxiuber" ${w.transporte.taxi_uber ? 'checked' : ''}><span class="vt-icon">🚕</span><span class="vt-name">Táxi / Uber</span></label>
           </div>
           <div id="w3-aviao-block"></div>
           <div id="w3-onibus-block"></div>
@@ -3421,9 +3429,9 @@ function viaWizStep3() {
           <div id="w3-proprio-block"></div>
           <div id="w3-taxiuber-block"></div>
         </div>
-        <div class="card" style="flex:0.9; min-width:0; position:sticky; top:16px">
+        <div class="card via-map-card" style="flex:0.9; min-width:0">
           <h3 style="margin-bottom:10px">Mapa da rota</h3>
-          <div id="via-map" style="display:none; height:500px; border-radius:8px; overflow:hidden"></div>
+          <div id="via-map" style="display:none"></div>
           <p class="hint" id="via-map-placeholder">O mapa aparece aqui depois de calcular uma rota (Carro Próprio ou Aluguel de Carro).</p>
         </div>
       </div>
