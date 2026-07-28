@@ -165,3 +165,16 @@
 - **Causa:** o caractere "→" (U+2192) não existe na fonte helvetica do jsPDF — além de imprimir lixo, corrompia o espaçamento de toda a célula que o continha (só as células com seta eram afetadas). Os rótulos de trecho usavam o endereço geocodificado completo.
 - **Correção:** a coluna "Trecho" virou duas colunas **Origem/Destino** (sem seta). Novo helper `viaLabelCurto` encurta o rótulo (primeiro trecho antes da vírgula — "Alameda Aeroporto"), com o endereço completo preservado no mapa e no tooltip (tela). `showFoot:'lastPage'` + `rowPageBreak:'avoid'` eliminam o total duplicado e evitam linha partida entre páginas. Mesma abreviação aplicada ao itinerário da tela (mantendo "→", que o HTML renderiza).
 - **Verificação:** linhas do PDF sem nenhum "→", 4 colunas, endereço encurtado, PDF gera de ponta a ponta sem erro; tela mostra rótulo curto com tooltip completo e mapa inicializado; `node --check` OK.
+
+## 2026-07-28 — Mapa real (tiles OSM) no PDF do trajeto
+
+**Solicitação:** no PDF, o "mapa" era só a linha do trajeto sobre um fundo cinza; o usuário quer ver o mapa de fato (ruas/cidades), não apenas o traçado.
+
+### Implementação (`public/app.js`)
+- Novo `viaPdfMapaImagem(comGeo, boxW, boxH)` (async): calcula o bounding box do trajeto, escolhe o zoom que melhor enquadra, baixa os tiles do OpenStreetMap (`tile.openstreetmap.org`, `crossOrigin='anonymous'`) que cobrem a área, desenha-os num canvas (~168 dpi), traça a rota (halo branco + linha colorida) e os marcadores (B/números) por cima, adiciona o crédito "© OpenStreetMap contributors" e devolve um PNG dataURL.
+- `viaPdfTrajeto` virou async: usa `doc.addImage` com a imagem do mapa (box 82 mm); se a geração falhar (rede/CORS), cai no desenho vetorial antigo `viaPdfDesenharMapa` (mantido como fallback). Legenda movida para baixo do mapa.
+- `viaGerarPDF` virou async (`await viaPdfTrajeto`); botão "Gerar PDF" mostra "Gerando mapa…" e fica desabilitado enquanto os tiles carregam.
+
+### Verificação (sem disparar download — save sobrescrito no teste)
+- `viaPdfMapaImagem` retorna PNG válido de ~970 KB em ~250 ms; canvas **não** fica *tainted* (CORS do OSM OK). Análise de pixels da imagem: **108 tons distintos** e cor média bege/branca típica do OSM → mapa real, não fundo liso. Dimensões 1201×541 (formato do box). Pipeline completo do PDF roda sem erro; sem erros de console; `node --check` OK.
+- Observação de cortesia: testes de PDF passaram a rodar com `doc.save` sobrescrito, para não gerar downloads no ambiente (conforme pedido do usuário).

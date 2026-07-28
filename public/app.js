@@ -3983,7 +3983,83 @@ function viaPdfDesenharMapa(doc, comGeo, x, y, boxW, boxH) {
   doc.text('Trajeto rodoviario calculado (B = base/retirada, numeros = paradas na ordem)', x + 3, y + boxH - 2);
 }
 
-function viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA) {
+// Monta um MAPA REAL como imagem PNG (dataURL): baixa os tiles do
+// OpenStreetMap que cobrem o trajeto, achata a rota e os marcadores por
+// cima num canvas e devolve a imagem pronta para addImage no PDF. Assim o
+// PDF mostra ruas/cidades de fundo, não só a linha. Retorna null se algo
+// falhar (o chamador cai no desenho vetorial simples).
+async function viaPdfMapaImagem(comGeo, boxW, boxH) {
+  try {
+    const PXPMM = 6.6, TILE = 256, PAD = 0.12;          // ~168 dpi, 12% de margem
+    const Wpx = Math.round(boxW * PXPMM), Hpx = Math.round(boxH * PXPMM);
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    const acc = (la, ln) => { minLat = Math.min(minLat, la); maxLat = Math.max(maxLat, la); minLng = Math.min(minLng, ln); maxLng = Math.max(maxLng, ln); };
+    comGeo.forEach(c => { c.geometry.forEach(([la, ln]) => acc(la, ln)); (c.pontos || []).forEach(p => acc(p.coord[0], p.coord[1])); });
+    if (!isFinite(minLat)) return null;
+
+    const worldX = (ln, z) => (ln + 180) / 360 * TILE * Math.pow(2, z);
+    const worldY = (la, z) => { const s = Math.sin(la * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * TILE * Math.pow(2, z); };
+    let zoom = 3;
+    for (let z = 16; z >= 3; z--) {
+      if (Math.abs(worldX(maxLng, z) - worldX(minLng, z)) <= Wpx * (1 - 2 * PAD) &&
+          Math.abs(worldY(minLat, z) - worldY(maxLat, z)) <= Hpx * (1 - 2 * PAD)) { zoom = z; break; }
+    }
+    const nTiles = Math.pow(2, zoom);
+    const originX = (worldX(minLng, zoom) + worldX(maxLng, zoom)) / 2 - Wpx / 2;
+    const originY = (worldY(minLat, zoom) + worldY(maxLat, zoom)) / 2 - Hpx / 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = Wpx; canvas.height = Hpx;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#e8ede9'; ctx.fillRect(0, 0, Wpx, Hpx);
+
+    const sub = ['a', 'b', 'c'];
+    const carregarTile = (tx, ty) => new Promise(resolve => {
+      if (ty < 0 || ty >= nTiles) return resolve();
+      const x = ((tx % nTiles) + nTiles) % nTiles;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => { try { ctx.drawImage(img, tx * TILE - originX, ty * TILE - originY, TILE, TILE); } catch (_) {} resolve(); };
+      img.onerror = () => resolve();
+      img.src = `https://${sub[(((x + ty) % 3) + 3) % 3]}.tile.openstreetmap.org/${zoom}/${x}/${ty}.png`;
+    });
+    const tarefas = [];
+    for (let tx = Math.floor(originX / TILE); tx <= Math.floor((originX + Wpx) / TILE); tx++)
+      for (let ty = Math.floor(originY / TILE); ty <= Math.floor((originY + Hpx) / TILE); ty++)
+        tarefas.push(carregarTile(tx, ty));
+    await Promise.all(tarefas);
+
+    const px = ln => worldX(ln, zoom) - originX, py = la => worldY(la, zoom) - originY;
+    const cores = ['#1f7a46', '#1f6fb2', '#a4681f'];
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    comGeo.forEach((c, idx) => {
+      const cor = cores[idx % cores.length];
+      const traçar = () => { ctx.beginPath(); c.geometry.forEach(([la, ln], i) => { const X = px(ln), Y = py(la); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.stroke(); };
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 7; traçar();   // halo branco
+      ctx.strokeStyle = cor; ctx.lineWidth = 4; traçar();                       // linha colorida
+      (c.pontos || []).forEach((p, i) => {
+        const base = i === 0 || i === c.pontos.length - 1, X = px(p.coord[1]), Y = py(p.coord[0]);
+        ctx.beginPath(); ctx.arc(X, Y, base ? 11 : 9, 0, 2 * Math.PI);
+        ctx.fillStyle = base ? '#0d2b1e' : cor; ctx.fill();
+        ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = `bold ${base ? 12 : 11}px Helvetica, Arial, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(base ? 'B' : String(i), X, Y + 0.5);
+      });
+    });
+
+    const cred = '© OpenStreetMap contributors';
+    ctx.font = '11px Helvetica, Arial, sans-serif';
+    const cw = ctx.measureText(cred).width + 8;
+    ctx.fillStyle = 'rgba(255,255,255,0.78)'; ctx.fillRect(Wpx - cw, Hpx - 16, cw, 16);
+    ctx.fillStyle = '#333'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+    ctx.fillText(cred, Wpx - 4, Hpx - 3);
+
+    return canvas.toDataURL('image/png');
+  } catch (e) { console.error('[viaPdfMapaImagem]', e); return null; }
+}
+
+async function viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA) {
   const { voos, onibus, carros } = viaColetarTrajeto(w);
   if (!voos.length && !onibus.length && !carros.length) return y;
   const pageH = doc.internal.pageSize.getHeight();
@@ -3993,10 +4069,19 @@ function viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA) {
 
   const comGeo = carros.filter(c => c.geometry && c.geometry.length);
   if (comGeo.length) {
-    const boxW = pageW - MARGIN * 2, boxH = 70;
-    if (y + boxH > pageH - 20) { doc.addPage(); y = 20; }
-    viaPdfDesenharMapa(doc, comGeo, MARGIN, y, boxW, boxH);
-    y += boxH + 6;
+    const boxW = pageW - MARGIN * 2, boxH = 82;
+    if (y + boxH + 8 > pageH - 20) { doc.addPage(); y = 20; }
+    const mapaImg = await viaPdfMapaImagem(comGeo, boxW, boxH);
+    if (mapaImg) {
+      doc.addImage(mapaImg, 'PNG', MARGIN, y, boxW, boxH);
+      doc.setDrawColor(205, 213, 208); doc.setLineWidth(0.3); doc.rect(MARGIN, y, boxW, boxH);
+    } else {
+      viaPdfDesenharMapa(doc, comGeo, MARGIN, y, boxW, boxH); // fallback vetorial
+    }
+    y += boxH + 3;
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...CINZA);
+    doc.text('B = base / retirada · números = paradas na ordem visitada · trajeto rodoviário calculado.', MARGIN, y);
+    y += 5;
   }
 
   // Colunas Origem/Destino separadas (sem a seta "→", que a fonte do jsPDF
@@ -4064,7 +4149,11 @@ function viaWizStep5() {
   VIA_MAP = null; // o mapa do resumo é uma instância nova a cada entrada na etapa
   viaRenderMapaResumo(w);
   $('#wiz-back').onclick = () => viaWizStep4();
-  $('#wiz-pdf').onclick = () => viaGerarPDF(w, r);
+  $('#wiz-pdf').onclick = async (ev) => {
+    const btn = ev.currentTarget, txt = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Gerando mapa…';
+    try { await viaGerarPDF(w, r); } finally { btn.disabled = false; btn.textContent = txt; }
+  };
   $('#wiz-enviar').onclick = async () => {
     try {
       await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
@@ -4078,7 +4167,7 @@ function viaWizStep5() {
   };
 }
 
-function viaGerarPDF(w, r) {
+async function viaGerarPDF(w, r) {
   if (!window.jspdf) return toast('Biblioteca de PDF ainda carregando. Tente novamente em instantes.');
   try {
     const { jsPDF } = window.jspdf;
@@ -4134,7 +4223,7 @@ function viaGerarPDF(w, r) {
       w.transporte.alugueis.map(a => [a.locadora, `${a.retirada_local} (${brDate(a.retirada_data)})`, `${a.devolucao_local} (${brDate(a.devolucao_data)})`, brl(viaNum(a.valor_diaria)), String(a.dias || 0), brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))]));
 
     // Trajeto completo da viagem (mapa + itinerário) — logo antes do detalhamento.
-    y = viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA);
+    y = await viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA);
 
     if (y > 240) { doc.addPage(); y = 20; }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
