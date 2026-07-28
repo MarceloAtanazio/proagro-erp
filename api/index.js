@@ -1457,10 +1457,17 @@ app.post('/api/colaboradores', requireAuth, requireEdit('viaticos'), h(async (re
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
   if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
   const ins = await query(`INSERT INTO erp_colaboradores
-    (name, cargo, tier, usuario_id, cidade_base_uf, cidade_base_municipio, veiculo_placa, veiculo_modelo, veiculo_consumo_kml)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    (name, cargo, tier, usuario_id, cidade_base_uf, cidade_base_municipio, veiculo_placa, veiculo_modelo, veiculo_consumo_kml,
+     veiculo_ano, veiculo_crlv_validade, veiculo_possui_seguro, veiculo_seguradora, veiculo_apolice, veiculo_seguro_validade,
+     veiculo_apto, veiculo_observacao, cnh_numero, cnh_categoria, cnh_validade, cnh_restricoes, motorista_apto, motorista_observacao)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING id`,
     [sanitize(b.name), sanitize(b.cargo), b.tier, b.usuario_id || null, b.cidade_base_uf || null, sanitize(b.cidade_base_municipio) || null,
-     sanitize(b.veiculo_placa) || null, sanitize(b.veiculo_modelo) || null, b.veiculo_consumo_kml ? Number(b.veiculo_consumo_kml) : null]);
+     sanitize(b.veiculo_placa) || null, sanitize(b.veiculo_modelo) || null, b.veiculo_consumo_kml ? Number(b.veiculo_consumo_kml) : null,
+     sanitize(b.veiculo_ano) || null, b.veiculo_crlv_validade || null, b.veiculo_possui_seguro === true,
+     sanitize(b.veiculo_seguradora) || null, sanitize(b.veiculo_apolice) || null, b.veiculo_seguro_validade || null,
+     b.veiculo_apto !== false, sanitize(b.veiculo_observacao) || null, sanitize(b.cnh_numero) || null,
+     sanitize(b.cnh_categoria) || null, b.cnh_validade || null, sanitize(b.cnh_restricoes) || null,
+     b.motorista_apto !== false, sanitize(b.motorista_observacao) || null]);
   res.json({ ok: true, id: ins[0].id });
 }));
 
@@ -1469,10 +1476,18 @@ app.put('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async 
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
   if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
   await query(`UPDATE erp_colaboradores SET name=$1, cargo=$2, tier=$3, ativo=$4, usuario_id=$5,
-    cidade_base_uf=$6, cidade_base_municipio=$7, veiculo_placa=$8, veiculo_modelo=$9, veiculo_consumo_kml=$10 WHERE id=$11`,
+    cidade_base_uf=$6, cidade_base_municipio=$7, veiculo_placa=$8, veiculo_modelo=$9, veiculo_consumo_kml=$10,
+    veiculo_ano=$11, veiculo_crlv_validade=$12, veiculo_possui_seguro=$13, veiculo_seguradora=$14, veiculo_apolice=$15,
+    veiculo_seguro_validade=$16, veiculo_apto=$17, veiculo_observacao=$18, cnh_numero=$19, cnh_categoria=$20,
+    cnh_validade=$21, cnh_restricoes=$22, motorista_apto=$23, motorista_observacao=$24 WHERE id=$25`,
     [sanitize(b.name), sanitize(b.cargo), b.tier, b.ativo !== false, b.usuario_id || null, b.cidade_base_uf || null,
      sanitize(b.cidade_base_municipio) || null, sanitize(b.veiculo_placa) || null, sanitize(b.veiculo_modelo) || null,
-     b.veiculo_consumo_kml ? Number(b.veiculo_consumo_kml) : null, req.params.id]);
+     b.veiculo_consumo_kml ? Number(b.veiculo_consumo_kml) : null, sanitize(b.veiculo_ano) || null,
+     b.veiculo_crlv_validade || null, b.veiculo_possui_seguro === true, sanitize(b.veiculo_seguradora) || null,
+     sanitize(b.veiculo_apolice) || null, b.veiculo_seguro_validade || null, b.veiculo_apto !== false,
+     sanitize(b.veiculo_observacao) || null, sanitize(b.cnh_numero) || null, sanitize(b.cnh_categoria) || null,
+     b.cnh_validade || null, sanitize(b.cnh_restricoes) || null, b.motorista_apto !== false,
+     sanitize(b.motorista_observacao) || null, req.params.id]);
   res.json({ ok: true });
 }));
 
