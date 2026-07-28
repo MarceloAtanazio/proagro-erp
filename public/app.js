@@ -3631,7 +3631,12 @@ function viaRenderProprioBlock() {
   box.style.display = w.transporte.carro_proprio ? '' : 'none';
   if (!w.transporte.carro_proprio) { box.innerHTML = ''; return; }
   const kmCombDisabled = rota.manual_override ? '' : 'disabled';
+  const doc = viaStatusDocumentacaoColaborador(colab);
+  const avisoDoc = (doc.cls === 'late' || doc.cls === 'warn')
+    ? `<div class="alert-item ${doc.cls === 'late' ? 'late' : 'warn'}" style="margin-bottom:10px">⚠️ Documentação do motorista/veículo pede atenção: ${esc(doc.title)}. Fale com o administrador antes de viajar com carro próprio.</div>`
+    : '';
   box.innerHTML = `<div class="via-subcard"><h4>🚙 Carro Próprio</h4>
+    ${avisoDoc}
     <p class="hint">Veículo cadastrado: <strong>${esc(colab.veiculo_modelo || 'não informado')}</strong>${colab.veiculo_placa ? ' — placa ' + esc(colab.veiculo_placa) : ''}${colab.veiculo_consumo_kml ? ` (consumo ${colab.veiculo_consumo_kml} km/L)` : ''}</p>
     <button class="btn primary" id="w3-proprio-calc" type="button">📍 Calcular rota automaticamente</button>
     <div id="w3-proprio-status" style="margin-top:8px"></div>
@@ -3893,6 +3898,36 @@ function viaGerarPDF(w, r) {
   }
 }
 
+// Calcula o status de uma data de validade (CNH, CRLV, seguro): vencido,
+// vencendo em breve (dentro de "diasAlerta" dias) ou em dia. Reaproveita as
+// classes de badge já existentes no CSS (ok/warn/late/off).
+function viaStatusValidadeDoc(dataStr, diasAlerta = 30) {
+  if (!dataStr) return { label: 'Não informado', cls: 'off' };
+  const hoje = todayISO();
+  if (dataStr < hoje) return { label: `Vencido em ${brDate(dataStr)}`, cls: 'late' };
+  const diffDias = Math.round((new Date(dataStr) - new Date(hoje)) / 86400000);
+  if (diffDias <= diasAlerta) return { label: `Vence em ${brDate(dataStr)}`, cls: 'warn' };
+  return { label: `Válido até ${brDate(dataStr)}`, cls: 'ok' };
+}
+// Consolida CNH + CRLV + seguro + os dois flags manuais (motorista/veículo
+// aptos) num único selo pra dar uma visão rápida na listagem de
+// colaboradores, sem precisar abrir "Editar" pra descobrir se falta algo.
+function viaStatusDocumentacaoColaborador(c) {
+  const problemas = [];
+  if (c.motorista_apto === false) problemas.push('motorista marcado como inapto');
+  if (c.veiculo_apto === false) problemas.push('veículo marcado como inapto');
+  const cnh = viaStatusValidadeDoc(c.cnh_validade);
+  if (cnh.cls === 'late') problemas.push('CNH vencida');
+  const crlv = viaStatusValidadeDoc(c.veiculo_crlv_validade);
+  if (crlv.cls === 'late') problemas.push('CRLV vencido');
+  const seg = c.veiculo_possui_seguro ? viaStatusValidadeDoc(c.veiculo_seguro_validade) : null;
+  if (seg && seg.cls === 'late') problemas.push('seguro vencido');
+  if (problemas.length) return { label: 'Verificar', cls: 'late', title: problemas.join('; ') };
+  if ([cnh, crlv, seg].some(s => s && s.cls === 'warn')) return { label: 'Vencendo', cls: 'warn', title: 'Algum documento vence nos próximos 30 dias.' };
+  if (!c.cnh_validade && !c.veiculo_crlv_validade) return { label: 'Sem dados', cls: 'off', title: 'Documentação de CNH/veículo ainda não preenchida.' };
+  return { label: 'Em dia', cls: 'ok', title: 'CNH, CRLV e seguro (se houver) em dia.' };
+}
+
 async function renderViaticosConfig() {
   const [colaboradores, tud, usuarios, viaConfig] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud'), api('/api/users'), api('/api/viaticos/config')]);
 
@@ -3924,19 +3959,21 @@ async function renderViaticosConfig() {
     </div>
     <p class="hint" style="margin-top:6px">Vínculo com usuário, cidade-base e veículo (pro autosserviço) se ajustam depois, clicando em "Editar".</p>
     <div class="table-wrap" style="margin-top:10px"><table>
-      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Usuário vinculado</th><th>Ativo</th><th class="actions">Ações</th></tr></thead>
+      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Usuário vinculado</th><th>Ativo</th><th>Documentação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${colaboradores.map(c => {
         const u = usuarios.find(x => x.id === c.usuario_id);
+        const doc = viaStatusDocumentacaoColaborador(c);
         return `<tr>
         <td>${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
         <td>${u ? esc(u.name) : '<span style="color:var(--muted)">— nenhum —</span>'}</td>
         <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
+        <td><span class="badge ${doc.cls}" title="${esc(doc.title)}">${doc.label}</span></td>
         <td class="actions">
           <button class="btn sm" data-editar-colab="${c.id}">Editar</button>
           <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>
           <button class="btn sm danger-ghost" data-del-colab="${c.id}">Excluir</button>
         </td></tr>`;
-      }).join('') || '<tr><td colspan="6"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
+      }).join('') || '<tr><td colspan="7"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
     </table></div>`;
 
   openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
@@ -3974,7 +4011,13 @@ async function renderViaticosConfig() {
     await api(`/api/colaboradores/${c.id}`, { method: 'PUT', body: {
       name: c.name, cargo: c.cargo, tier: c.tier, ativo: !c.ativo, usuario_id: c.usuario_id,
       cidade_base_uf: c.cidade_base_uf, cidade_base_municipio: c.cidade_base_municipio,
-      veiculo_placa: c.veiculo_placa, veiculo_modelo: c.veiculo_modelo, veiculo_consumo_kml: c.veiculo_consumo_kml
+      veiculo_placa: c.veiculo_placa, veiculo_modelo: c.veiculo_modelo, veiculo_ano: c.veiculo_ano,
+      veiculo_consumo_kml: c.veiculo_consumo_kml, veiculo_crlv_validade: c.veiculo_crlv_validade,
+      veiculo_possui_seguro: c.veiculo_possui_seguro, veiculo_seguradora: c.veiculo_seguradora,
+      veiculo_apolice: c.veiculo_apolice, veiculo_seguro_validade: c.veiculo_seguro_validade,
+      veiculo_apto: c.veiculo_apto, veiculo_observacao: c.veiculo_observacao,
+      cnh_numero: c.cnh_numero, cnh_categoria: c.cnh_categoria, cnh_validade: c.cnh_validade,
+      cnh_restricoes: c.cnh_restricoes, motorista_apto: c.motorista_apto, motorista_observacao: c.motorista_observacao
     }});
     renderViaticosConfig();
   });
@@ -3991,12 +4034,33 @@ async function formEditarColaborador(c, usuarios) {
       ${fldSel('ec-uf', 'Estado (cidade-base)', [{ v: '', t: '— não informado —' }, ...BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }))], c.cidade_base_uf || '')}
       ${fld('ec-municipio', 'Município (cidade-base)', 'text', c.cidade_base_municipio || '')}
     </div>
-    <h4 style="margin:14px 0 8px">Veículo próprio (pra Solicitação de Viáticos)</h4>
+
+    <h4 style="margin:16px 0 8px">Habilitação do motorista (CNH)</h4>
+    <div class="field-row">
+      ${fld('ec-cnh-numero', 'Nº da CNH', 'text', c.cnh_numero || '')}
+      ${fldSel('ec-cnh-categoria', 'Categoria', [{ v: '', t: '— não informado —' }, ...['A', 'B', 'AB', 'C', 'D', 'E'].map(x => ({ v: x, t: x }))], c.cnh_categoria || '')}
+      ${fld('ec-cnh-validade', 'Validade da CNH', 'date', c.cnh_validade || '')}
+    </div>
+    ${fld('ec-cnh-restricoes', 'Restrições (ex.: uso de lentes corretivas, só veículo automático)', 'text', c.cnh_restricoes || '')}
+    <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-motorista-apto" ${c.motorista_apto === false ? '' : 'checked'}> Motorista apto para dirigir a serviço da empresa</label>
+    <div class="field"><label>Observações sobre o motorista</label><textarea id="ec-motorista-obs" rows="2" placeholder="Ex.: restrição médica temporária, pendência de reciclagem, etc.">${esc(c.motorista_observacao || '')}</textarea></div>
+
+    <h4 style="margin:16px 0 8px">Veículo próprio (pra Solicitação de Viáticos)</h4>
     <div class="field-row">
       ${fld('ec-placa', 'Placa', 'text', c.veiculo_placa || '')}
       ${fld('ec-modelo', 'Modelo', 'text', c.veiculo_modelo || '')}
+      ${fld('ec-ano', 'Ano', 'text', c.veiculo_ano || '')}
       ${fld('ec-consumo', 'Consumo (km/L)', 'number', c.veiculo_consumo_kml || '', 'step="0.1" min="0"')}
-    </div>`;
+    </div>
+    ${fld('ec-crlv-validade', 'Validade do CRLV (licenciamento)', 'date', c.veiculo_crlv_validade || '')}
+    <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-possui-seguro" ${c.veiculo_possui_seguro ? 'checked' : ''}> Possui seguro do veículo</label>
+    <div id="ec-seguro-fields" class="field-row" style="${c.veiculo_possui_seguro ? '' : 'display:none'}">
+      ${fld('ec-seguradora', 'Seguradora', 'text', c.veiculo_seguradora || '')}
+      ${fld('ec-apolice', 'Nº da apólice', 'text', c.veiculo_apolice || '')}
+      ${fld('ec-seguro-validade', 'Validade do seguro', 'date', c.veiculo_seguro_validade || '')}
+    </div>
+    <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-veiculo-apto" ${c.veiculo_apto === false ? '' : 'checked'}> Veículo apto para uso a serviço da empresa</label>
+    <div class="field"><label>Observações sobre o veículo</label><textarea id="ec-veiculo-obs" rows="2" placeholder="Ex.: revisão pendente, problema mecânico, etc.">${esc(c.veiculo_observacao || '')}</textarea></div>`;
 
   openModal(`Editar colaborador — ${esc(c.name)}`, body,
     [{ label: 'Cancelar', onClick: closeModal },
@@ -4006,11 +4070,21 @@ async function formEditarColaborador(c, usuarios) {
             name: $('#ec-nome').value, cargo: $('#ec-cargo').value, tier: $('#ec-tier').value, ativo: c.ativo,
             usuario_id: $('#ec-usuario').value || null, cidade_base_uf: $('#ec-uf').value || null,
             cidade_base_municipio: $('#ec-municipio').value || null, veiculo_placa: $('#ec-placa').value || null,
-            veiculo_modelo: $('#ec-modelo').value || null, veiculo_consumo_kml: $('#ec-consumo').value || null
+            veiculo_modelo: $('#ec-modelo').value || null, veiculo_ano: $('#ec-ano').value || null,
+            veiculo_consumo_kml: $('#ec-consumo').value || null,
+            veiculo_crlv_validade: $('#ec-crlv-validade').value || null,
+            veiculo_possui_seguro: $('#ec-possui-seguro').checked,
+            veiculo_seguradora: $('#ec-seguradora').value || null, veiculo_apolice: $('#ec-apolice').value || null,
+            veiculo_seguro_validade: $('#ec-seguro-validade').value || null,
+            veiculo_apto: $('#ec-veiculo-apto').checked, veiculo_observacao: $('#ec-veiculo-obs').value || null,
+            cnh_numero: $('#ec-cnh-numero').value || null, cnh_categoria: $('#ec-cnh-categoria').value || null,
+            cnh_validade: $('#ec-cnh-validade').value || null, cnh_restricoes: $('#ec-cnh-restricoes').value || null,
+            motorista_apto: $('#ec-motorista-apto').checked, motorista_observacao: $('#ec-motorista-obs').value || null
           }});
           closeModal(); toast('Colaborador atualizado.'); renderViaticosConfig();
         } catch (e) { modalError(e.message); }
      }}]);
+  $('#ec-possui-seguro').onchange = e => { $('#ec-seguro-fields').style.display = e.target.checked ? '' : 'none'; };
 }
 
 // ============================================================
