@@ -178,3 +178,17 @@
 ### Verificação (sem disparar download — save sobrescrito no teste)
 - `viaPdfMapaImagem` retorna PNG válido de ~970 KB em ~250 ms; canvas **não** fica *tainted* (CORS do OSM OK). Análise de pixels da imagem: **108 tons distintos** e cor média bege/branca típica do OSM → mapa real, não fundo liso. Dimensões 1201×541 (formato do box). Pipeline completo do PDF roda sem erro; sem erros de console; `node --check` OK.
 - Observação de cortesia: testes de PDF passaram a rodar com `doc.save` sobrescrito, para não gerar downloads no ambiente (conforme pedido do usuário).
+  - **Correção da regra de teste:** a sobrescrita de `doc.save` no protótipo NÃO funcionou (o jsPDF não expõe `save` ali) e o download disparou de novo na máquina do usuário. Nova regra firme: **não executar `viaGerarPDF` no navegador** em teste algum — validar apenas funções que retornam dados sem salvar (ex.: `viaPdfMapaImagem`) ou espionar `viaGerarPDF` com um stub que substitui a função inteira.
+
+## 2026-07-28 — Botão "Baixar PDF" nos detalhes da solicitação
+
+**Solicitação:** na tela de detalhes da viagem (vista por todos os usuários), adicionar um botão para extrair o PDF gerado no momento da solicitação. As que não têm PDF (antigas, antes do novo modelo) devem exibir uma mensagem ao tentar baixar.
+
+### Implementação (`public/app.js`)
+- `viaTemPdfSolicitacao(s)`: "tem PDF" quando `s.origem === 'colaborador'` (criada pelo assistente de autosserviço, o novo modelo que gera PDF). As `origem = 'admin'` são o modelo antigo.
+- `viaBaixarPdfSolicitacao(s)`: se não tem PDF, `toast('Esta solicitação não possui PDF…')`; senão, reconstrói `w` (dados da OT + `transporte_detalhes`, que já guarda a geometria da rota) e `r` (a partir de `previsao_por_categoria`) e chama `viaGerarPDF`, passando `opts.dataEmissao = s.created_at`.
+- `viaGerarPDF(w, r, opts={})`: novo `opts.dataEmissao` faz o PDF regerado usar a **data original** da solicitação (campo "Data" e assinatura), em vez de hoje. Na solicitação nova, sem opts → hoje.
+- Botão **"Baixar PDF"** adicionado ao modal `viewSolicitacao` para todos (inclusive só-leitura).
+
+### Verificação (sem gerar download — `viaGerarPDF` espionado por stub)
+- Gating: admin → `false`/mensagem "não possui PDF" (não chama o gerador); colaborador → `true`. Reconstrução do colaborador: 2 destinos, avião+aluguel, total R$ 1.360, 3 dias, `dataEmissao` = created_at original. Trajeto reconstruído dos dados salvos: 1 voo + 1 carro com geometria (mapa/rota voltam no PDF). Sem erros de console; `node --check` OK.

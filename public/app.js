@@ -2771,6 +2771,8 @@ async function viewSolicitacao(id) {
     </table></div>`;
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
+  // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
+  botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
   if (somenteLeitura) {
     // consulta pura — nenhuma ação além de fechar
   } else if (!finalizada) {
@@ -4167,7 +4169,33 @@ function viaWizStep5() {
   };
 }
 
-async function viaGerarPDF(w, r) {
+// "Tem PDF" = solicitação criada pelo assistente de autosserviço (novo
+// modelo, que gera o PDF). As criadas pelo admin (modelo antigo) não têm.
+function viaTemPdfSolicitacao(s) { return !!s && s.origem === 'colaborador'; }
+
+// Regenera e baixa o PDF de uma solicitação já salva, a partir dos dados
+// gravados (mesmo conteúdo emitido na solicitação — inclui o trajeto/mapa,
+// pois a geometria da rota fica guardada em transporte_detalhes).
+async function viaBaixarPdfSolicitacao(s) {
+  if (!viaTemPdfSolicitacao(s)) {
+    return toast('Esta solicitação não possui PDF (foi criada antes do novo modelo de autosserviço).');
+  }
+  const cat = s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object' ? s.previsao_por_categoria : {};
+  const total = Object.values(cat).reduce((a, b) => a + (Number(b) || 0), 0);
+  const dias = Math.max(1, Math.round((new Date(s.data_fim) - new Date(s.data_inicio)) / 86400000) + 1);
+  const w = {
+    ordem_trabalho: s.ordem_trabalho, categoria_local: s.categoria_local,
+    destinos: Array.isArray(s.destinos) ? s.destinos : [],
+    data_inicio: s.data_inicio, data_fim: s.data_fim,
+    motivo: s.motivo || '', objetivo: s.objetivo || '',
+    colab: { name: s.colaborador_name, cargo: s.colaborador_cargo || '', tier: s.tier },
+    transporte: (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {}
+  };
+  toast('Gerando PDF…');
+  await viaGerarPDF(w, { cat, total, dias }, { dataEmissao: s.created_at });
+}
+
+async function viaGerarPDF(w, r, opts = {}) {
   if (!window.jspdf) return toast('Biblioteca de PDF ainda carregando. Tente novamente em instantes.');
   try {
     const { jsPDF } = window.jspdf;
@@ -4175,6 +4203,9 @@ async function viaGerarPDF(w, r) {
     const pageW = doc.internal.pageSize.getWidth();
     const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
     const MARGIN = 14;
+    // Data de emissão: hoje na solicitação nova; a data original quando o PDF
+    // é regerado depois, a partir de uma solicitação já salva (opts.dataEmissao).
+    const dataDoc = opts.dataEmissao ? new Date(opts.dataEmissao) : new Date();
 
     doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
     const logoW = 30, logoH = logoW * (139 / 600);
@@ -4187,7 +4218,7 @@ async function viaGerarPDF(w, r) {
     doc.autoTable({
       startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid',
       body: [
-        ['Nome do Solicitante', w.colab.name, 'Data', new Date().toLocaleDateString('pt-BR')],
+        ['Nome do Solicitante', w.colab.name, 'Data', dataDoc.toLocaleDateString('pt-BR')],
         ['Cargo', w.colab.cargo || '—', 'Tier', w.colab.tier],
         ['Data de Saída', brDate(w.data_inicio), 'Data de Retorno', brDate(w.data_fim)],
         ['Ordem de Trabalho', w.ordem_trabalho || '—', 'Categoria de Local', LOCAL_LABEL[w.categoria_local]],
@@ -4249,7 +4280,7 @@ async function viaGerarPDF(w, r) {
     const decl = doc.splitTextToSize(`Declaro que me comprometo a utilizar os valores destinados às despesas de viagem exclusivamente de acordo com o objetivo da viagem que me foi atribuído pela ${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}. Estou ciente de que a verificação e a validação dessas despesas serão realizadas após a data de retorno.`, pageW - MARGIN * 2);
     doc.text(decl, MARGIN, y); y += decl.length * 4 + 10;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
-    doc.text(`Assinado eletronicamente por ${w.colab.name} em ${new Date().toLocaleDateString('pt-BR')}`, MARGIN, y);
+    doc.text(`Assinado eletronicamente por ${w.colab.name} em ${dataDoc.toLocaleDateString('pt-BR')}`, MARGIN, y);
 
     const safeName = String(w.colab.name || 'colaborador').replace(/\s+/g, '_');
     const safeOt = String(w.ordem_trabalho || 'sem_OT').replace(/\s+/g, '_');
