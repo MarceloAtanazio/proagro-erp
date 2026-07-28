@@ -90,3 +90,15 @@
 
 ### Verificação
 - Medido no navegador local (estrutura da etapa 3 injetada no DOM): `:has(input:checked)` aplica fundo verde e ✓ (opacity 1); botões 26×26; ellipsis ativa em nome longo; sticky funciona (card fixo em y=88 após rolar 800px); mapa 480px no viewport de teste. Sem erros de console; `node --check` OK.
+
+## 2026-07-28 — Travas de combinação de transportes (Solicitação de Viáticos)
+
+**Solicitação:** bloquear combinações inválidas na etapa Transporte: Avião só combina com Aluguel de Carro e Táxi/Uber; Ônibus idem; Aluguel de Carro combina com Avião, Ônibus e Táxi/Uber; Carro Próprio é exclusivo; Táxi/Uber combina com Avião, Ônibus e Aluguel de Carro. Opções incompatíveis ficam bloqueadas.
+
+### Implementação (`public/app.js` + `styles.css`)
+- Mapa de compatibilidade `VIA_TRANSPORTE_COMPAT` + `viaAplicarTravasTransporte()`: ao marcar/desmarcar qualquer cartão, os incompatíveis com o conjunto marcado ficam `disabled` (opacidade reduzida, cursor bloqueado, tooltip dizendo com o que não combina). Cartões já marcados nunca são bloqueados — sempre dá pra desmarcar.
+- `viaTransporteConflitos()` valida no "Avançar" (protege rascunhos gravados antes da trava — ex.: Avião+Ônibus marcados juntos geram aviso e bloqueiam o avanço até ajuste).
+- Texto de apoio da etapa atualizado explicando as regras.
+
+### Verificação
+- Matriz de 8 cenários testada no navegador (grade real injetada no DOM): cada modo bloqueia exatamente o esperado; Carro Próprio bloqueia todos; combinação legada inválida é detectada pelo validador do Avançar; tooltip correto. `node --check` OK.

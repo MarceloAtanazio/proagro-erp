@@ -3406,6 +3406,50 @@ function viaWizStep2() {
   };
 }
 
+// Combinações permitidas entre modos de transporte (trava de fluxo):
+// Carro Próprio é exclusivo; Avião e Ônibus não se combinam entre si;
+// Aluguel de Carro e Táxi/Uber combinam com tudo, exceto Carro Próprio.
+const VIA_TRANSPORTE_COMPAT = {
+  aviao:         ['aluguel_carro', 'taxi_uber'],
+  onibus:        ['aluguel_carro', 'taxi_uber'],
+  aluguel_carro: ['aviao', 'onibus', 'taxi_uber'],
+  carro_proprio: [],
+  taxi_uber:     ['aviao', 'onibus', 'aluguel_carro']
+};
+const VIA_TRANSPORTE_LABEL = { aviao: 'Avião', onibus: 'Ônibus', aluguel_carro: 'Aluguel de Carro', carro_proprio: 'Carro Próprio', taxi_uber: 'Táxi / Uber' };
+const VIA_TRANSPORTE_IDS = { aviao: 'w3-aviao', onibus: 'w3-onibus', aluguel_carro: 'w3-aluguel', carro_proprio: 'w3-proprio', taxi_uber: 'w3-taxiuber' };
+
+// Bloqueia os cartões incompatíveis com o que já está marcado. Cartões
+// marcados nunca são bloqueados (o usuário sempre pode desmarcar).
+function viaAplicarTravasTransporte() {
+  const w = VIA_WIZ;
+  const marcados = Object.keys(VIA_TRANSPORTE_IDS).filter(k => w.transporte[k]);
+  Object.keys(VIA_TRANSPORTE_IDS).forEach(k => {
+    const input = document.getElementById(VIA_TRANSPORTE_IDS[k]);
+    if (!input) return;
+    const tile = input.closest('.via-transport-tile');
+    const bloqueadores = marcados.filter(m => m !== k && !VIA_TRANSPORTE_COMPAT[m].includes(k));
+    const bloqueado = !w.transporte[k] && bloqueadores.length > 0;
+    input.disabled = bloqueado;
+    if (tile) {
+      tile.classList.toggle('disabled', bloqueado);
+      tile.title = bloqueado ? `Não pode ser combinado com ${bloqueadores.map(b => VIA_TRANSPORTE_LABEL[b]).join(' + ')}.` : '';
+    }
+  });
+}
+
+// Pares marcados que violam a regra (protege contra rascunhos antigos
+// gravados antes da trava existir).
+function viaTransporteConflitos() {
+  const marcados = Object.keys(VIA_TRANSPORTE_COMPAT).filter(k => VIA_WIZ.transporte[k]);
+  const conflitos = [];
+  for (let i = 0; i < marcados.length; i++)
+    for (let j = i + 1; j < marcados.length; j++)
+      if (!VIA_TRANSPORTE_COMPAT[marcados[i]].includes(marcados[j]))
+        conflitos.push(`${VIA_TRANSPORTE_LABEL[marcados[i]]} + ${VIA_TRANSPORTE_LABEL[marcados[j]]}`);
+  return conflitos;
+}
+
 function viaWizStep3() {
   const w = VIA_WIZ, c = $('#content');
   VIA_MAP = null; // a div #via-map é recriada do zero a cada entrada nesta etapa
@@ -3415,7 +3459,7 @@ function viaWizStep3() {
       <div style="display:flex; gap:20px; align-items:flex-start">
         <div class="card" style="flex:1.1; min-width:0">
           <h3 style="margin-bottom:6px">Transporte</h3>
-          <p class="hint" style="margin-bottom:14px">Marque tudo que se aplica a esta viagem — pode combinar mais de um (ex.: avião pra chegar + carro alugado no destino).</p>
+          <p class="hint" style="margin-bottom:14px">Marque o que se aplica a esta viagem — dá pra combinar (ex.: avião pra chegar + carro alugado no destino). Combinações não permitidas ficam bloqueadas: Carro Próprio não combina com nada, e Avião e Ônibus não combinam entre si.</p>
           <div class="via-transport-grid">
             <label class="via-transport-tile"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}><span class="vt-icon">✈️</span><span class="vt-name">Avião</span></label>
             <label class="via-transport-tile"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}><span class="vt-icon">🚌</span><span class="vt-name">Ônibus</span></label>
@@ -3439,14 +3483,19 @@ function viaWizStep3() {
     </div>`;
 
   viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock(); viaRenderTaxiUberBlock();
+  viaAplicarTravasTransporte();
 
-  $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); };
-  $('#w3-onibus').onchange = e => { w.transporte.onibus = e.target.checked; viaRenderOnibusBlock(); };
-  $('#w3-aluguel').onchange = e => { w.transporte.aluguel_carro = e.target.checked; viaRenderAluguelBlock(); };
-  $('#w3-proprio').onchange = e => { w.transporte.carro_proprio = e.target.checked; viaRenderProprioBlock(); };
-  $('#w3-taxiuber').onchange = e => { w.transporte.taxi_uber = e.target.checked; viaRenderTaxiUberBlock(); };
+  $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); viaAplicarTravasTransporte(); };
+  $('#w3-onibus').onchange = e => { w.transporte.onibus = e.target.checked; viaRenderOnibusBlock(); viaAplicarTravasTransporte(); };
+  $('#w3-aluguel').onchange = e => { w.transporte.aluguel_carro = e.target.checked; viaRenderAluguelBlock(); viaAplicarTravasTransporte(); };
+  $('#w3-proprio').onchange = e => { w.transporte.carro_proprio = e.target.checked; viaRenderProprioBlock(); viaAplicarTravasTransporte(); };
+  $('#w3-taxiuber').onchange = e => { w.transporte.taxi_uber = e.target.checked; viaRenderTaxiUberBlock(); viaAplicarTravasTransporte(); };
   $('#wiz-back').onclick = () => viaWizStep2();
-  $('#wiz-next').onclick = () => viaWizStep4();
+  $('#wiz-next').onclick = () => {
+    const conflitos = viaTransporteConflitos();
+    if (conflitos.length) { toast(`Combinação de transportes não permitida: ${conflitos.join('; ')}. Ajuste antes de avançar.`); return; }
+    viaWizStep4();
+  };
 }
 
 function viaRenderTaxiUberBlock() {

@@ -402,6 +402,8 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .via-transport-tile:has(input:checked)::after { opacity:1; transform:scale(1); }
 .via-transport-tile:has(input:checked) .vt-name { color:var(--verde-700,#00783F); }
 .via-transport-tile:has(input:focus-visible) { outline:2px solid var(--verde-500,#3DAE43); outline-offset:2px; }
+.via-transport-tile.disabled { opacity:.45; cursor:not-allowed; background:#F6F8F7; }
+.via-transport-tile.disabled:hover { border-color:var(--line); box-shadow:none; }
 
 /* ---- Ordem do roteiro: lista de paradas ---- */
 .via-route-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
