@@ -1458,8 +1458,22 @@ app.post('/api/users/:id/toggle', requireAuth, requireSuperAdmin, h(async (req, 
 // ------------------------------------------------------------
 
 // ---- Colaboradores ----
+// Escopo de visão em Viáticos: admin ou quem tem EDIÇÃO na página vê tudo;
+// quem tem apenas LEITURA vê somente o que é do colaborador vinculado ao seu
+// usuário. Retorna null (sem restrição) ou a lista de ids de colaborador
+// permitidos — [-1] quando o usuário não tem colaborador vinculado, para que
+// nenhum registro apareça.
+async function viaticosEscopo(user) {
+  if (user.role === 'admin' || canEdit(user, 'viaticos')) return null;
+  const rows = await query('SELECT id FROM erp_colaboradores WHERE usuario_id = $1', [user.id]);
+  return rows.length ? rows.map(r => r.id) : [-1];
+}
+
 app.get('/api/colaboradores', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
-  res.json(await query('SELECT * FROM erp_colaboradores ORDER BY ativo DESC, name'));
+  const escopo = await viaticosEscopo(req.user);
+  res.json(await query(
+    `SELECT * FROM erp_colaboradores ${escopo ? 'WHERE id = ANY($1)' : ''} ORDER BY ativo DESC, name`,
+    escopo ? [escopo] : []));
 }));
 
 app.post('/api/colaboradores', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
@@ -1584,12 +1598,14 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
     END
     WHERE status_manual = false AND status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada')`, [today]);
 
+  const escopo = await viaticosEscopo(req.user);
   const rows = await query(`
     SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
       COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id), 0) AS valor_comprovado,
       (SELECT COUNT(*)::int FROM erp_attachments a JOIN erp_viaticos_despesas d ON d.id=a.entity_id AND a.entity_type='viatico' WHERE d.solicitacao_id=s.id) AS anexos_count
     FROM erp_viaticos_solicitacoes s JOIN erp_colaboradores c ON c.id=s.colaborador_id
-    ORDER BY s.data_inicio DESC, s.id DESC`);
+    ${escopo ? 'WHERE s.colaborador_id = ANY($1)' : ''}
+    ORDER BY s.data_inicio DESC, s.id DESC`, escopo ? [escopo] : []);
   res.json(rows.map(r => ({ ...r, valor_solicitado: n(r.valor_solicitado), valor_liberado: n(r.valor_liberado),
     valor_devolvido: n(r.valor_devolvido), valor_pendencia: n(r.valor_pendencia), valor_comprovado: n(r.valor_comprovado) })));
 }));
@@ -1618,6 +1634,10 @@ function validateSolicitacao(b) {
 // Verifica se o colaborador tem alguma pendência (estouro) de viagem anterior
 // ainda não descontada — usado para avisar/auto-preencher ao criar uma nova solicitação.
 app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const escopo = await viaticosEscopo(req.user);
+  if (escopo && !escopo.includes(Number(req.params.id))) {
+    return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
+  }
   const rows = await query(`SELECT id, destino, data_fim, valor_pendencia FROM erp_viaticos_solicitacoes
     WHERE colaborador_id=$1 AND status='divergente' AND pendencia_resolvida=false ORDER BY data_fim`, [req.params.id]);
   const total = rows.reduce((s, r) => s + n(r.valor_pendencia), 0);
@@ -1716,6 +1736,11 @@ app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'
 
 // ---- Despesas (itens de comprovação) ----
 app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const escopo = await viaticosEscopo(req.user);
+  if (escopo) {
+    const dona = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)', [req.params.id, escopo]);
+    if (!dona.length) return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
+  }
   const rows = await query('SELECT * FROM erp_viaticos_despesas WHERE solicitacao_id=$1 ORDER BY data', [req.params.id]);
   res.json(rows.map(r => ({ ...r, valor: n(r.valor) })));
 }));
@@ -1765,18 +1790,26 @@ app.put('/api/viaticos/config', requireAuth, requireEdit('viaticos'), h(async (r
 app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
   const todayD = new Date(), today = todayD.toISOString().slice(0, 10);
   const mesAtual = today.slice(0, 7);
+  const escopo = await viaticosEscopo(req.user);
+  const filtroColab = escopo ? ' AND colaborador_id = ANY($1)' : '';
+  const paramsColab = escopo ? [escopo] : [];
 
   // Carteira Flash = total já repassado (Contas a Pagar, categoria "Viáticos", pago)
   // menos o que está de fato alocado em solicitações (liberado - devolvido).
-  const transferido = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos'`))[0].v);
-  const transferidoMes = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]))[0].v);
-  const alocado = n((await query(`SELECT COALESCE(SUM(valor_liberado - valor_devolvido),0) AS v FROM erp_viaticos_solicitacoes WHERE status NOT IN ('arquivado','em_approvals')`))[0].v);
-  const saldoCarteira = transferido - alocado;
+  // São números globais da empresa — usuários restritos (só leitura, vendo
+  // apenas as próprias solicitações) não recebem esses valores.
+  let saldoCarteira = null, transferido = null, transferidoMes = null;
+  if (!escopo) {
+    transferido = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos'`))[0].v);
+    transferidoMes = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]))[0].v);
+    const alocado = n((await query(`SELECT COALESCE(SUM(valor_liberado - valor_devolvido),0) AS v FROM erp_viaticos_solicitacoes WHERE status NOT IN ('arquivado','em_approvals')`))[0].v);
+    saldoCarteira = transferido - alocado;
+  }
 
   const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado FROM erp_viaticos_solicitacoes
-    WHERE status IN ('liberado','em_viagem','aguardando_comprovacao')`);
+    WHERE status IN ('liberado','em_viagem','aguardando_comprovacao')${filtroColab}`, paramsColab);
   const vencidas = aguardando.filter(r => r.data_expiracao_flash && r.data_expiracao_flash < today);
-  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false`);
+  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false${filtroColab}`, paramsColab);
 
   res.json({
     saldoCarteira, transferido, transferidoMes,

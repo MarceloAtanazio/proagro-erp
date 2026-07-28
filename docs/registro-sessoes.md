@@ -102,3 +102,19 @@
 
 ### Verificação
 - Matriz de 8 cenários testada no navegador (grade real injetada no DOM): cada modo bloqueia exatamente o esperado; Carro Próprio bloqueia todos; combinação legada inválida é detectada pelo validador do Avançar; tooltip correto. `node --check` OK.
+
+## 2026-07-28 — Escopo por usuário na tela de Viáticos
+
+**Solicitação:** usuário comum logado deve ver na tela de Viáticos apenas as solicitações/ordens dele, não as de todos.
+
+### Regra implementada
+- **Admin ou usuário com EDIÇÃO em Viáticos:** continua vendo tudo (gestores precisam da visão completa).
+- **Usuário com apenas LEITURA em Viáticos:** vê somente o que pertence ao colaborador vinculado ao seu usuário (`erp_colaboradores.usuario_id`). Sem colaborador vinculado → lista vazia.
+
+### Implementação — filtro no BACKEND (`api/index.js`), não só na tela
+- Helper `viaticosEscopo(user)` → `null` (sem restrição) ou lista de ids de colaborador permitidos.
+- Filtrados: `GET /api/viaticos/solicitacoes` (lista principal), `GET /api/colaboradores`, `GET .../despesas` e `GET .../pendencia` (checagem de dono, 403 se de outro), `GET /api/viaticos/dashboard` (KPIs "Aguardando comprovação", "Vencidas" e "Divergentes" contam só as do próprio; valores globais da Carteira Flash são omitidos — `null`).
+- Frontend (`app.js`): quando restrito, esconde os 2 cartões de carteira e mostra banner "Você está vendo apenas as suas solicitações de viáticos".
+
+### Verificação
+- SQL do filtro validado no banco: usuária de teste (leitura, colaborador 7) passa a ver 1 solicitação em vez das 44 de todos. Servidor reiniciado sem erros; endpoints exigem auth normalmente; `node --check` OK nos dois arquivos.

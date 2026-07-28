@@ -2403,13 +2403,17 @@ async function renderViaticos() {
   const FKEY = 'filters-viaticos';
   const saved = loadFilters(FKEY);
 
+  // Usuário restrito (só leitura em Viáticos) vê apenas as próprias
+  // solicitações — o backend filtra a lista e omite os números da carteira.
+  const escopoProprio = dash.saldoCarteira === null;
   c.innerHTML = `
+    ${escopoProprio ? '<div class="ro-banner" style="margin-bottom:12px">👤 Você está vendo apenas as suas solicitações de viáticos.</div>' : ''}
     <div class="grid kpis" style="margin-bottom:16px">
-      <div class="card kpi ${dash.saldoCarteira < 0 ? 'red' : ''}"><div class="label">Saldo da Carteira Flash</div>
+      ${escopoProprio ? '' : `<div class="card kpi ${dash.saldoCarteira < 0 ? 'red' : ''}"><div class="label">Saldo da Carteira Flash</div>
         <div class="value ${dash.saldoCarteira < 0 ? 'neg' : ''}">${brl(dash.saldoCarteira)}</div>
         <div class="detail">Transferido (total): ${brl(dash.transferido)}</div></div>
       <div class="card kpi blue"><div class="label">Transferido no mês</div><div class="value">${brl(dash.transferidoMes)}</div>
-        <div class="detail">Contas a Pagar, categoria "Viáticos"</div></div>
+        <div class="detail">Contas a Pagar, categoria "Viáticos"</div></div>`}
       <div class="card kpi warn"><div class="label">Aguardando comprovação</div><div class="value">${dash.aguardandoComprovacao.n}</div>
         <div class="detail">${brl(dash.aguardandoComprovacao.v)}</div></div>
       <div class="card kpi ${dash.vencidas.n ? 'red' : ''}"><div class="label">Vencidas (Flash expirado)</div>
