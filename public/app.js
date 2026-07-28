@@ -3959,13 +3959,11 @@ async function renderViaticosConfig() {
     </div>
     <p class="hint" style="margin-top:6px">Vínculo com usuário, cidade-base e veículo (pro autosserviço) se ajustam depois, clicando em "Editar".</p>
     <div class="table-wrap" style="margin-top:10px"><table class="tbl-colaboradores">
-      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Usuário vinculado</th><th>Ativo</th><th>Documentação</th><th class="actions">Ações</th></tr></thead>
+      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th>Documentação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${colaboradores.map(c => {
-        const u = usuarios.find(x => x.id === c.usuario_id);
         const doc = viaStatusDocumentacaoColaborador(c);
         return `<tr>
         <td class="nowrap">${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
-        <td>${u ? esc(u.name) : '<span style="color:var(--muted)">— nenhum —</span>'}</td>
         <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
         <td><span class="badge ${doc.cls}" title="${esc(doc.title)}">${doc.label}</span></td>
         <td class="actions"><div class="btn-group">
@@ -3973,7 +3971,7 @@ async function renderViaticosConfig() {
           <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>
           <button class="btn sm danger-ghost" data-del-colab="${c.id}">Excluir</button>
         </div></td></tr>`;
-      }).join('') || '<tr><td colspan="7"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
+      }).join('') || '<tr><td colspan="6"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
     </table></div>`;
 
   openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
