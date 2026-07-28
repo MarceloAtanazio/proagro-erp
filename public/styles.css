@@ -186,6 +186,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .badge.late { background: var(--danger-050); color: var(--danger); }
 .badge.warn { background: var(--warn-050); color: var(--warn); }
 .badge.off { background: #EEF1EF; color: var(--muted); }
+.badge.online { background: var(--verde-050); color: var(--verde-700); }
+.badge.online::before, .badge.offline::before {
+  content: ''; display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; margin-right: 5px; vertical-align: 1px;
+}
+.badge.online::before { background: var(--verde-700); }
+.badge.offline { background: #EEF1EF; color: var(--muted); }
+.badge.offline::before { background: var(--muted); }
 
 /* ---------- Formulários / modal ---------- */
 .field { position: relative; margin-bottom: 14px; }

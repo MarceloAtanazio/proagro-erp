@@ -1,0 +1,21 @@
+# Segredos — nunca commitar (senha do banco, JWT_SECRET)
+.env
+.env.local
+.env.*.local
+
+# Dependências
+node_modules/
+
+# Vercel (config local do CLI)
+.vercel/
+
+# Claude Code (configuração pessoal/local)
+.claude/settings.local.json
+
+# Logs e temporários
+*.log
+npm-debug.log*
+
+# Sistema operacional / editor
+.DS_Store
+Thumbs.db

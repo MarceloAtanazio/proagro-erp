@@ -13,6 +13,7 @@ create table if not exists erp_users (
   password_hash text not null,
   role text not null default 'usuario' check (role in ('admin','usuario')),
   active boolean not null default true,
+  last_seen_at timestamptz, -- presença: atualizado a cada requisição autenticada (status Online/Offline)
   created_at timestamptz not null default now()
 );
 

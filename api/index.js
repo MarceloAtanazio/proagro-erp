@@ -104,6 +104,11 @@ async function requireAuth(req, res, next) {
     }
     u.permissions = u.permissions || {};
     req.user = u;
+    // Heartbeat de presença: marca atividade no máximo 1x por minuto
+    // (fire-and-forget — não atrasa nem derruba a requisição).
+    query(`UPDATE erp_users SET last_seen_at = now()
+           WHERE id = $1 AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')`,
+      [u.id]).catch(() => {});
     next();
   } catch (e) {
     console.error('[requireAuth]', e);
@@ -335,6 +340,7 @@ app.post('/api/auth/login', loginRateLimit, h(async (req, res) => {
     return res.status(403).json({ error: 'Conta inativa. Contate o administrador.' });
   }
   setAuthCookie(res, user);
+  query('UPDATE erp_users SET last_seen_at = now() WHERE id = $1', [user.id]).catch(() => {});
   logAudit(user, 'Login realizado');
   res.json({ ok: true, user: {
     id: user.id, name: user.name, email: user.email, role: user.role,
@@ -349,6 +355,8 @@ app.post('/api/auth/logout', (req, res) => {
   if (token) {
     try {
       const payload = jwt.verify(token, JWT_SECRET);
+      // Zera a presença para o usuário aparecer offline imediatamente.
+      query('UPDATE erp_users SET last_seen_at = NULL WHERE id=$1', [payload.sub]).catch(() => {});
       query('SELECT id, name FROM erp_users WHERE id=$1', [payload.sub])
         .then(rows => { if (rows[0]) logAudit(rows[0], 'Logout realizado'); })
         .catch(() => {});
@@ -1371,7 +1379,9 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
 // Administração de usuários (SOMENTE o super-administrador)
 // ------------------------------------------------------------
 app.get('/api/users', requireAuth, requireSuperAdmin, h(async (req, res) => {
-  res.json(await query(`SELECT id, name, email, role, status, active, permissions, must_change_password, created_at
+  res.json(await query(`SELECT id, name, email, role, status, active, permissions, must_change_password, created_at,
+      last_seen_at,
+      (last_seen_at IS NOT NULL AND last_seen_at > now() - interval '5 minutes') AS online
     FROM erp_users ORDER BY CASE WHEN active THEN 0 ELSE 1 END, name`));
 }));
 

@@ -4088,6 +4088,18 @@ async function formEditarColaborador(c, usuarios) {
 // ============================================================
 // USUÁRIOS (admin)
 // ============================================================
+// Recarrega a lista a cada 60s para manter o status Online/Offline
+// atualizado — só enquanto a página estiver aberta e sem modal ativo.
+let USERS_POLL_TIMER = null;
+function scheduleUsersRefresh() {
+  clearTimeout(USERS_POLL_TIMER);
+  USERS_POLL_TIMER = setTimeout(() => {
+    if (location.hash.replace('#', '') !== 'usuarios') return;
+    if ($('#modal-back').classList.contains('open')) return scheduleUsersRefresh();
+    renderUsuarios();
+  }, 60000);
+}
+
 async function renderUsuarios() {
   const rows = await api('/api/users');
   const byId = id => rows.find(u => String(u.id) === String(id));
@@ -4126,6 +4138,7 @@ async function renderUsuarios() {
           <div class="user-meta">
             <span class="badge ${u.role === 'admin' ? 'pend' : 'off'}">${u.role === 'admin' ? 'admin' : 'usuário'}</span>
             <span class="badge ${u.active ? 'ok' : 'late'}">${u.active ? 'Ativo' : 'Inativo'}</span>
+            <span class="badge ${u.online ? 'online' : 'offline'}">${u.online ? 'Online' : 'Offline'}</span>
           </div>
           <div class="user-actions">${
             isSuper
@@ -4145,6 +4158,8 @@ async function renderUsuarios() {
     try { await api(`/api/users/${b.dataset.toggle}/toggle`, { method: 'POST' }); toast('Situação atualizada.'); renderUsuarios(); }
     catch (e) { toast(e.message); }
   });
+
+  scheduleUsersRefresh();
 }
 
 // Presets de perfil que pré-preenchem a matriz de permissões (ajustável depois).
