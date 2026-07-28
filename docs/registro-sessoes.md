@@ -118,3 +118,15 @@
 
 ### Verificação
 - SQL do filtro validado no banco: usuária de teste (leitura, colaborador 7) passa a ver 1 solicitação em vez das 44 de todos. Servidor reiniciado sem erros; endpoints exigem auth normalmente; `node --check` OK nos dois arquivos.
+
+## 2026-07-28 — Botão "Ver detalhes" da OT para usuário só-leitura (Viáticos)
+
+**Solicitação:** em vez de ocultar, permitir que o usuário só-leitura veja os dados completos da OT e a comprovação (quando houver). Substitui a tarefa antes sugerida de "ocultar botões".
+
+### Implementação (`public/app.js`)
+- Lista de Viáticos: para `READONLY`, a coluna de ações mostra só o botão **"Ver detalhes"** (sem Editar/Excluir); toolbar esconde "+ Nova solicitação" e "Configurações" (Exportar continua). Handlers de new/config só ligam fora do modo leitura.
+- Modal `viewSolicitacao` ganhou um **bloco-resumo da OT** no topo (nº da OT, destinos, local/tier, período, expiração do Flash, status, motivo/objetivo) — visível para todos.
+- Com `somenteLeitura` (nova flag = `READONLY`): o modal abre como **"Detalhes da viagem"** em consulta pura — sem seletor de status, sem importar Flash, sem adicionar/editar/excluir despesa, sem aprovar/reprovar excesso (vira texto "aguardando análise do administrador"); tabela de despesas + anexos (📎) permanecem para consulta. `openAttachments` já era read-only por permissão, então o usuário vê os comprovantes mas não anexa/exclui. Único botão do rodapé: Fechar.
+
+### Verificação
+- Templates dos dois modos exercitados no navegador local: modo leitura gera apenas "Ver detalhes"; modo edição mantém Comprovar/Editar/Excluir; labels e `viewSolicitacao` presentes; sem erros de console; `node --check` OK.

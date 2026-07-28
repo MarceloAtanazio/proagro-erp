@@ -2431,8 +2431,8 @@ async function renderViaticos() {
       <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="btn-export">Exportar</button>
-      <button class="btn" id="btn-config">Configurações</button>
-      <button class="btn primary" id="btn-new">+ Nova solicitação</button>
+      ${READONLY ? '' : `<button class="btn" id="btn-config">Configurações</button>
+      <button class="btn primary" id="btn-new">+ Nova solicitação</button>`}
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
@@ -2464,10 +2464,11 @@ async function renderViaticos() {
           <td class="num">${brl(s.valor_liberado)}</td>
           <td class="num">${brl(s.valor_comprovado)}${s.anexos_count ? ` <small style="color:var(--muted)">(📎${s.anexos_count})</small>` : ''}</td>
           <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
-          <td class="actions">
-            <button class="btn sm primary" data-view="${s.id}">${['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status) ? 'Ver' : 'Comprovar'}</button>
+          <td class="actions">${READONLY
+            ? `<button class="btn sm primary" data-view="${s.id}">Ver detalhes</button>`
+            : `<button class="btn sm primary" data-view="${s.id}">${['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status) ? 'Ver' : 'Comprovar'}</button>
             <button class="btn sm" data-edit="${s.id}">Editar</button>
-            <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>
+            <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>`}
           </td>
         </tr>`;
       }).join('') || '<tr><td colspan="8"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
@@ -2490,8 +2491,10 @@ async function renderViaticos() {
 
   ['q', 'f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
   $('#btn-clear').onclick = () => { saveFilters(FKEY, {}); renderViaticos(); };
-  $('#btn-new').onclick = () => formSolicitacao(null);
-  $('#btn-config').onclick = () => renderViaticosConfig();
+  if (!READONLY) {
+    $('#btn-new').onclick = () => formSolicitacao(null);
+    $('#btn-config').onclick = () => renderViaticosConfig();
+  }
   $('#btn-export').onclick = () => openModal('Exportar Viáticos',
     `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>`,
     [
@@ -2663,6 +2666,9 @@ async function viewSolicitacao(id) {
     api(`/api/viaticos/solicitacoes/${id}/despesas`), api('/api/viaticos/tud')
   ]);
   const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
+  // Usuário só-leitura abre o mesmo modal em modo consulta: vê os dados
+  // completos da OT e a comprovação, sem nenhum controle de edição.
+  const somenteLeitura = READONLY;
   const comprovado = despesas.reduce((sum, d) => sum + d.valor, 0);
   const dif = s.valor_liberado - comprovado;
 
@@ -2705,20 +2711,36 @@ async function viewSolicitacao(id) {
     const st = excessoStatus[ex.chave];
     if (st === 'aprovado') alertBlocks.push(`<div class="alert-item ok">✅ Aprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`);
     else if (st === 'reprovado') alertBlocks.push(`<div class="alert-item late">❌ Reprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`);
-    else alertBlocks.push(`<div class="alert-item late">⚠️ ${ex.msg} Excesso de <strong>${brl(ex.valor)}</strong> — quer aprovar?
+    else alertBlocks.push(`<div class="alert-item late">⚠️ ${ex.msg} Excesso de <strong>${brl(ex.valor)}</strong>${somenteLeitura ? ' (aguardando análise do administrador).' : ` — quer aprovar?
           <button class="btn sm primary" data-aprovar="${ex.chave}" type="button" style="margin-left:8px">Aprovar</button>
-          <button class="btn sm danger-ghost" data-reprovar="${ex.chave}" type="button" style="margin-left:6px">Reprovar</button></div>`);
+          <button class="btn sm danger-ghost" data-reprovar="${ex.chave}" type="button" style="margin-left:6px">Reprovar</button>`}</div>`);
   });
 
   const STATUS_ATIVO_LABEL = { em_approvals: 'Em Approvals', transferencia_agendada: 'Transferência Agendada', liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação' };
+  const destinosTxt = Array.isArray(s.destinos) && s.destinos.length
+    ? s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ')
+    : esc(s.destino || '—');
+  const infoOT = `
+    <div class="card" style="margin-bottom:14px; padding:14px 16px; background:var(--verde-050,#EAF5EC); border-color:#CDE5D6">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px 16px; font-size:13px">
+        <div><small style="color:var(--muted)">Ordem de Trabalho</small><br><strong>${s.ordem_trabalho ? 'OT ' + esc(s.ordem_trabalho) : '—'}</strong></div>
+        <div><small style="color:var(--muted)">Destinos</small><br><strong>${destinosTxt}</strong></div>
+        <div><small style="color:var(--muted)">Local / Tier</small><br><strong>${LOCAL_LABEL[s.categoria_local] || '—'} · Tier ${esc(s.tier || '—')}</strong></div>
+        <div><small style="color:var(--muted)">Período</small><br><strong>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}</strong></div>
+        <div><small style="color:var(--muted)">Flash expira em</small><br><strong>${s.data_expiracao_flash ? brDate(s.data_expiracao_flash) : '—'}</strong></div>
+        <div><small style="color:var(--muted)">Status</small><br><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></div>
+      </div>
+      ${s.motivo || s.objetivo ? `<p style="margin:10px 0 0; font-size:13px; color:var(--ink-2)">${s.motivo ? `<strong>${esc(s.motivo)}</strong>` : ''}${s.motivo && s.objetivo ? ' — ' : ''}${s.objetivo ? esc(s.objetivo) : ''}</p>` : ''}
+    </div>`;
   const body = `
+    ${infoOT}
     <div class="grid kpis" style="margin-bottom:14px">
       <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div></div>
       <div class="card kpi blue"><div class="label">Comprovado</div><div class="value">${brl(comprovado)}</div></div>
       <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
     </div>
-    ${!finalizada ? `
+    ${!finalizada && !somenteLeitura ? `
     <div class="field-row" style="align-items:flex-end; margin-bottom:14px">
       ${fldSel('vs-status-sel', 'Status da viagem', Object.entries(STATUS_ATIVO_LABEL).map(([v, t]) => ({ v, t })), s.status)}
       <button class="btn" id="vs-status-update" type="button">Atualizar status</button>
@@ -2726,7 +2748,7 @@ async function viewSolicitacao(id) {
     </div>` : ''}
     ${alertBlocks.length ? `<div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px">${alertBlocks.join('')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
 
-    ${!finalizada ? `
+    ${!finalizada && !somenteLeitura ? `
     <div style="margin-bottom:10px"><button class="btn" id="btn-import-flash" type="button">📥 Importar lançamentos do Flash (Excel)</button></div>
     <div class="field-row" style="align-items:flex-end">
       ${fldSel('de-cat', 'Categoria', Object.entries(DESP_CAT_LABEL).map(([v, t]) => ({ v, t })), 'hospedagem')}
@@ -2744,12 +2766,14 @@ async function viewSolicitacao(id) {
         <td class="num">${brl(d.valor)}</td>
         <td class="actions">
           <button class="btn sm att-btn" data-att="${d.id}">📎</button>
-          ${!finalizada ? `<button class="btn sm" data-editdesp="${d.id}">Editar</button><button class="btn sm danger-ghost" data-deldesp="${d.id}">Excluir</button>` : ''}
+          ${!finalizada && !somenteLeitura ? `<button class="btn sm" data-editdesp="${d.id}">Editar</button><button class="btn sm danger-ghost" data-deldesp="${d.id}">Excluir</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhuma despesa lançada ainda.</div></td></tr>'}</tbody>
     </table></div>`;
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
-  if (!finalizada) {
+  if (somenteLeitura) {
+    // consulta pura — nenhuma ação além de fechar
+  } else if (!finalizada) {
     botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
       const r = await api(`/api/viaticos/solicitacoes/${id}/fechar`, { method: 'POST' });
       closeModal();
@@ -2766,10 +2790,10 @@ async function viewSolicitacao(id) {
     botoes.push({ label: 'Arquivar', cls: 'primary', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/arquivar`, { method: 'POST' }); closeModal(); toast('Arquivado.'); renderViaticos(); } });
   }
 
-  openModal(`${finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(s.data_inicio)}–${brDate(s.data_fim)})`,
+  openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(s.data_inicio)}–${brDate(s.data_fim)})`,
     body, botoes, { wide: true });
 
-  if (!finalizada) {
+  if (!finalizada && !somenteLeitura) {
     $('#btn-import-flash').onclick = () => importarFlashModal(s);
     $('#vs-status-update').onclick = async () => {
       const novo = $('#vs-status-sel').value;
