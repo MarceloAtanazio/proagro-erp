@@ -130,3 +130,16 @@
 
 ### Verificação
 - Templates dos dois modos exercitados no navegador local: modo leitura gera apenas "Ver detalhes"; modo edição mantém Comprovar/Editar/Excluir; labels e `viewSolicitacao` presentes; sem erros de console; `node --check` OK.
+
+## 2026-07-28 — Correção: rota do aluguel de carro partia da cidade-base
+
+**Bug reportado:** no caso "voou até outra cidade e alugou carro lá", a rota do aluguel considerava a cidade-base do colaborador em vez do local de retirada — somando o trecho feito de avião (ex.: Maringá→Goiânia ~2000 km) ao km do carro alugado.
+
+**Causa:** em `viaRenderAluguelBlock` (handler do botão "Calcular rota"), o ponto de partida só usava o "Local de retirada" quando a checkbox `uso_local` estava marcada; desmarcada, partia da cidade-base e ignorava o campo de retirada preenchido.
+
+### Correção (`public/app.js`)
+- A rota do carro alugado agora parte **sempre** do "Local de retirada" quando informado; só cai na cidade-base se o campo ficar vazio. O checkbox `uso_local` passou a controlar apenas as **paradas** (listar manualmente vs. usar as cidades da OT), não mais a origem.
+- Textos ajustados: hint fixo abaixo dos campos de retirada/devolução ("parte e retorna ao Local de retirada — não à cidade-base"); label do checkbox reescrita para refletir que é sobre listar paradas manualmente.
+
+### Verificação
+- Lógica do ponto de partida testada no navegador em 4 cenários: retirada Goiânia + checkbox off → parte de Goiânia (antes: Maringá) ✅; checkbox on → Goiânia + paradas custom; sem retirada → cai na cidade-base; retirada = base → sem regressão. Bloco real renderiza com os textos novos, sem erros de console; `node --check` OK.

@@ -3624,11 +3624,11 @@ function viaRenderAluguelBlock() {
         </div>
         <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '', 'placeholder="Digite o nome do lugar ou o endereço…" autocomplete="off"')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
         <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '', 'placeholder="Digite o nome do lugar ou o endereço…" autocomplete="off"')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
+        <p class="hint" style="margin:-4px 0 10px">A rota do carro alugado parte e retorna ao <strong>"Local de retirada"</strong> informado acima — não à cidade-base. Assim, quando você voa até outra cidade e aluga o carro lá, o trecho feito de avião não entra no cálculo.</p>
 
-        <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Carro usado localmente no destino (não parte da cidade-base — ex.: desembarquei de avião e aluguei um carro só pra rodar por lá)</label>
+        <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Rodei apenas por lugares específicos no destino — quero listar as paradas manualmente (em vez de usar as cidades da OT)</label>
 
         ${a.uso_local ? `
-        <p class="hint" style="margin:-4px 0 10px">A rota parte e retorna ao endereço preenchido acima em <strong>"Local de retirada"</strong> — digite o nome do lugar (ex.: um hotel) e escolha da lista que aparece, ou digite o endereço completo.</p>
         <div class="field"><label>Paradas visitadas (na ordem em que foram visitadas)</label>
           <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
             <div class="field" style="flex:1; margin-bottom:0"><label for="al-parada-end-${i}">Nome do lugar ou endereço</label><input id="al-parada-end-${i}" type="text" placeholder="Ex.: Hotel Slaviero, ou SHS Quadra 6, Bloco A" autocomplete="off"></div>
@@ -3706,8 +3706,14 @@ function viaRenderAluguelBlock() {
 
     const btnCalc = document.getElementById(`al-calc-${i}`);
     if (btnCalc) btnCalc.onclick = () => {
-      if (a.uso_local && !a.retirada_local) return toast('Preencha o "Local de retirada" com o endereço completo antes de calcular.');
-      const pontoFixo = a.uso_local
+      // A rota de um carro alugado parte SEMPRE do local onde ele foi
+      // retirado (quando informado) — só cai na cidade-base se o campo
+      // ficar em branco. Isso evita, no caso "voou até outra cidade e
+      // alugou lá", incluir por engano o trecho cidade-base → destino,
+      // que na verdade foi percorrido de avião e não com o carro alugado.
+      const temRetirada = !!(a.retirada_local && a.retirada_local.trim());
+      if (a.uso_local && !temRetirada) return toast('Preencha o "Local de retirada" com o endereço completo antes de calcular.');
+      const pontoFixo = temRetirada
         ? { endereco: a.retirada_local, lat: a.retirada_coord && a.retirada_coord.lat, lng: a.retirada_coord && a.retirada_coord.lng }
         : { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
       const intermediarios = a.uso_local ? (a.paradas || []) : w.destinos;
