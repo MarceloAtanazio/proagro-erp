@@ -254,6 +254,21 @@ const PAGES = [
   { hash: 'config', title: 'Configurações', icon: 'cfg', super: true }
 ];
 
+// Recolher/expandir o menu lateral — preferência lembrada por navegador.
+const SIDEBAR_KEY = 'proagro_sidebar_collapsed';
+(function initSidebarToggle() {
+  const btn = $('#btn-side-toggle');
+  const setTitle = on => { btn.title = btn.ariaLabel = on ? 'Expandir menu' : 'Recolher menu'; };
+  const saved = localStorage.getItem(SIDEBAR_KEY) === '1';
+  if (saved) $('#view-app').classList.add('side-collapsed');
+  setTitle(saved);
+  btn.onclick = () => {
+    const on = $('#view-app').classList.toggle('side-collapsed');
+    localStorage.setItem(SIDEBAR_KEY, on ? '1' : '0');
+    setTitle(on);
+  };
+})();
+
 function buildNav() {
   const nav = $('#nav'); nav.innerHTML = '';
   let curSection = null, emittedSection = null, emittedSub = null;
@@ -271,6 +286,7 @@ function buildNav() {
     }
     const a = el('a', p.sub ? 'nav-sub-item' : '', ICONS[p.icon] + '<span>' + p.title + '</span>');
     a.href = '#' + p.hash; a.dataset.hash = p.hash;
+    a.title = p.title; // tooltip — essencial com o menu recolhido (só ícones)
     nav.appendChild(a);
   });
 }

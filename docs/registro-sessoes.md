@@ -59,4 +59,18 @@
 - Consulta SQL do `online` testada direto no banco: usuário com `last_seen_at` recente → `online=true`; demais → `false`.
 
 ### Pendência
-- [ ] Publicar na Vercel (commit + push para `main` dispara o deploy automático) — aguardando confirmação do usuário.
+- [x] Publicar na Vercel — commit `336af57` enviado para `main` em 2026-07-28 (autorizado pelo usuário); deploy automático detectado no ar em ~15s e API smoke-testada (login responde 401 para senha errada). Também versionados: `.gitignore`, `docs/registro-sessoes.md` e `.claude/launch.json` (com `.claude/settings.local.json` ignorado).
+
+## 2026-07-28 — Feature: menu lateral recolhível
+
+**Solicitação:** botão para recolher o menu lateral e dar mais espaço às páginas.
+
+### Implementação
+1. **`index.html`:** botão `#btn-side-toggle` (chevron duplo) no cabeçalho da sidebar.
+2. **`styles.css`:** estado `.side-collapsed` no `#view-app` — sidebar encolhe de 236px para 64px (transição 0,18s), exibindo só os ícones; textos, rótulos de seção e dados do usuário ficam ocultos (avatar permanece). No layout mobile (≤980px, menu empilhado) o recolhimento não se aplica e o botão fica oculto.
+3. **`app.js`:** toggle com preferência persistida em `localStorage` (`proagro_sidebar_collapsed`); título/aria-label alternam entre "Recolher/Expandir menu"; itens do nav ganharam `title` (tooltip ao passar o mouse — essencial no modo só-ícones).
+
+### Verificação
+- Layout simulado no navegador local (sem autenticação, via DOM): recolhido = 64px de sidebar e +172px de área útil (1044 → 1216px); textos/seções/e-mail/botão Sair ocultos; ícones e avatar visíveis; tooltip presente; expandir restaura tudo; persistência confirmada.
+- Nota de ambiente: transições CSS não avançam no painel de teste sem renderização de quadros — o valor 236px "congelado" era artefato; com `transition: none` a medida confirma 64px.
+- Sem erros de console; `node --check` OK.

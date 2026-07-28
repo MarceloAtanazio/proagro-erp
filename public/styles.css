@@ -72,7 +72,31 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
   background: linear-gradient(180deg, var(--verde-900), var(--verde-800));
   color: #E7F1EB; display: flex; flex-direction: column;
   position: sticky; top: 0; height: 100vh;
+  transition: width .18s ease;
 }
+
+/* ---------- Menu lateral recolhido (.side-collapsed no #view-app) ---------- */
+.side-toggle {
+  margin-left: auto; flex-shrink: 0; width: 26px; height: 26px;
+  background: none; border: 1px solid rgba(255,255,255,.25); color: rgba(255,255,255,.8);
+  border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.side-toggle:hover { background: rgba(255,255,255,.1); color: #fff; }
+.side-toggle svg { width: 14px; height: 14px; transition: transform .18s ease; }
+.app.side-collapsed .side-toggle { margin-left: 0; }
+.app.side-collapsed .side-toggle svg { transform: rotate(180deg); }
+
+.app.side-collapsed .sidebar { width: 64px; }
+.app.side-collapsed .brand { padding: 22px 0 18px; justify-content: center; }
+.app.side-collapsed .brand img, .app.side-collapsed .brand > div { display: none; }
+.app.side-collapsed .nav { padding: 14px 8px; }
+.app.side-collapsed .nav-section, .app.side-collapsed .nav-subsection { display: none; }
+.app.side-collapsed .nav a { justify-content: center; padding: 10px 0; }
+.app.side-collapsed .nav a.nav-sub-item { padding-left: 0; }
+.app.side-collapsed .nav a span { display: none; }
+.app.side-collapsed .userbox { padding: 14px 8px; justify-content: center; }
+.app.side-collapsed .userbox > div:not(.avatar), .app.side-collapsed .userbox > button { display: none; }
 .sidebar .brand {
   display: flex; align-items: center; gap: 10px; padding: 22px 20px 18px;
   border-bottom: 1px solid rgba(255,255,255,.08);
@@ -267,6 +291,19 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   .app.visible { flex-direction: column; }
   .sidebar { width: 100%; height: auto; position: static; }
   .nav { display: flex; flex-wrap: wrap; }
+  /* No layout empilhado (mobile) o recolhimento não se aplica */
+  .side-toggle { display: none; }
+  .app.side-collapsed .sidebar { width: 100%; }
+  .app.side-collapsed .brand { padding: 22px 20px 18px; justify-content: flex-start; }
+  .app.side-collapsed .brand img, .app.side-collapsed .brand > div { display: block; }
+  .app.side-collapsed .nav { padding: 14px 10px; }
+  .app.side-collapsed .nav-section, .app.side-collapsed .nav-subsection { display: block; }
+  .app.side-collapsed .nav a { justify-content: flex-start; padding: 9px 12px; }
+  .app.side-collapsed .nav a.nav-sub-item { padding-left: 22px; }
+  .app.side-collapsed .nav a span { display: inline; }
+  .app.side-collapsed .userbox { padding: 14px 16px; justify-content: flex-start; }
+  .app.side-collapsed .userbox > div:not(.avatar) { display: block; }
+  .app.side-collapsed .userbox > button { display: inline-block; }
   .two-col, .form-row { grid-template-columns: 1fr; }
   .content { padding: 18px 14px 50px; }
 }
