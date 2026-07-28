@@ -143,3 +143,19 @@
 
 ### Verificação
 - Lógica do ponto de partida testada no navegador em 4 cenários: retirada Goiânia + checkbox off → parte de Goiânia (antes: Maringá) ✅; checkbox on → Goiânia + paradas custom; sem retirada → cai na cidade-base; retirada = base → sem regressão. Bloco real renderiza com os textos novos, sem erros de console; `node --check` OK.
+
+## 2026-07-28 — Ajustes no PDF da solicitação + trajeto completo (mapa)
+
+**Solicitação:** (1) título "Voos" quebrado; (2) título "Aluguel de Carro" quebrado/com caracteres estranhos; (3) "Total Geral" do Detalhamento justificado à direita e com fonte maior; (4) adicionar toda a rota da OT (deslocamentos de avião e automóvel, incluindo o mapa) na tela de revisão (etapa 5) e no PDF.
+
+### Implementação (`public/app.js` + `styles.css`)
+- **Itens 1 e 2:** os títulos das tabelas de transporte no PDF usavam emojis (`✈`, `🚌`, `🚗`) que a fonte helvetica do jsPDF não possui → imprimia lixo (ex.: "Ø=Þ—"). Emojis removidos dos títulos do PDF (mantidos na versão HTML, que renderiza normalmente).
+- **Item 3:** a linha "Total Geral" passou a usar células-objeto no `foot` do autoTable, com `halign:'right'` no valor (alinhado como as demais) e `fontSize:11` nas duas células (maior que o corpo, 9), para diferenciar o fechamento.
+- **Item 4 — Trajeto completo:**
+  - Geometria/pontos da rota (OSRM) agora são **persistidos** no objeto do aluguel/carro próprio (`rota_pontos`, `rota_geometry`) quando a rota é calculada — via novo parâmetro `meta` em `viaExecutarCalculoRota`; ajuste de repetição não sobrescreve a geometria.
+  - Novo helper `viaColetarTrajeto(w)` consolida voos, ônibus e trechos de automóvel (com km e total).
+  - **Etapa 5 (tela):** seção "Trajeto completo da viagem" com itinerário (avião/ônibus/carro, cada trecho + subtotal de km por veículo) ao lado de um **mapa Leaflet** com as rotas rodoviárias (polilinhas coloridas + marcadores B/paradas). Voos entram no itinerário (ponto a ponto; aeroportos não têm coordenada na base).
+  - **PDF:** seção "Trajeto da viagem" com **mapa vetorial** desenhado direto no jsPDF (projeção lat/lng, sem tiles → sem CORS nem dependência extra) + tabela-itinerário (Modo/Trecho/Detalhe) com rodapé de distância total por automóvel.
+
+### Verificação
+- No navegador local: geração completa do PDF chega ao fim sem erro (toast de sucesso); `viaPdfTrajeto`, `viaPdfDesenharMapa` e o autoTable do Total Geral rodam isolados sem exceção. Etapa 5 renderiza a seção com 4 itens de itinerário (voo + 2 trechos de carro + subtotal 216 km), tags de avião e carro, e o mapa Leaflet inicializado. Sem erros de console; `node --check` OK.

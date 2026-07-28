@@ -430,6 +430,23 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* ---- Mapa da rota: acompanha a rolagem e usa a altura disponível ---- */
 .via-map-card { position:sticky; top:88px; }
 #via-map { height:calc(100vh - 240px); min-height:460px; border-radius:8px; overflow:hidden; }
+
+/* ---- Trajeto completo da viagem (resumo/etapa 5) ---- */
+.via-trj-wrap { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+.via-trj-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.via-trj-list li { border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; background:#fff; }
+.via-trj-list li small { color:var(--muted); }
+.via-trj-list li.via-trj-total { background:var(--verde-050,#EAF5EC); border-color:#CDE5D6; color:var(--verde-700,#00783F); font-size:12.5px; }
+.via-trj-tag { display:inline-block; font-size:11px; font-weight:700; padding:1px 6px; border-radius:5px; margin-bottom:2px; }
+.via-trj-tag.av { background:#E4EEF8; color:#1f6fb2; }
+.via-trj-tag.on { background:#F3ECDD; color:#8A6414; }
+.via-trj-tag.ca { background:var(--verde-050,#EAF5EC); color:var(--verde-700,#00783F); }
+.via-trj-map { height:360px; border-radius:8px; overflow:hidden; border:1px solid var(--line); position:sticky; top:88px; }
+.via-trj-map-vazio { display:flex; align-items:center; justify-content:center; text-align:center; color:var(--muted); font-size:13px; padding:20px; background:#F6F8F7; }
+@media (max-width: 900px) {
+  .via-trj-wrap { grid-template-columns:1fr; }
+  .via-trj-map { position:static; height:300px; }
+}
 .via-cat-badge { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:12px 14px; border-radius:8px; border:1px solid var(--line); background:#FAFBFA; }
 .via-cat-badge .tag { font-size:11.5px; font-weight:700; padding:4px 11px; border-radius:20px; color:#fff; white-space:nowrap; }
 .via-cat-badge .tag.interior { background:#8A97A0; }

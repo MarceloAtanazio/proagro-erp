@@ -3311,7 +3311,9 @@ async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, s
     const { total_km, legs, pontos, geometry } = await viaCalcularRota(pontoFixo, intermediarios);
     const trechos = viaMesclarRepeticoes(legs, trechosAntigos);
     const kmPonderado = viaKmPonderado(trechos);
-    onSucesso(kmPonderado, trechos);
+    // meta leva pontos/geometry para o chamador persistir e reaproveitar no
+    // resumo (mapa da etapa 5) e no PDF. Ajuste de repetição não passa meta.
+    onSucesso(kmPonderado, trechos, { pontos, geometry, total_km });
     viaAtualizarMapa(pontos, geometry);
     statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km passando uma vez por trecho (ida até cada parada e volta ao ponto de partida). Ajuste as repetições abaixo se algum trecho foi percorrido mais vezes. Pedágio segue manual.</div>`
       + viaRenderRotaDetalhe(intermediarios, trechos, colab.veiculo_consumo_kml, preco, idPrefix);
@@ -3717,11 +3719,12 @@ function viaRenderAluguelBlock() {
         ? { endereco: a.retirada_local, lat: a.retirada_coord && a.retirada_coord.lat, lng: a.retirada_coord && a.retirada_coord.lng }
         : { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
       const intermediarios = a.uso_local ? (a.paradas || []) : w.destinos;
-      viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos) => {
+      viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos, meta) => {
         a.manual_override = false;
         a.distancia_km = km.toFixed(1);
         a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
         a.trechos = trechos;
+        if (meta) { a.rota_pontos = meta.pontos; a.rota_geometry = meta.geometry; }
         const kmEl = document.getElementById(`al-km-${i}`), combEl = document.getElementById(`al-comb-${i}`), manualEl = document.getElementById(`al-manual-${i}`);
         if (kmEl) { kmEl.value = a.distancia_km; kmEl.disabled = true; }
         if (combEl) { combEl.value = a.combustivel_valor; combEl.disabled = true; }
@@ -3767,11 +3770,12 @@ function viaRenderProprioBlock() {
   $('#w3-proprio-manual').onchange = e => { rota.manual_override = e.target.checked; viaRenderProprioBlock(); };
   $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(
     { uf: colab.cidade_base_uf, municipio: colab.cidade_base_municipio }, w.destinos, colab, w.preco_combustivel,
-    'w3-proprio-status', 'proprio', rota.trechos || [], (km, trechos) => {
+    'w3-proprio-status', 'proprio', rota.trechos || [], (km, trechos, meta) => {
       rota.manual_override = false;
       rota.distancia_km = km.toFixed(1);
       rota.combustivel_valor = (km / colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
       rota.trechos = trechos;
+      if (meta) { rota.rota_pontos = meta.pontos; rota.rota_geometry = meta.geometry; }
       $('#w3-proprio-km').value = rota.distancia_km; $('#w3-proprio-km').disabled = true;
       $('#w3-proprio-comb').value = rota.combustivel_valor; $('#w3-proprio-comb').disabled = true;
       $('#w3-proprio-manual').checked = false;
@@ -3870,6 +3874,145 @@ function viaResumoTaxiHtml(corridas) {
     <tbody>${corridas.map(t => `<tr><td>${esc(t.origem || '—')}</td><td>${esc(t.destino || '—')}</td><td class="num">${brl(Number(t.valor) || 0)}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
+// ------------------------------------------------------------
+// Trajeto completo da viagem (avião + ônibus + automóvel) — usado no
+// resumo da etapa 5 e no PDF, para dar à aprovação a visão de toda a rota.
+// ------------------------------------------------------------
+function viaColetarTrajeto(w) {
+  const t = w.transporte;
+  const voos = t.aviao ? (t.aviao_trechos || []).filter(v => v.origem || v.destino) : [];
+  const onibus = t.onibus ? (t.onibus_trechos || []).filter(o => o.origem || o.destino) : [];
+  const carros = [];
+  if (t.aluguel_carro) (t.alugueis || []).forEach(a => {
+    if (a.trechos && a.trechos.length) carros.push({
+      titulo: 'Carro alugado' + (a.locadora ? ' — ' + a.locadora : ''),
+      legs: a.trechos, totalKm: viaKmPonderado(a.trechos),
+      pontos: a.rota_pontos || null, geometry: a.rota_geometry || null
+    });
+  });
+  if (t.carro_proprio && t.carro_proprio_rota.trechos && t.carro_proprio_rota.trechos.length) {
+    const rota = t.carro_proprio_rota;
+    carros.push({ titulo: 'Carro próprio', legs: rota.trechos, totalKm: viaKmPonderado(rota.trechos),
+      pontos: rota.rota_pontos || null, geometry: rota.rota_geometry || null });
+  }
+  return { voos, onibus, carros };
+}
+
+function viaTrajetoResumoHtml(w) {
+  const { voos, onibus, carros } = viaColetarTrajeto(w);
+  if (!voos.length && !onibus.length && !carros.length) return '';
+  const temMapa = carros.some(c => c.geometry && c.geometry.length);
+  const itin = [];
+  voos.forEach(v => itin.push(`<li><span class="via-trj-tag av">✈️ Avião</span> <strong>${esc(v.origem || '—')} → ${esc(v.destino || '—')}</strong><br><small>${esc(v.cia || '')} ${esc(v.numero_voo || '')} · ${v.data ? brDate(v.data) : '—'} ${esc(v.saida || '')}${v.chegada ? '–' + esc(v.chegada) : ''}${v.classe ? ' · ' + esc(v.classe) : ''}</small></li>`));
+  onibus.forEach(o => itin.push(`<li><span class="via-trj-tag on">🚌 Ônibus</span> <strong>${esc(o.origem || '—')} → ${esc(o.destino || '—')}</strong><br><small>${esc(o.empresa || '')} · ${o.data ? brDate(o.data) : '—'} ${esc(o.horario || '')}</small></li>`));
+  carros.forEach(c => {
+    c.legs.forEach(l => itin.push(`<li><span class="via-trj-tag ca">🚗 Carro</span> <strong>${esc(l.de)} → ${esc(l.para)}</strong><br><small>${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` · ${l.repeticoes}× passagens` : ''}</small></li>`));
+    itin.push(`<li class="via-trj-total">Subtotal ${esc(c.titulo)}: <strong>${c.totalKm.toFixed(1)} km</strong></li>`);
+  });
+  return `
+    <h4 style="margin:22px 0 6px">Trajeto completo da viagem</h4>
+    <p class="hint" style="margin-top:0">Todos os deslocamentos previstos para esta OT — avião, ônibus e automóvel. O mapa mostra o trajeto rodoviário calculado; os voos são ponto a ponto e estão listados ao lado.</p>
+    <div class="via-trj-wrap">
+      <ul class="via-trj-list">${itin.join('')}</ul>
+      ${temMapa ? '<div id="via-map-resumo" class="via-trj-map"></div>' : '<div class="via-trj-map via-trj-map-vazio">Sem trajeto rodoviário calculado para exibir no mapa.</div>'}
+    </div>`;
+}
+
+function viaRenderMapaResumo(w) {
+  const el = document.getElementById('via-map-resumo');
+  if (!el) return;
+  const comGeo = viaColetarTrajeto(w).carros.filter(c => c.geometry && c.geometry.length);
+  if (!comGeo.length) { el.style.display = 'none'; return; }
+  const map = L.map(el);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+  const cores = ['#2a8055', '#1f6fb2', '#a4681f'];
+  const todos = [];
+  comGeo.forEach((c, idx) => {
+    L.polyline(c.geometry, { color: cores[idx % cores.length], weight: 4, opacity: 0.85 }).addTo(map);
+    c.geometry.forEach(p => todos.push(p));
+    (c.pontos || []).forEach((p, i) => {
+      const base = i === 0 || i === c.pontos.length - 1;
+      const icon = L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+        html: `<div style="width:${base ? 24 : 22}px;height:${base ? 24 : 22}px;border-radius:50%;background:${base ? '#0d2b1e' : cores[idx % cores.length]};border:${base ? 3 : 2}px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff">${base ? 'B' : i}</div>` });
+      L.marker(p.coord, { icon }).addTo(map).bindPopup(`<strong>${esc(p.label)}</strong>`);
+    });
+  });
+  if (todos.length) map.fitBounds(L.latLngBounds(todos), { padding: [25, 25] });
+  setTimeout(() => map.invalidateSize(), 120);
+}
+
+// Desenha o trajeto rodoviário como mapa vetorial no PDF (sem tiles — evita
+// problemas de CORS/canvas e não depende de biblioteca extra). Projeta
+// lat/lng no retângulo, com norte para cima e correção de longitude por cos(lat).
+function viaPdfDesenharMapa(doc, comGeo, x, y, boxW, boxH) {
+  doc.setFillColor(238, 242, 240); doc.setDrawColor(205, 213, 208); doc.setLineWidth(0.3);
+  doc.rect(x, y, boxW, boxH, 'FD');
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  const acc = (lat, lng) => { if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat; if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng; };
+  comGeo.forEach(c => { c.geometry.forEach(([lat, lng]) => acc(lat, lng)); (c.pontos || []).forEach(p => acc(p.coord[0], p.coord[1])); });
+  if (!isFinite(minLat)) return;
+  const pad = 5, midLat = (minLat + maxLat) / 2, cos = Math.cos(midLat * Math.PI / 180) || 1;
+  const spanLat = (maxLat - minLat) || 0.02, spanLng = ((maxLng - minLng) || 0.02) * cos;
+  const scale = Math.min((boxW - pad * 2) / spanLng, (boxH - pad * 2) / spanLat);
+  const offX = x + (boxW - spanLng * scale) / 2, offY = y + (boxH - spanLat * scale) / 2;
+  const px = lng => offX + (lng - minLng) * cos * scale;
+  const py = lat => offY + (maxLat - lat) * scale;
+  const cores = [[42, 128, 85], [31, 111, 178], [164, 104, 31]];
+  comGeo.forEach((c, idx) => {
+    const cor = cores[idx % cores.length];
+    doc.setDrawColor(...cor); doc.setLineWidth(0.7);
+    const g = c.geometry;
+    for (let i = 0; i < g.length - 1; i++) doc.line(px(g[i][1]), py(g[i][0]), px(g[i + 1][1]), py(g[i + 1][0]));
+    (c.pontos || []).forEach((p, i) => {
+      const base = i === 0 || i === c.pontos.length - 1;
+      const cx = px(p.coord[1]), cy = py(p.coord[0]);
+      doc.setFillColor(...(base ? [13, 43, 30] : cor)); doc.setDrawColor(255, 255, 255); doc.setLineWidth(0.4);
+      doc.circle(cx, cy, base ? 2 : 1.6, 'FD');
+      doc.setFontSize(6); doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold');
+      doc.text(base ? 'B' : String(i), cx, cy + 0.8, { align: 'center' });
+    });
+  });
+  doc.setFontSize(6.5); doc.setTextColor(90, 100, 94); doc.setFont('helvetica', 'italic');
+  doc.text('Trajeto rodoviario calculado (B = base/retirada, numeros = paradas na ordem)', x + 3, y + boxH - 2);
+}
+
+function viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA) {
+  const { voos, onibus, carros } = viaColetarTrajeto(w);
+  if (!voos.length && !onibus.length && !carros.length) return y;
+  const pageH = doc.internal.pageSize.getHeight();
+  if (y > 205) { doc.addPage(); y = 20; }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
+  doc.text('Trajeto da viagem', MARGIN, y); y += 5;
+
+  const comGeo = carros.filter(c => c.geometry && c.geometry.length);
+  if (comGeo.length) {
+    const boxW = pageW - MARGIN * 2, boxH = 70;
+    if (y + boxH > pageH - 20) { doc.addPage(); y = 20; }
+    viaPdfDesenharMapa(doc, comGeo, MARGIN, y, boxW, boxH);
+    y += boxH + 6;
+  }
+
+  const rows = [];
+  voos.forEach(v => rows.push(['Avião', `${v.origem || '—'} → ${v.destino || '—'}`, `${v.cia || ''} ${v.numero_voo || ''} · ${v.data ? brDate(v.data) : '—'} ${v.saida || ''}${v.chegada ? '-' + v.chegada : ''}${v.classe ? ' · ' + v.classe : ''}`.trim()]));
+  onibus.forEach(o => rows.push(['Ônibus', `${o.origem || '—'} → ${o.destino || '—'}`, `${o.empresa || ''} · ${o.data ? brDate(o.data) : '—'} ${o.horario || ''}`.trim()]));
+  let totalKmGeral = 0;
+  carros.forEach(c => {
+    c.legs.forEach(l => rows.push([c.titulo, `${l.de} → ${l.para}`, `${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` (${l.repeticoes}x)` : ''}`]));
+    totalKmGeral += c.totalKm;
+  });
+  doc.autoTable({
+    startY: y, margin: { left: MARGIN, right: MARGIN },
+    head: [['Modo', 'Trecho', 'Detalhe / Distância']],
+    body: rows,
+    foot: totalKmGeral > 0 ? [[{ content: 'Distância total por automóvel', colSpan: 2, styles: { halign: 'left' } }, { content: totalKmGeral.toFixed(1) + ' km', styles: { halign: 'right' } }]] : undefined,
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: VERDE, textColor: 255, fontSize: 8 },
+    footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
+    columnStyles: { 0: { cellWidth: 32 }, 2: { halign: 'left' } }
+  });
+  return doc.lastAutoTable.finalY + 10;
+}
+
 function viaWizStep5() {
   const w = VIA_WIZ, c = $('#content'), r = viaComputeResumo(w);
   c.innerHTML = `
@@ -3898,6 +4041,7 @@ function viaWizStep5() {
         ${w.transporte.onibus ? viaResumoTrechosHtml('🚌 Ônibus', w.transporte.onibus_trechos, ['empresa', 'origem', 'destino', 'data', 'horario', 'valor']) : ''}
         ${w.transporte.aluguel_carro ? viaResumoAlugueisHtml(w.transporte.alugueis) : ''}
         ${w.transporte.taxi_uber && w.transporte.taxi_uber_corridas.length ? viaResumoTaxiHtml(w.transporte.taxi_uber_corridas) : ''}
+        ${viaTrajetoResumoHtml(w)}
       </div>
       <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button>
         <div style="display:flex; gap:10px">
@@ -3907,6 +4051,8 @@ function viaWizStep5() {
       </div>
     </div>`;
 
+  VIA_MAP = null; // o mapa do resumo é uma instância nova a cada entrada na etapa
+  viaRenderMapaResumo(w);
   $('#wiz-back').onclick = () => viaWizStep4();
   $('#wiz-pdf').onclick = () => viaGerarPDF(w, r);
   $('#wiz-enviar').onclick = async () => {
@@ -3968,12 +4114,17 @@ function viaGerarPDF(w, r) {
         styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 2 }, headStyles: { fillColor: VERDE, textColor: 255, fontSize: 7.5 } });
       y = doc.lastAutoTable.finalY + 8;
     };
-    if (w.transporte.aviao && w.transporte.aviao_trechos.length) trechoTabela('✈ Voos', ['Cia', 'Nº Voo', 'Origem', 'Destino', 'Data', 'Saída', 'Chegada', 'Classe', 'Valor'],
+    // Sem emojis nos títulos: a fonte padrão do jsPDF (helvetica) não tem
+    // esses glifos e imprime lixo no lugar (ex.: "Ø=Þ—").
+    if (w.transporte.aviao && w.transporte.aviao_trechos.length) trechoTabela('Voos', ['Cia', 'Nº Voo', 'Origem', 'Destino', 'Data', 'Saída', 'Chegada', 'Classe', 'Valor'],
       w.transporte.aviao_trechos.map(t => [t.cia, t.numero_voo, t.origem, t.destino, brDate(t.data), t.saida, t.chegada, t.classe, brl(Number(t.valor) || 0)]));
-    if (w.transporte.onibus && w.transporte.onibus_trechos.length) trechoTabela('🚌 Ônibus', ['Empresa', 'Origem', 'Destino', 'Data', 'Horário', 'Valor'],
+    if (w.transporte.onibus && w.transporte.onibus_trechos.length) trechoTabela('Ônibus', ['Empresa', 'Origem', 'Destino', 'Data', 'Horário', 'Valor'],
       w.transporte.onibus_trechos.map(t => [t.empresa, t.origem, t.destino, brDate(t.data), t.horario, brl(Number(t.valor) || 0)]));
-    if (w.transporte.aluguel_carro && w.transporte.alugueis.length) trechoTabela('🚗 Aluguel de Carro', ['Locadora', 'Retirada', 'Devolução', 'Diária', 'Dias', 'Total'],
+    if (w.transporte.aluguel_carro && w.transporte.alugueis.length) trechoTabela('Aluguel de Carro', ['Locadora', 'Retirada', 'Devolução', 'Diária', 'Dias', 'Total'],
       w.transporte.alugueis.map(a => [a.locadora, `${a.retirada_local} (${brDate(a.retirada_data)})`, `${a.devolucao_local} (${brDate(a.devolucao_data)})`, brl(viaNum(a.valor_diaria)), String(a.dias || 0), brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))]));
+
+    // Trajeto completo da viagem (mapa + itinerário) — logo antes do detalhamento.
+    y = viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA);
 
     if (y > 240) { doc.addPage(); y = 20; }
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
@@ -3982,7 +4133,12 @@ function viaGerarPDF(w, r) {
       startY: y, margin: { left: MARGIN, right: MARGIN },
       head: [['Descrição', 'Total (R$)']],
       body: Object.entries(r.cat).map(([k, v]) => [DESP_CAT_LABEL[k] || k, brl(v)]),
-      foot: [['Total Geral', brl(r.total)]],
+      // Total Geral: valor justificado à direita (como os demais) e fonte um
+      // pouco maior nas duas células, para diferenciar a linha de fechamento.
+      foot: [[
+        { content: 'Total Geral', styles: { halign: 'left', fontSize: 11 } },
+        { content: brl(r.total), styles: { halign: 'right', fontSize: 11 } }
+      ]],
       styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5 }, headStyles: { fillColor: VERDE, textColor: 255 },
       footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
       columnStyles: { 1: { halign: 'right' } }
