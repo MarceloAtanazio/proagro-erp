@@ -3898,15 +3898,22 @@ function viaColetarTrajeto(w) {
   return { voos, onibus, carros };
 }
 
+// Rótulo curto para tabelas/itinerário: um endereço geocodificado longo
+// (ex.: "Alameda Aeroporto, Jardim Guanabara, Goiânia, ...") vira só o
+// primeiro trecho ("Alameda Aeroporto"); rótulos de cidade ("Abadia/GO")
+// não têm vírgula e ficam intactos. O endereço completo segue no mapa.
+function viaLabelCurto(s) { return String(s || '—').split(',')[0].trim() || '—'; }
+
 function viaTrajetoResumoHtml(w) {
   const { voos, onibus, carros } = viaColetarTrajeto(w);
   if (!voos.length && !onibus.length && !carros.length) return '';
   const temMapa = carros.some(c => c.geometry && c.geometry.length);
   const itin = [];
-  voos.forEach(v => itin.push(`<li><span class="via-trj-tag av">✈️ Avião</span> <strong>${esc(v.origem || '—')} → ${esc(v.destino || '—')}</strong><br><small>${esc(v.cia || '')} ${esc(v.numero_voo || '')} · ${v.data ? brDate(v.data) : '—'} ${esc(v.saida || '')}${v.chegada ? '–' + esc(v.chegada) : ''}${v.classe ? ' · ' + esc(v.classe) : ''}</small></li>`));
-  onibus.forEach(o => itin.push(`<li><span class="via-trj-tag on">🚌 Ônibus</span> <strong>${esc(o.origem || '—')} → ${esc(o.destino || '—')}</strong><br><small>${esc(o.empresa || '')} · ${o.data ? brDate(o.data) : '—'} ${esc(o.horario || '')}</small></li>`));
+  const rota = (de, para) => `<strong title="${esc(de || '')} → ${esc(para || '')}">${esc(viaLabelCurto(de))} → ${esc(viaLabelCurto(para))}</strong>`;
+  voos.forEach(v => itin.push(`<li><span class="via-trj-tag av">✈️ Avião</span> ${rota(v.origem, v.destino)}<br><small>${esc(v.cia || '')} ${esc(v.numero_voo || '')} · ${v.data ? brDate(v.data) : '—'} ${esc(v.saida || '')}${v.chegada ? '–' + esc(v.chegada) : ''}${v.classe ? ' · ' + esc(v.classe) : ''}</small></li>`));
+  onibus.forEach(o => itin.push(`<li><span class="via-trj-tag on">🚌 Ônibus</span> ${rota(o.origem, o.destino)}<br><small>${esc(o.empresa || '')} · ${o.data ? brDate(o.data) : '—'} ${esc(o.horario || '')}</small></li>`));
   carros.forEach(c => {
-    c.legs.forEach(l => itin.push(`<li><span class="via-trj-tag ca">🚗 Carro</span> <strong>${esc(l.de)} → ${esc(l.para)}</strong><br><small>${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` · ${l.repeticoes}× passagens` : ''}</small></li>`));
+    c.legs.forEach(l => itin.push(`<li><span class="via-trj-tag ca">🚗 Carro</span> ${rota(l.de, l.para)}<br><small>${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` · ${l.repeticoes}× passagens` : ''}</small></li>`));
     itin.push(`<li class="via-trj-total">Subtotal ${esc(c.titulo)}: <strong>${c.totalKm.toFixed(1)} km</strong></li>`);
   });
   return `
@@ -3992,23 +3999,26 @@ function viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA) {
     y += boxH + 6;
   }
 
+  // Colunas Origem/Destino separadas (sem a seta "→", que a fonte do jsPDF
+  // não possui — imprimia lixo e corrompia o espaçamento da célula inteira).
   const rows = [];
-  voos.forEach(v => rows.push(['Avião', `${v.origem || '—'} → ${v.destino || '—'}`, `${v.cia || ''} ${v.numero_voo || ''} · ${v.data ? brDate(v.data) : '—'} ${v.saida || ''}${v.chegada ? '-' + v.chegada : ''}${v.classe ? ' · ' + v.classe : ''}`.trim()]));
-  onibus.forEach(o => rows.push(['Ônibus', `${o.origem || '—'} → ${o.destino || '—'}`, `${o.empresa || ''} · ${o.data ? brDate(o.data) : '—'} ${o.horario || ''}`.trim()]));
+  voos.forEach(v => rows.push(['Avião', viaLabelCurto(v.origem), viaLabelCurto(v.destino), `${v.cia || ''} ${v.numero_voo || ''} · ${v.data ? brDate(v.data) : '—'} ${v.saida || ''}${v.chegada ? '-' + v.chegada : ''}${v.classe ? ' · ' + v.classe : ''}`.trim()]));
+  onibus.forEach(o => rows.push(['Ônibus', viaLabelCurto(o.origem), viaLabelCurto(o.destino), `${o.empresa || ''} · ${o.data ? brDate(o.data) : '—'} ${o.horario || ''}`.trim()]));
   let totalKmGeral = 0;
   carros.forEach(c => {
-    c.legs.forEach(l => rows.push([c.titulo, `${l.de} → ${l.para}`, `${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` (${l.repeticoes}x)` : ''}`]));
+    c.legs.forEach(l => rows.push([c.titulo, viaLabelCurto(l.de), viaLabelCurto(l.para), `${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` (${l.repeticoes}x)` : ''}`]));
     totalKmGeral += c.totalKm;
   });
   doc.autoTable({
     startY: y, margin: { left: MARGIN, right: MARGIN },
-    head: [['Modo', 'Trecho', 'Detalhe / Distância']],
+    head: [['Modo', 'Origem', 'Destino', 'Detalhe / Distância']],
     body: rows,
-    foot: totalKmGeral > 0 ? [[{ content: 'Distância total por automóvel', colSpan: 2, styles: { halign: 'left' } }, { content: totalKmGeral.toFixed(1) + ' km', styles: { halign: 'right' } }]] : undefined,
-    styles: { font: 'helvetica', fontSize: 8, cellPadding: 2 },
+    foot: totalKmGeral > 0 ? [[{ content: 'Distância total por automóvel', colSpan: 3, styles: { halign: 'left' } }, { content: totalKmGeral.toFixed(1) + ' km', styles: { halign: 'right' } }]] : undefined,
+    showFoot: 'lastPage', rowPageBreak: 'avoid',
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
     headStyles: { fillColor: VERDE, textColor: 255, fontSize: 8 },
     footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
-    columnStyles: { 0: { cellWidth: 32 }, 2: { halign: 'left' } }
+    columnStyles: { 0: { cellWidth: 34 }, 1: { cellWidth: 42 }, 2: { cellWidth: 42 }, 3: { halign: 'left' } }
   });
   return doc.lastAutoTable.finalY + 10;
 }

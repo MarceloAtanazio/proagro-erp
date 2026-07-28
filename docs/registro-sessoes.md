@@ -159,3 +159,9 @@
 
 ### Verificação
 - No navegador local: geração completa do PDF chega ao fim sem erro (toast de sucesso); `viaPdfTrajeto`, `viaPdfDesenharMapa` e o autoTable do Total Geral rodam isolados sem exceção. Etapa 5 renderiza a seção com 4 itens de itinerário (voo + 2 trechos de carro + subtotal 216 km), tags de avião e carro, e o mapa Leaflet inicializado. Sem erros de console; `node --check` OK.
+
+### Correção pós-validação — itinerário do PDF quebrado
+- **Bug reportado:** no PDF, a coluna "Trecho" saiu com a seta virando lixo ("!'") e com as letras espaçadas; endereços de retirada muito longos deixaram a tabela feia; o total aparecia repetido em cada página.
+- **Causa:** o caractere "→" (U+2192) não existe na fonte helvetica do jsPDF — além de imprimir lixo, corrompia o espaçamento de toda a célula que o continha (só as células com seta eram afetadas). Os rótulos de trecho usavam o endereço geocodificado completo.
+- **Correção:** a coluna "Trecho" virou duas colunas **Origem/Destino** (sem seta). Novo helper `viaLabelCurto` encurta o rótulo (primeiro trecho antes da vírgula — "Alameda Aeroporto"), com o endereço completo preservado no mapa e no tooltip (tela). `showFoot:'lastPage'` + `rowPageBreak:'avoid'` eliminam o total duplicado e evitam linha partida entre páginas. Mesma abreviação aplicada ao itinerário da tela (mantendo "→", que o HTML renderiza).
+- **Verificação:** linhas do PDF sem nenhum "→", 4 colunas, endereço encurtado, PDF gera de ponta a ponta sem erro; tela mostra rótulo curto com tooltip completo e mapa inicializado; `node --check` OK.
