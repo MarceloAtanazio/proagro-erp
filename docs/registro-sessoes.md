@@ -74,3 +74,7 @@
 - Layout simulado no navegador local (sem autenticação, via DOM): recolhido = 64px de sidebar e +172px de área útil (1044 → 1216px); textos/seções/e-mail/botão Sair ocultos; ícones e avatar visíveis; tooltip presente; expandir restaura tudo; persistência confirmada.
 - Nota de ambiente: transições CSS não avançam no painel de teste sem renderização de quadros — o valor 236px "congelado" era artefato; com `transition: none` a medida confirma 64px.
 - Sem erros de console; `node --check` OK.
+
+### Correção pós-validação (mesmo dia)
+- **Bug:** ao recolher, o botão de expandir sumia. Causa: o logo da sidebar tinha `style="display:block"` inline, que vence a regra CSS de ocultação — o logo ficava espremido nos 64px e empurrava o botão para fora da área visível (medido: botão em x=62 num sidebar de 64px).
+- **Correção:** estilo do logo movido do inline para o CSS (`.sidebar .brand img`), permitindo ao modo recolhido ocultá-lo. Verificado: recolhido → logo oculto, botão centralizado (x=19, largura 26, dentro dos 64px); expandido → tudo restaurado.
