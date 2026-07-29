@@ -20,10 +20,16 @@ Análise de todo o sistema: `api/index.js` (2.055 linhas, 94 rotas), `public/app
 | Severidade | Qtd | Corrigidos hoje |
 |---|---|---|
 | 🔴 Crítico (segurança/integridade) | 4 | 1 |
-| 🟠 Alto (bug funcional) | 5 | 3 |
-| 🟡 Médio (escala/robustez) | 8 | 0 |
-| 🔵 Baixo (qualidade/manutenção) | 7 | 0 |
+| 🟠 Alto (bug funcional) | 6 | 3 |
+| 🟡 Médio (escala/robustez) | 11 | 0 |
+| 🔵 Baixo (qualidade/manutenção) | 15 | 0 |
 | 💡 Ideias de produto | 13 | — |
+
+> **Cobertura:** a Parte 1 (abaixo) cobre o backend, o banco e as áreas do frontend
+> lidas a fundo na primeira passada. A **Parte 2**, no fim do documento, completa a
+> revisão das telas financeiras do frontend (Dashboard, Pagar/Receber, Fluxo,
+> Conciliação, Orçamento, Orçado × Realizado, Relatórios, importação do Flash,
+> Categorias, exportações e CSS) — 12 achados adicionais, incluindo um **alto**.
 
 **Pontos fortes encontrados:** nenhuma vulnerabilidade de SQL injection (todas as
 queries são parametrizadas; os fragmentos dinâmicos usam apenas identificadores
@@ -310,11 +316,145 @@ Basta abrir cada item e salvar — ou aplicar um `UPDATE` único adotando o
 
 ---
 
+---
+
+# PARTE 2 — Segunda passada: revisão do frontend tela por tela
+
+A primeira passada cobriu o backend de forma sistemática, mas no frontend só
+Suprimentos, Viáticos/PDF, navegação e helpers foram lidos a fundo — nas demais
+telas eu havia feito apenas varreduras por padrões. Esta parte completa a
+cobertura: **Dashboard, Contas a Pagar/Receber, Fluxo de Caixa, Conciliação
+Bancária, Orçamento Anual, Orçado × Realizado, Relatórios Gerenciais, importação
+do Flash, Categorias/Configurações, exportações (CSV/PDF/Excel) e o CSS.**
+
+## 🟠 ALTO
+
+### F1. Orçamento: digitar ponto como decimal multiplica o valor por 100 — ✅ ⬜
+**Onde:** `public/app.js` L90 (`num()`) usado na grade do Orçamento Anual (L2531).
+
+```js
+const num = v => { const n = Number(String(v).replace(/\./g,'').replace(',','.')); ... }
+```
+
+A função remove **todos** os pontos (para tratar milhar brasileiro). Como a grade
+usa `<input>` de texto livre, quem digita no hábito do teclado numérico grava
+outro valor — silenciosamente:
+
+| Digitado | Gravado |
+|---|---|
+| `1.234,50` | 1.234,50 ✅ |
+| `1234,50` | 1.234,50 ✅ |
+| **`1234.50`** | **123.450,00** ❌ (100×) |
+| `R$ 100` | 0 ❌ |
+
+**Impacto:** o orçamento alimenta Orçado × Realizado e os alertas do Dashboard —
+um erro de digitação distorce toda a análise gerencial sem nenhum aviso.
+**Correção proposta:** normalizar a entrada (aceitar ponto como decimal quando não
+houver vírgula), exibir o valor formatado ao sair do campo e destacar entradas não
+numéricas. *Contraste:* em Contas a Pagar/Receber os valores usam
+`<input type="number">`, que não sofre disso — a inconsistência está só aqui.
+
+## 🟡 MÉDIO
+
+### F2. Orçamento: edições digitadas são descartadas sem aviso — 📖 ⬜
+"+ Adicionar categoria" e "×" (excluir categoria) chamam `renderOrcamento()`, que
+recarrega a grade do servidor. Tudo que foi digitado e ainda não salvo **é perdido
+silenciosamente**. Sugestão: salvar antes, ou avisar que há alterações pendentes.
+
+### F3. Importação do Flash: duplica lançamentos e esconde as falhas — 📖 ⬜
+**Onde:** `importarFlashModal` (L3352).
+- **Sem checagem de duplicidade:** importar o mesmo arquivo duas vezes lança as
+  despesas em dobro. (A importação de extrato bancário *tem* essa proteção —
+  `SELECT ... WHERE txn_date=$1 AND amount=$2 AND description=$3` —, aqui não.)
+- **Erros silenciados:** `catch { /* segue tentando os demais */ }` mostra apenas
+  "3 de 10 importado(s)" sem dizer **quais** falharam nem **por quê**.
+
+### F4. Importação uma requisição por linha — 📖 ⬜
+O laço faz um `POST` por despesa (L3400). Em arquivos grandes são dezenas de
+chamadas serverless em série: lento e sujeito a falha parcial. Sugestão: endpoint
+de importação em lote (uma transação, um retorno com o relatório de erros).
+
+## 🔵 BAIXO
+
+### F5. Download de CSV pode ser cancelado em alguns navegadores — 📖 ⬜
+`exportCSV` (L5496) chama `URL.revokeObjectURL(a.href)` **imediatamente** após
+`a.click()`, e o `<a>` não é anexado ao DOM. Em Firefox/Safari isso pode abortar o
+download. Sugestão: anexar ao DOM e revogar em `setTimeout`.
+
+### F6. KPI "Maior desvio (R$)" sempre em vermelho — ✅ ⬜
+Em Orçado × Realizado (L2624) o cartão usa classe `red`/`neg` fixa. Quando o maior
+desvio é **economia** (gastou menos que o orçado), o número aparece em vermelho
+como se fosse problema. Sugestão: cor conforme o sinal.
+
+### F7. Código morto na grade do orçamento — ✅ ⬜
+`tableFor(type, cats)` **ignora** o parâmetro `cats` (as chamadas passam
+`CAT_RECEITA`/`CAT_DESPESA` em vão) e `[...new Set([...existing, ...[]])]` (L2447)
+é um no-op. Confunde quem for mexer depois.
+
+### F8. `confirm()` nativo em um único ponto — ✅ ⬜
+Excluir categoria do orçamento (L2497) usa o diálogo do navegador, enquanto todo o
+resto usa os modais do sistema.
+
+### F9. Acessibilidade — ✅ ⬜
+Apenas 8 atributos `aria-*` em todo o app; botões só de ícone (📎, ×, →12) sem
+rótulo acessível; `:focus-visible` definido em 2 pontos. O CSS **tem** 6 media
+queries e `prefers-reduced-motion` (ponto positivo), mas as tabelas largas ainda
+rolam horizontalmente no celular.
+
+### F10. Paleta fixa de 11 cores nos gráficos de categoria — ✅ ⬜
+Com mais de 11 categorias as cores repetem/ficam indefinidas (Relatórios L2755,
+Dashboard L376).
+
+### F11. Conciliação carrega todos os títulos a pagar só para um KPI — ✅ ⬜
+`renderConciliacao` (L2200) busca `/api/payables` inteiro apenas para calcular
+"Baixado sem conciliar". Reforça a necessidade de paginação/endpoint dedicado (M1).
+
+### F12. Suprimentos usa categoria em texto livre — 💡 ⬜
+Categoria/subcategoria do item são texto digitado, enquanto o restante do ERP usa
+as listas gerenciadas em **Categorias**. Isso gera variações ("TI", "T.I.",
+"Informática") que quebram filtros e relatórios futuros. Sugestão: reaproveitar
+`erp_categories` (novo tipo `suprimento`).
+
+## Pontos verificados e corretos (nesta segunda passada)
+
+- **Renomear categoria propaga para o histórico** (`erp_payables`,
+  `erp_receivables`, `erp_budgets`, `erp_suppliers`) — bem resolvido; evita
+  lançamentos órfãos. *Ressalva:* são 3–4 `UPDATE`s sem transação (reforça **C2**).
+- **Valores em Contas a Pagar/Receber** usam `<input type="number">` — imunes ao
+  problema F1.
+- **DRE de Relatórios Gerenciais** está corretamente rotulado como regime de caixa;
+  somas e percentuais conferem (divisões protegidas com `|| 1`).
+- **Orçado × Realizado**: sinal de "bom/ruim" corretamente invertido entre receita
+  e despesa; faixa de atenção de ±10% coerente.
+- **Conciliação**: KPI de "baixado sem conciliar" exige vínculo real
+  (`matched_type`/`matched_id`), não apenas valor parecido — critério rigoroso e
+  correto.
+- **Exportação CSV**: separador `;` e BOM UTF-8 (abre certo no Excel brasileiro).
+- **Nenhum XSS**: todos os campos de origem do usuário passam por `esc()`, inclusive
+  dentro dos textos de alerta do Dashboard.
+- **CSS** (583 linhas): sem `!important` em cascata problemática, com media queries
+  e respeito a `prefers-reduced-motion`.
+
+## O que permanece fora do escopo desta auditoria
+
+- **Testes de fluxo clicando na interface** ponta a ponta em cada tela (validei por
+  leitura + execução dirigida de funções, não simulando o uso real).
+- **Medição de performance real** (`EXPLAIN ANALYZE` nas queries, tempo de resposta
+  sob carga) — as observações de performance são estruturais.
+- **Conferência das regras de negócio contra a política interna** da empresa (valores
+  de TUD, tetos, alçadas): validei a consistência do cálculo, não se a regra
+  implementada é a regra desejada.
+
+---
+
 ## Prioridade sugerida
 
 1. **C1** (vazamento de comprovantes) — risco de dados pessoais/financeiros.
-2. **C2 + C3** (transações + lock de estoque) — integridade; resolvem juntos.
-3. **A4** (estorno de movimentos) — operacional, aparece no primeiro erro de digitação.
-4. **A3** (consumo do carro alugado) e **A5** (estoque mínimo).
-5. **M1/M3** (paginação e índices) antes do volume crescer.
-6. **B1/B2** (testes + CI) — reduz o retrabalho de todas as entregas seguintes.
+2. **F1** (ponto decimal no orçamento ×100) — corrompe dado gerencial de forma
+   silenciosa; correção pequena.
+3. **C2 + C3** (transações + lock de estoque) — integridade; resolvem juntos.
+4. **A4** (estorno de movimentos) e **F3** (duplicidade na importação do Flash) —
+   operacionais, aparecem no primeiro erro de digitação.
+5. **A3** (consumo do carro alugado) e **A5** (estoque mínimo).
+6. **M1/M3** (paginação e índices) antes do volume crescer.
+7. **B1/B2** (testes + CI) — reduz o retrabalho de todas as entregas seguintes.

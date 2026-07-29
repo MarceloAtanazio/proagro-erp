@@ -234,6 +234,14 @@
 
 **Dados de teste:** todos criados durante a auditoria foram removidos (0 itens/movimentos/logs de teste). Nenhuma conta de produção foi criada ou alterada.
 
+### Segunda passada (mesmo dia) — cobertura do frontend concluída
+Ao ser questionado se a análise estava completa, revi a cobertura: o backend havia sido auditado de forma sistemática, mas no frontend só Suprimentos, Viáticos/PDF, navegação e helpers foram lidos a fundo. Completei a revisão das telas financeiras — Dashboard, Contas a Pagar/Receber, Fluxo de Caixa, Conciliação, Orçamento Anual, Orçado × Realizado, Relatórios Gerenciais, importação do Flash, Categorias/Config, exportações e CSS. **12 achados novos** (Parte 2 do relatório), com destaque para:
+- **F1 (alto):** na grade do Orçamento Anual, digitar `1234.50` (ponto como decimal) grava **123.450,00** — o helper `num()` remove todos os pontos. Silencioso, e o orçamento alimenta o Orçado × Realizado e os alertas do Dashboard. (Contas a Pagar/Receber usam `input type=number` e não sofrem disso.)
+- **F2/F3/F4 (médios):** edições não salvas do orçamento descartadas sem aviso; importação do Flash duplica lançamentos se o arquivo for importado 2× e silencia os erros individuais; importação faz um POST por linha.
+- **Baixos:** revogação prematura do blob no CSV, KPI "maior desvio" sempre vermelho (mesmo quando é economia), código morto na grade do orçamento, `confirm()` nativo em 1 ponto, acessibilidade (poucos `aria-*`), paleta de 11 cores nos gráficos, conciliação carregando todos os títulos para um KPI, categoria de Suprimentos em texto livre fora da lista gerenciada.
+
+Também registrei o que foi verificado e está **correto** (rename de categoria propaga para o histórico; DRE em regime de caixa consistente; critério rigoroso do KPI de conciliação; CSV com BOM/`;` para Excel BR; nenhum XSS) e o que segue **fora de escopo** (testes clicando na interface, medição de performance com `EXPLAIN`, conferência das regras de negócio contra a política interna).
+
 ## 2026-07-28 — Cadastro de item detalhado (Suprimentos)
 
 **Solicitação:** ampliar o "Novo item" com identificação básica, classificação, logística/estoque, financeiro, fiscal (NCM/CEST/origem) e rastreabilidade (nº de série).
