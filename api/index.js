@@ -192,6 +192,19 @@ async function loginRateLimit(req, res, next) {
 const sanitize = v => (typeof v === 'string' ? v.trim() : v);
 const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 
+// "Hoje" no fuso do Brasil. A função serverless roda em UTC, então
+// new Date().toISOString() vira o DIA SEGUINTE depois das 21h (BRT),
+// deslocando vencimentos, status de viagem e datas padrão dos formulários.
+// 'en-CA' formata como YYYY-MM-DD.
+const TZ_BR = 'America/Sao_Paulo';
+const hojeISO = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ_BR });
+// Data em ISO a N dias de hoje (N pode ser negativo), sem passar por UTC.
+const isoMaisDias = dias => {
+  const [y, m, d] = hojeISO().split('-').map(Number);
+  const base = new Date(Date.UTC(y, m - 1, d) + dias * 86400000);
+  return base.toISOString().slice(0, 10);
+};
+
 // Envolve handlers async para propagar erros ao Express corretamente.
 // ------------------------------------------------------------
 // Log de auditoria
@@ -272,7 +285,17 @@ const AUDIT_MAP = {
   'DELETE /api/viaticos/solicitacoes/:id': req => `Excluiu a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/despesas': req => `Lançou despesa de viático (${req.body.categoria}, ${fmtBRL(req.body.valor)}) na solicitação ID ${req.params.id}`,
   'PUT /api/viaticos/despesas/:id': req => `Editou a despesa de viático ID ${req.params.id} (${req.body.categoria}, ${fmtBRL(req.body.valor)})`,
-  'DELETE /api/viaticos/despesas/:id': req => `Excluiu a despesa de viático ID ${req.params.id}`
+  'DELETE /api/viaticos/despesas/:id': req => `Excluiu a despesa de viático ID ${req.params.id}`,
+
+  // Suprimentos (estoque é área sensível: todo movimento fica registrado)
+  'POST /api/suprimentos/itens': (req, body) => `Cadastrou o item de estoque "${req.body.nome}" (ID ${body && body.id})`,
+  'PUT /api/suprimentos/itens/:id': req => `Editou o item de estoque ID ${req.params.id} ("${req.body.nome}"${req.body.ativo === false ? ', inativado' : ''})`,
+  'DELETE /api/suprimentos/itens/:id': req => `Excluiu o item de estoque ID ${req.params.id}`,
+  'POST /api/suprimentos/compras': (req, body) => `Registrou compra de ${req.body.quantidade} un. do item ID ${req.body.item_id} a ${fmtBRL(req.body.custo_unitario)}/un` +
+    (body && body.payable_id ? ` — lançada em Contas a Pagar (título ID ${body.payable_id})` : ''),
+  'POST /api/suprimentos/envios': (req, body) => `Registrou envio de ${req.body.quantidade} un. do item ID ${req.body.item_id} ao colaborador ID ${req.body.colaborador_id} (movimento ID ${body && body.id})`,
+  'POST /api/suprimentos/envios/:id/status': req => `Marcou o envio ID ${req.params.id} como "${req.body.status}"${req.body.status === 'devolvido' ? ' (item retornou ao estoque)' : ''}`,
+  'POST /api/suprimentos/ajustes': req => `Ajustou o estoque do item ID ${req.body.item_id}: ${req.body.tipo === 'saida' ? '−' : '+'}${req.body.quantidade} un. — motivo: "${req.body.notes}"`
 };
 
 // Intercepta res.json em toda requisição autenticada de escrita (POST/PUT/
@@ -1210,17 +1233,19 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
 
 // KPIs e análises do dashboard
 app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(async (req, res) => {
-  const todayD = new Date();
   const iso = d => d.toISOString().slice(0, 10);
-  const addDays = (d, n2) => new Date(d.getTime() + n2 * 86400000);
-  const today = iso(todayD);
-  const in7 = iso(addDays(todayD, 7)), in15 = iso(addDays(todayD, 15)), in30 = iso(addDays(todayD, 30));
+  const today = hojeISO(); // fuso do Brasil (ver hojeISO)
+  const in7 = isoMaisDias(7), in15 = isoMaisDias(15), in30 = isoMaisDias(30);
   const mesAtual = today.slice(0, 7);
-  const anoAtual = todayD.getFullYear(), mesNum = todayD.getMonth() + 1;
+  const anoAtual = Number(today.slice(0, 4)), mesNum = Number(today.slice(5, 7));
   const monthStart = mesAtual + '-01';
-  const monthEnd = iso(new Date(anoAtual, mesNum, 0));
+  const monthEnd = iso(new Date(Date.UTC(anoAtual, mesNum, 0)));
+  // "Hoje" à meia-noite (em UTC) derivado da data brasileira — base para as
+  // contas de calendário abaixo, sem risco de virar o dia por causa do fuso.
+  const todayD = new Date(Date.UTC(anoAtual, mesNum - 1, Number(today.slice(8, 10))));
+  const addDays = (d, k) => new Date(d.getTime() + k * 86400000);
   // Janela móvel dos últimos 12 meses (inclui o mês corrente).
-  const start12 = new Date(todayD.getFullYear(), todayD.getMonth() - 11, 1);
+  const start12 = new Date(Date.UTC(anoAtual, mesNum - 12, 1));
   const start12ISO = iso(start12);
 
   const one = async (sql, params) => (await query(sql, params))[0];
@@ -1264,9 +1289,11 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
     FROM erp_payables WHERE status='pago' AND payment_date >= $1 GROUP BY 1`, [start12ISO]);
   const last12 = [];
   for (let i = 11; i >= 0; i--) {
-    const d = new Date(todayD.getFullYear(), todayD.getMonth() - i, 1);
-    const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-    const label = MES_ABREV[d.getMonth()] + '/' + String(d.getFullYear()).slice(2);
+    // getUTC*: todayD é meia-noite UTC da data brasileira — usar os getters
+    // locais faria o mês virar quando o servidor não roda em UTC.
+    const d = new Date(Date.UTC(anoAtual, mesNum - 1 - i, 1));
+    const ym = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+    const label = MES_ABREV[d.getUTCMonth()] + '/' + String(d.getUTCFullYear()).slice(2);
     last12.push({
       ym, label,
       receitas: n((recMensal.find(r => r.ym === ym) || {}).total),
@@ -1328,7 +1355,8 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   const pagarVencidas = await query(`SELECT due_date, amount FROM erp_payables WHERE status='pendente' AND due_date < $1`, [today]);
   const agingPagar = { '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
   pagarVencidas.forEach(r => {
-    const dias = Math.floor((todayD - new Date(r.due_date + 'T00:00:00')) / 86400000);
+    // Ambos em UTC (o 'Z') — misturar com hora local deslocaria o aging em 1 dia.
+    const dias = Math.floor((todayD - new Date(String(r.due_date).slice(0, 10) + 'T00:00:00Z')) / 86400000);
     const b = dias <= 30 ? '1-30' : dias <= 60 ? '31-60' : dias <= 90 ? '61-90' : '90+';
     agingPagar[b] += n(r.amount);
   });
@@ -1587,7 +1615,7 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
   // respeitando qualquer ajuste manual feito depois. "Transferência Agendada"
   // fica congelado até a data de início chegar — só a partir daí passa a
   // seguir a mesma lógica automática das demais.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = hojeISO();
   await query(`
     UPDATE erp_viaticos_solicitacoes
     SET status = CASE
@@ -1788,7 +1816,7 @@ app.put('/api/viaticos/config', requireAuth, requireEdit('viaticos'), h(async (r
 }));
 
 app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
-  const todayD = new Date(), today = todayD.toISOString().slice(0, 10);
+  const today = hojeISO();
   const mesAtual = today.slice(0, 7);
   const escopo = await viaticosEscopo(req.user);
   const filtroColab = escopo ? ' AND colaborador_id = ANY($1)' : '';
@@ -1839,8 +1867,6 @@ async function estoqueAtualItem(itemId) {
     FROM erp_estoque_movimentos WHERE item_id=$1`, [itemId]);
   return Number(r[0].q);
 }
-const hojeISO = () => new Date().toISOString().slice(0, 10);
-
 app.get('/api/suprimentos/itens', requireAuth, SUP_VIEW, h(async (req, res) => {
   res.json(await query(`${SUP_ESTOQUE_SELECT} ORDER BY i.ativo DESC, i.nome`));
 }));
@@ -1899,7 +1925,12 @@ function itemValues(b) {
 app.post('/api/suprimentos/itens', requireAuth, SUP_EDIT, h(async (req, res) => {
   const b = req.body, err = validItemEstoque(b);
   if (err) return res.status(400).json({ error: err });
-  const v = itemValues(b), cols = Object.keys(v), vals = Object.values(v);
+  const v = itemValues(b);
+  // Preço de custo informado no cadastro serve como custo médio inicial —
+  // senão o item entraria com custo 0 e o "Valor em estoque" ficaria zerado
+  // até a primeira compra. As compras seguintes recalculam a média.
+  if (n(v.preco_ultima_compra) > 0) v.custo_medio = n(v.preco_ultima_compra);
+  const cols = Object.keys(v), vals = Object.values(v);
   const ph = cols.map((_, i) => '$' + (i + 1)).join(',');
   const rows = await query(`INSERT INTO erp_estoque_itens (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
   res.json({ ok: true, id: rows[0].id });
@@ -1909,6 +1940,11 @@ app.put('/api/suprimentos/itens/:id', requireAuth, SUP_EDIT, h(async (req, res) 
   const b = req.body, err = validItemEstoque(b);
   if (err) return res.status(400).json({ error: err });
   const v = itemValues(b); v.ativo = b.ativo !== false;
+  // Item ainda sem custo médio (nunca comprado): adota o preço de custo
+  // informado, para o estoque passar a ser valorizado. Se já há custo médio
+  // calculado por compras, ele é preservado.
+  const atual = (await query('SELECT custo_medio FROM erp_estoque_itens WHERE id=$1', [req.params.id]))[0];
+  if (atual && !(n(atual.custo_medio) > 0) && n(v.preco_ultima_compra) > 0) v.custo_medio = n(v.preco_ultima_compra);
   const cols = Object.keys(v), vals = Object.values(v);
   const set = cols.map((c, i) => `${c}=$${i + 1}`).join(', ');
   vals.push(req.params.id);
@@ -2025,9 +2061,27 @@ app.post('/api/suprimentos/ajustes', requireAuth, SUP_EDIT, h(async (req, res) =
     const saldo = await estoqueAtualItem(item.id);
     if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}.` });
   }
+  // Entrada por ajuste também precisa valorizar o estoque: sem custo, o item
+  // ficava com custo médio 0 e o "Valor em estoque" zerado. Se o usuário não
+  // informar, usa o custo médio atual ou o preço da última compra do cadastro.
+  let custo = null;
+  if (tipo === 'entrada') {
+    const informado = Number(b.custo_unitario);
+    custo = (b.custo_unitario != null && b.custo_unitario !== '' && isFinite(informado) && informado >= 0)
+      ? informado
+      : (n(item.custo_medio) > 0 ? n(item.custo_medio) : n(item.preco_ultima_compra));
+    if (!(custo > 0)) custo = null;
+  }
   const data = isDate(b.data) ? b.data : hojeISO();
-  await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, data, notes, created_by)
-    VALUES ($1,$2,'ajuste',$3,$4,$5,$6)`, [item.id, tipo, qtd, data, sanitize(b.notes), req.user.id]);
+  await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, custo_unitario, valor_total, data, notes, created_by)
+    VALUES ($1,$2,'ajuste',$3,$4,$5,$6,$7,$8)`,
+    [item.id, tipo, qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, data, sanitize(b.notes), req.user.id]);
+
+  if (tipo === 'entrada' && custo != null) {
+    const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);
+    const novoCusto = (baseQtd + qtd) > 0 ? ((n(item.custo_medio) * baseQtd) + qtd * custo) / (baseQtd + qtd) : custo;
+    await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [Number(novoCusto.toFixed(2)), item.id]);
+  }
   res.json({ ok: true });
 }));
 

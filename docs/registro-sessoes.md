@@ -215,6 +215,25 @@
 - Fluxo real via API (JWT de teste + servidor local): compra +10@5 → estoque 10, custo médio 5; envio 3 → 7; envio de 999 bloqueado ("estoque insuficiente"); devolução → 10; resumo valor R$50. Compra com `lancar_pagar` criou Conta a Pagar (id 346) e custo médio ponderado 6,43 = (10×5+4×10)/14. **Todos os dados de teste (item, movimentos, título 346) foram apagados** — banco confirmado limpo (0/0/0).
 - Frontend (stub do `api`, sem tocar no banco): 3 abas; Estoque com 2 itens, KPIs, badges "Baixo"/"OK" corretos, valor total certo; Compras com badge "Em Contas a Pagar" e botão; Envios com "Marcar entregue"/"Registrar devolução" e formulário com disponibilidade + colaborador. Sem erros de console; `node --check` OK nos dois arquivos.
 
+## 2026-07-29 — Auditoria completa do ERP + 3 correções
+
+**Solicitação:** (1) por que "Valor em estoque" ficava R$ 0,00; (2) análise completa do sistema em busca de erros, bugs, melhorias e ideias.
+
+**Relatório completo:** [auditoria-2026-07-29.md](auditoria-2026-07-29.md) — 24 achados classificados por severidade + 13 ideias de produto, com nível de evidência de cada um.
+
+### Corrigido e verificado nesta sessão
+1. **Valor em estoque zerado (A1):** o custo médio só era atualizado em compras; itens com entrada por *ajuste* ficavam com custo 0. Agora o preço de custo do cadastro vira o CMP inicial e o ajuste de entrada aceita custo unitário (entra na média ponderada). Testado: 5.000 → +2 un = R$ 10.000 → +1 un a 8.000 = CMP 6.000.
+2. **Fuso horário (A2):** 14 usos de `toISOString()` faziam "hoje" virar o dia seguinte após 21h (função roda em UTC) — afetava vencimentos, horizontes do dashboard, status automático de viagem, *aging* e datas padrão dos formulários. Criados `hojeISO()`/`isoMaisDias()` com `America/Sao_Paulo`; `todayISO()` do frontend passou a usar o relógio local. Verificado no horário crítico (23:30 BRT → data correta).
+3. **Auditoria do módulo Suprimentos (C4):** nenhuma ação de estoque/compra/envio/ajuste era registrada em `erp_audit_log` (lacuna introduzida quando o módulo foi criado). 7 entradas adicionadas ao `AUDIT_MAP`; confirmado no log.
+
+### Principais achados em aberto (detalhes no relatório)
+- **C1 (crítico):** rotas de anexo (`/api/attachments/*`) não aplicam `viaticosEscopo` — usuário com `viaticos: view` poderia baixar comprovantes de outros colaboradores trocando o id.
+- **C2/C3 (crítico):** nenhuma transação no projeto (compra + Conta a Pagar podem divergir) e race condition no saldo de estoque (check-then-insert sem lock).
+- **A3/A4/A5 (alto):** combustível do carro alugado usa o consumo do carro próprio; não há estorno/edição de movimentos; estoque mínimo 0 nunca alerta.
+- Médios/baixos: paginação, índices, unicidade de SKU/CNPJ, anexos em `bytea`, `pool max`, sessão sem renovação, healthcheck, testes, CI, SRI nos CDNs, headers de segurança, arquivos monolíticos, migrações versionadas.
+
+**Dados de teste:** todos criados durante a auditoria foram removidos (0 itens/movimentos/logs de teste). Nenhuma conta de produção foi criada ou alterada.
+
 ## 2026-07-28 — Cadastro de item detalhado (Suprimentos)
 
 **Solicitação:** ampliar o "Novo item" com identificação básica, classificação, logística/estoque, financeiro, fiscal (NCM/CEST/origem) e rastreabilidade (nº de série).

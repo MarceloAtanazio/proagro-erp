@@ -74,7 +74,10 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const brl = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const brDate = iso => { if (!iso) return '—'; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// Data de hoje pelo relógio local do usuário. toISOString() converte para UTC
+// e, no Brasil (UTC-3), devolveria o DIA SEGUINTE depois das 21h — fazendo os
+// formulários abrirem com a data errada à noite. 'en-CA' formata YYYY-MM-DD.
+const todayISO = () => new Date().toLocaleDateString('en-CA');
 
 // Mantém os filtros de uma tela (busca, status, categoria, período) entre
 // navegações, até que o usuário clique em "Limpar filtros".
@@ -965,8 +968,9 @@ async function renderFluxo() {
   const saved = loadFilters(FKEY);
   const todayISOv = todayISO();
   const monthStart = todayISOv.slice(0, 8) + '01';
-  const monthEndD = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
-  const monthEnd = monthEndD.toISOString().slice(0, 10);
+  // Último dia do mês corrente — formatado no fuso local (ver todayISO).
+  const [anoV, mesV] = todayISOv.split('-').map(Number);
+  const monthEnd = new Date(anoV, mesV, 0).toLocaleDateString('en-CA');
 
   const de = saved.de || monthStart, ate = saved.ate || monthEnd;
   const granularidade = saved.gran || 'dia';
@@ -1996,21 +2000,34 @@ function supFichaItem(i) {
 }
 
 function supFormAjuste(i) {
+  const custoBase = Number(i.custo_medio) > 0 ? Number(i.custo_medio) : (Number(i.preco_ultima_compra) || '');
   openModal(`Ajustar estoque — ${esc(i.nome)}`, `
-    <p class="hint">Estoque atual: <strong>${supNum(i.estoque_atual)} ${esc(i.unidade)}</strong></p>
+    <p class="hint">Estoque atual: <strong>${supNum(i.estoque_atual)} ${esc(i.unidade)}</strong> · Custo médio: <strong>${brl(i.custo_medio)}</strong></p>
     <div class="form-row">
       ${fldSel('aj-tipo', 'Tipo de ajuste', [{ v: 'entrada', t: 'Entrada (+)' }, { v: 'saida', t: 'Saída (−)' }], 'entrada')}
       ${fld('aj-qtd', 'Quantidade', 'number', '', 'step="0.001" min="0.001"')}
     </div>
-    ${fld('aj-data', 'Data', 'date', new Date().toISOString().slice(0, 10))}
+    <div class="form-row" id="aj-custo-wrap">
+      ${fld('aj-custo', 'Custo unitário (R$)', 'number', custoBase, 'step="0.01" min="0"')}
+      ${fld('aj-data', 'Data', 'date', todayISO())}
+    </div>
+    <p class="hint" id="aj-custo-hint" style="margin-top:-4px">Informe o custo para o estoque ser valorizado (entra na média ponderada). Em branco, usa o custo médio atual ou o preço de custo do cadastro.</p>
     ${fld('aj-notes', 'Motivo do ajuste *', 'text', '', 'placeholder="Ex.: contagem física, perda, correção"')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Registrar ajuste', cls: 'primary', onClick: async () => {
         try {
-          await api('/api/suprimentos/ajustes', { method: 'POST', body: { item_id: i.id, tipo: $('#aj-tipo').value, quantidade: $('#aj-qtd').value, data: $('#aj-data').value, notes: $('#aj-notes').value } });
+          await api('/api/suprimentos/ajustes', { method: 'POST', body: { item_id: i.id, tipo: $('#aj-tipo').value, quantidade: $('#aj-qtd').value, custo_unitario: $('#aj-custo').value, data: $('#aj-data').value, notes: $('#aj-notes').value } });
           closeModal(); toast('Ajuste registrado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
+  // Custo só faz sentido em entradas (saída consome pelo custo médio vigente).
+  const toggleCusto = () => {
+    const entrada = $('#aj-tipo').value === 'entrada';
+    $('#aj-custo-wrap').querySelector('.field').style.display = entrada ? '' : 'none';
+    $('#aj-custo-hint').style.display = entrada ? '' : 'none';
+  };
+  $('#aj-tipo').onchange = toggleCusto;
+  toggleCusto();
 }
 
 async function supHistorico(i) {
@@ -2072,11 +2089,11 @@ function supFormCompra(itens, fornecedores) {
       ${fldSel('co-forn', 'Fornecedor', [{ v: '', t: '—' }, ...fornecedores.filter(s => s.status === 'ativo').map(s => ({ v: s.id, t: s.name }))], '')}
       ${fld('co-doc', 'Documento / NF', 'text', '')}
     </div>
-    ${fld('co-data', 'Data da compra', 'date', new Date().toISOString().slice(0, 10))}
+    ${fld('co-data', 'Data da compra', 'date', todayISO())}
     <label class="check-chip" style="margin:6px 0"><input type="checkbox" id="co-pagar"> Lançar também em Contas a Pagar</label>
     <div id="co-pagar-fields" style="display:none">
       <div class="form-row">
-        ${fld('co-venc', 'Vencimento', 'date', new Date().toISOString().slice(0, 10))}
+        ${fld('co-venc', 'Vencimento', 'date', todayISO())}
         ${fld('co-catpag', 'Categoria (financeiro)', 'text', 'Materiais/Suprimentos')}
       </div>
     </div>
@@ -2148,7 +2165,7 @@ function supFormEnvio(itens, colaboradores) {
     ${fldSel('en-item', 'Item *', disp.map(i => ({ v: i.id, t: `${i.nome} — ${supNum(i.estoque_atual)} ${i.unidade} disp.` })), disp[0].id)}
     <div class="form-row">
       ${fld('en-qtd', 'Quantidade *', 'number', '1', 'step="0.001" min="0.001"')}
-      ${fld('en-data', 'Data do envio', 'date', new Date().toISOString().slice(0, 10))}
+      ${fld('en-data', 'Data do envio', 'date', todayISO())}
     </div>
     ${fldSel('en-colab', 'Colaborador destinatário *', colaboradores.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), colaboradores[0].id)}
     ${fld('en-notes', 'Observações', 'text', '', 'placeholder="Ex.: nº de série, finalidade"')}
@@ -2165,7 +2182,7 @@ function supFormEnvio(itens, colaboradores) {
 function supFormDevolucao(id) {
   openModal('Registrar devolução', `
     <p class="hint">O item volta ao estoque nesta data.</p>
-    ${fld('dv-data', 'Data da devolução', 'date', new Date().toISOString().slice(0, 10))}
+    ${fld('dv-data', 'Data da devolução', 'date', todayISO())}
     ${fld('dv-notes', 'Observações', 'text', '', 'placeholder="Ex.: estado do equipamento"')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Confirmar devolução', cls: 'primary', onClick: async () => {
