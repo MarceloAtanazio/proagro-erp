@@ -214,3 +214,19 @@
 ### Verificação (dados de teste criados e depois REMOVIDOS do banco)
 - Fluxo real via API (JWT de teste + servidor local): compra +10@5 → estoque 10, custo médio 5; envio 3 → 7; envio de 999 bloqueado ("estoque insuficiente"); devolução → 10; resumo valor R$50. Compra com `lancar_pagar` criou Conta a Pagar (id 346) e custo médio ponderado 6,43 = (10×5+4×10)/14. **Todos os dados de teste (item, movimentos, título 346) foram apagados** — banco confirmado limpo (0/0/0).
 - Frontend (stub do `api`, sem tocar no banco): 3 abas; Estoque com 2 itens, KPIs, badges "Baixo"/"OK" corretos, valor total certo; Compras com badge "Em Contas a Pagar" e botão; Envios com "Marcar entregue"/"Registrar devolução" e formulário com disponibilidade + colaborador. Sem erros de console; `node --check` OK nos dois arquivos.
+
+## 2026-07-28 — Cadastro de item detalhado (Suprimentos)
+
+**Solicitação:** ampliar o "Novo item" com identificação básica, classificação, logística/estoque, financeiro, fiscal (NCM/CEST/origem) e rastreabilidade (nº de série).
+
+### Modelo de dados (migração `estoque_itens_campos_detalhados`)
+- Novas colunas em `erp_estoque_itens`: `descricao`, `subcategoria`, `marca`, `estoque_maximo`, `peso_liquido`, `peso_bruto`, `dim_altura/largura/profundidade`, `preco_ultima_compra`, `ncm`, `cest`, `origem_mercadoria`, `numero_serie`. Refletido em `supabase/schema.sql`.
+
+### Backend (`api/index.js`)
+- `validItemEstoque` valida NCM (8 díg.), CEST (7 díg.), não-negativos e máx ≥ mín. `itemValues` monta as colunas (nomes fixos internos) para INSERT/UPDATE dinâmicos. `preco_ultima_compra` é atualizado automaticamente a cada compra (junto do custo médio).
+
+### Frontend (`app.js` + `styles.css`)
+- `supFormItem` reescrito em 6 seções (modal wide) + textarea de descrição + select de origem (tabela B do SPED). Nova **Ficha do item** (`supFichaItem`, só leitura) acessível por botão na tabela — disponível inclusive para usuários só-leitura. Quantidade em estoque exibida como somente-leitura (gerida por movimentações).
+
+### Verificação (dados de teste criados e REMOVIDOS)
+- **Importante:** o dev server não faz hot-reload — foi necessário reiniciá-lo para carregar o novo backend (na 1ª tentativa os campos voltaram null). Após reiniciar: NCM "123" → erro; CEST "12" → erro; máx<mín → erro; item completo criado e **todos os campos persistiram** (marca, subcategoria, NCM, origem, pesos, dimensões, preço, série, estoque máximo). Itens de teste apagados (0 restantes). Frontend: 6 seções presentes, 14 campos-chave, select de origem com 10 opções, Ficha renderizando dimensões/origem/série. Sem erros de console; `node --check` OK.

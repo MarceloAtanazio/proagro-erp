@@ -92,13 +92,27 @@ create table if not exists erp_budgets (
 -- ============================================================
 create table if not exists erp_estoque_itens (
   id serial primary key,
-  nome text not null,
-  sku text,
+  nome text not null,                    -- nome / descrição curta
+  sku text,                              -- código estruturado
+  descricao text,                        -- descrição longa / técnica
   categoria text,
+  subcategoria text,
+  marca text,                            -- marca / fabricante
   tipo text not null default 'material' check (tipo in ('material','equipamento')),
-  unidade text not null default 'un',
-  estoque_minimo numeric(14,3) not null default 0,
+  unidade text not null default 'un',    -- UN, KG, CX, LT, MT...
+  estoque_minimo numeric(14,3) not null default 0,  -- ponto de ressuprimento
+  estoque_maximo numeric(14,3),          -- limite para evitar excesso
+  peso_liquido numeric(12,3),            -- kg
+  peso_bruto numeric(12,3),              -- kg
+  dim_altura numeric(10,2),              -- cm
+  dim_largura numeric(10,2),             -- cm
+  dim_profundidade numeric(10,2),        -- cm
+  preco_ultima_compra numeric(14,2),     -- valor pago ao fornecedor (última compra)
   custo_medio numeric(14,2) not null default 0, -- média ponderada, atualizada nas compras
+  ncm text,                              -- Nomenclatura Comum do Mercosul (8 dígitos)
+  cest text,                             -- Código Especificador da Substituição Tributária
+  origem_mercadoria text,                -- tabela B do SPED (0..8)
+  numero_serie text,                     -- rastreabilidade / garantia (eletrônicos)
   ativo boolean not null default true,
   notes text,
   created_at timestamptz not null default now()

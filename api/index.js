@@ -1863,26 +1863,56 @@ app.get('/api/suprimentos/resumo', requireAuth, SUP_VIEW, h(async (req, res) => 
 function validItemEstoque(b) {
   if (!sanitize(b.nome)) return 'Nome do item é obrigatório.';
   if (b.tipo && !['material', 'equipamento'].includes(b.tipo)) return 'Tipo inválido.';
-  if (b.estoque_minimo != null && !(Number(b.estoque_minimo) >= 0)) return 'Estoque mínimo inválido.';
+  const naoNeg = (v, label) => (v != null && v !== '' && !(Number(v) >= 0)) ? `${label} inválido(a).` : null;
+  for (const [f, l] of [['estoque_minimo', 'Estoque mínimo'], ['estoque_maximo', 'Estoque máximo'],
+      ['peso_liquido', 'Peso líquido'], ['peso_bruto', 'Peso bruto'], ['dim_altura', 'Altura'],
+      ['dim_largura', 'Largura'], ['dim_profundidade', 'Profundidade'], ['preco_ultima_compra', 'Preço de custo']]) {
+    const e = naoNeg(b[f], l); if (e) return e;
+  }
+  const mn = Number(b.estoque_minimo), mx = Number(b.estoque_maximo);
+  if (b.estoque_maximo != null && b.estoque_maximo !== '' && isFinite(mx) && isFinite(mn) && mx > 0 && mx < mn)
+    return 'Estoque máximo não pode ser menor que o mínimo.';
+  if (sanitize(b.ncm) && String(b.ncm).replace(/\D/g, '').length !== 8) return 'NCM deve ter 8 dígitos.';
+  if (sanitize(b.cest) && String(b.cest).replace(/\D/g, '').length !== 7) return 'CEST deve ter 7 dígitos.';
   return null;
+}
+
+// Monta o objeto de campos do item na ordem das colunas. As chaves são
+// nomes fixos internos (não vêm do usuário), então é seguro interpolá-las.
+function itemValues(b) {
+  const num = v => (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
+  return {
+    nome: sanitize(b.nome), sku: sanitize(b.sku), categoria: sanitize(b.categoria),
+    subcategoria: sanitize(b.subcategoria), marca: sanitize(b.marca),
+    tipo: b.tipo === 'equipamento' ? 'equipamento' : 'material',
+    unidade: sanitize(b.unidade) || 'un', descricao: sanitize(b.descricao),
+    estoque_minimo: Number(b.estoque_minimo) || 0, estoque_maximo: num(b.estoque_maximo),
+    peso_liquido: num(b.peso_liquido), peso_bruto: num(b.peso_bruto),
+    dim_altura: num(b.dim_altura), dim_largura: num(b.dim_largura), dim_profundidade: num(b.dim_profundidade),
+    preco_ultima_compra: num(b.preco_ultima_compra),
+    ncm: sanitize(b.ncm), cest: sanitize(b.cest),
+    origem_mercadoria: sanitize(b.origem_mercadoria), numero_serie: sanitize(b.numero_serie),
+    notes: sanitize(b.notes)
+  };
 }
 
 app.post('/api/suprimentos/itens', requireAuth, SUP_EDIT, h(async (req, res) => {
   const b = req.body, err = validItemEstoque(b);
   if (err) return res.status(400).json({ error: err });
-  const rows = await query(`INSERT INTO erp_estoque_itens (nome, sku, categoria, tipo, unidade, estoque_minimo, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [sanitize(b.nome), sanitize(b.sku), sanitize(b.categoria), b.tipo === 'equipamento' ? 'equipamento' : 'material',
-     sanitize(b.unidade) || 'un', Number(b.estoque_minimo) || 0, sanitize(b.notes)]);
+  const v = itemValues(b), cols = Object.keys(v), vals = Object.values(v);
+  const ph = cols.map((_, i) => '$' + (i + 1)).join(',');
+  const rows = await query(`INSERT INTO erp_estoque_itens (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
   res.json({ ok: true, id: rows[0].id });
 }));
 
 app.put('/api/suprimentos/itens/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
   const b = req.body, err = validItemEstoque(b);
   if (err) return res.status(400).json({ error: err });
-  await query(`UPDATE erp_estoque_itens SET nome=$1, sku=$2, categoria=$3, tipo=$4, unidade=$5, estoque_minimo=$6, ativo=$7, notes=$8 WHERE id=$9`,
-    [sanitize(b.nome), sanitize(b.sku), sanitize(b.categoria), b.tipo === 'equipamento' ? 'equipamento' : 'material',
-     sanitize(b.unidade) || 'un', Number(b.estoque_minimo) || 0, b.ativo !== false, sanitize(b.notes), req.params.id]);
+  const v = itemValues(b); v.ativo = b.ativo !== false;
+  const cols = Object.keys(v), vals = Object.values(v);
+  const set = cols.map((c, i) => `${c}=$${i + 1}`).join(', ');
+  vals.push(req.params.id);
+  await query(`UPDATE erp_estoque_itens SET ${set} WHERE id=$${vals.length}`, vals);
   res.json({ ok: true });
 }));
 
@@ -1938,7 +1968,7 @@ app.post('/api/suprimentos/compras', requireAuth, SUP_EDIT, h(async (req, res) =
   // Custo médio ponderado sobre o estoque ANTES desta entrada.
   const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);
   const novoCusto = (baseQtd + qtd) > 0 ? ((Number(item.custo_medio) * baseQtd) + valorTotal) / (baseQtd + qtd) : custo;
-  await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [Number(novoCusto.toFixed(2)), item.id]);
+  await query('UPDATE erp_estoque_itens SET custo_medio=$1, preco_ultima_compra=$2 WHERE id=$3', [Number(novoCusto.toFixed(2)), custo, item.id]);
 
   res.json({ ok: true, id: mov[0].id, payable_id: payableId });
 }));

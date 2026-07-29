@@ -1817,7 +1817,7 @@ async function supRenderEstoque(panel) {
     const q = $('#sup-q').value.toLowerCase(), ft = $('#sup-ftipo').value;
     const rows = itens.filter(i => (!ft || i.tipo === ft) && (!q || (i.nome + ' ' + (i.sku || '') + ' ' + (i.categoria || '')).toLowerCase().includes(q)));
     $('#sup-tbl').innerHTML = `
-      <thead><tr><th>Item</th><th>Tipo</th><th>Categoria</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="num">Custo médio</th><th class="num">Valor total</th><th>Situação</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
+      <thead><tr><th>Item</th><th>Tipo</th><th>Categoria</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="num">Custo médio</th><th class="num">Valor total</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${rows.map(i => {
         const atual = Number(i.estoque_atual), min = Number(i.estoque_minimo), baixo = atual < min, zero = atual <= 0;
         const sit = !i.ativo ? '<span class="badge off">Inativo</span>' : zero ? '<span class="badge late">Sem estoque</span>' : baixo ? '<span class="badge warn">Baixo</span>' : '<span class="badge ok">OK</span>';
@@ -1830,13 +1830,15 @@ async function supRenderEstoque(panel) {
           <td class="num">${brl(i.custo_medio)}</td>
           <td class="num">${brl(atual * Number(i.custo_medio))}</td>
           <td>${sit}</td>
-          ${edit ? `<td class="actions">
-            <button class="btn sm" data-mov="${i.id}">Ajustar</button>
+          <td class="actions">
+            <button class="btn sm" data-ficha="${i.id}">Ficha</button>
+            ${edit ? `<button class="btn sm" data-mov="${i.id}">Ajustar</button>
             <button class="btn sm" data-hist="${i.id}">Histórico</button>
-            <button class="btn sm" data-edit="${i.id}">Editar</button>
-          </td>` : ''}
+            <button class="btn sm" data-edit="${i.id}">Editar</button>` : ''}
+          </td>
         </tr>`;
-      }).join('') || `<tr><td colspan="${edit ? 9 : 8}"><div class="empty">Nenhum item cadastrado ainda.</div></td></tr>`}</tbody>`;
+      }).join('') || `<tr><td colspan="9"><div class="empty">Nenhum item cadastrado ainda.</div></td></tr>`}</tbody>`;
+    $('#sup-tbl').querySelectorAll('[data-ficha]').forEach(b => b.onclick = () => supFichaItem(itens.find(i => i.id == b.dataset.ficha)));
     if (edit) {
       $('#sup-tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => supFormItem(itens.find(i => i.id == b.dataset.edit)));
       $('#sup-tbl').querySelectorAll('[data-mov]').forEach(b => b.onclick = () => supFormAjuste(itens.find(i => i.id == b.dataset.mov)));
@@ -1848,35 +1850,149 @@ async function supRenderEstoque(panel) {
   draw();
 }
 
+// Origem da mercadoria (tabela B do SPED) — exigida na nota fiscal.
+const ORIGEM_MERCADORIA = [
+  { v: '', t: '—' },
+  { v: '0', t: '0 - Nacional' },
+  { v: '1', t: '1 - Estrangeira (importação direta)' },
+  { v: '2', t: '2 - Estrangeira (mercado interno)' },
+  { v: '3', t: '3 - Nacional (conteúdo import. 40%–70%)' },
+  { v: '4', t: '4 - Nacional (processo produtivo básico)' },
+  { v: '5', t: '5 - Nacional (conteúdo import. ≤ 40%)' },
+  { v: '6', t: '6 - Estrangeira (import. direta, sem similar)' },
+  { v: '7', t: '7 - Estrangeira (merc. interno, sem similar)' },
+  { v: '8', t: '8 - Nacional (conteúdo import. > 70%)' }
+];
+const ORIGEM_LABEL = Object.fromEntries(ORIGEM_MERCADORIA.map(o => [o.v, o.t]));
+const supSecTitle = t => `<div class="sup-sec-title">${t}</div>`;
+const fldArea = (id, label, value = '', attrs = '') =>
+  `<div class="field"><label for="${id}">${label}</label><textarea id="${id}" rows="2" ${attrs}>${esc(value)}</textarea></div>`;
+
 function supFormItem(i) {
   const isEdit = !!i; i = i || {};
+  const num = v => (v == null ? '' : v);
   openModal(isEdit ? 'Editar item' : 'Novo item de estoque', `
-    ${fld('it-nome', 'Nome do item *', 'text', i.nome || '')}
+    ${supSecTitle('1 · Identificação básica')}
+    ${isEdit ? `<p class="hint" style="margin-top:0">Código interno (ID): <strong>#${i.id}</strong></p>` : ''}
+    ${fld('it-nome', 'Nome / descrição curta *', 'text', i.nome || '', 'placeholder="Nome comercial que aparece nas telas e notas"')}
     <div class="form-row">
-      ${fld('it-sku', 'Código/SKU', 'text', i.sku || '')}
-      ${fld('it-cat', 'Categoria', 'text', i.categoria || '', 'placeholder="Ex.: EPI, Papelaria, TI"')}
-    </div>
-    <div class="form-row">
+      ${fld('it-sku', 'SKU (código estruturado)', 'text', i.sku || '', 'placeholder="Ex.: EPI-LUV-P-001"')}
       ${fldSel('it-tipo', 'Tipo', [{ v: 'material', t: 'Material (consumo)' }, { v: 'equipamento', t: 'Equipamento (durável)' }], i.tipo || 'material')}
-      ${fldSel('it-un', 'Unidade', SUP_UNIDADES.map(u => ({ v: u, t: u })), i.unidade || 'un')}
+    </div>
+    ${fldArea('it-descricao', 'Descrição longa / técnica', i.descricao || '', 'placeholder="Especificações, ficha técnica, observações"')}
+
+    ${supSecTitle('2 · Classificação e organização')}
+    <div class="form-row">
+      ${fld('it-cat', 'Categoria', 'text', i.categoria || '', 'placeholder="Ex.: EPI, Papelaria, TI"')}
+      ${fld('it-subcat', 'Subcategoria', 'text', i.subcategoria || '')}
     </div>
     <div class="form-row">
-      ${fld('it-min', 'Estoque mínimo', 'number', i.estoque_minimo != null ? i.estoque_minimo : 0, 'step="0.001" min="0"')}
-      ${isEdit ? fldSel('it-ativo', 'Status', [{ v: 'true', t: 'Ativo' }, { v: 'false', t: 'Inativo' }], String(i.ativo !== false)) : ''}
+      ${fld('it-marca', 'Marca / fabricante', 'text', i.marca || '')}
+      ${fldSel('it-un', 'Unidade de medida', SUP_UNIDADES.map(u => ({ v: u, t: u })), i.unidade || 'un')}
     </div>
-    ${fld('it-notes', 'Observações', 'text', i.notes || '')}
-    <p class="hint">A quantidade em estoque não é editada aqui — ela vem das compras, envios e ajustes.</p>`,
+
+    ${supSecTitle('3 · Logística e estoque')}
+    ${isEdit ? `<p class="hint" style="margin-top:0">Quantidade em estoque: <strong>${supNum(i.estoque_atual)} ${esc(i.unidade || 'un')}</strong> — controlada por movimentações, não editável aqui.</p>` : ''}
+    <div class="form-row">
+      ${fld('it-min', 'Estoque mínimo (ressuprimento)', 'number', num(i.estoque_minimo != null ? i.estoque_minimo : 0), 'step="0.001" min="0"')}
+      ${fld('it-max', 'Estoque máximo', 'number', num(i.estoque_maximo), 'step="0.001" min="0"')}
+    </div>
+    <div class="form-row">
+      ${fld('it-pliq', 'Peso líquido (kg)', 'number', num(i.peso_liquido), 'step="0.001" min="0"')}
+      ${fld('it-pbru', 'Peso bruto (kg)', 'number', num(i.peso_bruto), 'step="0.001" min="0"')}
+    </div>
+    <div class="form-row">
+      ${fld('it-dalt', 'Altura (cm)', 'number', num(i.dim_altura), 'step="0.01" min="0"')}
+      ${fld('it-dlar', 'Largura (cm)', 'number', num(i.dim_largura), 'step="0.01" min="0"')}
+      ${fld('it-dpro', 'Profundidade (cm)', 'number', num(i.dim_profundidade), 'step="0.01" min="0"')}
+    </div>
+
+    ${supSecTitle('4 · Financeiro')}
+    <div class="form-row">
+      ${fld('it-preco', 'Preço de custo / última compra (R$)', 'number', num(i.preco_ultima_compra), 'step="0.01" min="0"')}
+      <div class="field"><label>Custo médio ponderado (CMP)</label><input value="${isEdit ? brl(i.custo_medio) : 'Calculado nas compras'}" disabled></div>
+    </div>
+    <p class="hint" style="margin-top:-4px">O CMP e o preço da última compra são atualizados automaticamente a cada entrada por compra.</p>
+
+    ${supSecTitle('5 · Fiscal e tributário')}
+    <div class="form-row">
+      ${fld('it-ncm', 'NCM (8 dígitos)', 'text', i.ncm || '', 'placeholder="00000000" inputmode="numeric"')}
+      ${fld('it-cest', 'CEST (se aplicável)', 'text', i.cest || '', 'placeholder="0000000" inputmode="numeric"')}
+    </div>
+    ${fldSel('it-origem', 'Origem da mercadoria', ORIGEM_MERCADORIA, i.origem_mercadoria || '')}
+
+    ${supSecTitle('6 · Rastreabilidade')}
+    ${fld('it-serie', 'Número de série', 'text', i.numero_serie || '', 'placeholder="Para eletrônicos / controle de garantia"')}
+
+    ${supSecTitle('Outros')}
+    ${fld('it-notes', 'Observações gerais', 'text', i.notes || '')}
+    ${isEdit ? fldSel('it-ativo', 'Status', [{ v: 'true', t: 'Ativo' }, { v: 'false', t: 'Inativo' }], String(i.ativo !== false)) : ''}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: isEdit ? 'Salvar' : 'Cadastrar', cls: 'primary', onClick: async () => {
-        const body = { nome: $('#it-nome').value, sku: $('#it-sku').value, categoria: $('#it-cat').value,
-          tipo: $('#it-tipo').value, unidade: $('#it-un').value, estoque_minimo: $('#it-min').value, notes: $('#it-notes').value };
+        const body = {
+          nome: $('#it-nome').value, sku: $('#it-sku').value, tipo: $('#it-tipo').value, descricao: $('#it-descricao').value,
+          categoria: $('#it-cat').value, subcategoria: $('#it-subcat').value, marca: $('#it-marca').value, unidade: $('#it-un').value,
+          estoque_minimo: $('#it-min').value, estoque_maximo: $('#it-max').value,
+          peso_liquido: $('#it-pliq').value, peso_bruto: $('#it-pbru').value,
+          dim_altura: $('#it-dalt').value, dim_largura: $('#it-dlar').value, dim_profundidade: $('#it-dpro').value,
+          preco_ultima_compra: $('#it-preco').value, ncm: $('#it-ncm').value, cest: $('#it-cest').value,
+          origem_mercadoria: $('#it-origem').value, numero_serie: $('#it-serie').value, notes: $('#it-notes').value
+        };
         if (isEdit) body.ativo = $('#it-ativo').value === 'true';
         try {
           if (isEdit) await api('/api/suprimentos/itens/' + i.id, { method: 'PUT', body });
           else await api('/api/suprimentos/itens', { method: 'POST', body });
           closeModal(); toast(isEdit ? 'Item atualizado.' : 'Item cadastrado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
-     }}]);
+     }}], { wide: true });
+}
+
+// Ficha completa do item (somente leitura) — mostra todos os dados do cadastro.
+function supFichaItem(i) {
+  const dim = [i.dim_altura, i.dim_largura, i.dim_profundidade].some(v => v != null)
+    ? `${supNum(i.dim_altura || 0)} × ${supNum(i.dim_largura || 0)} × ${supNum(i.dim_profundidade || 0)} cm` : '—';
+  const linha = (rot, val) => `<tr><td style="color:var(--muted);width:42%">${rot}</td><td><strong>${val}</strong></td></tr>`;
+  const txt = v => (v == null || v === '') ? '—' : esc(v);
+  openModal(`Ficha do item — ${esc(i.nome)}`, `
+    ${supSecTitle('Identificação')}
+    <table class="via-resumo-tbl">
+      ${linha('Código interno (ID)', '#' + i.id)}
+      ${linha('SKU', txt(i.sku))}
+      ${linha('Tipo', i.tipo === 'equipamento' ? 'Equipamento (durável)' : 'Material (consumo)')}
+      ${linha('Descrição técnica', txt(i.descricao))}
+    </table>
+    ${supSecTitle('Classificação')}
+    <table class="via-resumo-tbl">
+      ${linha('Categoria', txt(i.categoria))}
+      ${linha('Subcategoria', txt(i.subcategoria))}
+      ${linha('Marca / fabricante', txt(i.marca))}
+      ${linha('Unidade', txt(i.unidade))}
+    </table>
+    ${supSecTitle('Logística e estoque')}
+    <table class="via-resumo-tbl">
+      ${linha('Estoque atual', supNum(i.estoque_atual) + ' ' + esc(i.unidade || 'un'))}
+      ${linha('Estoque mínimo', supNum(i.estoque_minimo))}
+      ${linha('Estoque máximo', i.estoque_maximo != null ? supNum(i.estoque_maximo) : '—')}
+      ${linha('Peso líquido / bruto', `${i.peso_liquido != null ? supNum(i.peso_liquido) + ' kg' : '—'} / ${i.peso_bruto != null ? supNum(i.peso_bruto) + ' kg' : '—'}`)}
+      ${linha('Dimensões (A×L×P)', dim)}
+    </table>
+    ${supSecTitle('Financeiro')}
+    <table class="via-resumo-tbl">
+      ${linha('Preço da última compra', i.preco_ultima_compra != null ? brl(i.preco_ultima_compra) : '—')}
+      ${linha('Custo médio ponderado', brl(i.custo_medio))}
+      ${linha('Valor total em estoque', brl(Number(i.estoque_atual) * Number(i.custo_medio)))}
+    </table>
+    ${supSecTitle('Fiscal')}
+    <table class="via-resumo-tbl">
+      ${linha('NCM', txt(i.ncm))}
+      ${linha('CEST', txt(i.cest))}
+      ${linha('Origem', i.origem_mercadoria ? esc(ORIGEM_LABEL[i.origem_mercadoria] || i.origem_mercadoria) : '—')}
+    </table>
+    ${supSecTitle('Rastreabilidade')}
+    <table class="via-resumo-tbl">
+      ${linha('Número de série', txt(i.numero_serie))}
+    </table>`,
+    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
 }
 
 function supFormAjuste(i) {

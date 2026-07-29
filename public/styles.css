@@ -578,3 +578,6 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .sup-tab { appearance: none; background: none; border: none; padding: 10px 16px; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .sup-tab:hover { color: var(--ink); }
 .sup-tab.active { color: var(--verde-700); border-bottom-color: var(--verde-700); }
+.sup-sec-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--verde-700); margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.sup-sec-title:first-child { margin-top: 0; }
+#modal-body textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; box-sizing: border-box; }
