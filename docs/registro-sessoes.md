@@ -192,3 +192,25 @@
 
 ### Verificação (sem gerar download — `viaGerarPDF` espionado por stub)
 - Gating: admin → `false`/mensagem "não possui PDF" (não chama o gerador); colaborador → `true`. Reconstrução do colaborador: 2 destinos, avião+aluguel, total R$ 1.360, 3 dias, `dataEmissao` = created_at original. Trajeto reconstruído dos dados salvos: 1 voo + 1 carro com geometria (mapa/rota voltam no PDF). Sem erros de console; `node --check` OK.
+
+## 2026-07-28 — Novo módulo: Suprimentos (Estoque · Compras · Envios)
+
+**Solicitação:** seção para registrar compras de materiais, controle de estoque e controle de envio de equipamentos/materiais a funcionários.
+
+**Decisões (via perguntas ao usuário):** (1) compra com opção de lançar em Contas a Pagar (checkbox por compra); (2) envios só para colaboradores cadastrados; (3) equipamentos com custódia e devolução.
+
+### Modelo de dados (migração `suprimentos_estoque_compras_envios`)
+- `erp_estoque_itens`: catálogo (nome, sku, categoria, tipo material/equipamento, unidade, estoque_minimo, custo_medio, ativo).
+- `erp_estoque_movimentos`: **livro-razão** e fonte da verdade do estoque — `tipo` entrada/saida, `origem` compra/envio/ajuste/devolucao, quantidade, custo/valor, supplier_id, colaborador_id, status de custódia, payable_id (se virou Conta a Pagar), devolucao_de. Estoque atual = SUM(entrada) − SUM(saida). Também refletido em `supabase/schema.sql`.
+
+### Backend (`api/index.js`)
+- `suprimentos` adicionado ao whitelist `PERM_PAGES` (permissão configurável por usuário).
+- Rotas `/api/suprimentos/*`: itens (CRUD), colaboradores, resumo (KPIs), movimentos (histórico), compras (entrada + custo médio ponderado + Conta a Pagar opcional), envios (saída com checagem de saldo), envios/:id/status (entregue/devolvido; devolução repõe estoque), ajustes (entrada/saída com motivo). `requireViewAny(['suprimentos'])` / `requireEdit('suprimentos')`.
+
+### Frontend (`app.js` + `styles.css`)
+- Nova seção "Suprimentos" no menu (ícone `box`), permissão `suprimentos` em `PERM_PAGES`/`PAGE_LABELS`, rota `renderSuprimentos`.
+- Uma página com 3 abas: **Estoque** (KPIs, tabela com alerta de estoque baixo, item/ajuste/histórico), **Compras** (registrar com fornecedor/NF e opção de Contas a Pagar), **Envios a funcionários** (saída para colaborador, custódia enviado→entregue→devolvido para equipamentos).
+
+### Verificação (dados de teste criados e depois REMOVIDOS do banco)
+- Fluxo real via API (JWT de teste + servidor local): compra +10@5 → estoque 10, custo médio 5; envio 3 → 7; envio de 999 bloqueado ("estoque insuficiente"); devolução → 10; resumo valor R$50. Compra com `lancar_pagar` criou Conta a Pagar (id 346) e custo médio ponderado 6,43 = (10×5+4×10)/14. **Todos os dados de teste (item, movimentos, título 346) foram apagados** — banco confirmado limpo (0/0/0).
+- Frontend (stub do `api`, sem tocar no banco): 3 abas; Estoque com 2 itens, KPIs, badges "Baixo"/"OK" corretos, valor total certo; Compras com badge "Em Contas a Pagar" e botão; Envios com "Marcar entregue"/"Registrar devolução" e formulário com disponibilidade + colaborador. Sem erros de console; `node --check` OK nos dois arquivos.

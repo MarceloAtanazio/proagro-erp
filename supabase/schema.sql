@@ -84,6 +84,49 @@ create table if not exists erp_budgets (
   unique (year, month, type, category)
 );
 
+-- ============================================================
+-- Suprimentos (Estoque, Compras e Envios a funcionários)
+-- O estoque é derivado do livro de movimentos: 'entrada' soma,
+-- 'saida' subtrai. Compra=entrada, Envio=saida, Devolução=entrada,
+-- Ajuste=entrada/saida com motivo.
+-- ============================================================
+create table if not exists erp_estoque_itens (
+  id serial primary key,
+  nome text not null,
+  sku text,
+  categoria text,
+  tipo text not null default 'material' check (tipo in ('material','equipamento')),
+  unidade text not null default 'un',
+  estoque_minimo numeric(14,3) not null default 0,
+  custo_medio numeric(14,2) not null default 0, -- média ponderada, atualizada nas compras
+  ativo boolean not null default true,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists erp_estoque_movimentos (
+  id serial primary key,
+  item_id integer not null references erp_estoque_itens(id) on delete cascade,
+  tipo text not null check (tipo in ('entrada','saida')),
+  origem text not null check (origem in ('compra','envio','ajuste','devolucao')),
+  quantidade numeric(14,3) not null check (quantidade > 0),
+  custo_unitario numeric(14,2),
+  valor_total numeric(14,2),
+  supplier_id integer references erp_suppliers(id) on delete set null,
+  documento text,
+  colaborador_id integer references erp_colaboradores(id) on delete set null,
+  status text check (status in ('enviado','entregue','devolvido')), -- custódia do envio
+  data date not null default current_date,
+  data_devolucao date,
+  devolucao_de integer references erp_estoque_movimentos(id) on delete set null,
+  payable_id integer references erp_payables(id) on delete set null, -- se a compra virou Conta a Pagar
+  notes text,
+  created_by integer references erp_users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_erp_estq_mov_item on erp_estoque_movimentos(item_id);
+create index if not exists idx_erp_estq_mov_origem on erp_estoque_movimentos(origem);
+
 -- Controle de tentativas de login (rate limit), necessário pois funções
 -- serverless na Vercel não mantêm memória entre execuções.
 create table if not exists erp_login_attempts (

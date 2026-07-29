@@ -572,3 +572,9 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-audit col.c-audit-user { width: 16%; }
 .tbl-audit col.c-audit-acao { width: 68%; }
 .tbl-audit td { white-space: normal; word-break: break-word; vertical-align: top; }
+
+/* Suprimentos — abas da seção */
+.sup-tabs { display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.sup-tab { appearance: none; background: none; border: none; padding: 10px 16px; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.sup-tab:hover { color: var(--ink); }
+.sup-tab.active { color: var(--verde-700); border-bottom-color: var(--verde-700); }

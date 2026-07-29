@@ -62,7 +62,7 @@ function setAuthCookie(res, user) {
 
 // Páginas cujo acesso é configurável por usuário.
 // "usuarios" não entra aqui: é exclusiva do administrador.
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos'];
 
 // Normaliza o objeto de permissões recebido do frontend para o formato
 // { pagina: 'view' | 'edit' }, descartando páginas desconhecidas e níveis inválidos.
@@ -1817,6 +1817,188 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
     vencidas: { n: vencidas.length, v: vencidas.reduce((s, r) => s + n(r.valor_liberado), 0) },
     divergentes: { n: divergentes[0].n, v: n(divergentes[0].v) }
   });
+}));
+
+// ============================================================
+// SUPRIMENTOS — Estoque, Compras e Envios a funcionários
+// O estoque é DERIVADO do livro de movimentos (erp_estoque_movimentos):
+// tipo 'entrada' soma, 'saida' subtrai. Assim a quantidade nunca fica
+// dessincronizada. Compra = entrada; Envio = saída; Devolução = entrada;
+// Ajuste manual = entrada/saída com motivo.
+// ============================================================
+const SUP_VIEW = requireViewAny(['suprimentos']);
+const SUP_EDIT = requireEdit('suprimentos');
+const SUP_ESTOQUE_SELECT = `
+  SELECT i.*,
+    COALESCE((SELECT SUM(CASE WHEN m.tipo='entrada' THEN m.quantidade ELSE -m.quantidade END)
+              FROM erp_estoque_movimentos m WHERE m.item_id = i.id), 0) AS estoque_atual
+  FROM erp_estoque_itens i`;
+
+async function estoqueAtualItem(itemId) {
+  const r = await query(`SELECT COALESCE(SUM(CASE WHEN tipo='entrada' THEN quantidade ELSE -quantidade END),0) AS q
+    FROM erp_estoque_movimentos WHERE item_id=$1`, [itemId]);
+  return Number(r[0].q);
+}
+const hojeISO = () => new Date().toISOString().slice(0, 10);
+
+app.get('/api/suprimentos/itens', requireAuth, SUP_VIEW, h(async (req, res) => {
+  res.json(await query(`${SUP_ESTOQUE_SELECT} ORDER BY i.ativo DESC, i.nome`));
+}));
+
+app.get('/api/suprimentos/colaboradores', requireAuth, SUP_VIEW, h(async (req, res) => {
+  res.json(await query('SELECT id, name, cargo FROM erp_colaboradores WHERE ativo = true ORDER BY name'));
+}));
+
+app.get('/api/suprimentos/resumo', requireAuth, SUP_VIEW, h(async (req, res) => {
+  const itens = await query(`${SUP_ESTOQUE_SELECT} WHERE i.ativo = true`);
+  const custodia = await query(`SELECT COALESCE(SUM(quantidade),0) AS q FROM erp_estoque_movimentos WHERE origem='envio' AND status <> 'devolvido'`);
+  res.json({
+    totalItens: itens.length,
+    valorEstoque: itens.reduce((s, i) => s + n(i.estoque_atual) * n(i.custo_medio), 0),
+    abaixoMinimo: itens.filter(i => n(i.estoque_atual) < n(i.estoque_minimo)).length,
+    emCustodia: n(custodia[0].q)
+  });
+}));
+
+function validItemEstoque(b) {
+  if (!sanitize(b.nome)) return 'Nome do item é obrigatório.';
+  if (b.tipo && !['material', 'equipamento'].includes(b.tipo)) return 'Tipo inválido.';
+  if (b.estoque_minimo != null && !(Number(b.estoque_minimo) >= 0)) return 'Estoque mínimo inválido.';
+  return null;
+}
+
+app.post('/api/suprimentos/itens', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body, err = validItemEstoque(b);
+  if (err) return res.status(400).json({ error: err });
+  const rows = await query(`INSERT INTO erp_estoque_itens (nome, sku, categoria, tipo, unidade, estoque_minimo, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [sanitize(b.nome), sanitize(b.sku), sanitize(b.categoria), b.tipo === 'equipamento' ? 'equipamento' : 'material',
+     sanitize(b.unidade) || 'un', Number(b.estoque_minimo) || 0, sanitize(b.notes)]);
+  res.json({ ok: true, id: rows[0].id });
+}));
+
+app.put('/api/suprimentos/itens/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body, err = validItemEstoque(b);
+  if (err) return res.status(400).json({ error: err });
+  await query(`UPDATE erp_estoque_itens SET nome=$1, sku=$2, categoria=$3, tipo=$4, unidade=$5, estoque_minimo=$6, ativo=$7, notes=$8 WHERE id=$9`,
+    [sanitize(b.nome), sanitize(b.sku), sanitize(b.categoria), b.tipo === 'equipamento' ? 'equipamento' : 'material',
+     sanitize(b.unidade) || 'un', Number(b.estoque_minimo) || 0, b.ativo !== false, sanitize(b.notes), req.params.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/suprimentos/itens/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const used = (await query('SELECT COUNT(*)::int AS n FROM erp_estoque_movimentos WHERE item_id=$1', [req.params.id]))[0].n;
+  if (used > 0) return res.status(409).json({ error: `Item possui ${used} movimentação(ões). Inative-o em vez de excluir.` });
+  await query('DELETE FROM erp_estoque_itens WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res) => {
+  const cond = [], params = [];
+  if (req.query.item_id) { params.push(req.query.item_id); cond.push(`m.item_id=$${params.length}`); }
+  if (req.query.origem) { params.push(req.query.origem); cond.push(`m.origem=$${params.length}`); }
+  const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+  res.json(await query(`
+    SELECT m.*, i.nome AS item_nome, i.unidade, i.tipo AS item_tipo,
+      s.name AS supplier_name, c.name AS colaborador_name, u.name AS created_by_name
+    FROM erp_estoque_movimentos m
+    JOIN erp_estoque_itens i ON i.id = m.item_id
+    LEFT JOIN erp_suppliers s ON s.id = m.supplier_id
+    LEFT JOIN erp_colaboradores c ON c.id = m.colaborador_id
+    LEFT JOIN erp_users u ON u.id = m.created_by
+    ${where} ORDER BY m.data DESC, m.id DESC`, params));
+}));
+
+// Compra: entrada no estoque + custo médio ponderado + (opcional) Conta a Pagar
+app.post('/api/suprimentos/compras', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body;
+  const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [b.item_id]))[0];
+  if (!item) return res.status(400).json({ error: 'Item inválido.' });
+  const qtd = Number(b.quantidade), custo = Number(b.custo_unitario);
+  if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
+  if (!isFinite(custo) || custo < 0) return res.status(400).json({ error: 'Custo unitário inválido.' });
+  const data = isDate(b.data) ? b.data : hojeISO();
+  const valorTotal = Number((qtd * custo).toFixed(2));
+
+  let payableId = null;
+  if (b.lancar_pagar) {
+    if (!isDate(b.due_date)) return res.status(400).json({ error: 'Informe o vencimento para lançar em Contas a Pagar.' });
+    const desc = `Compra de material: ${item.nome} (${qtd} ${item.unidade})`;
+    const pr = await query(`INSERT INTO erp_payables (supplier_id, description, category, document, amount, due_date, notes, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [b.supplier_id || null, desc, sanitize(b.categoria_pagar) || 'Materiais/Suprimentos', sanitize(b.documento), valorTotal, b.due_date, sanitize(b.notes), req.user.id]);
+    payableId = pr[0].id;
+  }
+
+  const mov = await query(`INSERT INTO erp_estoque_movimentos
+    (item_id, tipo, origem, quantidade, custo_unitario, valor_total, supplier_id, documento, data, payable_id, notes, created_by)
+    VALUES ($1,'entrada','compra',$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    [item.id, qtd, custo, valorTotal, b.supplier_id || null, sanitize(b.documento), data, payableId, sanitize(b.notes), req.user.id]);
+
+  // Custo médio ponderado sobre o estoque ANTES desta entrada.
+  const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);
+  const novoCusto = (baseQtd + qtd) > 0 ? ((Number(item.custo_medio) * baseQtd) + valorTotal) / (baseQtd + qtd) : custo;
+  await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [Number(novoCusto.toFixed(2)), item.id]);
+
+  res.json({ ok: true, id: mov[0].id, payable_id: payableId });
+}));
+
+// Envio a colaborador: saída do estoque (checa saldo). Equipamento entra em custódia.
+app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body;
+  const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [b.item_id]))[0];
+  if (!item) return res.status(400).json({ error: 'Item inválido.' });
+  if (!b.colaborador_id) return res.status(400).json({ error: 'Selecione o colaborador destinatário.' });
+  const colab = (await query('SELECT id FROM erp_colaboradores WHERE id=$1', [b.colaborador_id]))[0];
+  if (!colab) return res.status(400).json({ error: 'Colaborador inválido.' });
+  const qtd = Number(b.quantidade);
+  if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
+  const saldo = await estoqueAtualItem(item.id);
+  if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}, solicitado ${qtd}.` });
+  const data = isDate(b.data) ? b.data : hojeISO();
+  const mov = await query(`INSERT INTO erp_estoque_movimentos
+    (item_id, tipo, origem, quantidade, colaborador_id, status, data, notes, created_by)
+    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6) RETURNING id`,
+    [item.id, qtd, b.colaborador_id, data, sanitize(b.notes), req.user.id]);
+  res.json({ ok: true, id: mov[0].id });
+}));
+
+// Custódia do envio: entregue | devolvido (a devolução repõe o estoque).
+app.post('/api/suprimentos/envios/:id/status', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const novo = req.body.status;
+  if (!['entregue', 'devolvido'].includes(novo)) return res.status(400).json({ error: 'Status inválido.' });
+  const env = (await query(`SELECT * FROM erp_estoque_movimentos WHERE id=$1 AND origem='envio'`, [req.params.id]))[0];
+  if (!env) return res.status(404).json({ error: 'Envio não encontrado.' });
+  if (env.status === 'devolvido') return res.status(400).json({ error: 'Este envio já foi devolvido.' });
+  if (novo === 'devolvido') {
+    const data = isDate(req.body.data) ? req.body.data : hojeISO();
+    await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, colaborador_id, data, devolucao_de, notes, created_by)
+      VALUES ($1,'entrada','devolucao',$2,$3,$4,$5,$6,$7)`,
+      [env.item_id, env.quantidade, env.colaborador_id, data, env.id, sanitize(req.body.notes), req.user.id]);
+    await query(`UPDATE erp_estoque_movimentos SET status='devolvido', data_devolucao=$1 WHERE id=$2`, [data, env.id]);
+  } else {
+    await query(`UPDATE erp_estoque_movimentos SET status='entregue' WHERE id=$1`, [env.id]);
+  }
+  res.json({ ok: true });
+}));
+
+// Ajuste manual de estoque (entrada/saída com motivo obrigatório).
+app.post('/api/suprimentos/ajustes', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body;
+  const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [b.item_id]))[0];
+  if (!item) return res.status(400).json({ error: 'Item inválido.' });
+  const tipo = b.tipo === 'saida' ? 'saida' : 'entrada';
+  const qtd = Number(b.quantidade);
+  if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
+  if (!sanitize(b.notes)) return res.status(400).json({ error: 'Descreva o motivo do ajuste.' });
+  if (tipo === 'saida') {
+    const saldo = await estoqueAtualItem(item.id);
+    if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}.` });
+  }
+  const data = isDate(b.data) ? b.data : hojeISO();
+  await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, data, notes, created_by)
+    VALUES ($1,$2,'ajuste',$3,$4,$5,$6)`, [item.id, tipo, qtd, data, sanitize(b.notes), req.user.id]);
+  res.json({ ok: true });
 }));
 
 // ------------------------------------------------------------

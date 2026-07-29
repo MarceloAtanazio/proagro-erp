@@ -21,11 +21,11 @@ let CURRENT_PAGE = 'dashboard';
 let FORCE_MODAL = false;   // trava o modal (troca de senha obrigatória)
 
 // Páginas com acesso configurável (espelha PERM_PAGES do backend)
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos'];
 const PAGE_LABELS = {
   dashboard:'Dashboard', pagar:'Contas a Pagar', receber:'Contas a Receber', fluxo:'Fluxo de Caixa',
   conciliacao:'Conciliação Bancária', fornecedores:'Fornecedores', orcamento:'Orçamento Anual',
-  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais', viaticos:'Viáticos'
+  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais', viaticos:'Viáticos', suprimentos:'Suprimentos'
 };
 
 function permLevel(page) {
@@ -235,7 +235,8 @@ const ICONS = {
   usr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
   cfg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 008 4.6a1.7 1.7 0 001.03-1.56V3a2 2 0 014 0v.09A1.7 1.7 0 0016 4.6a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 8a1.7 1.7 0 001.56 1.03H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>',
   tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.6L12.7 4.7A2 2 0 0011.3 4H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9c.8.8 2 .8 2.8 0l5.3-5.3c.8-.8.8-2 0-2.8z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>',
-  via: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M3 12h18"/></svg>'
+  via: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M3 12h18"/></svg>',
+  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>'
 };
 
 const PAGES = [
@@ -248,6 +249,7 @@ const PAGES = [
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
   { hash: 'viaticos', title: 'Viáticos', icon: 'via' },
+  { hash: 'suprimentos', title: 'Suprimentos', icon: 'box', section: 'Suprimentos' },
   { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração', sub: 'Cadastros' },
   { hash: 'usuarios', title: 'Usuários', icon: 'usr', sub: 'Cadastros', super: true },
   { hash: 'categorias', title: 'Categorias', icon: 'tag', sub: 'Cadastros', super: true },
@@ -341,6 +343,7 @@ function route() {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
     orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, viaticos: renderViaticos,
+    suprimentos: renderSuprimentos,
     usuarios: renderUsuarios, categorias: renderCategorias, config: renderConfig
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
@@ -1761,6 +1764,298 @@ function formFornecedor(r) {
           if (isEdit) await api('/api/suppliers/' + r.id, { method: 'PUT', body });
           else await api('/api/suppliers', { method: 'POST', body });
           closeModal(); toast(isEdit ? 'Fornecedor atualizado.' : 'Fornecedor cadastrado.'); renderFornecedores();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+// ============================================================
+// SUPRIMENTOS (Estoque · Compras · Envios a funcionários)
+// Uma única seção com três abas que compartilham o mesmo estoque.
+// ============================================================
+let SUP_TAB = 'estoque';
+const SUP_UNIDADES = ['un', 'cx', 'par', 'pct', 'm', 'kg', 'L', 'rolo'];
+const supNum = v => (Math.round((Number(v) || 0) * 1000) / 1000).toLocaleString('pt-BR');
+
+async function renderSuprimentos() {
+  const c = $('#content');
+  c.innerHTML = `
+    <div class="sup-tabs">
+      <button class="sup-tab" data-tab="estoque">Estoque</button>
+      <button class="sup-tab" data-tab="compras">Compras</button>
+      <button class="sup-tab" data-tab="envios">Envios a funcionários</button>
+    </div>
+    <div id="sup-panel"></div>`;
+  const draw = () => {
+    c.querySelectorAll('.sup-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === SUP_TAB));
+    const panel = $('#sup-panel'); panel.innerHTML = '<div class="empty">Carregando…</div>';
+    ({ estoque: supRenderEstoque, compras: supRenderCompras, envios: supRenderEnvios }[SUP_TAB])(panel)
+      .catch(e => { panel.innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+  };
+  c.querySelectorAll('.sup-tab').forEach(b => b.onclick = () => { SUP_TAB = b.dataset.tab; draw(); });
+  draw();
+}
+
+// ---- Aba Estoque ----
+async function supRenderEstoque(panel) {
+  const [resumo, itens] = await Promise.all([api('/api/suprimentos/resumo'), api('/api/suprimentos/itens')]);
+  const edit = !READONLY;
+  panel.innerHTML = `
+    <div class="grid kpis" style="margin-bottom:14px">
+      <div class="card kpi"><div class="label">Itens ativos</div><div class="value">${resumo.totalItens}</div></div>
+      <div class="card kpi blue"><div class="label">Valor em estoque</div><div class="value">${brl(resumo.valorEstoque)}</div></div>
+      <div class="card kpi ${resumo.abaixoMinimo ? 'red' : ''}"><div class="label">Abaixo do mínimo</div><div class="value">${resumo.abaixoMinimo}</div></div>
+      <div class="card kpi"><div class="label">Equip. em custódia</div><div class="value">${resumo.emCustodia}</div></div>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="sup-q" placeholder="Buscar item, código, categoria…">
+      <select id="sup-ftipo"><option value="">Todos os tipos</option><option value="material">Material</option><option value="equipamento">Equipamento</option></select>
+      <div class="spacer"></div>
+      ${edit ? '<button class="btn primary" id="sup-new-item">+ Novo item</button>' : ''}
+    </div>
+    <div class="table-wrap"><table id="sup-tbl"></table></div>`;
+  const draw = () => {
+    const q = $('#sup-q').value.toLowerCase(), ft = $('#sup-ftipo').value;
+    const rows = itens.filter(i => (!ft || i.tipo === ft) && (!q || (i.nome + ' ' + (i.sku || '') + ' ' + (i.categoria || '')).toLowerCase().includes(q)));
+    $('#sup-tbl').innerHTML = `
+      <thead><tr><th>Item</th><th>Tipo</th><th>Categoria</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="num">Custo médio</th><th class="num">Valor total</th><th>Situação</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
+      <tbody>${rows.map(i => {
+        const atual = Number(i.estoque_atual), min = Number(i.estoque_minimo), baixo = atual < min, zero = atual <= 0;
+        const sit = !i.ativo ? '<span class="badge off">Inativo</span>' : zero ? '<span class="badge late">Sem estoque</span>' : baixo ? '<span class="badge warn">Baixo</span>' : '<span class="badge ok">OK</span>';
+        return `<tr${!i.ativo ? ' style="opacity:.55"' : ''}>
+          <td><strong>${esc(i.nome)}</strong>${i.sku ? '<br><small class="mono" style="color:var(--muted)">' + esc(i.sku) + '</small>' : ''}</td>
+          <td>${i.tipo === 'equipamento' ? 'Equipamento' : 'Material'}</td>
+          <td>${esc(i.categoria || '—')}</td>
+          <td class="num"><strong>${supNum(atual)}</strong> <small style="color:var(--muted)">${esc(i.unidade)}</small></td>
+          <td class="num">${supNum(min)}</td>
+          <td class="num">${brl(i.custo_medio)}</td>
+          <td class="num">${brl(atual * Number(i.custo_medio))}</td>
+          <td>${sit}</td>
+          ${edit ? `<td class="actions">
+            <button class="btn sm" data-mov="${i.id}">Ajustar</button>
+            <button class="btn sm" data-hist="${i.id}">Histórico</button>
+            <button class="btn sm" data-edit="${i.id}">Editar</button>
+          </td>` : ''}
+        </tr>`;
+      }).join('') || `<tr><td colspan="${edit ? 9 : 8}"><div class="empty">Nenhum item cadastrado ainda.</div></td></tr>`}</tbody>`;
+    if (edit) {
+      $('#sup-tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => supFormItem(itens.find(i => i.id == b.dataset.edit)));
+      $('#sup-tbl').querySelectorAll('[data-mov]').forEach(b => b.onclick = () => supFormAjuste(itens.find(i => i.id == b.dataset.mov)));
+      $('#sup-tbl').querySelectorAll('[data-hist]').forEach(b => b.onclick = () => supHistorico(itens.find(i => i.id == b.dataset.hist)));
+    }
+  };
+  ['sup-q', 'sup-ftipo'].forEach(id => $('#' + id).oninput = draw);
+  if (edit) $('#sup-new-item').onclick = () => supFormItem(null);
+  draw();
+}
+
+function supFormItem(i) {
+  const isEdit = !!i; i = i || {};
+  openModal(isEdit ? 'Editar item' : 'Novo item de estoque', `
+    ${fld('it-nome', 'Nome do item *', 'text', i.nome || '')}
+    <div class="form-row">
+      ${fld('it-sku', 'Código/SKU', 'text', i.sku || '')}
+      ${fld('it-cat', 'Categoria', 'text', i.categoria || '', 'placeholder="Ex.: EPI, Papelaria, TI"')}
+    </div>
+    <div class="form-row">
+      ${fldSel('it-tipo', 'Tipo', [{ v: 'material', t: 'Material (consumo)' }, { v: 'equipamento', t: 'Equipamento (durável)' }], i.tipo || 'material')}
+      ${fldSel('it-un', 'Unidade', SUP_UNIDADES.map(u => ({ v: u, t: u })), i.unidade || 'un')}
+    </div>
+    <div class="form-row">
+      ${fld('it-min', 'Estoque mínimo', 'number', i.estoque_minimo != null ? i.estoque_minimo : 0, 'step="0.001" min="0"')}
+      ${isEdit ? fldSel('it-ativo', 'Status', [{ v: 'true', t: 'Ativo' }, { v: 'false', t: 'Inativo' }], String(i.ativo !== false)) : ''}
+    </div>
+    ${fld('it-notes', 'Observações', 'text', i.notes || '')}
+    <p class="hint">A quantidade em estoque não é editada aqui — ela vem das compras, envios e ajustes.</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: isEdit ? 'Salvar' : 'Cadastrar', cls: 'primary', onClick: async () => {
+        const body = { nome: $('#it-nome').value, sku: $('#it-sku').value, categoria: $('#it-cat').value,
+          tipo: $('#it-tipo').value, unidade: $('#it-un').value, estoque_minimo: $('#it-min').value, notes: $('#it-notes').value };
+        if (isEdit) body.ativo = $('#it-ativo').value === 'true';
+        try {
+          if (isEdit) await api('/api/suprimentos/itens/' + i.id, { method: 'PUT', body });
+          else await api('/api/suprimentos/itens', { method: 'POST', body });
+          closeModal(); toast(isEdit ? 'Item atualizado.' : 'Item cadastrado.'); renderSuprimentos();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+function supFormAjuste(i) {
+  openModal(`Ajustar estoque — ${esc(i.nome)}`, `
+    <p class="hint">Estoque atual: <strong>${supNum(i.estoque_atual)} ${esc(i.unidade)}</strong></p>
+    <div class="form-row">
+      ${fldSel('aj-tipo', 'Tipo de ajuste', [{ v: 'entrada', t: 'Entrada (+)' }, { v: 'saida', t: 'Saída (−)' }], 'entrada')}
+      ${fld('aj-qtd', 'Quantidade', 'number', '', 'step="0.001" min="0.001"')}
+    </div>
+    ${fld('aj-data', 'Data', 'date', new Date().toISOString().slice(0, 10))}
+    ${fld('aj-notes', 'Motivo do ajuste *', 'text', '', 'placeholder="Ex.: contagem física, perda, correção"')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar ajuste', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/suprimentos/ajustes', { method: 'POST', body: { item_id: i.id, tipo: $('#aj-tipo').value, quantidade: $('#aj-qtd').value, data: $('#aj-data').value, notes: $('#aj-notes').value } });
+          closeModal(); toast('Ajuste registrado.'); renderSuprimentos();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+async function supHistorico(i) {
+  const movs = await api('/api/suprimentos/movimentos?item_id=' + i.id);
+  const ORIG = { compra: 'Compra', envio: 'Envio', ajuste: 'Ajuste', devolucao: 'Devolução' };
+  openModal(`Histórico — ${esc(i.nome)}`, `
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Movimento</th><th class="num">Qtd</th><th>Detalhe</th><th>Por</th></tr></thead>
+      <tbody>${movs.map(m => {
+        const entrada = m.tipo === 'entrada';
+        const det = m.origem === 'compra' ? [m.supplier_name ? 'Forn.: ' + esc(m.supplier_name) : '', m.documento ? 'NF ' + esc(m.documento) : ''].filter(Boolean).join(' · ')
+          : (m.origem === 'envio' || m.origem === 'devolucao') ? (m.colaborador_name ? 'Colab.: ' + esc(m.colaborador_name) : '')
+          : esc(m.notes || '');
+        return `<tr>
+          <td>${brDate(m.data)}</td>
+          <td><span class="badge ${entrada ? 'ok' : 'late'}">${entrada ? '+ ' : '− '}${ORIG[m.origem] || m.origem}</span></td>
+          <td class="num">${supNum(m.quantidade)} ${esc(i.unidade)}</td>
+          <td>${det || '—'}${m.status ? ` <small style="color:var(--muted)">(${m.status})</small>` : ''}</td>
+          <td><small>${esc(m.created_by_name || '—')}</small></td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="5"><div class="empty">Sem movimentações.</div></td></tr>'}</tbody>
+    </table></div>`,
+    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+}
+
+// ---- Aba Compras ----
+async function supRenderCompras(panel) {
+  const [itens, fornecedores, movs] = await Promise.all([
+    api('/api/suprimentos/itens'),
+    api('/api/suppliers').catch(() => []),
+    api('/api/suprimentos/movimentos?origem=compra')
+  ]);
+  const edit = !READONLY;
+  panel.innerHTML = `
+    <div class="toolbar"><div class="spacer"></div>${edit ? '<button class="btn primary" id="sup-new-compra">+ Registrar compra</button>' : ''}</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th class="num">Custo un.</th><th class="num">Total</th><th>Fornecedor</th><th>Documento</th><th>Financeiro</th></tr></thead>
+      <tbody>${movs.map(m => `<tr>
+        <td>${brDate(m.data)}</td><td>${esc(m.item_nome)}</td>
+        <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
+        <td class="num">${brl(m.custo_unitario)}</td><td class="num">${brl(m.valor_total)}</td>
+        <td>${esc(m.supplier_name || '—')}</td><td>${esc(m.documento || '—')}</td>
+        <td>${m.payable_id ? '<span class="badge ok">Em Contas a Pagar</span>' : '<span class="badge off">—</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="8"><div class="empty">Nenhuma compra registrada ainda.</div></td></tr>'}</tbody>
+    </table></div>`;
+  if (edit) $('#sup-new-compra').onclick = () => supFormCompra(itens, fornecedores);
+}
+
+function supFormCompra(itens, fornecedores) {
+  const ativos = itens.filter(i => i.ativo);
+  if (!ativos.length) { toast('Cadastre um item no Estoque antes de registrar compras.'); return; }
+  openModal('Registrar compra', `
+    ${fldSel('co-item', 'Item *', ativos.map(i => ({ v: i.id, t: `${i.nome}${i.sku ? ' (' + i.sku + ')' : ''}` })), ativos[0].id)}
+    <div class="form-row">
+      ${fld('co-qtd', 'Quantidade *', 'number', '', 'step="0.001" min="0.001"')}
+      ${fld('co-custo', 'Custo unitário (R$) *', 'number', '', 'step="0.01" min="0"')}
+    </div>
+    <div class="form-row">
+      ${fldSel('co-forn', 'Fornecedor', [{ v: '', t: '—' }, ...fornecedores.filter(s => s.status === 'ativo').map(s => ({ v: s.id, t: s.name }))], '')}
+      ${fld('co-doc', 'Documento / NF', 'text', '')}
+    </div>
+    ${fld('co-data', 'Data da compra', 'date', new Date().toISOString().slice(0, 10))}
+    <label class="check-chip" style="margin:6px 0"><input type="checkbox" id="co-pagar"> Lançar também em Contas a Pagar</label>
+    <div id="co-pagar-fields" style="display:none">
+      <div class="form-row">
+        ${fld('co-venc', 'Vencimento', 'date', new Date().toISOString().slice(0, 10))}
+        ${fld('co-catpag', 'Categoria (financeiro)', 'text', 'Materiais/Suprimentos')}
+      </div>
+    </div>
+    ${fld('co-notes', 'Observações', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar compra', cls: 'primary', onClick: async () => {
+        try {
+          const r = await api('/api/suprimentos/compras', { method: 'POST', body: {
+            item_id: $('#co-item').value, quantidade: $('#co-qtd').value, custo_unitario: $('#co-custo').value,
+            supplier_id: $('#co-forn').value || null, documento: $('#co-doc').value, data: $('#co-data').value,
+            lancar_pagar: $('#co-pagar').checked, due_date: $('#co-venc').value, categoria_pagar: $('#co-catpag').value, notes: $('#co-notes').value } });
+          closeModal(); toast(r.payable_id ? 'Compra registrada e lançada em Contas a Pagar.' : 'Compra registrada.'); renderSuprimentos();
+        } catch (e) { modalError(e.message); }
+     }}]);
+  $('#co-pagar').onchange = e => { $('#co-pagar-fields').style.display = e.target.checked ? '' : 'none'; };
+}
+
+// ---- Aba Envios a funcionários ----
+async function supRenderEnvios(panel) {
+  const [itens, colaboradores, movs] = await Promise.all([
+    api('/api/suprimentos/itens'),
+    api('/api/suprimentos/colaboradores'),
+    api('/api/suprimentos/movimentos?origem=envio')
+  ]);
+  const edit = !READONLY;
+  const ST = { enviado: ['warn', 'Enviado'], entregue: ['pend', 'Entregue'], devolvido: ['ok', 'Devolvido'] };
+  panel.innerHTML = `
+    <div class="toolbar">
+      <select id="en-fstatus"><option value="">Todas as situações</option><option value="enviado">Enviado</option><option value="entregue">Entregue</option><option value="devolvido">Devolvido</option></select>
+      <div class="spacer"></div>${edit ? '<button class="btn primary" id="sup-new-envio">+ Registrar envio</button>' : ''}
+    </div>
+    <div class="table-wrap"><table id="en-tbl"></table></div>`;
+  const draw = () => {
+    const fs = $('#en-fstatus').value;
+    const rows = movs.filter(m => !fs || m.status === fs);
+    $('#en-tbl').innerHTML = `
+      <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th>Colaborador</th><th>Tipo</th><th>Situação</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
+      <tbody>${rows.map(m => {
+        const equip = m.item_tipo === 'equipamento', st = ST[m.status] || ['off', m.status];
+        return `<tr>
+          <td>${brDate(m.data)}</td><td>${esc(m.item_nome)}</td>
+          <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
+          <td>${esc(m.colaborador_name || '—')}</td>
+          <td>${equip ? 'Equipamento' : 'Material'}</td>
+          <td><span class="badge ${st[0]}">${st[1]}</span>${m.data_devolucao ? ` <small style="color:var(--muted)">${brDate(m.data_devolucao)}</small>` : ''}</td>
+          ${edit ? `<td class="actions">${m.status === 'devolvido' ? '<small style="color:var(--muted)">—</small>' :
+            `${m.status === 'enviado' ? `<button class="btn sm" data-entregue="${m.id}">Marcar entregue</button>` : ''}
+             ${equip ? `<button class="btn sm" data-devolver="${m.id}">Registrar devolução</button>` : ''}`}</td>` : ''}
+        </tr>`;
+      }).join('') || `<tr><td colspan="${edit ? 7 : 6}"><div class="empty">Nenhum envio registrado ainda.</div></td></tr>`}</tbody>`;
+    if (edit) {
+      $('#en-tbl').querySelectorAll('[data-entregue]').forEach(b => b.onclick = async () => {
+        try { await api(`/api/suprimentos/envios/${b.dataset.entregue}/status`, { method: 'POST', body: { status: 'entregue' } }); toast('Marcado como entregue.'); renderSuprimentos(); }
+        catch (e) { toast(e.message); }
+      });
+      $('#en-tbl').querySelectorAll('[data-devolver]').forEach(b => b.onclick = () => supFormDevolucao(b.dataset.devolver));
+    }
+  };
+  $('#en-fstatus').oninput = draw;
+  if (edit) $('#sup-new-envio').onclick = () => supFormEnvio(itens, colaboradores);
+  draw();
+}
+
+function supFormEnvio(itens, colaboradores) {
+  const disp = itens.filter(i => i.ativo && Number(i.estoque_atual) > 0);
+  if (!disp.length) { toast('Não há itens com estoque disponível para envio.'); return; }
+  if (!colaboradores.length) { toast('Nenhum colaborador cadastrado. Cadastre em Viáticos.'); return; }
+  openModal('Registrar envio a funcionário', `
+    ${fldSel('en-item', 'Item *', disp.map(i => ({ v: i.id, t: `${i.nome} — ${supNum(i.estoque_atual)} ${i.unidade} disp.` })), disp[0].id)}
+    <div class="form-row">
+      ${fld('en-qtd', 'Quantidade *', 'number', '1', 'step="0.001" min="0.001"')}
+      ${fld('en-data', 'Data do envio', 'date', new Date().toISOString().slice(0, 10))}
+    </div>
+    ${fldSel('en-colab', 'Colaborador destinatário *', colaboradores.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), colaboradores[0].id)}
+    ${fld('en-notes', 'Observações', 'text', '', 'placeholder="Ex.: nº de série, finalidade"')}
+    <p class="hint">Equipamentos ficam em custódia (você registra a devolução depois). Materiais de consumo apenas dão baixa.</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar envio', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/suprimentos/envios', { method: 'POST', body: { item_id: $('#en-item').value, quantidade: $('#en-qtd').value, colaborador_id: $('#en-colab').value, data: $('#en-data').value, notes: $('#en-notes').value } });
+          closeModal(); toast('Envio registrado.'); renderSuprimentos();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+function supFormDevolucao(id) {
+  openModal('Registrar devolução', `
+    <p class="hint">O item volta ao estoque nesta data.</p>
+    ${fld('dv-data', 'Data da devolução', 'date', new Date().toISOString().slice(0, 10))}
+    ${fld('dv-notes', 'Observações', 'text', '', 'placeholder="Ex.: estado do equipamento"')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Confirmar devolução', cls: 'primary', onClick: async () => {
+        try {
+          await api(`/api/suprimentos/envios/${id}/status`, { method: 'POST', body: { status: 'devolvido', data: $('#dv-data').value, notes: $('#dv-notes').value } });
+          closeModal(); toast('Devolução registrada. Item retornou ao estoque.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
 }
