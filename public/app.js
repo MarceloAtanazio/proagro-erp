@@ -4376,7 +4376,93 @@ function viaComputeResumo(w) {
   }
   if (w.transporte.taxi_uber) add('taxi_uber', w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0));
   const total = Object.values(cat).reduce((s, v) => s + v, 0);
-  return { dias, cat, total };
+  return { dias, noites, cat, total, memoria: viaMemoriaCategorias(w, cat) };
+}
+
+// Linhas do "Detalhamento de Viáticos" (resumo da etapa 5 e PDF) — fonte única.
+// Inclui uma linha de Hospedagem com R$ 0,00 quando ela foi deliberadamente
+// zerada (cidade-sede ou ida e volta no mesmo dia): sem isso o conceito
+// simplesmente desaparecia da tabela e quem aprova não saberia se foi
+// descartado por regra ou esquecido.
+function viaLinhasDetalhamento(r) {
+  const linhas = Object.entries(r.cat || {}).map(([k, v]) => ({
+    chave: k, label: DESP_CAT_LABEL[k] || k, memoria: (r.memoria && r.memoria[k]) || '—', valor: v
+  }));
+  const memHosp = r.memoria && r.memoria.hospedagem;
+  if (!(r.cat || {}).hospedagem && memHosp && memHosp.startsWith('Não se aplica')) {
+    linhas.unshift({ chave: 'hospedagem', label: DESP_CAT_LABEL.hospedagem, memoria: memHosp, valor: 0 });
+  }
+  return linhas;
+}
+
+// Memória de cálculo por categoria — o "como chegou nesse valor" que aparecia
+// só na etapa 4 e agora acompanha o conceito no resumo e no PDF, para quem
+// aprova não precisar recalcular de cabeça. Fonte única: as duas telas e o
+// documento leem daqui.
+function viaMemoriaCategorias(w, cat) {
+  const t = w.transporte || {}, m = {};
+  const { dias, noites: noitesPeriodo } = viaDiasNoites(w.data_inicio, w.data_fim);
+  const hospDevida = viaHospedagemDevida(w.destinos, w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
+  const noites = hospDevida ? noitesPeriodo : 0;
+  // Valor unitário: usa a TUD quando disponível (fluxo do assistente) e, no PDF
+  // regerado de uma solicitação salva, deriva do próprio valor gravado —
+  // preservando o histórico mesmo que a TUD tenha mudado depois.
+  const tudVal = tipo => {
+    const r = (w.tud || []).find(x => x.tier === w.colab.tier && x.categoria_local === w.categoria_local && x.tipo_despesa === tipo);
+    return r ? Number(r.valor_diaria) : null;
+  };
+  const unit = (total, qtd) => (qtd > 0 ? (Number(total) || 0) / qtd : 0);
+
+  if (!hospDevida) {
+    const cid = w.colab.cidade_base_municipio ? ` (${w.colab.cidade_base_municipio}/${w.colab.cidade_base_uf})` : '';
+    m.hospedagem = `Não se aplica — viagem na própria cidade-sede${cid}`;
+  } else if (noites === 0) {
+    m.hospedagem = 'Não se aplica — ida e volta no mesmo dia';
+  } else {
+    const v = tudVal('hospedagem') ?? unit(cat.hospedagem, noites);
+    m.hospedagem = `${noites} diária(s) × ${brl(v)} (teto da TUD)`;
+  }
+  const vAlim = tudVal('alimentacao') ?? unit(cat.alimentacao, dias);
+  m.alimentacao = `${dias} dia(s) × ${brl(vAlim)} (teto da TUD)`;
+
+  if (t.aviao) m.passagem_aviao = `${(t.aviao_trechos || []).length} trecho(s) de voo`;
+  if (t.onibus) m.passagem_onibus = `${(t.onibus_trechos || []).length} trecho(s) de ônibus`;
+  if (t.aluguel_carro && (t.alugueis || []).length) {
+    m.aluguel_carro = t.alugueis.length === 1
+      ? `${Number(t.alugueis[0].dias) || 0} diária(s) × ${brl(viaNum(t.alugueis[0].valor_diaria))}${t.alugueis[0].locadora ? ' — ' + t.alugueis[0].locadora : ''}`
+      : `${t.alugueis.length} aluguéis somados`;
+  }
+  // Combustível: km ponderado ÷ consumo × preço/litro (a premissa que gerou o valor).
+  const blocos = [...(t.aluguel_carro ? (t.alugueis || []) : []), ...(t.carro_proprio ? [t.carro_proprio_rota || {}] : [])];
+  const kmTotal = blocos.reduce((s, b) => s + viaKmPonderado(b.trechos), 0);
+  if (cat.combustivel) {
+    const consumo = w.colab.veiculo_consumo_kml;
+    // O preço/litro não é gravado na solicitação (auditoria, achado B3), mas
+    // pode ser reconstruído do próprio valor: combustível = km ÷ consumo ×
+    // preço ⇒ preço = combustível × consumo ÷ km. Assim o PDF regerado mostra
+    // a premissa real daquele momento, não a configuração de hoje.
+    let preco = w.preco_combustivel || null;
+    if (!preco && kmTotal > 0 && consumo) {
+      const derivado = (Number(cat.combustivel) * consumo) / kmTotal;
+      // Só exibe a fórmula se o preço reconstruído for plausível: fora dessa
+      // faixa, o valor foi editado à mão e não segue km ÷ consumo × preço —
+      // mostrar a conta nesse caso passaria uma premissa que não é verdade.
+      if (derivado >= 2 && derivado <= 15) preco = derivado;
+    }
+    m.combustivel = (kmTotal > 0 && consumo && preco)
+      ? `${kmTotal.toFixed(1)} km ÷ ${consumo} km/L × ${brl(preco)}/L`
+      : 'Informado manualmente';
+  }
+  if (cat.pedagio) {
+    const nTrechos = blocos.reduce((s, b) => s + (b.trechos || []).filter(x => viaNum(x.pedagio) > 0).length, 0);
+    m.pedagio = nTrechos > 0 ? `${nTrechos} trecho(s) com pedágio (valor × repetições)` : 'Valor total informado';
+  }
+  if (cat.estacionamento) {
+    const qtd = blocos.reduce((s, b) => s + (Number(b.estacionamento_qtd) || 0), 0);
+    m.estacionamento = `${qtd} diária(s) de estacionamento`;
+  }
+  if (t.taxi_uber) m.taxi_uber = `${(t.taxi_uber_corridas || []).length} corrida(s)`;
+  return m;
 }
 
 function viaResumoTrechosHtml(titulo, trechos, campos) {
@@ -4653,9 +4739,11 @@ function viaWizStep5() {
         </table>
         <h4 style="margin:18px 0 8px">Detalhamento de Viáticos</h4>
         <div class="table-wrap"><table>
-          <thead><tr><th>Descrição</th><th class="num">Total (R$)</th></tr></thead>
-          <tbody>${Object.entries(r.cat).map(([k, v]) => `<tr><td>${DESP_CAT_LABEL[k] || k}</td><td class="num">${brl(v)}</td></tr>`).join('') || '<tr><td colspan="2"><div class="empty">Nenhuma despesa prevista.</div></td></tr>'}
-          <tr style="font-weight:700; background:var(--verde-050)"><td>Total Geral</td><td class="num">${brl(r.total)}</td></tr></tbody>
+          <thead><tr><th>Descrição</th><th>Como foi calculado</th><th class="num">Total (R$)</th></tr></thead>
+          <tbody>${viaLinhasDetalhamento(r).map(l => `<tr><td>${esc(l.label)}</td>
+            <td><small style="color:var(--ink-2)">${esc(l.memoria)}</small></td>
+            <td class="num">${brl(l.valor)}</td></tr>`).join('') || '<tr><td colspan="3"><div class="empty">Nenhuma despesa prevista.</div></td></tr>'}
+          <tr style="font-weight:700; background:var(--verde-050)"><td>Total Geral</td><td></td><td class="num">${brl(r.total)}</td></tr></tbody>
         </table></div>
         ${w.transporte.aviao ? viaResumoTrechosHtml('✈️ Voos', w.transporte.aviao_trechos, ['cia', 'numero_voo', 'origem', 'destino', 'data', 'saida', 'chegada', 'classe', 'valor']) : ''}
         ${w.transporte.onibus ? viaResumoTrechosHtml('🚌 Ônibus', w.transporte.onibus_trechos, ['empresa', 'origem', 'destino', 'data', 'horario', 'valor']) : ''}
@@ -4711,11 +4799,20 @@ async function viaBaixarPdfSolicitacao(s) {
     destinos: Array.isArray(s.destinos) ? s.destinos : [],
     data_inicio: s.data_inicio, data_fim: s.data_fim,
     motivo: s.motivo || '', objetivo: s.objetivo || '',
-    colab: { name: s.colaborador_name, cargo: s.colaborador_cargo || '', tier: s.tier },
+    // cidade-base e consumo entram para a memória de cálculo sair correta
+    // (hospedagem na cidade-sede, premissa do combustível). Sem `tud`, os
+    // valores unitários são derivados do que foi gravado na solicitação —
+    // o documento reflete o histórico, não a TUD de hoje.
+    colab: {
+      name: s.colaborador_name, cargo: s.colaborador_cargo || '', tier: s.tier,
+      cidade_base_uf: s.colaborador_cidade_base_uf || null,
+      cidade_base_municipio: s.colaborador_cidade_base_municipio || null,
+      veiculo_consumo_kml: s.colaborador_veiculo_consumo_kml || null
+    },
     transporte: (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {}
   };
   toast('Gerando PDF…');
-  await viaGerarPDF(w, { cat, total, dias }, { dataEmissao: s.created_at });
+  await viaGerarPDF(w, { cat, total, dias, memoria: viaMemoriaCategorias(w, cat) }, { dataEmissao: s.created_at });
 }
 
 async function viaGerarPDF(w, r, opts = {}) {
@@ -4784,17 +4881,19 @@ async function viaGerarPDF(w, r, opts = {}) {
     doc.text('Detalhamento de Viáticos', MARGIN, y); y += 5;
     doc.autoTable({
       startY: y, margin: { left: MARGIN, right: MARGIN },
-      head: [['Descrição', 'Total (R$)']],
-      body: Object.entries(r.cat).map(([k, v]) => [DESP_CAT_LABEL[k] || k, brl(v)]),
+      // "Como foi calculado" acompanha cada conceito: a aprovação enxerga a
+      // memória de cálculo sem precisar abrir o sistema.
+      head: [['Descrição', 'Como foi calculado', 'Total (R$)']],
+      body: viaLinhasDetalhamento(r).map(l => [l.label, l.memoria, brl(l.valor)]),
       // Total Geral: valor justificado à direita (como os demais) e fonte um
-      // pouco maior nas duas células, para diferenciar a linha de fechamento.
+      // pouco maior, para diferenciar a linha de fechamento.
       foot: [[
-        { content: 'Total Geral', styles: { halign: 'left', fontSize: 11 } },
+        { content: 'Total Geral', colSpan: 2, styles: { halign: 'left', fontSize: 11 } },
         { content: brl(r.total), styles: { halign: 'right', fontSize: 11 } }
       ]],
-      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5 }, headStyles: { fillColor: VERDE, textColor: 255 },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, overflow: 'linebreak' }, headStyles: { fillColor: VERDE, textColor: 255 },
       footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
-      columnStyles: { 1: { halign: 'right' } }
+      columnStyles: { 0: { cellWidth: 46 }, 1: { fontSize: 8, textColor: CINZA }, 2: { halign: 'right', cellWidth: 32 } }
     });
     y = doc.lastAutoTable.finalY + 12;
 

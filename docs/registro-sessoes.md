@@ -257,6 +257,18 @@ Decisões tomadas pelo usuário: hospedagem por **noites nas duas pontas** e ped
 
 **Verificação (7 cenários, funções reais no navegador):** caso do usuário → 3 dias de alimentação R$ 300 e hospedagem R$ 0 ✅; destino fora → hospedagem normal (2 noites); sede + destino fora → hospedagem devida; grafia "Sao Paulo" sem acento → reconhecida como mesma cidade; Palmas/PR vs Palmas/TO → cidades diferentes, hospedagem devida; sede não cadastrada e sem destinos → mantém hospedagem. Conferência: teto R$ 0 na cidade-sede e R$ 500 com destino fora. Sem erros de console.
 
+### 7. Memória de cálculo no Resumo e no PDF
+**Pedido:** levar a composição que aparecia só na etapa 4 ("Alimentação — 3 dia(s) × R$ 140,00 (teto da TUD)") para o quadro **Detalhamento de Viáticos** do resumo e do PDF, ao lado de cada conceito.
+
+**Implementação** (`public/app.js`, fonte única para as três saídas):
+- `viaMemoriaCategorias(w, cat)` gera a composição por categoria: hospedagem (`N diária(s) × R$ X` ou o motivo de não se aplicar), alimentação (`N dia(s) × R$ X`), voos/ônibus (`N trecho(s)`), aluguel (`N diária(s) × R$ X — locadora`), combustível (`km ÷ km/L × R$/L`), pedágio (`N trecho(s) com pedágio`), estacionamento e táxi (`N corrida(s)`). Devolvida em `viaComputeResumo` → usada pelo resumo e pelo PDF.
+- `viaLinhasDetalhamento(r)` monta as linhas da tabela e **inclui Hospedagem com R$ 0,00** quando ela foi zerada por regra (cidade-sede ou mesmo dia). Antes o conceito desaparecia da tabela e o aprovador não distinguia "descartado por regra" de "esquecido".
+- Nova coluna "Como foi calculado" no resumo (etapa 5) e no PDF (com fonte menor e cinza, largura das colunas ajustada).
+- **PDF regerado:** `viaBaixarPdfSolicitacao` passou a montar `colab` com cidade-base e consumo (a lista de solicitações agora devolve `colaborador_veiculo_consumo_kml` também), então a memória sai correta em documentos históricos. Sem `tud` salva, os valores unitários são **derivados do que foi gravado** — o documento reflete a TUD da época, não a de hoje.
+- **Preço do combustível** não é gravado na solicitação (achado B3): ele é **reconstruído** da própria fórmula (`preço = combustível × consumo ÷ km`). Guarda-chuva: se o valor reconstruído ficar fora da faixa R$ 2–15/L, significa que o combustível foi digitado à mão e não segue a fórmula — nesse caso exibe "Informado manualmente" em vez de mostrar uma premissa falsa.
+
+**Verificação:** 3 cenários (assistente com TUD e preço; viagem fora com voo/aluguel/pedágio/estacionamento; PDF regerado sem TUD e sem preço). Dado consistente reconstrói exatamente R$ 6,50/L; valor editado à mão cai em "Informado manualmente". Tabela do resumo renderizada com as 3 colunas e a linha de hospedagem explicando o zero. Um teste intermediário acusou R$ 5,87/L — era inconsistência dos meus dados de teste, e foi o que motivou a faixa de plausibilidade. Sem erros de console.
+
 ### Pendências desta fase
 - **Painel do Supabase (ação do dono):** rotacionar a chave anon legada e confirmar a janela de backup.
 - **Fase 1** (não iniciada): mover as regras de viáticos para o backend com recálculo server-side, `withTx` + `FOR UPDATE`, guarda de status em `/fechar`, validação de chave em `/excesso-status`, parsers de dinheiro (A5/A6).
