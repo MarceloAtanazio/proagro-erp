@@ -9,7 +9,8 @@
 > - ✅ **C2 fechado** — novo `anexoViaticoNoEscopo()` aplicado nas 5 rotas de anexo; a contagem também passou a respeitar o escopo.
 > - ✅ **C4 fechado** — whitelist de MIME + verificação por assinatura do conteúdo no upload; `previewable` no front virou lista explícita (SVG nunca é renderizado). Verificado: SVG declarado → 415, **SVG renomeado para .png → 415**, PDF/PNG legítimos → 200.
 > - ✅ **A4 contido** — endpoints de autosserviço passaram a exigir `requireAutosservico`: liberados só para o super-admin (que valida a tela) ou com `AUTOSSERVICO_VIATICOS=on`. O recálculo server-side da previsão segue pendente (Fase 1).
-> - ⏳ **A1 aguarda decisão de negócio** (base de hospedagem: noites × dias).
+> - ✅ **A1 fechado** — decidido pelo dono do sistema: hospedagem por **noites nas duas pontas**. O teto de conferência passou a usar `noites`, igual à previsão, e a contagem virou fonte única (`viaDiasNoites`), o que também fecha **B1** (3 cópias da mesma conta).
+> - ✅ **B2 fechado** — pedágio virou coluna **por trecho** (valor de uma passagem × repetições), com o campo total em somente-leitura quando há detalhamento e compatibilidade com registros antigos.
 >
 > Pendência de infraestrutura para o dono do sistema: **rotacionar a chave anon legada** no painel do Supabase (defesa extra; a chave não está no repositório) e **confirmar a janela de backup**.
 

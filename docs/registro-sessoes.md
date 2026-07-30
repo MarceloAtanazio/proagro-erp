@@ -237,9 +237,17 @@ Novo helper `anexoViaticoNoEscopo()` (`api/index.js`) aplicado nas 5 rotas de an
 ### 4. A4 — Autosserviço exposto por obscuridade
 `requireAutosservico` nas 2 rotas: liberado apenas para o super-admin (que está validando a tela) ou com `AUTOSSERVICO_VIATICOS=on`. Assim o recurso continua testável por você e fecha para os demais até o recálculo server-side da previsão (Fase 1).
 
+### 5. A1 — Hospedagem unificada em NOITES (decisão do usuário) + B1 e B2
+Decisões tomadas pelo usuário: hospedagem por **noites nas duas pontas** e pedágio **multiplicado pelas repetições**.
+- **A1:** o teto de conferência passou de `valor_diaria × dias` para `× noites`, a mesma base da previsão. Viagem de 2 dias com TUD R$ 120: previsto R$ 120 e teto R$ 120 (antes o teto era R$ 240). Viagem de 1 dia não prevê pernoite — a mensagem de excesso explica isso em vez de citar um teto zerado.
+- **B1 (de brinde):** criada a fonte única `viaDiasNoites(inicio, fim)` e eliminadas as 3 cópias literais da contagem de dias (previsão, conferência e regeração de PDF) — era justamente essa duplicação que permitiu a divergência do A1.
+- **B2:** pedágio saiu do campo único e virou coluna **por trecho** na tabela de rota, ao lado de repetições e combustível: informa-se o valor de **uma passagem** e o total é `Σ(pedágio × repetições)`. O campo "Pedágio total" fica somente-leitura quando há detalhamento por trecho (evita dupla contagem) e continua editável quando a rota não foi calculada. `viaPedagioTotal()` mantém compatibilidade com solicitações antigas (usa o campo único quando não há pedágio por trecho).
+
+**Verificação:** cenários de dias/noites (mesmo dia, 2 dias, 3 dias, virada de mês) com previsão e teto sempre iguais; pedágio R$ 8 × 6 repetições = R$ 48 e total R$ 80,50 na tabela real renderizada no navegador; 6 colunas presentes; compatibilidade com registro antigo (usa `pedagio_valor`) e novo (usa trechos). Sem erros de console; `node --check` OK.
+
 ### Pendências desta fase
-- **A1 (hospedagem: noites × dias)** — aguarda decisão de negócio; é o único item da Fase 0 não aplicado.
 - **Painel do Supabase (ação do dono):** rotacionar a chave anon legada e confirmar a janela de backup.
+- **Fase 1** (não iniciada): mover as regras de viáticos para o backend com recálculo server-side, `withTx` + `FOR UPDATE`, guarda de status em `/fechar`, validação de chave em `/excesso-status`, parsers de dinheiro (A5/A6).
 
 ## 2026-07-29 — Auditoria completa do ERP + 3 correções
 

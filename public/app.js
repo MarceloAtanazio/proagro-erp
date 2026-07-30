@@ -3107,17 +3107,21 @@ async function viewSolicitacao(id) {
   // cobre mais de uma noite numa linha só.
   const limite = s.data_expiracao_flash || s.data_fim;
   const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
-  const dias = Math.max(1, Math.round((new Date(s.data_fim) - new Date(s.data_inicio)) / 86400000) + 1);
+  const { dias, noites } = viaDiasNoites(s.data_inicio, s.data_fim);
   const tudHosp = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'hospedagem');
   const tudAlim = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'alimentacao');
 
   const excessos = []; // { chave, msg, valor }
   if (tudHosp) {
     const gastoHosp = despesas.filter(d => d.categoria === 'hospedagem').reduce((sum, d) => sum + d.valor, 0);
-    const tetoHosp = tudHosp.valor_diaria * dias;
+    // Teto por NOITES, a mesma base da previsão (antes era por dias, o que
+    // liberava na conferência quase o dobro do que havia sido previsto).
+    const tetoHosp = tudHosp.valor_diaria * noites;
     if (gastoHosp > tetoHosp) {
       excessos.push({ chave: 'hospedagem', valor: gastoHosp - tetoHosp,
-        msg: `Hospedagem acima do teto da TUD: ${brl(gastoHosp)} gasto contra um limite de ${brl(tetoHosp)} (${brl(tudHosp.valor_diaria)}/dia × ${dias} dia(s)).` });
+        msg: noites === 0
+          ? `Hospedagem lançada em viagem de 1 dia (sem pernoite previsto): ${brl(gastoHosp)}. A TUD não prevê hospedagem quando ida e volta ocorrem no mesmo dia.`
+          : `Hospedagem acima do teto da TUD: ${brl(gastoHosp)} gasto contra um limite de ${brl(tetoHosp)} (${brl(tudHosp.valor_diaria)}/noite × ${noites} noite(s)).` });
     }
   }
   if (tudAlim) {
@@ -3468,10 +3472,22 @@ function viaWizProgress(atual) {
   const nomes = ['Solicitante', 'Viagem', 'Transporte', 'Despesas', 'Resumo'];
   return `<div class="via-wiz-steps">${nomes.map((n, i) => `<span class="via-wiz-step ${i + 1 === atual ? 'active' : i + 1 < atual ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
 }
-function viaWizDias(w) { return Math.max(1, Math.round((new Date(w.data_fim) - new Date(w.data_inicio)) / 86400000) + 1); }
-// Alimentação conta por DIA de viagem; Hospedagem conta por NOITE (dias - 1) —
-// uma viagem de 30/07 a 31/07 tem 2 dias de alimentação mas só 1 noite de hospedagem.
-function viaWizNoites(w) { return Math.max(0, viaWizDias(w) - 1); }
+// FONTE ÚNICA da duração da viagem. Antes esta mesma conta existia em 3 lugares
+// (previsão, conferência e regeração de PDF), com risco de divergirem — e foi
+// exatamente o que aconteceu com a hospedagem (auditoria 2026-07-29, A1/B1).
+//
+// Alimentação conta por DIA de viagem; Hospedagem conta por NOITE (dias − 1),
+// que é o que o hotel cobra: 03/08 a 05/08 = 3 dias de alimentação e 2 noites.
+// A regra vale nas DUAS pontas — tanto no valor previsto quanto no teto da TUD
+// usado para apontar excesso na comprovação.
+function viaDiasNoites(dataInicio, dataFim) {
+  const ini = new Date(dataInicio), fim = new Date(dataFim);
+  if (isNaN(ini) || isNaN(fim)) return { dias: 0, noites: 0 };
+  const dias = Math.max(1, Math.round((fim - ini) / 86400000) + 1);
+  return { dias, noites: Math.max(0, dias - 1) };
+}
+function viaWizDias(w) { return viaDiasNoites(w.data_inicio, w.data_fim).dias; }
+function viaWizNoites(w) { return viaDiasNoites(w.data_inicio, w.data_fim).noites; }
 
 // Calcula a distância real de carro (cidade-base -> destinos na ordem
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
@@ -3635,14 +3651,31 @@ async function viaCalcularRota(pontoFixo, intermediarios) {
 // repetição que ele já tinha ajustado, em vez de resetar tudo pra 1.
 function viaMesclarRepeticoes(novosTrechos, trechosAntigos) {
   const mapa = {};
-  (trechosAntigos || []).forEach(t => { mapa[`${t.de}→${t.para}`] = t.repeticoes; });
-  return novosTrechos.map(t => ({ ...t, repeticoes: mapa[`${t.de}→${t.para}`] || 1 }));
+  (trechosAntigos || []).forEach(t => { mapa[`${t.de}→${t.para}`] = { repeticoes: t.repeticoes, pedagio: t.pedagio }; });
+  return novosTrechos.map(t => {
+    const ant = mapa[`${t.de}→${t.para}`] || {};
+    return { ...t, repeticoes: ant.repeticoes || 1, pedagio: ant.pedagio != null ? ant.pedagio : '' };
+  });
 }
 // Soma km × repetições — usado quando um trecho do roteiro foi percorrido
 // mais de uma vez (ex.: deslocamento diário entre a cidade do hotel e a do
 // evento), o que o cálculo de rota simples (ida até cada destino e volta à
 // base) não capturaria sozinho.
 function viaKmPonderado(trechos) { return (trechos || []).reduce((s, t) => s + t.km * (t.repeticoes || 1), 0); }
+// Pedágio segue a mesma lógica das repetições: o valor informado é o de UMA
+// passagem no trecho, e o total considera quantas vezes o trecho foi
+// percorrido (auditoria 2026-07-29, achado B2 — antes o pedágio era um campo
+// único que ficava de fora da multiplicação, subestimando o reembolso).
+function viaPedagioPonderado(trechos) {
+  return (trechos || []).reduce((s, t) => s + viaNum(t.pedagio) * (t.repeticoes || 1), 0);
+}
+// Total de pedágio de um bloco de transporte: prefere o detalhamento por
+// trecho e cai no campo único antigo quando a rota não foi calculada ou o
+// registro é anterior a esta mudança.
+function viaPedagioTotal(bloco) {
+  const porTrecho = viaPedagioPonderado(bloco && bloco.trechos);
+  return porTrecho > 0 ? porTrecho : (Number(bloco && bloco.pedagio_valor) || 0);
+}
 // Aceita "250.50" ou "250,50" — o campo de diária de aluguel virou texto
 // livre (sem as setinhas do input numérico) pra facilitar a digitação.
 function viaNum(v) {
@@ -3684,16 +3717,21 @@ function viaAtualizarMapa(pontos, geometry) {
 
 function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix) {
   const legsHtml = trechos.map((t, i) => {
-    const comb = consumo ? (t.km * (t.repeticoes || 1) / consumo * preco) : 0;
+    const rep = t.repeticoes || 1;
+    const comb = consumo ? (t.km * rep / consumo * preco) : 0;
+    const pedTrecho = viaNum(t.pedagio) * rep;
     return `<tr>
       <td>${esc(t.de)} → ${esc(t.para)}</td>
       <td class="num">${t.km.toFixed(1)} km</td>
-      <td class="num" style="width:90px"><input type="number" min="1" step="1" value="${t.repeticoes || 1}" data-legrep="${i}" style="width:56px; text-align:center" title="Quantas vezes esse trecho foi percorrido no total (cada ida ou volta conta 1)"></td>
+      <td class="num" style="width:90px"><input type="number" min="1" step="1" value="${rep}" data-legrep="${i}" style="width:56px; text-align:center" title="Quantas vezes esse trecho foi percorrido no total (cada ida ou volta conta 1)"></td>
       <td class="num" id="${idPrefix}-legcomb-${i}">${comb > 0 ? brl(comb) : '—'}</td>
+      <td class="num" style="width:110px"><input type="number" min="0" step="0.01" placeholder="0,00" value="${esc(t.pedagio || '')}" data-legped="${i}" style="width:76px; text-align:right" title="Valor do pedágio de UMA passagem neste trecho — é multiplicado pelas repetições"></td>
+      <td class="num" id="${idPrefix}-legpedtot-${i}">${pedTrecho > 0 ? brl(pedTrecho) : '—'}</td>
     </tr>`;
   }).join('');
   const kmPonderado = viaKmPonderado(trechos);
   const combTotal = consumo ? (kmPonderado / consumo * preco) : 0;
+  const pedagioTotal = viaPedagioPonderado(trechos);
   const reorderHtml = intermediarios.map((d, i) => {
     const nome = esc(d.endereco || `${d.municipio}/${d.uf}`);
     return `
@@ -3708,14 +3746,16 @@ function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix)
     </div>`;
   }).join('');
   return `
-    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Repetições</th><th class="num">Combustível</th></tr></thead>
+    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Repetições</th><th class="num">Combustível</th><th class="num">Pedágio (1 passagem)</th><th class="num">Pedágio total</th></tr></thead>
     <tbody>${legsHtml}</tbody>
     <tfoot><tr style="font-weight:700; background:var(--verde-050,#EAF5EC)">
       <td colspan="2">Total considerando repetições</td>
       <td class="num" id="${idPrefix}-totalkm">${kmPonderado.toFixed(1)} km</td>
       <td class="num" id="${idPrefix}-totalcomb">${brl(combTotal)}</td>
+      <td></td>
+      <td class="num" id="${idPrefix}-totalped">${brl(pedagioTotal)}</td>
     </tr></tfoot></table></div>
-    <p class="hint" style="margin-top:8px">Se algum trecho foi percorrido mais de uma vez — por exemplo, deslocamentos diários entre a cidade do hotel e a do evento — aumente as "Repetições" dele. Cada unidade conta uma passagem (ida OU volta); um vaivém em 3 dias, por exemplo, são 6 repetições.</p>
+    <p class="hint" style="margin-top:8px">Se algum trecho foi percorrido mais de uma vez — por exemplo, deslocamentos diários entre a cidade do hotel e a do evento — aumente as "Repetições" dele. Cada unidade conta uma passagem (ida OU volta); um vaivém em 3 dias, por exemplo, são 6 repetições. No pedágio, informe o valor de <strong>uma passagem</strong> pelo trecho: o total é multiplicado pelas repetições, igual ao combustível.</p>
     <p style="margin-top:12px; font-size:13px; margin-bottom:2px"><strong>Ordem do roteiro</strong></p>
     <p class="hint" style="margin-top:0">Use as setas para mudar a sequência ou o × para remover uma parada — a rota é recalculada na hora.</p>
     <div class="via-route-list">${reorderHtml}</div>`;
@@ -3748,19 +3788,34 @@ async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, s
     statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km passando uma vez por trecho (ida até cada parada e volta ao ponto de partida). Ajuste as repetições abaixo se algum trecho foi percorrido mais vezes. Pedágio segue manual.</div>`
       + viaRenderRotaDetalhe(intermediarios, trechos, colab.veiculo_consumo_kml, preco, idPrefix);
     const recalcular = () => { onReorder(); viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, statusElId, idPrefix, trechos, onSucesso, onReorder); };
+    // Redesenha os subtotais da linha e do rodapé (km, combustível e pedágio)
+    // sem chamar o OSRM de novo — vale tanto para repetições quanto pedágio.
+    const atualizarLinha = i => {
+      const consumo = colab.veiculo_consumo_kml, rep = trechos[i].repeticoes || 1;
+      const comb = consumo ? (trechos[i].km * rep / consumo * preco) : 0;
+      const cellComb = document.getElementById(`${idPrefix}-legcomb-${i}`); if (cellComb) cellComb.textContent = comb > 0 ? brl(comb) : '—';
+      const pedLinha = viaNum(trechos[i].pedagio) * rep;
+      const cellPed = document.getElementById(`${idPrefix}-legpedtot-${i}`); if (cellPed) cellPed.textContent = pedLinha > 0 ? brl(pedLinha) : '—';
+      const novoKm = viaKmPonderado(trechos);
+      const combTotal = consumo ? (novoKm / consumo * preco) : 0;
+      const cellTotalKm = document.getElementById(`${idPrefix}-totalkm`); if (cellTotalKm) cellTotalKm.textContent = `${novoKm.toFixed(1)} km`;
+      const cellTotalComb = document.getElementById(`${idPrefix}-totalcomb`); if (cellTotalComb) cellTotalComb.textContent = brl(combTotal);
+      const cellTotalPed = document.getElementById(`${idPrefix}-totalped`); if (cellTotalPed) cellTotalPed.textContent = brl(viaPedagioPonderado(trechos));
+      onSucesso(novoKm, trechos);
+    };
     statusEl.querySelectorAll('[data-legrep]').forEach(inp => {
       inp.onchange = () => {
         const i = Number(inp.dataset.legrep);
         trechos[i].repeticoes = Math.max(1, Math.round(Number(inp.value)) || 1);
         inp.value = trechos[i].repeticoes;
-        const consumo = colab.veiculo_consumo_kml;
-        const comb = consumo ? (trechos[i].km * trechos[i].repeticoes / consumo * preco) : 0;
-        const cellComb = document.getElementById(`${idPrefix}-legcomb-${i}`); if (cellComb) cellComb.textContent = comb > 0 ? brl(comb) : '—';
-        const novoKm = viaKmPonderado(trechos);
-        const combTotal = consumo ? (novoKm / consumo * preco) : 0;
-        const cellTotalKm = document.getElementById(`${idPrefix}-totalkm`); if (cellTotalKm) cellTotalKm.textContent = `${novoKm.toFixed(1)} km`;
-        const cellTotalComb = document.getElementById(`${idPrefix}-totalcomb`); if (cellTotalComb) cellTotalComb.textContent = brl(combTotal);
-        onSucesso(novoKm, trechos);
+        atualizarLinha(i);
+      };
+    });
+    statusEl.querySelectorAll('[data-legped]').forEach(inp => {
+      inp.oninput = () => {
+        const i = Number(inp.dataset.legped);
+        trechos[i].pedagio = inp.value;
+        atualizarLinha(i);
       };
     });
     statusEl.querySelectorAll('[data-mvup]').forEach(b => b.onclick = () => { const i = Number(b.dataset.mvup); [intermediarios[i - 1], intermediarios[i]] = [intermediarios[i], intermediarios[i - 1]]; recalcular(); });
@@ -4072,9 +4127,11 @@ function viaRenderAluguelBlock() {
 
         <button class="btn" id="al-calc-${i}" type="button">📍 Calcular rota automaticamente</button>
         <div id="al-status-${i}" style="margin-top:8px"></div>
-        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio (R$)', 'number', a.pedagio_valor || '', 'step="0.01" min="0"')}</div>
+        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio total (R$)', 'number', viaPedagioPonderado(a.trechos) > 0 ? viaPedagioPonderado(a.trechos).toFixed(2) : (a.pedagio_valor || ''), `step="0.01" min="0" ${viaPedagioPonderado(a.trechos) > 0 ? 'disabled' : ''}`)}</div>
         <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="al-manual-${i}" ${a.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
-        <p class="hint" style="margin-top:8px">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
+        <p class="hint" style="margin-top:8px">${viaPedagioPonderado(a.trechos) > 0
+          ? 'Pedágio somado a partir da tabela de trechos acima (valor de uma passagem × repetições).'
+          : 'Calcule a rota para informar o pedágio por trecho — ou preencha aqui o valor total, se preferir.'}</p>
         <div class="field-row">${fld(`al-estacqtd-${i}`, 'Estacionamento — Qtd.', 'number', a.estacionamento_qtd || 1, 'min="1"')}${fld(`al-estacvalor-${i}`, 'Valor unitário (R$)', 'number', a.estacionamento_valor || '', 'step="0.01" min="0"')}</div>
         <p style="font-weight:600">Total da diária: ${brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))}</p>
         <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
@@ -4183,10 +4240,12 @@ function viaRenderProprioBlock() {
     <div class="field-row" style="margin-top:10px">
       ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', rota.distancia_km, `step="0.1" min="0" ${kmCombDisabled}`)}
       ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', rota.combustivel_valor, `step="0.01" min="0" ${kmCombDisabled}`)}
-      ${fld('w3-proprio-pedagio', 'Pedágio (R$)', 'number', rota.pedagio_valor, 'step="0.01" min="0"')}
+      ${fld('w3-proprio-pedagio', 'Pedágio total (R$)', 'number', viaPedagioPonderado(rota.trechos) > 0 ? viaPedagioPonderado(rota.trechos).toFixed(2) : rota.pedagio_valor, `step="0.01" min="0" ${viaPedagioPonderado(rota.trechos) > 0 ? 'disabled' : ''}`)}
     </div>
     <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="w3-proprio-manual" ${rota.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
-    <p class="hint" style="margin-top:8px">Pedágio ainda não tem cálculo automático — preencha manualmente por enquanto.</p>
+    <p class="hint" style="margin-top:8px">${viaPedagioPonderado(rota.trechos) > 0
+      ? 'Pedágio somado a partir da tabela de trechos acima (valor de uma passagem × repetições).'
+      : 'Calcule a rota para informar o pedágio por trecho — ou preencha aqui o valor total, se preferir.'}</p>
     <div class="field-row">
       ${fld('w3-proprio-estac-qtd', 'Estacionamento — Qtd.', 'number', rota.estacionamento_qtd, 'min="1"')}
       ${fld('w3-proprio-estac-valor', 'Valor unitário (R$)', 'number', rota.estacionamento_valor, 'step="0.01" min="0"')}
@@ -4224,8 +4283,8 @@ function viaWizStep4() {
   const aluguelTotal = w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + viaNum(a.valor_diaria) * (Number(a.dias) || 0), 0) : 0;
   const combustivelTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0 : 0)
     + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.combustivel_valor) || 0), 0) : 0);
-  const pedagioTotal = (w.transporte.carro_proprio ? Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0 : 0)
-    + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.pedagio_valor) || 0), 0) : 0);
+  const pedagioTotal = (w.transporte.carro_proprio ? viaPedagioTotal(w.transporte.carro_proprio_rota) : 0)
+    + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + viaPedagioTotal(a), 0) : 0);
   const estacionamentoTotal = (w.transporte.carro_proprio ? (Number(w.transporte.carro_proprio_rota.estacionamento_qtd) || 0) * (Number(w.transporte.carro_proprio_rota.estacionamento_valor) || 0) : 0)
     + (w.transporte.aluguel_carro ? w.transporte.alugueis.reduce((s, a) => s + (Number(a.estacionamento_qtd) || 0) * (Number(a.estacionamento_valor) || 0), 0) : 0);
   const taxiTotal = w.transporte.taxi_uber ? w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0) : 0;
@@ -4271,12 +4330,12 @@ function viaComputeResumo(w) {
   if (w.transporte.aluguel_carro) w.transporte.alugueis.forEach(a => {
     add('aluguel_carro', viaNum(a.valor_diaria) * (Number(a.dias) || 0));
     add('combustivel', Number(a.combustivel_valor) || 0);
-    add('pedagio', Number(a.pedagio_valor) || 0);
+    add('pedagio', viaPedagioTotal(a));
     add('estacionamento', (Number(a.estacionamento_qtd) || 0) * (Number(a.estacionamento_valor) || 0));
   });
   if (w.transporte.carro_proprio) {
     add('combustivel', Number(w.transporte.carro_proprio_rota.combustivel_valor) || 0);
-    add('pedagio', Number(w.transporte.carro_proprio_rota.pedagio_valor) || 0);
+    add('pedagio', viaPedagioTotal(w.transporte.carro_proprio_rota));
     add('estacionamento', (Number(w.transporte.carro_proprio_rota.estacionamento_qtd) || 0) * (Number(w.transporte.carro_proprio_rota.estacionamento_valor) || 0));
   }
   if (w.transporte.taxi_uber) add('taxi_uber', w.transporte.taxi_uber_corridas.reduce((s, t) => s + (Number(t.valor) || 0), 0));
@@ -4610,7 +4669,7 @@ async function viaBaixarPdfSolicitacao(s) {
   }
   const cat = s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object' ? s.previsao_por_categoria : {};
   const total = Object.values(cat).reduce((a, b) => a + (Number(b) || 0), 0);
-  const dias = Math.max(1, Math.round((new Date(s.data_fim) - new Date(s.data_inicio)) / 86400000) + 1);
+  const { dias } = viaDiasNoites(s.data_inicio, s.data_fim);
   const w = {
     ordem_trabalho: s.ordem_trabalho, categoria_local: s.categoria_local,
     destinos: Array.isArray(s.destinos) ? s.destinos : [],
