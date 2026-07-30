@@ -5378,7 +5378,10 @@ async function openAttachmentFile(attId, parentType, parentId, parentLabel) {
     const r = await api(`/api/attachments/file/${attId}`);
     const blob = b64toBlob(r.data, r.mime_type);
     const url = URL.createObjectURL(blob);
-    const previewable = r.mime_type === 'application/pdf' || r.mime_type.startsWith('image/');
+    // Lista explícita em vez de "image/*": SVG é uma imagem que EXECUTA script
+    // e, exibido em <iframe> por blob: URL, rodaria na origem do ERP
+    // (auditoria 2026-07-29, achado C4). O que não está aqui só é baixado.
+    const previewable = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(String(r.mime_type || '').toLowerCase());
     const body = previewable
       ? `<iframe id="att-preview-frame" src="${url}" class="att-preview-frame"></iframe>`
       : `<div class="empty">Pré-visualização não disponível para "${esc(r.file_name)}". Use "Baixar" para abrir no seu computador.</div>`;
@@ -5419,7 +5422,7 @@ function openAttachments(type, id, label) {
             <option value="contrato">Contrato</option>
             <option value="outro" selected>Outro</option>
           </select>
-          <input type="file" id="att-file" accept=".pdf,.png,.jpg,.jpeg,.xml,.xlsx,.docx,image/*,application/pdf">
+          <input type="file" id="att-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xml,.xls,.xlsx,.docx">
           <button class="btn primary" id="att-send" type="button">Anexar</button>
         </div>
         <small style="color:var(--muted)">Até 3 MB por arquivo (PDF, imagem, XML, planilha…).</small>

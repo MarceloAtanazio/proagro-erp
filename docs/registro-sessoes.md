@@ -215,6 +215,32 @@
 - Fluxo real via API (JWT de teste + servidor local): compra +10@5 → estoque 10, custo médio 5; envio 3 → 7; envio de 999 bloqueado ("estoque insuficiente"); devolução → 10; resumo valor R$50. Compra com `lancar_pagar` criou Conta a Pagar (id 346) e custo médio ponderado 6,43 = (10×5+4×10)/14. **Todos os dados de teste (item, movimentos, título 346) foram apagados** — banco confirmado limpo (0/0/0).
 - Frontend (stub do `api`, sem tocar no banco): 3 abas; Estoque com 2 itens, KPIs, badges "Baixo"/"OK" corretos, valor total certo; Compras com badge "Em Contas a Pagar" e botão; Envios com "Marcar entregue"/"Registrar devolução" e formulário com disponibilidade + colaborador. Sem erros de console; `node --check` OK nos dois arquivos.
 
+## 2026-07-30 — Fase 0 da auditoria: fechamento dos riscos críticos
+
+**Contexto:** execução da Fase 0 recomendada em [AUDITORIA_ERP_2026-07-29.md](../AUDITORIA_ERP_2026-07-29.md).
+
+### 1. C1 — Base de produção exposta fora do backend (o mais grave)
+- **Antes:** 9 tabelas sem RLS num schema exposto ao PostgREST + `anon`/`authenticated` com `SELECT/INSERT/UPDATE/DELETE/TRUNCATE` em todas as `erp_*`. Com a chave anon (publicável, ativa até 2036) era possível ler `erp_users` **com `password_hash`**, `erp_payables`, `erp_receivables`, `erp_bank_transactions`, `erp_suppliers` (com `pix_key`), `erp_budgets`, `erp_login_attempts` e o estoque — contornando toda a camada de permissão do Express.
+- **Verificação prévia de segurança:** confirmado que o backend conecta como `postgres` com `rolbypassrls = true`, logo ligar RLS não o afeta (as 10 tabelas que já tinham RLS provavam isso na prática).
+- **Feito** (migração `seguranca_rls_todas_tabelas_erp_e_revoke_anon`): `ENABLE ROW LEVEL SECURITY` nas 9 tabelas; `REVOKE ALL` de `anon`/`authenticated` em tabelas e sequences; `ALTER DEFAULT PRIVILEGES` para tabelas futuras não nascerem abertas.
+- **Depois:** as 9 tabelas retornam `HTTP 401 permission denied` para a chave anon; backend lê as 12 tabelas e grava normalmente; linter Supabase sem nenhum erro `rls_disabled_in_public` (só os INFO de "RLS sem política", que é o estado desejado).
+
+### 2. C2 — Anexos de viáticos ignoravam o escopo do colaborador
+Novo helper `anexoViaticoNoEscopo()` (`api/index.js`) aplicado nas 5 rotas de anexo (download, lista, contagem, upload e exclusão). A contagem passou a ser filtrada por escopo via JOIN. Verificado: a despesa 235 (de outro colaborador) fica fora do escopo `[7]`; super-admin segue baixando normalmente (anexo 45, PDF de 170 KB).
+
+### 3. C4 — XSS armazenado via anexo SVG
+- Whitelist `ATTACH_MIMES` (PDF, JPG, PNG, WEBP, XML de NFe, XLSX/XLS, DOCX — SVG e HTML fora) e `mimeDoConteudo()`, que confere a **assinatura do arquivo** em vez de confiar no MIME informado.
+- No front, `previewable` virou lista explícita (`app.js`): SVG nunca vai para `<iframe>`.
+- **Nota de escopo:** a primeira versão da whitelist só aceitava PDF e imagens, o que quebraria o anexo de **XML de NFe e planilhas** (uso real, previsto no `accept` do input). Corrigido antes de publicar: bloqueia o que o navegador executa, sem proibir documento legítimo.
+- Verificado: SVG declarado → 415; **SVG renomeado para `.png` → 415**; PDF e PNG válidos → 200. Os 2 anexos de teste foram removidos (45 anexos, igual a antes).
+
+### 4. A4 — Autosserviço exposto por obscuridade
+`requireAutosservico` nas 2 rotas: liberado apenas para o super-admin (que está validando a tela) ou com `AUTOSSERVICO_VIATICOS=on`. Assim o recurso continua testável por você e fecha para os demais até o recálculo server-side da previsão (Fase 1).
+
+### Pendências desta fase
+- **A1 (hospedagem: noites × dias)** — aguarda decisão de negócio; é o único item da Fase 0 não aplicado.
+- **Painel do Supabase (ação do dono):** rotacionar a chave anon legada e confirmar a janela de backup.
+
 ## 2026-07-29 — Auditoria completa do ERP + 3 correções
 
 **Solicitação:** (1) por que "Valor em estoque" ficava R$ 0,00; (2) análise completa do sistema em busca de erros, bugs, melhorias e ideias.

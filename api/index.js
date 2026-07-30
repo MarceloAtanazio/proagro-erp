@@ -622,8 +622,63 @@ app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async 
 const ATTACH_TYPES = { payable: 'pagar', receivable: 'receber', viatico: 'viaticos' };
 const ATTACH_KINDS = ['boleto', 'nota_fiscal', 'comprovante', 'contrato', 'outro'];
 const MAX_ATTACH_BYTES = 3 * 1024 * 1024; // 3 MB por arquivo (limite seguro p/ Vercel)
+// Formatos aceitos como comprovante: os que a operação realmente usa
+// (comprovante em PDF/foto, XML de NFe, planilha e documento). Ficam de fora
+// justamente os que o navegador EXECUTA: SVG e HTML são marcação com script e
+// rodariam na origem do ERP ao abrir o anexo (auditoria 2026-07-29, C4).
+const ATTACH_MIMES = [
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp',
+  'text/xml', 'application/xml',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',       // .xlsx
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'application/vnd.ms-excel'                                                 // .xls
+];
+// Só estes são exibidos embutidos (o resto é baixado) — nenhum executa script.
+const ATTACH_MIMES_PREVIEW = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+
+// Confere o tipo pela assinatura do próprio arquivo, em vez de confiar no MIME
+// que o cliente informou. Devolve o MIME confirmado ou null se o conteúdo não
+// corresponder a nada permitido (um SVG renomeado para .png cai aqui).
+function mimeDoConteudo(buf, mimeInformado) {
+  if (buf.length < 8) return null;
+  const hex = buf.subarray(0, 12).toString('hex').toLowerCase();
+  if (hex.startsWith('25504446')) return 'application/pdf';                   // %PDF
+  if (hex.startsWith('ffd8ff')) return 'image/jpeg';                          // JPEG
+  if (hex.startsWith('89504e470d0a1a0a')) return 'image/png';                 // PNG
+  if (hex.startsWith('52494646') && hex.slice(16, 24) === '57454250') return 'image/webp';
+  // XLSX/DOCX são ZIP ("PK\x03\x04"); o formato exato vem do MIME informado,
+  // que aqui já passou pela whitelist.
+  if (hex.startsWith('504b0304')) {
+    return ATTACH_MIMES.includes(mimeInformado) && mimeInformado.includes('openxmlformats')
+      ? mimeInformado : 'application/vnd.ms-excel';
+  }
+  // XML (NFe): texto que começa com declaração ou tag. Recusa marcação
+  // executável disfarçada de XML.
+  const inicio = buf.subarray(0, 512).toString('utf8').trim().toLowerCase();
+  if (inicio.startsWith('<?xml') || inicio.startsWith('<nfe') || inicio.startsWith('<nfeproc')) {
+    if (/<svg|<html|<script|<!doctype html/.test(inicio)) return null;
+    return 'text/xml';
+  }
+  return null;
+}
 
 function pageForType(type) { return ATTACH_TYPES[type] || null; }
+
+// Um anexo de viático pertence a uma DESPESA, que pertence a uma SOLICITAÇÃO
+// de um colaborador. Quem tem apenas leitura em Viáticos vê somente as próprias
+// viagens (viaticosEscopo) — e a mesma trava precisa valer para os anexos,
+// senão bastava trocar o id na URL para baixar o comprovante de outra pessoa
+// (auditoria 2026-07-29, achado C2). Devolve true quando não há restrição
+// (admin ou quem edita Viáticos) ou quando o anexo é do próprio colaborador.
+async function anexoViaticoNoEscopo(user, despesaId) {
+  const escopo = await viaticosEscopo(user);
+  if (!escopo) return true;
+  const r = await query(
+    `SELECT 1 FROM erp_viaticos_despesas d
+       JOIN erp_viaticos_solicitacoes s ON s.id = d.solicitacao_id
+      WHERE d.id = $1 AND s.colaborador_id = ANY($2)`, [Number(despesaId), escopo]);
+  return r.length > 0;
+}
 
 // IMPORTANTE: rotas com segmento literal ("file", "count") precisam vir ANTES
 // da rota genérica "/:type/:id" — senão o Express casa "file"/"count" como se
@@ -634,11 +689,14 @@ function pageForType(type) { return ATTACH_TYPES[type] || null; }
 // binário cru: funções serverless da Vercel às vezes corrompem respostas
 // binárias dependendo do Content-Type — texto nunca tem esse problema.
 app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
-  const rows = await query('SELECT entity_type, file_name, mime_type, data FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
+  const rows = await query('SELECT entity_type, entity_id, file_name, mime_type, data FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   const a = rows[0];
   if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
   const page = pageForType(a.entity_type);
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
+  if (a.entity_type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, a.entity_id))) {
+    return res.status(403).json({ error: 'Este anexo pertence à viagem de outro colaborador.' });
+  }
   res.json({ file_name: a.file_name, mime_type: a.mime_type || 'application/octet-stream', data: a.data.toString('base64') });
 }));
 
@@ -647,10 +705,20 @@ app.get('/api/attachments/count/:type', requireAuth, h(async (req, res) => {
   const page = pageForType(req.params.type);
   if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
-  const rows = await query(
-    'SELECT entity_id, COUNT(*)::int AS n FROM erp_attachments WHERE entity_type=$1 GROUP BY entity_id',
-    [req.params.type]
-  );
+  // Em viáticos a contagem também respeita o escopo do colaborador — antes
+  // devolvia o total da empresa inteira (achado C2).
+  const escopoViatico = req.params.type === 'viatico' ? await viaticosEscopo(req.user) : null;
+  const rows = escopoViatico
+    ? await query(
+        `SELECT a.entity_id, COUNT(*)::int AS n FROM erp_attachments a
+           JOIN erp_viaticos_despesas d ON d.id = a.entity_id
+           JOIN erp_viaticos_solicitacoes s ON s.id = d.solicitacao_id
+          WHERE a.entity_type='viatico' AND s.colaborador_id = ANY($1)
+          GROUP BY a.entity_id`, [escopoViatico])
+    : await query(
+        'SELECT entity_id, COUNT(*)::int AS n FROM erp_attachments WHERE entity_type=$1 GROUP BY entity_id',
+        [req.params.type]
+      );
   const map = {};
   rows.forEach(r => { map[r.entity_id] = r.n; });
   res.json(map);
@@ -661,6 +729,9 @@ app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const page = pageForType(req.params.type);
   if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão para visualizar.' });
+  if (req.params.type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, req.params.id))) {
+    return res.status(403).json({ error: 'Esta despesa pertence à viagem de outro colaborador.' });
+  }
   const rows = await query(
     `SELECT id, kind, file_name, mime_type, byte_size, created_at
        FROM erp_attachments WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC`,
@@ -675,8 +746,20 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
   if (req.user.role !== 'admin' && !canEdit(req.user, page)) return res.status(403).json({ error: 'Sem permissão para anexar nesta seção.' });
 
+  if (req.params.type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, req.params.id))) {
+    return res.status(403).json({ error: 'Esta despesa pertence à viagem de outro colaborador.' });
+  }
+
   const fileName = sanitize(req.body.file_name);
-  const mime = sanitize(req.body.mime_type) || 'application/octet-stream';
+  // O MIME vem do cliente e antes era aceito como veio: um anexo
+  // "image/svg+xml" era servido de volta e renderizado em <iframe>, e SVG
+  // executa script na origem do ERP (auditoria 2026-07-29, achado C4).
+  // Só formatos de comprovante, e o tipo real é conferido pela assinatura
+  // do arquivo — nome e MIME informados não são fonte de verdade.
+  const mimeInformado = (sanitize(req.body.mime_type) || '').toLowerCase();
+  if (!ATTACH_MIMES.includes(mimeInformado)) {
+    return res.status(415).json({ error: 'Formato não permitido. Envie PDF, imagem (JPG/PNG/WEBP), XML de NFe, planilha ou documento Word.' });
+  }
   const kind = ATTACH_KINDS.includes(req.body.kind) ? req.body.kind : 'outro';
   const b64 = String(req.body.data || '');
   if (!fileName) return res.status(400).json({ error: 'Nome do arquivo é obrigatório.' });
@@ -686,6 +769,9 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   try { buf = Buffer.from(b64, 'base64'); } catch { return res.status(400).json({ error: 'Arquivo inválido.' }); }
   if (!buf.length) return res.status(400).json({ error: 'Arquivo vazio.' });
   if (buf.length > MAX_ATTACH_BYTES) return res.status(413).json({ error: 'Arquivo acima do limite de 3 MB.' });
+
+  const mime = mimeDoConteudo(buf, mimeInformado);
+  if (!mime) return res.status(415).json({ error: 'O conteúdo do arquivo não corresponde a um formato permitido. Verifique se o arquivo não está corrompido ou renomeado.' });
 
   // Confirma que o título existe.
   const table = { payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas' }[req.params.type];
@@ -702,11 +788,14 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
 
 // Excluir um anexo.
 app.delete('/api/attachments/:id', requireAuth, h(async (req, res) => {
-  const rows = await query('SELECT entity_type FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
+  const rows = await query('SELECT entity_type, entity_id FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   const a = rows[0];
   if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
   const page = pageForType(a.entity_type);
   if (req.user.role !== 'admin' && !canEdit(req.user, page)) return res.status(403).json({ error: 'Sem permissão para excluir.' });
+  if (a.entity_type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, a.entity_id))) {
+    return res.status(403).json({ error: 'Este anexo pertence à viagem de outro colaborador.' });
+  }
   await query('DELETE FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
 }));
@@ -1553,13 +1642,29 @@ app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(asy
 // ---- Autosserviço (colaborador solicitando por conta própria) ----
 // Disponível para QUALQUER usuário autenticado vinculado a um colaborador —
 // não passa pela permissão de página 'viaticos' (essa é a de administração).
-app.get('/api/viaticos/autosservico/meu-colaborador', requireAuth, h(async (req, res) => {
+// A seção de autosserviço (#via-solicitar) não foi lançada, mas estava
+// "protegida" apenas por não aparecer no menu: os endpoints respondiam a
+// qualquer usuário logado e vinculado a um colaborador, e o servidor aceitava
+// a previsão de valores calculada no navegador sem recalcular contra a TUD
+// (auditoria 2026-07-29, achado A4). Ocultar no front não é controle de
+// acesso. Enquanto o recálculo no servidor não existir, o recurso fica
+// disponível somente para o super-administrador (que o está validando).
+// Para lançar a todos os colaboradores, defina AUTOSSERVICO_VIATICOS=on nas
+// variáveis de ambiente — de preferência só depois do recálculo server-side.
+const AUTOSSERVICO_LIBERADO = String(process.env.AUTOSSERVICO_VIATICOS || '').trim().toLowerCase() === 'on';
+function requireAutosservico(req, res, next) {
+  const ehSuper = req.user && String(req.user.email).toLowerCase() === SUPER_ADMIN_EMAIL;
+  if (AUTOSSERVICO_LIBERADO || ehSuper) return next();
+  return res.status(403).json({ error: 'A solicitação por autosserviço ainda não foi liberada. Fale com o administrador.' });
+}
+
+app.get('/api/viaticos/autosservico/meu-colaborador', requireAuth, requireAutosservico, h(async (req, res) => {
   const rows = await query('SELECT * FROM erp_colaboradores WHERE usuario_id=$1 AND ativo=true', [req.user.id]);
   if (!rows.length) return res.status(404).json({ error: 'Nenhum colaborador de viáticos vinculado a este usuário.' });
   res.json(rows[0]);
 }));
 
-app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, h(async (req, res) => {
+app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosservico, h(async (req, res) => {
   const colabRows = await query('SELECT * FROM erp_colaboradores WHERE usuario_id=$1 AND ativo=true', [req.user.id]);
   if (!colabRows.length) return res.status(403).json({ error: 'Seu usuário não está vinculado a um colaborador de viáticos.' });
   const colab = colabRows[0];
