@@ -3107,7 +3107,10 @@ async function viewSolicitacao(id) {
   // cobre mais de uma noite numa linha só.
   const limite = s.data_expiracao_flash || s.data_fim;
   const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
-  const { dias, noites } = viaDiasNoites(s.data_inicio, s.data_fim);
+  const { dias, noites: noitesPeriodo } = viaDiasNoites(s.data_inicio, s.data_fim);
+  // Mesma regra da previsão: viagem toda na cidade-sede não tem hospedagem.
+  const hospDevida = viaHospedagemDevida(s.destinos, s.colaborador_cidade_base_uf, s.colaborador_cidade_base_municipio);
+  const noites = hospDevida ? noitesPeriodo : 0;
   const tudHosp = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'hospedagem');
   const tudAlim = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'alimentacao');
 
@@ -3119,7 +3122,9 @@ async function viewSolicitacao(id) {
     const tetoHosp = tudHosp.valor_diaria * noites;
     if (gastoHosp > tetoHosp) {
       excessos.push({ chave: 'hospedagem', valor: gastoHosp - tetoHosp,
-        msg: noites === 0
+        msg: !hospDevida
+          ? `Hospedagem lançada em viagem na própria cidade-sede do colaborador (${esc(s.colaborador_cidade_base_municipio || '')}/${esc(s.colaborador_cidade_base_uf || '')}): ${brl(gastoHosp)}. A TUD não prevê hospedagem nesse caso.`
+          : noites === 0
           ? `Hospedagem lançada em viagem de 1 dia (sem pernoite previsto): ${brl(gastoHosp)}. A TUD não prevê hospedagem quando ida e volta ocorrem no mesmo dia.`
           : `Hospedagem acima do teto da TUD: ${brl(gastoHosp)} gasto contra um limite de ${brl(tetoHosp)} (${brl(tudHosp.valor_diaria)}/noite × ${noites} noite(s)).` });
     }
@@ -3488,6 +3493,30 @@ function viaDiasNoites(dataInicio, dataFim) {
 }
 function viaWizDias(w) { return viaDiasNoites(w.data_inicio, w.data_fim).dias; }
 function viaWizNoites(w) { return viaDiasNoites(w.data_inicio, w.data_fim).noites; }
+
+// Compara município/UF tolerando acento, caixa e espaço extra — a cidade-base
+// e os destinos vêm do mesmo dataset, mas registros antigos podem ter grafia
+// diferente e um falso negativo aqui pagaria hospedagem indevida.
+const viaMesmaCidade = (ufA, munA, ufB, munB) => {
+  const n = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  return !!n(munA) && n(ufA) === n(ufB) && n(munA) === n(munB);
+};
+
+// Hospedagem só é devida quando o colaborador PERNOITA FORA da cidade-sede:
+// visita na própria cidade ele dorme em casa, então entra apenas alimentação.
+// Basta um destino fora da sede para a hospedagem voltar a ser devida (ele
+// precisa se hospedar nesse trecho). Sem cidade-sede cadastrada ou sem
+// destinos não há como afirmar que é local — mantém o comportamento normal,
+// para não subestimar o viático por falta de cadastro.
+function viaHospedagemDevida(destinos, cidadeBaseUf, cidadeBaseMunicipio) {
+  const lista = Array.isArray(destinos) ? destinos : [];
+  if (!cidadeBaseMunicipio || !cidadeBaseUf || !lista.length) return true;
+  return lista.some(d => !viaMesmaCidade(d.uf, d.municipio, cidadeBaseUf, cidadeBaseMunicipio));
+}
+// Noites que de fato entram no cálculo (0 quando a viagem é toda na cidade-sede).
+function viaNoitesFaturaveis(destinos, cidadeBaseUf, cidadeBaseMunicipio, noites) {
+  return viaHospedagemDevida(destinos, cidadeBaseUf, cidadeBaseMunicipio) ? noites : 0;
+}
 
 // Calcula a distância real de carro (cidade-base -> destinos na ordem
 // adicionada -> volta pra cidade-base) usando o OSRM (motor de rotas
@@ -4272,7 +4301,10 @@ function viaRenderProprioBlock() {
 }
 
 function viaWizStep4() {
-  const w = VIA_WIZ, c = $('#content'), dias = viaWizDias(w), noites = viaWizNoites(w);
+  const w = VIA_WIZ, c = $('#content'), dias = viaWizDias(w);
+  const noitesPeriodo = viaWizNoites(w);
+  const hospDevida = viaHospedagemDevida(w.destinos, w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
+  const noites = hospDevida ? noitesPeriodo : 0;
   const tudHosp = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'hospedagem');
   const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');
 
@@ -4298,7 +4330,9 @@ function viaWizStep4() {
       <div class="card">
         <h3 style="margin-bottom:6px">Despesas previstas</h3>
         <p class="hint" style="margin-bottom:16px">Visão somente leitura de tudo que foi definido nas etapas anteriores. Pra corrigir algum valor, use "Voltar".</p>
-        ${linha('🏨', `Hospedagem — ${noites} diária(s) × ${brl(valorHosp)} (teto da TUD)`, totalHosp)}
+        ${hospDevida
+          ? linha('🏨', `Hospedagem — ${noites} diária(s) × ${brl(valorHosp)} (teto da TUD)`, totalHosp)
+          : `<div class="via-resumo-linha"><span>🏨 Hospedagem — não se aplica: viagem na própria cidade-sede (${esc(w.colab.cidade_base_municipio)}/${esc(w.colab.cidade_base_uf)})</span><strong>${brl(0)}</strong></div>`}
         ${linha('🍽️', `Alimentação — ${dias} dia(s) × ${brl(valorAlim)} (teto da TUD)`, totalAlim)}
         ${w.transporte.aviao ? linha('✈️', 'Passagem de Avião (soma dos trechos)', aviaoTotal) : ''}
         ${w.transporte.onibus ? linha('🚌', 'Passagem de Ônibus (soma dos trechos)', onibusTotal) : ''}
@@ -4319,7 +4353,9 @@ function viaWizStep4() {
 }
 
 function viaComputeResumo(w) {
-  const dias = viaWizDias(w), noites = viaWizNoites(w), cat = {};
+  const dias = viaWizDias(w), cat = {};
+  // Viagem inteiramente na cidade-sede não gera hospedagem (dorme em casa).
+  const noites = viaNoitesFaturaveis(w.destinos, w.colab.cidade_base_uf, w.colab.cidade_base_municipio, viaWizNoites(w));
   const add = (k, v) => { if (v) cat[k] = (cat[k] || 0) + v; };
   const tudHosp = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'hospedagem');
   const tudAlim = w.tud.find(t => t.tier === w.colab.tier && t.categoria_local === w.categoria_local && t.tipo_despesa === 'alimentacao');

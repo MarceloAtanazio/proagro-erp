@@ -1734,6 +1734,7 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
   const escopo = await viaticosEscopo(req.user);
   const rows = await query(`
     SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
+      c.cidade_base_uf AS colaborador_cidade_base_uf, c.cidade_base_municipio AS colaborador_cidade_base_municipio,
       COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id), 0) AS valor_comprovado,
       (SELECT COUNT(*)::int FROM erp_attachments a JOIN erp_viaticos_despesas d ON d.id=a.entity_id AND a.entity_type='viatico' WHERE d.solicitacao_id=s.id) AS anexos_count
     FROM erp_viaticos_solicitacoes s JOIN erp_colaboradores c ON c.id=s.colaborador_id

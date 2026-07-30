@@ -245,6 +245,18 @@ Decisões tomadas pelo usuário: hospedagem por **noites nas duas pontas** e ped
 
 **Verificação:** cenários de dias/noites (mesmo dia, 2 dias, 3 dias, virada de mês) com previsão e teto sempre iguais; pedágio R$ 8 × 6 repetições = R$ 48 e total R$ 80,50 na tabela real renderizada no navegador; 6 colunas presentes; compatibilidade com registro antigo (usa `pedagio_valor`) e novo (usa trechos). Sem erros de console; `node --check` OK.
 
+### 6. Regra nova: viagem na própria cidade-sede não gera hospedagem
+**Pedido do usuário:** quando o destino é a mesma cidade-sede cadastrada para o colaborador, não há hospedagem (ele dorme em casa). Exemplo dado: sede São Paulo/SP, visita comercial em São Paulo/SP de 18 a 20 → 3 dias de alimentação e **nenhuma** diária de hospedagem.
+
+**Implementação** (`public/app.js`, seguindo o padrão de fonte única):
+- `viaMesmaCidade(ufA, munA, ufB, munB)` — compara UF+município normalizando acento, caixa e espaços (registro antigo com grafia diferente não pode gerar falso negativo e pagar hospedagem indevida). A comparação é por **UF + município**, então homônimos não se confundem (Palmas/PR ≠ Palmas/TO).
+- `viaHospedagemDevida(destinos, baseUf, baseMun)` — `false` só quando **todos** os destinos são a cidade-sede. Basta um destino fora para a hospedagem voltar a ser devida (há pernoite nesse trecho). Sem cidade-sede cadastrada ou sem destinos, mantém o comportamento normal — não dá para afirmar que é local, e o erro seria subestimar o viático por falha de cadastro.
+- `viaNoitesFaturaveis(...)` aplicado nos **três** pontos que calculam hospedagem: previsão (`viaComputeResumo`), etapa 4 do assistente e **conferência/excesso** (`viewSolicitacao`) — se ficasse só na previsão, o teto voltaria a divergir, repetindo o achado A1.
+- Etapa 4 mostra "Hospedagem — não se aplica: viagem na própria cidade-sede (São Paulo/SP) · R$ 0,00" em vez de "0 diária(s)". Na conferência, hospedagem lançada nesse caso gera excesso com mensagem específica citando a cidade-sede.
+- **Backend:** `GET /api/viaticos/solicitacoes` passou a devolver `colaborador_cidade_base_uf`/`colaborador_cidade_base_municipio` (a tela de conferência não tinha esse dado).
+
+**Verificação (7 cenários, funções reais no navegador):** caso do usuário → 3 dias de alimentação R$ 300 e hospedagem R$ 0 ✅; destino fora → hospedagem normal (2 noites); sede + destino fora → hospedagem devida; grafia "Sao Paulo" sem acento → reconhecida como mesma cidade; Palmas/PR vs Palmas/TO → cidades diferentes, hospedagem devida; sede não cadastrada e sem destinos → mantém hospedagem. Conferência: teto R$ 0 na cidade-sede e R$ 500 com destino fora. Sem erros de console.
+
 ### Pendências desta fase
 - **Painel do Supabase (ação do dono):** rotacionar a chave anon legada e confirmar a janela de backup.
 - **Fase 1** (não iniciada): mover as regras de viáticos para o backend com recálculo server-side, `withTx` + `FOR UPDATE`, guarda de status em `/fechar`, validação de chave em `/excesso-status`, parsers de dinheiro (A5/A6).
