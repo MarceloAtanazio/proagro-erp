@@ -315,3 +315,21 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 
 ### Verificação (dados de teste criados e REMOVIDOS)
 - **Importante:** o dev server não faz hot-reload — foi necessário reiniciá-lo para carregar o novo backend (na 1ª tentativa os campos voltaram null). Após reiniciar: NCM "123" → erro; CEST "12" → erro; máx<mín → erro; item completo criado e **todos os campos persistiram** (marca, subcategoria, NCM, origem, pesos, dimensões, preço, série, estoque máximo). Itens de teste apagados (0 restantes). Frontend: 6 seções presentes, 14 campos-chave, select de origem com 10 opções, Ficha renderizando dimensões/origem/série. Sem erros de console; `node --check` OK.
+
+## 2026-07-30 — Menu lateral: densidade e agrupamento
+
+**Solicitação:** o menu lateral estava grande e com UX ruim.
+
+**Diagnóstico medido (1366×720):** conteúdo de **787px** em 587px de área útil → excedia 200px e forçava rolagem no menu. Dos 787px, **196px (25%) eram apenas títulos de seção**, e duas seções tinham um único item ("Visão geral" só com o Dashboard; "Suprimentos" sozinho).
+
+### O que mudou
+- **Agrupamento (`public/app.js`, `PAGES`):** de 6 rótulos para 4. Dashboard abre a lista sem título; "Movimentação" virou **Financeiro**; Viáticos saiu de Planejamento e foi com Suprimentos para **Operações**; o subtítulo "Cadastros" saiu (os itens ficaram diretos em Administração). Nada foi escondido nem virou clique extra.
+- **Densidade (`public/styles.css`):** item 38,3 → 32,3px; título de seção 33,8 → 28px; logo 72,5 → 63px; rodapé do usuário 61 → 53px.
+- **Mobile:** a media query de 980px repetia os paddings antigos e desfazia a compactação no celular — valores alinhados (comentário no CSS alerta para manter os dois lados iguais).
+
+### Verificação
+- Conteúdo: **787 → 592px (−25%)**; títulos: 196 → 112px (−43%). Sem rolagem em 720/768/900/1080px de altura (em 700px sobra 7px, tela fora do uso real).
+- Item ativo mantém destaque (fundo verde, texto branco, 32,3px de altura — dentro do padrão de 32–40px para desktop).
+- Modo recolhido intacto: 64px, rótulos e títulos ocultos, sem rolagem.
+- **Falso positivo investigado:** o modo recolhido media 236px nos testes. Causa: a aba em background não avança transições CSS (`transition: width .18s`), então o valor ficava preso no inicial. Com a transição desligada, mede 64px — **não era bug**.
+- Sem erros de console.

@@ -97,8 +97,12 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 .app.side-collapsed .nav a span { display: none; }
 .app.side-collapsed .userbox { padding: 14px 8px; justify-content: center; }
 .app.side-collapsed .userbox > div:not(.avatar), .app.side-collapsed .userbox > button { display: none; }
+/* Densidade do menu: com 14 páginas, o conteúdo passava de 787px em ~587px
+   de área útil (1366×720) e forçava rolagem — perder o rodapé de vista e ter
+   de rolar para trocar de tela é o pior atrito de um menu de navegação.
+   Alturas enxugadas aqui e menos títulos de seção em PAGES (app.js). */
 .sidebar .brand {
-  display: flex; align-items: center; gap: 10px; padding: 22px 20px 18px;
+  display: flex; align-items: center; gap: 10px; padding: 16px 18px 14px;
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
 /* Estilo do logo fica aqui (não inline) para o modo recolhido poder ocultá-lo */
@@ -106,13 +110,18 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 .brand-name { font-weight: 700; font-size: 16.5px; letter-spacing: -.01em; color: #fff; }
 .brand-sub { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: rgba(255,255,255,.55); }
 
-.nav { padding: 14px 10px; flex: 1; overflow-y: auto; }
-.nav-section { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: rgba(255,255,255,.4); padding: 12px 12px 6px; }
+.nav { padding: 8px 10px 6px; flex: 1; overflow-y: auto; }
+.nav-section {
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: rgba(255,255,255,.38); padding: 10px 12px 3px;
+}
+/* Primeiro grupo cola no topo: o espaço acima já vem do padding do .nav */
+.nav-section:first-child { padding-top: 2px; }
 .nav-subsection { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,255,255,.32); padding: 8px 12px 4px 22px; font-weight: 600; }
 .nav a {
   display: flex; align-items: center; gap: 10px;
-  padding: 9px 12px; border-radius: 8px; color: rgba(255,255,255,.82);
-  text-decoration: none; font-size: 13.5px; margin-bottom: 2px;
+  padding: 6px 12px; border-radius: 8px; color: rgba(255,255,255,.82);
+  text-decoration: none; font-size: 13.5px; margin-bottom: 1px;
 }
 .nav a svg { width: 17px; height: 17px; flex-shrink: 0; opacity: .8; }
 .nav a:hover { background: rgba(255,255,255,.07); color: #fff; }
@@ -121,11 +130,11 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 .nav a.nav-sub-item { padding-left: 22px; }
 
 .sidebar .userbox {
-  padding: 14px 16px; border-top: 1px solid rgba(255,255,255,.08);
+  padding: 10px 14px; border-top: 1px solid rgba(255,255,255,.08);
   display: flex; align-items: center; gap: 10px; font-size: 12.5px;
 }
 .userbox .avatar {
-  width: 32px; height: 32px; border-radius: 50%; background: var(--verde-500);
+  width: 30px; height: 30px; border-radius: 50%; background: var(--verde-500);
   display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; flex-shrink: 0;
 }
 .userbox .uname { color: #fff; font-weight: 600; line-height: 1.2; }
@@ -296,14 +305,16 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   /* No layout empilhado (mobile) o recolhimento não se aplica */
   .side-toggle { display: none; }
   .app.side-collapsed .sidebar { width: 100%; }
-  .app.side-collapsed .brand { padding: 22px 20px 18px; justify-content: flex-start; }
+  /* Estes paddings repetem os do menu expandido — mantenha-os iguais aos de
+     cima, senão o celular volta ao espaçamento antigo (mais alto). */
+  .app.side-collapsed .brand { padding: 16px 18px 14px; justify-content: flex-start; }
   .app.side-collapsed .brand img, .app.side-collapsed .brand > div { display: block; }
-  .app.side-collapsed .nav { padding: 14px 10px; }
+  .app.side-collapsed .nav { padding: 8px 10px 6px; }
   .app.side-collapsed .nav-section, .app.side-collapsed .nav-subsection { display: block; }
-  .app.side-collapsed .nav a { justify-content: flex-start; padding: 9px 12px; }
+  .app.side-collapsed .nav a { justify-content: flex-start; padding: 6px 12px; }
   .app.side-collapsed .nav a.nav-sub-item { padding-left: 22px; }
   .app.side-collapsed .nav a span { display: inline; }
-  .app.side-collapsed .userbox { padding: 14px 16px; justify-content: flex-start; }
+  .app.side-collapsed .userbox { padding: 10px 14px; justify-content: flex-start; }
   .app.side-collapsed .userbox > div:not(.avatar) { display: block; }
   .app.side-collapsed .userbox > button { display: inline-block; }
   .two-col, .form-row { grid-template-columns: 1fr; }

@@ -242,20 +242,26 @@ const ICONS = {
   box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>'
 };
 
+// Agrupamento enxuto: os títulos de seção consumiam 196px dos 787px do menu
+// (25%), e duas seções tinham um único item ("Visão geral" com o Dashboard e
+// "Suprimentos" sozinho). Dashboard passou a abrir a lista sem rótulo, Viáticos
+// e Suprimentos foram reunidos em "Operações" (ambos operacionais, não de
+// planejamento) e o subtítulo "Cadastros" saiu — nada foi escondido nem virou
+// clique extra, só deixou de haver rolagem.
 const PAGES = [
-  { hash: 'dashboard', title: 'Dashboard', icon: 'dash', section: 'Visão geral' },
-  { hash: 'pagar', title: 'Contas a Pagar', icon: 'out', section: 'Movimentação' },
+  { hash: 'dashboard', title: 'Dashboard', icon: 'dash' },
+  { hash: 'pagar', title: 'Contas a Pagar', icon: 'out', section: 'Financeiro' },
   { hash: 'receber', title: 'Contas a Receber', icon: 'in' },
   { hash: 'fluxo', title: 'Fluxo de Caixa', icon: 'flow' },
   { hash: 'conciliacao', title: 'Conciliação Bancária', icon: 'bank' },
   { hash: 'orcamento', title: 'Orçamento Anual', icon: 'bud', section: 'Planejamento' },
   { hash: 'orcadoreal', title: 'Orçado x Realizado', icon: 'vs' },
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
-  { hash: 'viaticos', title: 'Viáticos', icon: 'via' },
-  { hash: 'suprimentos', title: 'Suprimentos', icon: 'box', section: 'Suprimentos' },
-  { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração', sub: 'Cadastros' },
-  { hash: 'usuarios', title: 'Usuários', icon: 'usr', sub: 'Cadastros', super: true },
-  { hash: 'categorias', title: 'Categorias', icon: 'tag', sub: 'Cadastros', super: true },
+  { hash: 'viaticos', title: 'Viáticos', icon: 'via', section: 'Operações' },
+  { hash: 'suprimentos', title: 'Suprimentos', icon: 'box' },
+  { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração' },
+  { hash: 'usuarios', title: 'Usuários', icon: 'usr', super: true },
+  { hash: 'categorias', title: 'Categorias', icon: 'tag', super: true },
   { hash: 'config', title: 'Configurações', icon: 'cfg', super: true }
 ];
 
