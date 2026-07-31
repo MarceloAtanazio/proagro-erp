@@ -1642,20 +1642,99 @@ app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(asy
 // ---- Autosserviço (colaborador solicitando por conta própria) ----
 // Disponível para QUALQUER usuário autenticado vinculado a um colaborador —
 // não passa pela permissão de página 'viaticos' (essa é a de administração).
-// A seção de autosserviço (#via-solicitar) não foi lançada, mas estava
-// "protegida" apenas por não aparecer no menu: os endpoints respondiam a
-// qualquer usuário logado e vinculado a um colaborador, e o servidor aceitava
-// a previsão de valores calculada no navegador sem recalcular contra a TUD
-// (auditoria 2026-07-29, achado A4). Ocultar no front não é controle de
-// acesso. Enquanto o recálculo no servidor não existir, o recurso fica
-// disponível somente para o super-administrador (que o está validando).
-// Para lançar a todos os colaboradores, defina AUTOSSERVICO_VIATICOS=on nas
-// variáveis de ambiente — de preferência só depois do recálculo server-side.
-const AUTOSSERVICO_LIBERADO = String(process.env.AUTOSSERVICO_VIATICOS || '').trim().toLowerCase() === 'on';
-function requireAutosservico(req, res, next) {
-  const ehSuper = req.user && String(req.user.email).toLowerCase() === SUPER_ADMIN_EMAIL;
-  if (AUTOSSERVICO_LIBERADO || ehSuper) return next();
-  return res.status(403).json({ error: 'A solicitação por autosserviço ainda não foi liberada. Fale com o administrador.' });
+// Lançado em 2026-07-30, embutido na própria tela de Viáticos (não é mais
+// rota solta). Continua exigindo vínculo com um colaborador ativo.
+function requireAutosservico(req, res, next) { return next(); }
+
+// Tabela de capitais e a regra de "categoria do local" — precisa ser IDÊNTICA
+// à de public/app.js (CAPITAIS_BR / viaCategoriaDestino / viaCalcularCategoriaLocal).
+// Duplicada aqui porque o projeto não tem bundler/módulo compartilhado entre
+// front (script solto no navegador) e back (CommonJS) — se um dia um dos dois
+// mudar, o outro precisa acompanhar manualmente.
+const VIA_CAPITAIS_BR = {
+  AC: 'Rio Branco', AL: 'Maceió', AP: 'Macapá', AM: 'Manaus', BA: 'Salvador', CE: 'Fortaleza',
+  DF: 'Brasília', ES: 'Vitória', GO: 'Goiânia', MA: 'São Luís', MT: 'Cuiabá', MS: 'Campo Grande',
+  MG: 'Belo Horizonte', PA: 'Belém', PB: 'João Pessoa', PR: 'Curitiba', PE: 'Recife', PI: 'Teresina',
+  RJ: 'Rio de Janeiro', RN: 'Natal', RS: 'Porto Alegre', RO: 'Porto Velho', RR: 'Boa Vista',
+  SC: 'Florianópolis', SE: 'Aracaju', SP: 'São Paulo', TO: 'Palmas'
+};
+const VIA_CATEGORIA_TOPO = new Set(['SP:São Paulo', 'RJ:Rio de Janeiro', 'DF:Brasília']);
+const VIA_CATEGORIA_PRIORIDADE = { interior: 0, capital: 1, sp_df_rj_intl: 2 };
+function viaCategoriaDestinoServer(uf, municipio) {
+  if (VIA_CATEGORIA_TOPO.has(`${uf}:${municipio}`)) return 'sp_df_rj_intl';
+  if (VIA_CAPITAIS_BR[uf] === municipio) return 'capital';
+  return 'interior';
+}
+function viaCalcularCategoriaLocalServer(destinos, internacional) {
+  let cat = internacional ? 'sp_df_rj_intl' : 'interior';
+  (destinos || []).forEach(d => {
+    const c = viaCategoriaDestinoServer(d.uf, d.municipio);
+    if (VIA_CATEGORIA_PRIORIDADE[c] > VIA_CATEGORIA_PRIORIDADE[cat]) cat = c;
+  });
+  return cat;
+}
+function viaMesmaCidadeServer(ufA, munA, ufB, munB) {
+  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+  return !!norm(munA) && norm(ufA) === norm(ufB) && norm(munA) === norm(munB);
+}
+function viaHospedagemDevidaServer(destinos, cidadeBaseUf, cidadeBaseMunicipio) {
+  const lista = Array.isArray(destinos) ? destinos : [];
+  if (!cidadeBaseMunicipio || !cidadeBaseUf || !lista.length) return true;
+  return lista.some(d => !viaMesmaCidadeServer(d.uf, d.municipio, cidadeBaseUf, cidadeBaseMunicipio));
+}
+function viaPedagioPonderadoServer(trechos) {
+  return (trechos || []).reduce((s, t) => s + (Number(t && t.pedagio) || 0) * (Number(t && t.repeticoes) || 1), 0);
+}
+function viaPedagioTotalServer(bloco) {
+  const porTrecho = viaPedagioPonderadoServer(bloco && bloco.trechos);
+  return porTrecho > 0 ? porTrecho : (Number(bloco && bloco.pedagio_valor) || 0);
+}
+
+// Recalcula categoria_local e a previsão por categoria a partir dos dados
+// BRUTOS enviados (destinos, período, itens de transporte) — nunca a partir
+// dos totais que o navegador já somou. O front usa exatamente as mesmas
+// fórmulas (viaComputeResumo/viaMemoriaCategorias em app.js) só para o
+// colaborador ver o número antes de enviar; a fonte da verdade do que fica
+// gravado — e do que a aprovação vê — é este cálculo aqui (auditoria
+// 2026-07-29, achado A4: o servidor aceitava a previsão pronta do cliente).
+function viaRecalcularPrevisao(b, colab, tud) {
+  const categoriaLocal = viaCalcularCategoriaLocalServer(b.destinos, !!b.internacional);
+  const ini = new Date(b.data_inicio), fim = new Date(b.data_fim);
+  const dias = Math.max(1, Math.round((fim - ini) / 86400000) + 1);
+  const noitesPeriodo = Math.max(0, dias - 1);
+  const hospDevida = viaHospedagemDevidaServer(b.destinos, colab.cidade_base_uf, colab.cidade_base_municipio);
+  const noites = hospDevida ? noitesPeriodo : 0;
+
+  const tudTier = (tipo) => {
+    const r = tud.find(t => t.tier === colab.tier && t.categoria_local === categoriaLocal && t.tipo_despesa === tipo);
+    return r ? Number(r.valor_diaria) : 0;
+  };
+  const cat = {};
+  const add = (k, v) => { if (v > 0) cat[k] = Number(((cat[k] || 0) + v).toFixed(2)); };
+  add('hospedagem', tudTier('hospedagem') * noites);
+  add('alimentacao', tudTier('alimentacao') * dias);
+
+  const t = (b.transporte_detalhes && typeof b.transporte_detalhes === 'object') ? b.transporte_detalhes : {};
+  const somaValor = arr => (Array.isArray(arr) ? arr : []).reduce((s, x) => s + (Number(x && x.valor) || 0), 0);
+  if (t.aviao) add('passagem_aviao', somaValor(t.aviao_trechos));
+  if (t.onibus) add('passagem_onibus', somaValor(t.onibus_trechos));
+  if (t.aluguel_carro) (Array.isArray(t.alugueis) ? t.alugueis : []).forEach(a => {
+    const diaria = String(a && a.valor_diaria || '').includes(',')
+      ? Number(String(a.valor_diaria).replace(/\./g, '').replace(',', '.')) : Number(a && a.valor_diaria);
+    add('aluguel_carro', (isFinite(diaria) ? diaria : 0) * (Number(a && a.dias) || 0));
+    add('combustivel', Number(a && a.combustivel_valor) || 0);
+    add('pedagio', viaPedagioTotalServer(a));
+    add('estacionamento', (Number(a && a.estacionamento_qtd) || 0) * (Number(a && a.estacionamento_valor) || 0));
+  });
+  if (t.carro_proprio && t.carro_proprio_rota) {
+    const r = t.carro_proprio_rota;
+    add('combustivel', Number(r.combustivel_valor) || 0);
+    add('pedagio', viaPedagioTotalServer(r));
+    add('estacionamento', (Number(r.estacionamento_qtd) || 0) * (Number(r.estacionamento_valor) || 0));
+  }
+  if (t.taxi_uber) add('taxi_uber', somaValor(t.taxi_uber_corridas));
+
+  return { categoriaLocal, cat };
 }
 
 app.get('/api/viaticos/autosservico/meu-colaborador', requireAuth, requireAutosservico, h(async (req, res) => {
@@ -1669,7 +1748,6 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   if (!colabRows.length) return res.status(403).json({ error: 'Seu usuário não está vinculado a um colaborador de viáticos.' });
   const colab = colabRows[0];
   const b = req.body;
-  if (!['interior', 'capital', 'sp_df_rj_intl'].includes(b.categoria_local)) return res.status(400).json({ error: 'Categoria de local inválida.' });
   if (b.motivo && !MOTIVO_OPTIONS.includes(b.motivo)) return res.status(400).json({ error: 'Motivo inválido.' });
   if (!isDate(b.data_inicio) || !isDate(b.data_fim)) return res.status(400).json({ error: 'Datas do período inválidas.' });
   if (b.data_fim < b.data_inicio) return res.status(400).json({ error: 'Data final não pode ser antes da inicial.' });
@@ -1679,12 +1757,19 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
       if (!d || typeof d.uf !== 'string' || d.uf.length !== 2 || !sanitize(d.municipio)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
     }
   }
+  // categoria_local e previsao_por_categoria NUNCA vêm do cliente: o front só
+  // usa esses cálculos para o colaborador ver o número antes de enviar — quem
+  // grava e quem a aprovação vê é o recálculo abaixo, a partir dos destinos,
+  // período e itens de transporte brutos (auditoria 2026-07-29, achado A4).
+  const tud = await query('SELECT tier, categoria_local, tipo_despesa, valor_diaria FROM erp_viaticos_tud');
+  const { categoriaLocal, cat } = viaRecalcularPrevisao(b, colab, tud);
+
   const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
     (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, objetivo, data_inicio, data_fim,
      valor_liberado, previsao_por_categoria, transporte_detalhes, notes, created_by, origem)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,'colaborador') RETURNING id`,
-    [colab.id, colab.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo),
-     sanitize(b.objetivo), b.data_inicio, b.data_fim, JSON.stringify(b.previsao_por_categoria || {}), JSON.stringify(b.transporte_detalhes || {}),
+    [colab.id, colab.tier, categoriaLocal, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo),
+     sanitize(b.objetivo), b.data_inicio, b.data_fim, JSON.stringify(cat), JSON.stringify(b.transporte_detalhes || {}),
      sanitize(b.notes), req.user.id]);
   res.json({ ok: true, id: ins[0].id });
 }));

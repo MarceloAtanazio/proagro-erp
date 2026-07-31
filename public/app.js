@@ -317,16 +317,12 @@ function route() {
   let hash = (location.hash || '').slice(1);
   if (!hash) hash = firstAllowedHash() || 'dashboard';
 
-  // Rota escondida (não aparece no menu) — tela de autosserviço em construção.
-  // Acessível manualmente via #via-solicitar, sem depender da permissão de
-  // página 'viaticos' (qualquer usuário logado e vinculado a um colaborador
-  // pode usar, uma vez lançada oficialmente).
+  // #via-solicitar existiu como rota solta enquanto a seção estava em
+  // construção (2026-07-28 a 30). Lançada e embutida dentro de Viáticos —
+  // um bookmark antigo só precisa cair na tela certa e abrir o assistente.
   if (hash === 'via-solicitar') {
-    document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
-    CURRENT_PAGE = 'via-solicitar'; READONLY = false;
-    $('#page-title').textContent = 'Solicitação de Viáticos';
-    $('#content').innerHTML = '<div class="empty">Carregando…</div>';
-    renderSolicitacaoAutosservico().catch(err => { $('#content').innerHTML = `<div class="empty">${esc(err.message)}</div>`; });
+    VIA_ABRIR_WIZARD_AO_ENTRAR = true;
+    location.hash = 'viaticos';
     return;
   }
 
@@ -2832,7 +2828,16 @@ const VIA_STATUS_BADGE = {
 };
 
 async function renderViaticos() {
-  const [dash, sols] = await Promise.all([api('/api/viaticos/dashboard'), api('/api/viaticos/solicitacoes')]);
+  // meu-colaborador decide se o botão "Solicitar viagem" aparece — é
+  // autosserviço, então vale para qualquer usuário vinculado a um
+  // colaborador, mesmo os com acesso só de leitura na página (READONLY
+  // controla EDITAR dados de terceiros, não pedir a própria viagem).
+  // 404 (sem vínculo) é esperado para a maior parte dos usuários; qualquer
+  // outro erro é logado mas não trava a tela.
+  const [dash, sols, meuColaborador] = await Promise.all([
+    api('/api/viaticos/dashboard'), api('/api/viaticos/solicitacoes'),
+    api('/api/viaticos/autosservico/meu-colaborador').catch(e => { if (!/404|vínculo|vinculad/i.test(e.message || '')) console.error('[viaticos] meu-colaborador:', e); return null; })
+  ]);
   const c = $('#content');
   const FKEY = 'filters-viaticos';
   const saved = loadFilters(FKEY);
@@ -2865,10 +2870,13 @@ async function renderViaticos() {
       <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
       <button class="btn" id="btn-export">Exportar</button>
+      ${meuColaborador ? '<button class="btn primary" id="btn-solicitar-viagem">✈️ Solicitar viagem</button>' : ''}
       ${READONLY ? '' : `<button class="btn" id="btn-config">Configurações</button>
       <button class="btn primary" id="btn-new">+ Nova solicitação</button>`}
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
+
+  if ($('#btn-solicitar-viagem')) $('#btn-solicitar-viagem').onclick = () => renderSolicitacaoAutosservico();
 
   let lastFiltered = sols;
   const draw = () => {
@@ -2951,6 +2959,14 @@ async function renderViaticos() {
       } }
     ]);
   draw();
+
+  // Veio de um bookmark antigo de #via-solicitar: abre o assistente direto,
+  // sem exigir um segundo clique. Só quando o vínculo existe — sem ele, a
+  // tela de Viáticos já fica visível e o usuário entende o motivo.
+  if (VIA_ABRIR_WIZARD_AO_ENTRAR) {
+    VIA_ABRIR_WIZARD_AO_ENTRAR = false;
+    if (meuColaborador) renderSolicitacaoAutosservico();
+  }
 }
 
 async function formSolicitacao(existing) {
@@ -3446,13 +3462,17 @@ async function importarFlashModal(s) {
 }
 
 // ============================================================
-// SOLICITAÇÃO DE VIÁTICOS — Autosserviço (em construção)
-// Acessível só via #via-solicitar (rota escondida, fora do menu) até ser
-// oficialmente lançada. Fluxo em 5 etapas, cada uma alimentando a próxima;
-// a última é só leitura + geração de PDF (upload manual no Approvals, até
-// a integração automática existir).
+// SOLICITAÇÃO DE VIÁTICOS — Autosserviço
+// Embutido dentro da tela de Viáticos (botão "Solicitar viagem"), não é
+// mais rota própria — quem acessa é só quem já tem permissão de ver a
+// página Viáticos e está vinculado a um colaborador. Fluxo em 5 etapas,
+// cada uma alimentando a próxima; a última é só leitura + geração de PDF
+// (upload manual no Approvals, até a integração automática existir).
 // ============================================================
 let VIA_WIZ = null;
+// Setado pelo redirecionamento de um #via-solicitar antigo (bookmark) — faz
+// renderViaticos() abrir o assistente assim que a tela terminar de montar.
+let VIA_ABRIR_WIZARD_AO_ENTRAR = false;
 
 async function renderSolicitacaoAutosservico() {
   const c = $('#content');
@@ -3462,7 +3482,9 @@ async function renderSolicitacaoAutosservico() {
   } catch (e) {
     c.innerHTML = `<div class="card"><h3>Sem vínculo de colaborador</h3>
       <p style="color:var(--ink-2); font-size:13.5px; margin-top:8px">Seu usuário ainda não está vinculado a um cadastro de colaborador de viáticos.
-      Peça ao administrador para vincular seu usuário em Viáticos → Configurações → Colaboradores.</p></div>`;
+      Peça ao administrador para vincular seu usuário em Viáticos → Configurações → Colaboradores.</p>
+      <button class="btn" id="via-voltar-erro" style="margin-top:14px">Voltar</button></div>`;
+    $('#via-voltar-erro').onclick = () => renderViaticos();
     return;
   }
   const [tud, viaConfig] = await Promise.all([api('/api/viaticos/tud'), api('/api/viaticos/config')]);
@@ -3481,8 +3503,18 @@ async function renderSolicitacaoAutosservico() {
 
 function viaWizProgress(atual) {
   const nomes = ['Solicitante', 'Viagem', 'Transporte', 'Despesas', 'Resumo'];
-  return `<div class="via-wiz-steps">${nomes.map((n, i) => `<span class="via-wiz-step ${i + 1 === atual ? 'active' : i + 1 < atual ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
+  return `<div class="via-wiz-topbar">
+      <button type="button" class="via-wiz-cancelar" data-via-cancelar>← Voltar para Viáticos</button>
+    </div>
+    <div class="via-wiz-steps">${nomes.map((n, i) => `<span class="via-wiz-step ${i + 1 === atual ? 'active' : i + 1 < atual ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
 }
+// Delegado uma única vez: qualquer etapa do assistente pode ter esse botão
+// (viaWizProgress reaproveitado em todas), então liga aqui em vez de
+// religar a cada re-render de cada uma das 5 etapas.
+document.addEventListener('click', e => {
+  if (!e.target.closest('[data-via-cancelar]')) return;
+  if (confirm('Sair da solicitação? Os dados preenchidos nesta viagem serão perdidos.')) renderViaticos();
+});
 // FONTE ÚNICA da duração da viagem. Antes esta mesma conta existia em 3 lugares
 // (previsão, conferência e regeração de PDF), com risco de divergirem — e foi
 // exatamente o que aconteceu com a hospedagem (auditoria 2026-07-29, A1/B1).
@@ -4776,12 +4808,17 @@ function viaWizStep5() {
   $('#wiz-enviar').onclick = async () => {
     try {
       await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
+        // categoria_local e previsao_por_categoria vão só como referência —
+        // o servidor recalcula os dois a partir de destinos/período/internacional
+        // e dos itens de transporte, e é o que de fato é gravado (não confia
+        // no total que o navegador já somou — auditoria 2026-07-29, achado A4).
         ordem_trabalho: w.ordem_trabalho, categoria_local: w.categoria_local, destinos: w.destinos,
+        internacional: !!w.internacional,
         data_inicio: w.data_inicio, data_fim: w.data_fim, motivo: w.motivo, objetivo: w.objetivo,
         previsao_por_categoria: r.cat, transporte_detalhes: w.transporte, notes: ''
       }});
       toast('Solicitação enviada! Ela segue para aprovação.');
-      renderSolicitacaoAutosservico();
+      renderViaticos();
     } catch (e) { toast(e.message); }
   };
 }

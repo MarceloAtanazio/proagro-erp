@@ -333,3 +333,28 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 - Modo recolhido intacto: 64px, rótulos e títulos ocultos, sem rolagem.
 - **Falso positivo investigado:** o modo recolhido media 236px nos testes. Causa: a aba em background não avança transições CSS (`transition: width .18s`), então o valor ficava preso no inicial. Com a transição desligada, mede 64px — **não era bug**.
 - Sem erros de console.
+
+## 2026-07-30 — Lançamento da Solicitação de Viáticos (autosserviço) dentro de Viáticos
+
+**Solicitação:** tirar `#via-solicitar` do modo "escondido" e colocar no ar, **embutida dentro da tela Viáticos** (não como rota solta) — o acesso do colaborador será restrito à página Viáticos.
+
+**Pré-requisito de segurança apontado antes de abrir:** a auditoria (achado A4) registrou que o servidor aceitava a previsão de valores calculada no navegador sem recalcular contra a TUD. Enquanto só o dono do sistema usava, não importava; abrindo para colaboradores, um POST direto à API poderia inflar a previsão. Implementado o recálculo server-side **antes** de liberar o acesso.
+
+### Backend (`api/index.js`)
+- `requireAutosservico` virou passthrough (sem mais gate por super-admin/env var) — a rota inteira agora depende só de `requireAuth` + vínculo com colaborador ativo.
+- **`viaRecalcularPrevisao(b, colab, tud)`** (nova): recalcula `categoria_local` (duplicando a pequena tabela de capitais do front, comentado que precisa ficar em sincronia — não há bundler/módulo compartilhado no projeto) e `previsao_por_categoria` a partir dos itens BRUTOS enviados (destinos, período, itens de transporte), nunca dos totais que o cliente já somou. Reaplica a mesma regra de hospedagem-na-cidade-sede do achado A1 (`viaHospedagemDevidaServer`).
+- `POST /api/viaticos/solicitacoes/autosservico`: `categoria_local` e `previsao_por_categoria` do payload são ignorados para gravação — o que fica salvo é sempre o recálculo do servidor. `valor_liberado` continua sempre `0` (like antes).
+
+### Frontend (`public/app.js` + `styles.css`)
+- Rota `#via-solicitar` removida como tela própria; um acesso a ela agora seta uma flag e redireciona para `#viaticos`, abrindo o assistente sozinho (compatibilidade com bookmarks antigos).
+- `renderViaticos()` busca `GET /api/viaticos/autosservico/meu-colaborador` em paralelo (404 tratado como "sem vínculo", silencioso) e mostra o botão **"✈️ Solicitar viagem"** quando há vínculo — inclusive para usuário `READONLY` (autosserviço da própria viagem é diferente de editar dados de terceiros).
+- Assistente ganhou um link **"← Voltar para Viáticos"** (visível em todas as etapas, com confirmação antes de descartar) e o envio final retorna para `renderViaticos()` em vez de reiniciar o assistente.
+
+### Verificação
+- **Recálculo server-side** testado via API com JWT real contra um payload deliberadamente malicioso (`previsao_por_categoria` inflada + `categoria_local` forjada): o servidor gravou o valor recalculado correto e ignorou por completo os campos injetados. Registro de teste removido do banco.
+- **Frontend** testado no navegador com sessão real (cookie válido): botão aparece, assistente abre com os dados do colaborador, "Voltar para Viáticos" funciona (com confirm), e o redirecionamento de `#via-solicitar` para `#viaticos` abre o assistente sozinho.
+- Dois falsos alarmes descartados durante o teste, documentados para não confundir sessões futuras: (1) o modo recolhido do menu media 236px por causa de transições CSS não avançarem em aba de background — não é bug; (2) checar `window.USER` sempre dá `false` porque a variável real é `let USER` de escopo de módulo, que não vira propriedade de `window` — a variável correta (`USER` "nua") sempre esteve certa.
+- Sem erros de console; `node --check` OK nos dois arquivos.
+
+### Documento de auditoria atualizado
+`AUDITORIA_ERP_2026-07-29.md` — achado **A4 marcado como fechado** (estava "contido" desde a Fase 0).
