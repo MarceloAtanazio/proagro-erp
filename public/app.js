@@ -5088,7 +5088,7 @@ async function formEditarColaborador(c, usuarios) {
     ${fldSel('ec-usuario', 'Vincular a um usuário (autosserviço)', [{ v: '', t: '— nenhum —' }, ...usuarios.map(u => ({ v: u.id, t: `${u.name} (${u.email})` }))], c.usuario_id || '')}
     <div class="field-row">
       ${fldSel('ec-uf', 'Estado (cidade-base)', [{ v: '', t: '— não informado —' }, ...BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }))], c.cidade_base_uf || '')}
-      ${fld('ec-municipio', 'Município (cidade-base)', 'text', c.cidade_base_municipio || '')}
+      ${fldSel('ec-municipio', 'Município (cidade-base)', [{ v: '', t: c.cidade_base_uf ? '— selecione —' : '— escolha o estado primeiro —' }], '')}
     </div>
 
     <h4 style="margin:16px 0 8px">Habilitação do motorista (CNH)</h4>
@@ -5141,6 +5141,20 @@ async function formEditarColaborador(c, usuarios) {
         } catch (e) { modalError(e.message); }
      }}]);
   $('#ec-possui-seguro').onchange = e => { $('#ec-seguro-fields').style.display = e.target.checked ? '' : 'none'; };
+
+  // Município (cidade-base) em lista suspensa, filtrada pelo estado — evita
+  // erro de digitação (acento, grafia) que faria a regra de hospedagem na
+  // cidade-sede (viaHospedagemDevida) não reconhecer a viagem como local.
+  const popularMunicipiosColab = () => {
+    const uf = $('#ec-uf').value;
+    const lista = uf ? (BR_LOCALIDADES.municipios[uf] || []) : [];
+    const atual = c.cidade_base_uf === uf ? (c.cidade_base_municipio || '') : '';
+    $('#ec-municipio').innerHTML = uf
+      ? lista.map(m => `<option value="${esc(m)}" ${m === atual ? 'selected' : ''}>${esc(m)}</option>`).join('')
+      : `<option value="">— escolha o estado primeiro —</option>`;
+  };
+  $('#ec-uf').onchange = popularMunicipiosColab;
+  popularMunicipiosColab();
 }
 
 // ============================================================

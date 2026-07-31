@@ -358,3 +358,19 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 
 ### Documento de auditoria atualizado
 `AUDITORIA_ERP_2026-07-29.md` — achado **A4 marcado como fechado** (estava "contido" desde a Fase 0).
+
+## 2026-07-31 — Cadastro de colaborador: município da cidade-base em lista suspensa
+
+**Solicitação:** o campo "Município (cidade-base)" era de digitação livre; trocar por lista suspensa filtrada pelo estado, para evitar erro de digitação.
+
+### Implementação (`public/app.js`, `formEditarColaborador`)
+- Campo virou `<select>` (reaproveitando o dataset `BR_LOCALIDADES.municipios`, já usado no cadastro de destinos da viagem).
+- Cascata: ao escolher/trocar o Estado, a lista de municípios é populada; se o UF selecionado for o mesmo já salvo, o município atual vem pré-selecionado — trocar de estado limpa a seleção.
+
+**Por que importa:** a regra de "viagem na própria cidade-sede não gera hospedagem" (`viaHospedagemDevida`) compara o texto do município cadastrado com o do destino da viagem. Erro de digitação/acento no cadastro livre faria essa comparação falhar silenciosamente e cobrar hospedagem indevida (ou o contrário).
+
+### Verificação
+- Colaborador com cidade-base já cadastrada (PR/Marialva): select carrega 399 municípios do PR e vem com "Marialva" pré-selecionado.
+- Trocar o estado para SP: lista atualiza para 645 municípios, "São Paulo" presente, "Marialva" não aparece mais.
+- Colaborador novo (sem cidade-base): mostra "— escolha o estado primeiro —" até um UF ser selecionado.
+- Sem erros de console; `node --check` OK.
