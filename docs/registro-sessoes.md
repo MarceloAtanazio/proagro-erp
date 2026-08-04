@@ -385,3 +385,16 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 
 ### Verificação
 - Sem executar a geração do PDF (que termina em `doc.save`, disparando download): medição isolada com `doc.getTextWidth()` no mesmo jsPDF/fonte/tamanho, para 3 datas diferentes — todas cabem nos novos 22mm, nenhuma cabia nos 18mm antigos. Sem erros de console; `node --check` OK.
+
+## 2026-08-04 — Correção: data quebrando em duas linhas na tela de Contas a Pagar
+
+**Solicitação:** na tabela de Contas a Pagar (tela, não o PDF), a data de vencimento quebrava em duas linhas com o menu aberto ou recolhido.
+
+**Causa:** `.tbl-pagar` usa `table-layout: fixed` com a coluna "Vencimento" em 7% da largura da tabela; a regra genérica de célula (`white-space: normal`) permite quebra — ao contrário das colunas de ID e Valor, que já tinham `nowrap` dedicado.
+
+**Correção:**
+- `public/styles.css`: nova classe `.tbl-pagar td.venc-cell { white-space: nowrap }`; coluna "Vencimento" de 7% para 8% (compensado tirando 1% de "Fornecedor", de 17% para 16% — soma das colunas continua 100%).
+- `public/app.js`: célula da data em `renderPagar` ganhou a classe `venc-cell`. Aproveitado para adicionar `nowrap` também na data de Contas a Receber (`renderReceber`), por consistência preventiva (tabela sem `table-layout: fixed`, risco menor, mas mesmo princípio).
+
+### Verificação
+- Estrutura real da tabela injetada no DOM com os 3 títulos do print do usuário, nos dois estados do menu (expandido e recolhido): `cell.getClientRects().length === 1` nos dois casos — confirma que a data ("07/08/2026") renderiza numa única linha. Sem erros de console; `node --check` OK.

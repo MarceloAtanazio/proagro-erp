@@ -558,9 +558,9 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    sozinho — isso é o que causou "PAGA/MENT/O" antes. */
 .tbl-pagar thead th { text-align: center; white-space: normal; }
 .tbl-pagar col.c-id { width: 3%; }
-.tbl-pagar col.c-venc { width: 7%; }
+.tbl-pagar col.c-venc { width: 8%; }
 .tbl-pagar col.c-desc { width: 18%; }
-.tbl-pagar col.c-forn { width: 17%; }
+.tbl-pagar col.c-forn { width: 16%; }
 .tbl-pagar col.c-cat { width: 10%; }
 .tbl-pagar col.c-cc { width: 10%; }
 .tbl-pagar col.c-pm { width: 7%; }
@@ -572,6 +572,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-pagar td.actions { white-space: normal; }
 .tbl-pagar td.actions .btn { margin: 2px 4px 2px 0; }
 .tbl-pagar td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tbl-pagar td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tbl-pagar td.pm-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ===== Botão de anexos — largura fixa para não quebrar o layout da linha,

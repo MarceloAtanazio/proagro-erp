@@ -699,7 +699,7 @@ async function renderPagar() {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
           <td class="id-cell">${r.id}</td>
-          <td>${brDate(r.due_date)}</td>
+          <td class="venc-cell">${brDate(r.due_date)}</td>
           <td>${esc(r.description)}</td>
           <td>${esc(r.supplier_name || '—')}</td>
           <td>${esc(r.category)}</td>
@@ -889,7 +889,7 @@ async function renderReceber() {
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
-          <td>${brDate(r.due_date)}</td><td>${esc(r.client_name)}</td><td>${esc(r.description)}</td>
+          <td class="nowrap">${brDate(r.due_date)}</td><td>${esc(r.client_name)}</td><td>${esc(r.description)}</td>
           <td>${esc(r.category)}</td><td>${esc(r.document || '—')}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'recebido'
