@@ -429,3 +429,31 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 - Via API: validações (sem fornecedor, sem `proxima_geracao` com geração ligada); contrato com vencimento em 2030 **não gerou nada** no GET (fora do horizonte de 5 dias); contrato com vencimento hoje gerou exatamente 1 parcela e avançou o ciclo; **2º GET não duplicou** (idempotência confirmada); "gerar agora" bypassa o horizonte e avança 1 ciclo por clique; contrato com `data_fim` vencida recusa gerar; exclusão bloqueada quando há parcela vinculada (409); toggle de status; log de auditoria cobrindo todas as ações.
 - Via UI (sessão real autenticada): contrato criado pelo formulário aparece corretamente na tabela e nos KPIs; "Gerar agora" e "Suspender" confirmados no servidor (o teste inicial só não esperou o re-render assíncrono — não era bug real).
 - Todos os contratos, parcelas e logs de teste foram apagados do banco (confirmado: 0 restantes). Sem erros de console; `node --check` OK nos dois arquivos.
+
+## 2026-08-04 — Preço do combustível automático via ANP (+ margem discriminada)
+
+**Solicitação:** o preço do combustível usado no cálculo de rota (Viáticos) deveria vir automaticamente da ANP, sem depender de preenchimento manual, com 10% de margem sobre o valor da ANP — e discriminar todos os valores na tela.
+
+### Pesquisa prévia (antes de implementar)
+A ANP não tem uma API JSON pública e estável. O dado oficial é publicado semanalmente (domingo–sábado) como planilha XLSX em URL previsível:
+`https://www.gov.br/anp/.../arquivos-lpc/{ano}/resumo_semanal_lpc_{inicio}_{fim}.xlsx`, com uma aba "BRASIL" contendo a linha `GASOLINA COMUM` (preço médio nacional). Confirmado via `curl` real (200 OK, XLSX genuíno) e leitura da planilha. Adotado **Gasolina Comum** como referência (o cadastro de veículo não distingue combustível; o usuário pode pedir troca se a frota for a diesel/etanol).
+
+**Dependência:** `xlsx` (SheetJS) precisou ser instalada para o parsing no backend. A versão do npm (0.18.5, mesma já usada no frontend via CDN) tem 2 vulnerabilidades conhecidas de alta severidade (Prototype Pollution CVE-2023-30533, ReDoS) sem correção publicada no npm — a SheetJS move os builds corrigidos para o CDN próprio. Instalada a versão corrigida direto de `cdn.sheetjs.com` (`xlsx@0.20.3`, acima do piso de correção das duas CVEs) — `npm audit` confirma 0 vulnerabilidades.
+
+### Backend (`api/index.js`)
+- `buscarPrecoANP()`: calcula a última semana (dom–sáb) já concluída, monta a URL, baixa e faz parse da aba BRASIL; se a semana ainda não foi publicada, recua semana a semana (até 6 tentativas).
+- `atualizarPrecoANPSeNecessario(forcar)`: só rebusca se desatualizado (> 3 dias) ou se forçado. Em falha automática, **mantém o último valor bom** e só registra o erro para diagnóstico (nunca deixa o cálculo de rota sem preço); em falha forçada (botão manual), propaga o erro ao usuário.
+- `GET /api/viaticos/config`: dispara a checagem de atualização e devolve o detalhamento completo (valor ANP, margem, preço final, semana de referência, data de atualização, erro se houver).
+- `POST /api/viaticos/config/atualizar-anp` (novo): força a busca agora, ignorando a janela de 3 dias.
+- `PUT /api/viaticos/config`: repropósito — agora ajusta só a **margem** (não mais o preço final digitado); o preço final é sempre recalculado a partir do último valor bruto da ANP.
+- Migração `combustivel_anp_automatico`: novas colunas em `erp_viaticos_config` (`combustivel_anp_valor`, `combustivel_margem_pct` default 10, `combustivel_anp_semana_fim`, `combustivel_anp_atualizado_em`, `combustivel_anp_erro`). Não refletido em `schema.sql` — a tabela já não constava lá (drift anterior).
+
+### Frontend (`app.js`)
+- Painel "Combustível — preço automático (ANP)" em Viáticos → Configurações: tabela com os 3 valores discriminados (ANP, margem, final), data/semana de referência, alerta se a última busca falhou, botões "Salvar margem" e "Atualizar agora" (com feedback "Buscando na ANP…"). Campo de digitação manual do preço final foi removido.
+
+### Verificação (dados reais — sem dados de teste a limpar; o valor real de produção FOI atualizado de propósito, é a própria feature)
+- Busca real executada contra o site da ANP: retornou R$ 6,56/L (Gasolina Comum, semana encerrada em 01/08/2026) — confirmado como o valor real vigente. Preço final calculado: 6,56 × 1,10 = **R$ 7,22** (bate com o cálculo manual).
+- 2ª chamada ao GET não rebuscou (mesmo timestamp de atualização) — cache de 3 dias funcionando.
+- Validação de margem (negativa e > 200 rejeitadas); troca de margem para 15% recalculou sem rebuscar a ANP (7,54 = 6,56×1,15); "Atualizar agora" rebuscou de fato (novo timestamp) e **preservou** a margem configurada (não voltou para 10% sozinho). Margem devolvida a 10% ao final do teste (único ajuste revertido — os demais valores são o estado real desejado).
+- Log de auditoria cobrindo as 3 ações (ajuste de margem, atualização manual, atualização automática).
+- Frontend testado com sessão real autenticada: painel renderiza os 3 valores corretos, sem o campo antigo de preço manual; botão "Atualizar agora" muda para "Buscando na ANP…" durante a chamada e reabre o modal com os dados atualizados. Sem erros de console; `node --check` OK nos dois arquivos.

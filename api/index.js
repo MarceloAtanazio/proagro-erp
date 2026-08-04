@@ -16,6 +16,7 @@ const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const path = require('path');
+const XLSX = require('xlsx');
 const { query, n } = require('../src/db');
 
 const app = express();
@@ -267,7 +268,8 @@ const AUDIT_MAP = {
   'PUT /api/colaboradores/:id': req => `Editou o colaborador de viáticos ID ${req.params.id} ("${req.body.name}", Tier ${req.body.tier}${req.body.ativo === false ? ', inativado' : ''})`,
   'DELETE /api/colaboradores/:id': req => `Excluiu o colaborador de viáticos ID ${req.params.id}`,
   'POST /api/viaticos/tud': req => `Atualizou a TUD (Tier ${req.body.tier}, ${req.body.categoria_local}, ${req.body.tipo_despesa}) para ${fmtBRL(req.body.valor_diaria)}/dia`,
-  'PUT /api/viaticos/config': req => `Atualizou o preço do combustível para ${fmtBRL(req.body.preco_combustivel_litro)}/L`,
+  'PUT /api/viaticos/config': req => `Atualizou a margem sobre o preço ANP do combustível para ${req.body.margem_pct}%`,
+  'POST /api/viaticos/config/atualizar-anp': (req, body) => `Atualizou manualmente o preço do combustível via ANP${body && body.combustivel_anp_valor ? ` (R$ ${body.combustivel_anp_valor}/L, semana ${body.combustivel_anp_semana_fim})` : ''}`,
   'DELETE /api/viaticos/tud/:id': req => `Excluiu uma faixa da TUD (ID ${req.params.id})`,
   'POST /api/viaticos/solicitacoes': (req, body) => {
     let msg = `Criou solicitação de viático (ID ${body && body.id}) para o colaborador ID ${req.body.colaborador_id}`;
@@ -2134,16 +2136,123 @@ app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h
 
 // ---- Dashboard / KPIs ----
 // ---- Configuração global (preço do combustível p/ cálculo de rota) ----
+//
+// O preço não é mais digitado: é buscado automaticamente no Levantamento de
+// Preços de Combustíveis da ANP (média nacional, Gasolina Comum, planilha
+// semanal oficial em gov.br) e recebe uma margem (10% por padrão, ajustável)
+// para cobrir a variação entre postos. Guardamos a decomposição completa
+// (valor bruto da ANP, margem aplicada, semana de referência) para exibir
+// discriminado na tela, como pedido — nada fica "escondido" no valor final.
+//
+// A ANP publica um arquivo por semana (domingo a sábado) num nome previsível
+// (resumo_semanal_lpc_AAAA-MM-DD_AAAA-MM-DD.xlsx). Não existe uma API JSON
+// oficial; buscamos esse XLSX diretamente e lemos a aba "BRASIL". Como o dia
+// exato da publicação pode variar, tentamos a semana mais recente já
+// concluída e, se ainda não publicada, recuamos semana a semana (até 6).
+const ANP_BASE_URL = 'https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/arquivos-lpc';
+const ANP_REFRESH_DIAS = 3; // ANP atualiza 1x/semana; conferir a cada poucos dias evita bater no site à toa
+
+async function buscarPrecoANP() {
+  const [Y, M, D] = hojeISO().split('-').map(Number);
+  const hojeUTC = Date.UTC(Y, M - 1, D);
+  const dow = new Date(hojeUTC).getUTCDay(); // 0=domingo .. 6=sábado
+  let sabado = hojeUTC - ((dow - 6 + 7) % 7) * 86400000; // sábado da última semana já concluída
+  const iso = ms => new Date(ms).toISOString().slice(0, 10);
+
+  for (let tentativa = 0; tentativa < 6; tentativa++) {
+    const domingo = sabado - 6 * 86400000;
+    const anosPossiveis = [...new Set([new Date(domingo).getUTCFullYear(), new Date(sabado).getUTCFullYear()])];
+    for (const ano of anosPossiveis) {
+      const url = `${ANP_BASE_URL}/${ano}/resumo_semanal_lpc_${iso(domingo)}_${iso(sabado)}.xlsx`;
+      try {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!resp.ok) continue;
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const wb = XLSX.read(buf, { type: 'buffer' });
+        const ws = wb.Sheets['BRASIL'];
+        if (!ws) continue;
+        const linhas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
+        const linha = linhas.find(r => String(r[3] || '').trim().toUpperCase() === 'GASOLINA COMUM');
+        const valor = linha ? Number(linha[6]) : NaN;
+        if (!isFinite(valor) || valor <= 0) continue;
+        return { valor, semanaFim: iso(sabado) };
+      } catch (e) { /* tenta a próxima combinação de ano/semana */ }
+    }
+    sabado -= 7 * 86400000;
+  }
+  throw new Error('não foi possível obter o preço da ANP após várias tentativas (site fora do ar ou formato do arquivo alterado)');
+}
+
+// Reconsulta a ANP se o valor estiver desatualizado (ou se forcar=true, usado
+// pelo botão "Atualizar agora"). Em falha automática, mantém o último valor
+// bom e só registra o erro para diagnóstico — nunca deixa o cálculo de rota
+// sem preço por causa de uma falha temporária do site da ANP.
+async function atualizarPrecoANPSeNecessario(forcar) {
+  const cfg = (await query('SELECT * FROM erp_viaticos_config WHERE id=1'))[0] || {};
+  const stale = !cfg.combustivel_anp_atualizado_em ||
+    (Date.now() - new Date(cfg.combustivel_anp_atualizado_em).getTime()) > ANP_REFRESH_DIAS * 86400000;
+  if (!forcar && !stale) return cfg;
+
+  try {
+    const { valor, semanaFim } = await buscarPrecoANP();
+    const margem = cfg.combustivel_margem_pct != null ? n(cfg.combustivel_margem_pct) : 10;
+    const final = Number((valor * (1 + margem / 100)).toFixed(2));
+    await query(`INSERT INTO erp_viaticos_config (id, preco_combustivel_litro, combustivel_anp_valor, combustivel_margem_pct, combustivel_anp_semana_fim, combustivel_anp_atualizado_em, combustivel_anp_erro, updated_at)
+      VALUES (1,$1,$2,$3,$4,now(),NULL,now())
+      ON CONFLICT (id) DO UPDATE SET preco_combustivel_litro=excluded.preco_combustivel_litro, combustivel_anp_valor=excluded.combustivel_anp_valor,
+        combustivel_margem_pct=excluded.combustivel_margem_pct, combustivel_anp_semana_fim=excluded.combustivel_anp_semana_fim,
+        combustivel_anp_atualizado_em=excluded.combustivel_anp_atualizado_em, combustivel_anp_erro=NULL, updated_at=now()`,
+      [final, valor, margem, semanaFim]);
+  } catch (e) {
+    console.error('[anp]', e.message);
+    await query(`INSERT INTO erp_viaticos_config (id, combustivel_anp_erro, updated_at) VALUES (1,$1,now())
+      ON CONFLICT (id) DO UPDATE SET combustivel_anp_erro=excluded.combustivel_anp_erro, updated_at=now()`, [e.message]);
+    if (forcar) throw e; // acionado manualmente: o usuário precisa saber que falhou agora
+  }
+  return (await query('SELECT * FROM erp_viaticos_config WHERE id=1'))[0];
+}
+
 app.get('/api/viaticos/config', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
-  const rows = await query('SELECT preco_combustivel_litro FROM erp_viaticos_config WHERE id=1');
-  res.json({ preco_combustivel_litro: rows.length ? n(rows[0].preco_combustivel_litro) : null });
+  const cfg = await atualizarPrecoANPSeNecessario(false);
+  res.json({
+    preco_combustivel_litro: cfg.preco_combustivel_litro != null ? n(cfg.preco_combustivel_litro) : null,
+    combustivel_anp_valor: cfg.combustivel_anp_valor != null ? n(cfg.combustivel_anp_valor) : null,
+    combustivel_margem_pct: cfg.combustivel_margem_pct != null ? n(cfg.combustivel_margem_pct) : 10,
+    combustivel_anp_semana_fim: cfg.combustivel_anp_semana_fim || null,
+    combustivel_anp_atualizado_em: cfg.combustivel_anp_atualizado_em || null,
+    combustivel_anp_erro: cfg.combustivel_anp_erro || null
+  });
 }));
 
+// Força a busca agora, ignorando a janela de atualização — usado pelo botão
+// "Atualizar agora" na tela de Configurações. Ao contrário da checagem
+// automática, aqui a falha é reportada ao usuário (ele pediu a ação).
+app.post('/api/viaticos/config/atualizar-anp', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  try {
+    const cfg = await atualizarPrecoANPSeNecessario(true);
+    res.json({
+      ok: true,
+      preco_combustivel_litro: n(cfg.preco_combustivel_litro),
+      combustivel_anp_valor: n(cfg.combustivel_anp_valor),
+      combustivel_anp_semana_fim: cfg.combustivel_anp_semana_fim
+    });
+  } catch (e) {
+    res.status(502).json({ error: `Não foi possível buscar o preço na ANP agora (${e.message}). O último valor conhecido continua sendo usado nos cálculos.` });
+  }
+}));
+
+// Ajusta apenas a margem sobre o valor da ANP (o preço final é sempre
+// recalculado a partir do último valor bruto conhecido — não se digita mais
+// o preço final diretamente).
 app.put('/api/viaticos/config', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  const v = Number(req.body.preco_combustivel_litro);
-  if (!isFinite(v) || v < 0) return res.status(400).json({ error: 'Preço do combustível inválido.' });
-  await query(`INSERT INTO erp_viaticos_config (id, preco_combustivel_litro, updated_at) VALUES (1,$1,now())
-    ON CONFLICT (id) DO UPDATE SET preco_combustivel_litro=excluded.preco_combustivel_litro, updated_at=now()`, [v]);
+  const margem = Number(req.body.margem_pct);
+  if (!isFinite(margem) || margem < 0 || margem > 200) return res.status(400).json({ error: 'Margem inválida (use um percentual entre 0 e 200).' });
+  const cfg = (await query('SELECT * FROM erp_viaticos_config WHERE id=1'))[0];
+  const anpValor = cfg && cfg.combustivel_anp_valor != null ? n(cfg.combustivel_anp_valor) : null;
+  const final = anpValor != null ? Number((anpValor * (1 + margem / 100)).toFixed(2)) : (cfg ? n(cfg.preco_combustivel_litro) : null);
+  await query(`INSERT INTO erp_viaticos_config (id, combustivel_margem_pct, preco_combustivel_litro, updated_at) VALUES (1,$1,$2,now())
+    ON CONFLICT (id) DO UPDATE SET combustivel_margem_pct=excluded.combustivel_margem_pct, preco_combustivel_litro=excluded.preco_combustivel_litro, updated_at=now()`,
+    [margem, final]);
   res.json({ ok: true });
 }));
 

@@ -5154,12 +5154,28 @@ async function renderViaticosConfig() {
         </tr>`;
       }).join('')}</tbody></table></div>`;
 
+  const anpValor = viaConfig.combustivel_anp_valor, margem = viaConfig.combustivel_margem_pct != null ? viaConfig.combustivel_margem_pct : 10;
+  const atualizadoEm = viaConfig.combustivel_anp_atualizado_em
+    ? new Date(viaConfig.combustivel_anp_atualizado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null;
   const body = `
-    <div class="field-row" style="align-items:flex-end; max-width:420px">
-      ${fld('cfg-combustivel', 'Preço do combustível (R$/litro)', 'number', viaConfig.preco_combustivel_litro || '', 'step="0.01" min="0"')}
-      <button class="btn primary" id="cfg-combustivel-save" type="button">Salvar</button>
+    <div class="card" style="margin-bottom:16px; max-width:520px">
+      <h4 style="margin:0 0 4px">⛽ Combustível — preço automático (ANP)</h4>
+      <p class="hint" style="margin:0 0 10px">Buscado sozinho toda semana no Levantamento de Preços da ANP (média nacional, Gasolina Comum) — não precisa preencher. Usado no cálculo de rota de Carro Próprio e Aluguel de Carro.</p>
+      ${viaConfig.combustivel_anp_erro ? `<div class="alert-item late" style="margin-bottom:10px">⚠️ Última busca falhou: ${esc(viaConfig.combustivel_anp_erro)}. O valor abaixo é o último obtido com sucesso.</div>` : ''}
+      <table class="via-resumo-tbl">
+        <tr><td>Preço médio ANP (Gasolina Comum, Brasil)</td><td>${anpValor != null ? brl(anpValor) : '<span style="color:var(--muted)">ainda não buscado</span>'}</td></tr>
+        <tr><td>Margem de segurança</td><td>
+          <input id="cfg-margem" type="number" step="0.1" min="0" max="200" value="${esc(margem)}" style="width:70px; text-align:right">% do valor da ANP
+        </td></tr>
+        <tr style="font-weight:700; background:var(--verde-050)"><td>Preço final usado nos cálculos</td><td style="font-size:16px">${viaConfig.preco_combustivel_litro != null ? brl(viaConfig.preco_combustivel_litro) : '—'}</td></tr>
+      </table>
+      <p class="hint" style="margin:8px 0 12px">${atualizadoEm ? `Atualizado em ${atualizadoEm}` : 'Nunca atualizado'}${viaConfig.combustivel_anp_semana_fim ? ` · semana da pesquisa ANP encerrada em ${brDate(viaConfig.combustivel_anp_semana_fim)}` : ''}.</p>
+      <div class="btn-group">
+        <button class="btn primary" id="cfg-margem-save" type="button">Salvar margem</button>
+        <button class="btn" id="cfg-anp-refresh" type="button">Atualizar agora</button>
+      </div>
     </div>
-    <p class="hint" style="margin-bottom:16px">Usado no cálculo automático de rota (Carro Próprio / Aluguel de Carro). A busca automática do preço médio da ANP ainda não existe — ajuste manualmente aqui de vez em quando.</p>
     <p class="hint">Estacionamento é sempre lançado "por recibo" (sem teto) e Veículo próprio fica fora da TUD — não precisam de configuração aqui.</p>
     ${tudGrid('A')}${tudGrid('B')}
     <h3 style="margin:20px 0 10px; font-size:15px">Colaboradores</h3>
@@ -5188,11 +5204,17 @@ async function renderViaticosConfig() {
 
   openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
 
-  $('#cfg-combustivel-save').onclick = async () => {
-    const v = Number($('#cfg-combustivel').value);
-    if (!isFinite(v) || v < 0) return toast('Valor inválido.');
-    try { await api('/api/viaticos/config', { method: 'PUT', body: { preco_combustivel_litro: v } }); toast('Preço do combustível atualizado.'); }
+  $('#cfg-margem-save').onclick = async () => {
+    const v = Number($('#cfg-margem').value);
+    if (!isFinite(v) || v < 0 || v > 200) return toast('Margem inválida (0 a 200%).');
+    try { await api('/api/viaticos/config', { method: 'PUT', body: { margem_pct: v } }); toast('Margem atualizada.'); renderViaticosConfig(); }
     catch (e) { toast(e.message); }
+  };
+  $('#cfg-anp-refresh').onclick = async (ev) => {
+    const btn = ev.currentTarget, txt = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Buscando na ANP…';
+    try { await api('/api/viaticos/config/atualizar-anp', { method: 'POST' }); toast('Preço atualizado com a ANP.'); renderViaticosConfig(); }
+    catch (e) { toast(e.message); btn.disabled = false; btn.textContent = txt; }
   };
 
   document.querySelectorAll('[data-tud]').forEach(inp => inp.onchange = async () => {
