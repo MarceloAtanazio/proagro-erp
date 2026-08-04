@@ -21,11 +21,12 @@ let CURRENT_PAGE = 'dashboard';
 let FORCE_MODAL = false;   // trava o modal (troca de senha obrigatória)
 
 // Páginas com acesso configurável (espelha PERM_PAGES do backend)
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos','contratos'];
 const PAGE_LABELS = {
   dashboard:'Dashboard', pagar:'Contas a Pagar', receber:'Contas a Receber', fluxo:'Fluxo de Caixa',
   conciliacao:'Conciliação Bancária', fornecedores:'Fornecedores', orcamento:'Orçamento Anual',
-  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais', viaticos:'Viáticos', suprimentos:'Suprimentos'
+  orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais', viaticos:'Viáticos', suprimentos:'Suprimentos',
+  contratos:'Contratos'
 };
 
 function permLevel(page) {
@@ -239,7 +240,8 @@ const ICONS = {
   cfg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008 19.4a1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8a1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06A1.7 1.7 0 008 4.6a1.7 1.7 0 001.03-1.56V3a2 2 0 014 0v.09A1.7 1.7 0 0016 4.6a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06A1.7 1.7 0 0019.4 8a1.7 1.7 0 001.56 1.03H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>',
   tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.6L12.7 4.7A2 2 0 0011.3 4H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9c.8.8 2 .8 2.8 0l5.3-5.3c.8-.8.8-2 0-2.8z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>',
   via: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M3 12h18"/></svg>',
-  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>'
+  box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>',
+  contract: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2h6l5 5v13a2 2 0 01-2 2H9a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M9 12l2 2 4-4M8 17h5"/></svg>'
 };
 
 // Agrupamento enxuto: os títulos de seção consumiam 196px dos 787px do menu
@@ -260,6 +262,7 @@ const PAGES = [
   { hash: 'viaticos', title: 'Viáticos', icon: 'via', section: 'Operações' },
   { hash: 'suprimentos', title: 'Suprimentos', icon: 'box' },
   { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração' },
+  { hash: 'contratos', title: 'Contratos', icon: 'contract' },
   { hash: 'usuarios', title: 'Usuários', icon: 'usr', super: true },
   { hash: 'categorias', title: 'Categorias', icon: 'tag', super: true },
   { hash: 'config', title: 'Configurações', icon: 'cfg', super: true }
@@ -348,7 +351,7 @@ function route() {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
     orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, viaticos: renderViaticos,
-    suprimentos: renderSuprimentos,
+    suprimentos: renderSuprimentos, contratos: renderContratos,
     usuarios: renderUsuarios, categorias: renderCategorias, config: renderConfig
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
@@ -1772,6 +1775,157 @@ function formFornecedor(r) {
           closeModal(); toast(isEdit ? 'Fornecedor atualizado.' : 'Fornecedor cadastrado.'); renderFornecedores();
         } catch (e) { modalError(e.message); }
      }}]);
+}
+
+// ============================================================
+// CONTRATOS (aluguel, contabilidade, meteorologia etc.)
+// Fornecedores com vínculo recorrente — cada contrato pode gerar sozinho as
+// parcelas em Contas a Pagar, no ciclo definido. A duplicidade é evitada
+// deixando o usuário decidir "a partir de quando" o sistema pode gerar
+// sozinho (proxima_geracao), e travada de verdade por um índice único no
+// banco — ver api/index.js.
+// ============================================================
+const CONTR_PERIODO_LABEL = { mensal: 'Mensal', bimestral: 'Bimestral', trimestral: 'Trimestral', semestral: 'Semestral', anual: 'Anual' };
+const CONTR_STATUS_BADGE = { ativo: 'ok', suspenso: 'warn', encerrado: 'off' };
+const CONTR_STATUS_LABEL = { ativo: 'Ativo', suspenso: 'Suspenso', encerrado: 'Encerrado' };
+
+async function renderContratos() {
+  const [rows, sups] = await Promise.all([api('/api/contratos'), api('/api/suppliers')]);
+  const c = $('#content');
+  const hoje = todayISO(), limite60 = isoMaisDiasLocal(60);
+  const venceEm60Dias = dataISO => !!dataISO && dataISO >= hoje && dataISO <= limite60;
+
+  const ativos = rows.filter(r => r.status === 'ativo');
+  const vencendo = ativos.filter(r => venceEm60Dias(r.data_fim));
+  const valorMensal = ativos.reduce((s, r) => s + Number(r.valor) / (CONTR_MESES[r.periodicidade] || 1), 0);
+
+  c.innerHTML = `
+    <div class="grid kpis" style="margin-bottom:16px">
+      <div class="card kpi"><div class="label">Contratos ativos</div><div class="value">${ativos.length}</div></div>
+      <div class="card kpi blue"><div class="label">Valor recorrente (equiv. mensal)</div><div class="value">${brl(valorMensal)}</div></div>
+      <div class="card kpi ${vencendo.length ? 'warn' : ''}"><div class="label">Vencendo em 60 dias</div><div class="value">${vencendo.length}</div></div>
+    </div>
+    ${vencendo.length ? `<div class="card" style="margin-bottom:16px"><div class="alert-list">${vencendo.map(r =>
+      `<div class="alert-item warn">⏰ <strong>${esc(r.titulo)}</strong> (${esc(r.supplier_name)}) vence em ${brDate(r.data_fim)}${r.renovacao_automatica ? ' — renovação automática configurada, mas confira as condições' : ' — decidir renovação'}.</div>`
+    ).join('')}</div></div>` : ''}
+    <div class="toolbar">
+      <input type="search" id="ct-q" placeholder="Buscar contrato, fornecedor…">
+      <select id="ct-fstatus"><option value="">Todos os status</option><option value="ativo">Ativos</option><option value="suspenso">Suspensos</option><option value="encerrado">Encerrados</option></select>
+      <div class="spacer"></div>
+      <button class="btn primary" id="ct-new">+ Novo contrato</button>
+    </div>
+    <div class="table-wrap"><table id="ct-tbl"></table></div>`;
+
+  const draw = () => {
+    const q = $('#ct-q').value.toLowerCase(), fs = $('#ct-fstatus').value;
+    const filtered = rows.filter(r => (!fs || r.status === fs) &&
+      (!q || (r.titulo + ' ' + r.supplier_name + ' ' + (r.documento || '')).toLowerCase().includes(q)));
+    $('#ct-tbl').innerHTML = `
+      <thead><tr><th>Contrato</th><th>Fornecedor</th><th>Categoria</th><th class="num">Valor</th><th>Ciclo</th><th>Vigência</th><th>Próx. parcela</th><th>Status</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${filtered.map(r => `<tr${r.status === 'encerrado' ? ' style="opacity:.55"' : ''}>
+        <td><strong>${esc(r.titulo)}</strong>${r.documento ? '<br><small style="color:var(--muted)">Nº ' + esc(r.documento) + '</small>' : ''}</td>
+        <td>${esc(r.supplier_name)}</td>
+        <td>${esc(r.categoria)}</td>
+        <td class="num">${brl(r.valor)}</td>
+        <td>${CONTR_PERIODO_LABEL[r.periodicidade]}</td>
+        <td>${brDate(r.data_inicio)} – ${r.data_fim ? brDate(r.data_fim) : 'indeterminado'}</td>
+        <td>${r.gerar_parcelas && r.proxima_geracao ? brDate(r.proxima_geracao) : '<small style="color:var(--muted)">Manual</small>'}</td>
+        <td><span class="badge ${CONTR_STATUS_BADGE[r.status]}">${CONTR_STATUS_LABEL[r.status]}</span></td>
+        <td class="actions">
+          ${r.gerar_parcelas && r.proxima_geracao && r.status === 'ativo' ? `<button class="btn sm" data-gerar="${r.id}">Gerar agora</button>` : ''}
+          <button class="btn sm" data-edit="${r.id}">Editar</button>
+          ${r.status !== 'encerrado' ? `<button class="btn sm" data-status="${r.id}:${r.status === 'ativo' ? 'suspenso' : 'ativo'}">${r.status === 'ativo' ? 'Suspender' : 'Reativar'}</button>
+             <button class="btn sm danger-ghost" data-status="${r.id}:encerrado">Encerrar</button>` : ''}
+          ${!r.parcelas_geradas ? `<button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>` : ''}
+        </td></tr>`).join('') || '<tr><td colspan="9"><div class="empty">Nenhum contrato cadastrado ainda.</div></td></tr>'}</tbody>`;
+    $('#ct-tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formContrato(rows.find(r => r.id == b.dataset.edit), sups));
+    $('#ct-tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('contrato', `/api/contratos/${b.dataset.del}`, renderContratos));
+    $('#ct-tbl').querySelectorAll('[data-status]').forEach(b => b.onclick = async () => {
+      const [id, status] = b.dataset.status.split(':');
+      try { await api(`/api/contratos/${id}/status`, { method: 'POST', body: { status } }); toast('Status do contrato atualizado.'); renderContratos(); }
+      catch (e) { toast(e.message); }
+    });
+    $('#ct-tbl').querySelectorAll('[data-gerar]').forEach(b => b.onclick = async () => {
+      try {
+        const r = await api(`/api/contratos/${b.dataset.gerar}/gerar-agora`, { method: 'POST' });
+        toast(r.gerou ? `Parcela de ${brDate(r.venc)} gerada em Contas a Pagar.` : `A parcela de ${brDate(r.venc)} já havia sido gerada — nada duplicado.`);
+        renderContratos();
+      } catch (e) { toast(e.message); }
+    });
+  };
+  ['ct-q', 'ct-fstatus'].forEach(id => $('#' + id).oninput = draw);
+  $('#ct-new').onclick = () => formContrato(null, sups);
+  draw();
+}
+
+const CONTR_MESES = { mensal: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
+// Mesmo princípio do isoMaisDias do backend, só que no fuso local do navegador.
+function isoMaisDiasLocal(dias) { const d = new Date(); d.setDate(d.getDate() + dias); return d.toLocaleDateString('en-CA'); }
+
+// Sugere a data da 1ª parcela: 1 ciclo após o início, no mesmo dia do mês.
+function contrSugerirProximaGeracao(dataInicio, periodicidade) {
+  if (!dataInicio) return '';
+  const [y, m, d] = dataInicio.split('-').map(Number);
+  const meses = CONTR_MESES[periodicidade] || 1;
+  const dt = new Date(Date.UTC(y, m - 1 + meses, d));
+  if (dt.getUTCDate() !== d) dt.setUTCDate(0); // rola pro último dia do mês, se o mês for mais curto
+  return dt.toISOString().slice(0, 10);
+}
+
+function formContrato(r, sups) {
+  const isEdit = !!r; r = r || {};
+  const ativos = sups.filter(s => s.status === 'ativo' || s.id === r.supplier_id);
+  openModal(isEdit ? 'Editar contrato' : 'Novo contrato', `
+    ${fld('ct-titulo', 'Título do contrato *', 'text', r.titulo || '', 'placeholder="Ex.: Aluguel — Sala 302, Contabilidade mensal"')}
+    <div class="form-row">
+      ${fldSel('ct-supplier', 'Fornecedor *', ativos.length ? ativos.map(s => ({ v: s.id, t: s.name })) : [{ v: '', t: '— cadastre um fornecedor primeiro —' }], r.supplier_id || '')}
+      ${fldSel('ct-cat', 'Categoria *', CAT_DESPESA.map(x => ({ v: x, t: x })), r.categoria || CAT_DESPESA[0])}
+    </div>
+    <div class="form-row">
+      ${fldSel('ct-cc', 'Centro de custo', [{ v: '', t: '—' }, ...CENTROS.map(x => ({ v: x, t: x }))], r.cost_center || '')}
+      ${fld('ct-doc', 'Nº do contrato / documento', 'text', r.documento || '')}
+    </div>
+    <div class="form-row">
+      ${fld('ct-valor', 'Valor da parcela (R$) *', 'number', r.valor || '', 'step="0.01" min="0.01"')}
+      ${fldSel('ct-periodicidade', 'Periodicidade *', Object.entries(CONTR_PERIODO_LABEL).map(([v, t]) => ({ v, t })), r.periodicidade || 'mensal')}
+    </div>
+    <div class="form-row">
+      ${fld('ct-inicio', 'Início de vigência *', 'date', r.data_inicio || todayISO())}
+      ${fld('ct-fim', 'Fim de vigência (opcional)', 'date', r.data_fim || '')}
+    </div>
+    <label class="check-chip" style="margin:6px 0"><input type="checkbox" id="ct-renovacao" ${r.renovacao_automatica ? 'checked' : ''}> Tem renovação automática (só informativo — o alerta de vencimento continua sendo emitido)</label>
+    <label class="check-chip" style="margin:6px 0"><input type="checkbox" id="ct-gerar" ${isEdit ? (r.gerar_parcelas ? 'checked' : '') : 'checked'}> Gerar as parcelas em Contas a Pagar automaticamente</label>
+    <div id="ct-gerar-fields">
+      ${fld('ct-proxima', 'Gerar parcelas a partir de (1ª competência automática)', 'date', r.proxima_geracao || '')}
+      <p class="hint" style="margin-top:-6px">${isEdit ? 'Já lançou parcelas manualmente até um certo mês? Deixe esta data para o mês seguinte — nada antes dela será gerado.' : 'Sugerida automaticamente a partir do início de vigência. Se você já lançou parcelas manuais deste contrato até algum mês, mude esta data para o mês seguinte.'}</p>
+    </div>
+    ${fld('ct-obs', 'Observações', 'text', r.observacoes || '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: isEdit ? 'Salvar alterações' : 'Cadastrar', cls: 'primary', onClick: async () => {
+        const body = {
+          supplier_id: $('#ct-supplier').value || null, titulo: $('#ct-titulo').value, categoria: $('#ct-cat').value,
+          cost_center: $('#ct-cc').value, documento: $('#ct-doc').value, valor: $('#ct-valor').value,
+          periodicidade: $('#ct-periodicidade').value, data_inicio: $('#ct-inicio').value, data_fim: $('#ct-fim').value,
+          renovacao_automatica: $('#ct-renovacao').checked, gerar_parcelas: $('#ct-gerar').checked,
+          proxima_geracao: $('#ct-proxima').value, observacoes: $('#ct-obs').value
+        };
+        try {
+          if (isEdit) await api('/api/contratos/' + r.id, { method: 'PUT', body });
+          else await api('/api/contratos', { method: 'POST', body });
+          closeModal(); toast(isEdit ? 'Contrato atualizado.' : 'Contrato cadastrado.'); renderContratos();
+        } catch (e) { modalError(e.message); }
+     }}]);
+  const toggleGerar = () => { $('#ct-gerar-fields').style.display = $('#ct-gerar').checked ? '' : 'none'; };
+  $('#ct-gerar').onchange = toggleGerar; toggleGerar();
+  if (!isEdit) {
+    // Acompanha Início/Periodicidade até o usuário editar a sugestão à mão —
+    // checar "campo vazio" não bastava: a 1ª sugestão já preenche o campo, e
+    // trocar a periodicidade depois não atualizava mais nada (bug pego no teste).
+    let proximaTocada = false;
+    const sugerir = () => { if (!proximaTocada) $('#ct-proxima').value = contrSugerirProximaGeracao($('#ct-inicio').value, $('#ct-periodicidade').value); };
+    $('#ct-proxima').oninput = () => { proximaTocada = true; };
+    $('#ct-inicio').onchange = sugerir; $('#ct-periodicidade').onchange = sugerir; sugerir();
+  }
 }
 
 // ============================================================

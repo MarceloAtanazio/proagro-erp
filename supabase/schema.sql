@@ -31,6 +31,31 @@ create table if not exists erp_suppliers (
   created_at timestamptz not null default now()
 );
 
+-- Contratos recorrentes (aluguel, contabilidade, meteorologia etc.) — cada um
+-- pode gerar sozinho as parcelas em Contas a Pagar, no ciclo configurado.
+create table if not exists erp_contratos (
+  id serial primary key,
+  supplier_id integer not null references erp_suppliers(id),
+  titulo text not null,
+  categoria text not null,
+  cost_center text,
+  valor numeric(14,2) not null check (valor > 0),
+  periodicidade text not null check (periodicidade in ('mensal','bimestral','trimestral','semestral','anual')),
+  data_inicio date not null,
+  data_fim date,
+  renovacao_automatica boolean not null default false,
+  gerar_parcelas boolean not null default true,
+  proxima_geracao date, -- portão de entrada da geração automática: nada antes desta data é tocado
+  documento text,
+  observacoes text,
+  status text not null default 'ativo' check (status in ('ativo','suspenso','encerrado')),
+  created_by integer references erp_users(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_erp_contratos_supplier on erp_contratos(supplier_id);
+create index if not exists idx_erp_contratos_status on erp_contratos(status);
+create index if not exists idx_erp_contratos_data_fim on erp_contratos(data_fim);
+
 create table if not exists erp_payables (
   id serial primary key,
   supplier_id integer references erp_suppliers(id) on delete set null,
@@ -43,9 +68,14 @@ create table if not exists erp_payables (
   payment_date date,
   status text not null default 'pendente' check (status in ('pendente','pago')),
   notes text,
+  contract_id integer references erp_contratos(id) on delete set null, -- parcela gerada por um contrato recorrente
   created_by integer references erp_users(id),
   created_at timestamptz not null default now()
 );
+-- Trava real contra duplicidade: nunca duas parcelas do mesmo contrato com o
+-- mesmo vencimento, mesmo sob chamadas concorrentes (INSERT usa ON CONFLICT DO NOTHING).
+create unique index if not exists erp_payables_contrato_venc_uidx
+  on erp_payables(contract_id, due_date) where contract_id is not null;
 
 create table if not exists erp_receivables (
   id serial primary key,

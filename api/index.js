@@ -62,7 +62,7 @@ function setAuthCookie(res, user) {
 
 // Páginas cujo acesso é configurável por usuário.
 // "usuarios" não entra aqui: é exclusiva do administrador.
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos','contratos'];
 
 // Normaliza o objeto de permissões recebido do frontend para o formato
 // { pagina: 'view' | 'edit' }, descartando páginas desconhecidas e níveis inválidos.
@@ -226,6 +226,11 @@ const AUDIT_MAP = {
   'POST /api/suppliers': req => `Cadastrou o fornecedor "${req.body.name}"`,
   'PUT /api/suppliers/:id': req => `Editou o fornecedor "${req.body.name}" (ID ${req.params.id})`,
   'DELETE /api/suppliers/:id': req => `Excluiu o fornecedor ID ${req.params.id}`,
+  'POST /api/contratos': (req, body) => `Cadastrou o contrato "${req.body.titulo}" (ID ${body && body.id})`,
+  'PUT /api/contratos/:id': req => `Editou o contrato "${req.body.titulo}" (ID ${req.params.id})`,
+  'POST /api/contratos/:id/status': req => `Alterou o status do contrato ID ${req.params.id} para "${req.body.status}"`,
+  'POST /api/contratos/:id/gerar-agora': (req, body) => `Gerou manualmente a parcela do contrato ID ${req.params.id}` + (body && body.venc ? ` (venc. ${body.venc})` : ''),
+  'DELETE /api/contratos/:id': req => `Excluiu o contrato ID ${req.params.id}`,
   'POST /api/payables': (req, body) => `Criou o título a pagar "${req.body.description}" (ID ${body && body.id})`,
   'PUT /api/payables/:id': req => `Editou o título a pagar "${req.body.description}" (ID ${req.params.id})`,
   'POST /api/payables/:id/pay': req => `Baixou o pagamento do título a pagar ID ${req.params.id}`,
@@ -451,6 +456,141 @@ app.delete('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(asy
   const used = usedRows[0].n;
   if (used > 0) return res.status(409).json({ error: `Fornecedor possui ${used} título(s) vinculado(s). Inative-o em vez de excluir.` });
   await query('DELETE FROM erp_suppliers WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
+// Contratos (aluguel, contabilidade, meteorologia etc.) — fornecedores com
+// vínculo recorrente. Cada contrato pode gerar sozinho as parcelas em Contas
+// a Pagar, no ciclo definido (mensal/bimestral/.../anual).
+//
+// Duplicidade é travada em DUAS camadas: (1) "proxima_geracao" é o portão de
+// entrada — o usuário decide a partir de qual competência o sistema pode
+// gerar sozinho, então parcelas já lançadas manualmente antes disso nunca são
+// tocadas; (2) o índice único (contract_id, due_date) no banco (ver migração)
+// garante, via ON CONFLICT DO NOTHING, que mesmo duas chamadas concorrentes
+// da rotina de geração não dupliquem uma parcela.
+// ------------------------------------------------------------
+const PERIODO_MESES = { mensal: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
+
+function proximoCiclo(dataISO, periodicidade) {
+  const [y, m, d] = dataISO.split('-').map(Number);
+  const meses = PERIODO_MESES[periodicidade] || 1;
+  const base = new Date(Date.UTC(y, m - 1 + meses, d));
+  // Meses com menos dias (ex.: vencimento dia 31 e o próximo mês só tem 30):
+  // Date normaliza rolando pro mês seguinte — corrige voltando pro último dia do mês pretendido.
+  if (base.getUTCDate() !== d) base.setUTCDate(0);
+  return base.toISOString().slice(0, 10);
+}
+
+// Gera as parcelas vencidas/a vencer nos próximos 5 dias, para contratos
+// ativos com geração automática ligada — chamada sempre que a lista de
+// contratos é aberta (mesmo padrão usado no status automático de viáticos).
+// Idempotente: ON CONFLICT DO NOTHING é a garantia real, não apenas o filtro
+// de datas.
+async function gerarParcelasPendentes() {
+  const horizonte = isoMaisDias(5);
+  const contratos = await query(
+    `SELECT * FROM erp_contratos WHERE status='ativo' AND gerar_parcelas=true AND proxima_geracao IS NOT NULL AND proxima_geracao <= $1`,
+    [horizonte]);
+  for (const ct of contratos) {
+    let venc = ct.proxima_geracao;
+    let seguranca = 0; // nunca gera mais que 24 parcelas numa única passada (proteção contra loop)
+    while (venc && venc <= horizonte && seguranca < 24) {
+      if (ct.data_fim && venc > ct.data_fim) { venc = null; break; }
+      const desc = `${ct.titulo} — parcela ${brDateBR(venc)}`;
+      await query(
+        `INSERT INTO erp_payables (supplier_id, description, category, cost_center, amount, due_date, contract_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (contract_id, due_date) WHERE contract_id IS NOT NULL DO NOTHING`,
+        [ct.supplier_id, desc, ct.categoria, ct.cost_center, ct.valor, venc, ct.id]);
+      venc = proximoCiclo(venc, ct.periodicidade);
+      seguranca++;
+    }
+    await query('UPDATE erp_contratos SET proxima_geracao=$1 WHERE id=$2', [venc, ct.id]);
+  }
+}
+
+app.get('/api/contratos', requireAuth, requireViewAny(['contratos']), h(async (req, res) => {
+  await gerarParcelasPendentes().catch(e => console.error('[contratos] geração automática:', e.message));
+  const rows = await query(`
+    SELECT c.*, s.name AS supplier_name,
+      (SELECT COUNT(*)::int FROM erp_payables p WHERE p.contract_id = c.id) AS parcelas_geradas
+    FROM erp_contratos c JOIN erp_suppliers s ON s.id = c.supplier_id
+    ORDER BY CASE WHEN c.status='ativo' THEN 0 ELSE 1 END, c.data_fim NULLS LAST, c.titulo`);
+  res.json(rows);
+}));
+
+function validContrato(b) {
+  if (!b.supplier_id) return 'Selecione o fornecedor.';
+  if (!sanitize(b.titulo)) return 'Título do contrato é obrigatório.';
+  if (!sanitize(b.categoria)) return 'Categoria é obrigatória.';
+  if (!Object.keys(PERIODO_MESES).includes(b.periodicidade)) return 'Periodicidade inválida.';
+  const valor = Number(b.valor);
+  if (!isFinite(valor) || valor <= 0) return 'Valor deve ser maior que zero.';
+  if (!isDate(b.data_inicio)) return 'Data de início inválida.';
+  if (b.data_fim && !isDate(b.data_fim)) return 'Data de fim inválida.';
+  if (b.data_fim && b.data_fim < b.data_inicio) return 'Data de fim não pode ser antes do início.';
+  if (b.gerar_parcelas && !isDate(b.proxima_geracao)) return 'Informe a partir de quando o sistema deve gerar as parcelas automaticamente.';
+  return null;
+}
+
+app.post('/api/contratos', requireAuth, requireEdit('contratos'), h(async (req, res) => {
+  const b = req.body, err = validContrato(b);
+  if (err) return res.status(400).json({ error: err });
+  const rows = await query(
+    `INSERT INTO erp_contratos (supplier_id, titulo, categoria, cost_center, valor, periodicidade, data_inicio, data_fim,
+       renovacao_automatica, gerar_parcelas, proxima_geracao, documento, observacoes, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+    [b.supplier_id, sanitize(b.titulo), sanitize(b.categoria), sanitize(b.cost_center), Number(b.valor), b.periodicidade,
+     b.data_inicio, b.data_fim || null, b.renovacao_automatica === true, b.gerar_parcelas !== false,
+     b.gerar_parcelas !== false ? b.proxima_geracao : null, sanitize(b.documento), sanitize(b.observacoes), req.user.id]);
+  res.json({ ok: true, id: rows[0].id });
+}));
+
+app.put('/api/contratos/:id', requireAuth, requireEdit('contratos'), h(async (req, res) => {
+  const b = req.body, err = validContrato(b);
+  if (err) return res.status(400).json({ error: err });
+  await query(
+    `UPDATE erp_contratos SET supplier_id=$1, titulo=$2, categoria=$3, cost_center=$4, valor=$5, periodicidade=$6,
+       data_inicio=$7, data_fim=$8, renovacao_automatica=$9, gerar_parcelas=$10, proxima_geracao=$11,
+       documento=$12, observacoes=$13 WHERE id=$14`,
+    [b.supplier_id, sanitize(b.titulo), sanitize(b.categoria), sanitize(b.cost_center), Number(b.valor), b.periodicidade,
+     b.data_inicio, b.data_fim || null, b.renovacao_automatica === true, b.gerar_parcelas !== false,
+     b.gerar_parcelas !== false ? b.proxima_geracao : null, sanitize(b.documento), sanitize(b.observacoes), req.params.id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/contratos/:id/status', requireAuth, requireEdit('contratos'), h(async (req, res) => {
+  const status = req.body.status;
+  if (!['ativo', 'suspenso', 'encerrado'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+  await query('UPDATE erp_contratos SET status=$1 WHERE id=$2', [status, req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Gera manualmente a PRÓXIMA parcela pendente deste contrato, sem esperar o
+// horizonte de 5 dias — mesma trava de idempotência (ON CONFLICT). Gera uma
+// parcela por clique; se o usuário estiver atrasado em vários ciclos, repetir
+// o clique avança um ciclo de cada vez.
+app.post('/api/contratos/:id/gerar-agora', requireAuth, requireEdit('contratos'), h(async (req, res) => {
+  const ct = (await query('SELECT * FROM erp_contratos WHERE id=$1', [req.params.id]))[0];
+  if (!ct) return res.status(404).json({ error: 'Contrato não encontrado.' });
+  if (!ct.proxima_geracao) return res.status(400).json({ error: 'Este contrato não tem geração automática configurada.' });
+  const venc = ct.proxima_geracao;
+  if (ct.data_fim && venc > ct.data_fim) return res.status(400).json({ error: 'O contrato já encerrou o período de geração de parcelas.' });
+  const desc = `${ct.titulo} — parcela ${brDateBR(venc)}`;
+  const ins = await query(
+    `INSERT INTO erp_payables (supplier_id, description, category, cost_center, amount, due_date, contract_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (contract_id, due_date) WHERE contract_id IS NOT NULL DO NOTHING RETURNING id`,
+    [ct.supplier_id, desc, ct.categoria, ct.cost_center, ct.valor, venc, ct.id]);
+  const proximo = proximoCiclo(venc, ct.periodicidade);
+  await query('UPDATE erp_contratos SET proxima_geracao=$1 WHERE id=$2', [(ct.data_fim && proximo > ct.data_fim) ? null : proximo, ct.id]);
+  res.json({ ok: true, gerou: ins.length > 0, venc });
+}));
+
+app.delete('/api/contratos/:id', requireAuth, requireEdit('contratos'), h(async (req, res) => {
+  const used = (await query('SELECT COUNT(*)::int AS n FROM erp_payables WHERE contract_id=$1', [req.params.id]))[0].n;
+  if (used > 0) return res.status(409).json({ error: `Contrato possui ${used} parcela(s) já geradas em Contas a Pagar. Encerre-o em vez de excluir.` });
+  await query('DELETE FROM erp_contratos WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 }));
 

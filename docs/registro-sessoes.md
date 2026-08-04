@@ -398,3 +398,34 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 
 ### Verificação
 - Estrutura real da tabela injetada no DOM com os 3 títulos do print do usuário, nos dois estados do menu (expandido e recolhido): `cell.getClientRects().length === 1` nos dois casos — confirma que a data ("07/08/2026") renderiza numa única linha. Sem erros de console; `node --check` OK.
+
+## 2026-08-04 — Novo módulo: Gestão de Contratos
+
+**Solicitação:** gerenciar fornecedores com vínculo recorrente (aluguel, contabilidade, meteorologia etc.), com geração automática das parcelas em Contas a Pagar.
+
+**Decisões (via perguntas ao usuário):** (1) geração automática permitida, com atenção especial à duplicidade — o usuário já tinha parcelas lançadas manualmente até dezembro/2026; (2) alerta focado em vencimento/renovação do contrato; (3) página própria "Contratos" no menu (não uma aba dentro de Fornecedores).
+
+### Proteção contra duplicidade (dupla camada)
+1. **Portão de entrada (`proxima_geracao`):** o usuário define a partir de que data o sistema pode gerar sozinho. Quem já lançou manualmente até dez/2026 define essa data para jan/2027 — nada anterior é tocado.
+2. **Trava no banco:** índice único parcial `(contract_id, due_date) WHERE contract_id IS NOT NULL` em `erp_payables`; o INSERT usa `ON CONFLICT DO NOTHING`, garantindo idempotência mesmo sob chamadas concorrentes.
+
+### Modelo de dados (migração `gestao_contratos`)
+- `erp_contratos`: fornecedor, título, categoria, centro de custo, valor da parcela, periodicidade (mensal/bimestral/trimestral/semestral/anual), vigência (início/fim opcional), renovação automática (informativo), `gerar_parcelas` + `proxima_geracao`, documento, observações, status (ativo/suspenso/encerrado).
+- `erp_payables.contract_id`: vincula a parcela gerada ao contrato de origem.
+- Refletido em `supabase/schema.sql` (nota: o arquivo já tinha drift anterior — `payment_method`/`pix_key` ausentes — não reconciliado agora, fora de escopo).
+
+### Backend (`api/index.js`)
+- `contratos` no whitelist `PERM_PAGES`. Rotas `/api/contratos/*`: listar (dispara `gerarParcelasPendentes` — mesmo padrão do status automático de viáticos), criar, editar, mudar status, **gerar agora** (bypassa o horizonte de 5 dias, gera 1 parcela por clique) e excluir (bloqueado se já houver parcela gerada — mesmo padrão de Fornecedores).
+- `gerarParcelasPendentes()`: gera parcelas com vencimento nos próximos 5 dias para contratos ativos com geração automática ligada, avançando `proxima_geracao` a cada ciclo (`proximoCiclo`, com correção de mês curto — dia 31 rolando para o último dia do mês seguinte).
+- Auditoria: 5 ações registradas em `AUDIT_MAP`.
+
+### Frontend (`app.js`)
+- Página "Contratos" (ícone de documento com check) logo após Fornecedores no menu; permissão de acesso configurável por usuário (aparece automaticamente no editor de permissões, que itera `PERM_PAGES`).
+- KPIs (ativos, valor recorrente equivalente mensal, vencendo em 60 dias) + alerta de vencimento/renovação; tabela com ações (Gerar agora, Editar, Suspender/Reativar, Encerrar, Excluir quando sem parcela).
+- Formulário com sugestão automática da 1ª data de geração (início + 1 ciclo), texto explícito orientando a ajustar para pular parcelas já lançadas manualmente.
+
+### Verificação (dados de teste criados e REMOVIDOS do banco)
+- **Bug pego e corrigido durante o teste:** a sugestão de "próxima geração" só atualizava o campo se estivesse vazio — como a 1ª sugestão já o preenche, trocar depois Início/Periodicidade não recalculava mais nada (ficava desatualizado em silêncio). Corrigido com uma flag "campo tocado pelo usuário": atualiza automaticamente até o usuário editar à mão; a partir daí, respeita o valor manual.
+- Via API: validações (sem fornecedor, sem `proxima_geracao` com geração ligada); contrato com vencimento em 2030 **não gerou nada** no GET (fora do horizonte de 5 dias); contrato com vencimento hoje gerou exatamente 1 parcela e avançou o ciclo; **2º GET não duplicou** (idempotência confirmada); "gerar agora" bypassa o horizonte e avança 1 ciclo por clique; contrato com `data_fim` vencida recusa gerar; exclusão bloqueada quando há parcela vinculada (409); toggle de status; log de auditoria cobrindo todas as ações.
+- Via UI (sessão real autenticada): contrato criado pelo formulário aparece corretamente na tabela e nos KPIs; "Gerar agora" e "Suspender" confirmados no servidor (o teste inicial só não esperou o re-render assíncrono — não era bug real).
+- Todos os contratos, parcelas e logs de teste foram apagados do banco (confirmado: 0 restantes). Sem erros de console; `node --check` OK nos dois arquivos.
