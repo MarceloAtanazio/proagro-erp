@@ -5858,7 +5858,7 @@ async function exportPagarPDF(rows, filtersLabel) {
       headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
       alternateRowStyles: { fillColor: VERDE_CLARO },
       columnStyles: {
-        0: { cellWidth: 10, halign: 'right' }, 1: { cellWidth: 18 }, 7: { cellWidth: 22, halign: 'right' }, 8: { cellWidth: 24 }
+        0: { cellWidth: 10, halign: 'right' }, 1: { cellWidth: 22 }, 7: { cellWidth: 22, halign: 'right' }, 8: { cellWidth: 24 }
       },
       didParseCell: hook => {
         if (hook.section === 'body' && hook.column.index === 8) {

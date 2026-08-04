@@ -374,3 +374,14 @@ Também registrei o que foi verificado e está **correto** (rename de categoria 
 - Trocar o estado para SP: lista atualiza para 645 municípios, "São Paulo" presente, "Marialva" não aparece mais.
 - Colaborador novo (sem cidade-base): mostra "— escolha o estado primeiro —" até um UF ser selecionado.
 - Sem erros de console; `node --check` OK.
+
+## 2026-08-04 — Correção: data quebrando em duas linhas no PDF de Contas a Pagar
+
+**Solicitação:** no relatório PDF de Contas a Pagar, a data de vencimento ("07/08/2026") estava quebrando em duas linhas na coluna "Venc.".
+
+**Causa:** `exportPagarPDF` (`public/app.js`) fixava a coluna "Venc." em 18mm; medido com `doc.getTextWidth()` na mesma fonte/tamanho usados no PDF (Helvetica 8pt), a data + padding da célula precisam de 18,4mm — 0,4mm a mais do que a coluna tinha, forçando a quebra.
+
+**Correção:** largura da coluna "Venc." de 18mm para 22mm (mesma largura já usada na coluna "Valor", ao lado). Sobra 3,6mm de folga; o total da tabela cresce só 4mm, sem risco de estourar a página A4 paisagem (273mm úteis).
+
+### Verificação
+- Sem executar a geração do PDF (que termina em `doc.save`, disparando download): medição isolada com `doc.getTextWidth()` no mesmo jsPDF/fonte/tamanho, para 3 datas diferentes — todas cabem nos novos 22mm, nenhuma cabia nos 18mm antigos. Sem erros de console; `node --check` OK.
