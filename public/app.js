@@ -3477,6 +3477,88 @@ function parseFlashFilename(filename) {
   return { ot: otMatch ? otMatch[1] : null, nome };
 }
 
+// Converte um valor monetário de planilha para número, sem assumir o idioma.
+// O Flash exporta em pt-BR ("1.250,50") e também em es-MX ("1,250.50") — a
+// versão anterior só entendia o formato brasileiro e devolvia null no
+// mexicano, descartando TODAS as linhas em silêncio. Regra: havendo vírgula e
+// ponto, o separador que aparece por último é o decimal; havendo só um,
+// 3 dígitos depois dele indicam milhar (1.250 = mil duzentos e cinquenta) e
+// 1–2 dígitos indicam decimal (250.50).
+function flashParseValor(v) {
+  if (typeof v === 'number') return isFinite(v) ? Math.abs(v) : null;
+  let s = String(v ?? '').replace(/ /g, ' ').trim();
+  if (!s) return null;
+  s = s.replace(/R\$|\$|\s/gi, '').replace(/MXN|BRL|USD/gi, '').replace(/^[-+]/, '');
+  const ultimaVirgula = s.lastIndexOf(','), ultimoPonto = s.lastIndexOf('.');
+  if (ultimaVirgula > -1 && ultimoPonto > -1) {
+    const decimal = ultimaVirgula > ultimoPonto ? ',' : '.';
+    const milhar = decimal === ',' ? '.' : ',';
+    s = s.split(milhar).join('').replace(decimal, '.');
+  } else if (ultimaVirgula > -1) {
+    s = /,\d{3}$/.test(s) ? s.split(',').join('') : s.replace(',', '.');
+  } else if (ultimoPonto > -1 && /\.\d{3}$/.test(s)) {
+    s = s.split('.').join('');
+  }
+  const num = Number(s);
+  return isFinite(num) ? Math.abs(num) : null;
+}
+
+// Aceita Date, dd/mm/aaaa, dd-mm-aaaa, aaaa-mm-dd, dd/mm/aa e o número serial
+// do Excel — o Flash em espanhol não exporta sempre no formato brasileiro.
+function flashParseData(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
+  }
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    return new Date(Date.UTC(1899, 11, 30) + v * 86400000).toISOString().slice(0, 10);
+  }
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/);
+  if (m) return `20${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return null;
+}
+
+// Rótulos de coluna aceitos, em pt-BR e es-MX (a conta do Flash da matriz
+// exporta "Comprobación de Viáticos", com o cabeçalho em espanhol).
+const FLASH_COLUNAS = {
+  data:   ['data', 'fecha'],
+  mov:    ['movimenta', 'movimient', 'concepto', 'conceito', 'descri', 'establecimiento'],
+  valor:  ['valor', 'importe', 'monto'],
+  pessoa: ['pessoa', 'persona', 'colaborador', 'empleado', 'usuario', 'usuário'],
+  status: ['presta', 'rendi', 'estado', 'status', 'situa']
+};
+// Só entram lançamentos cuja prestação de contas está concluída.
+const FLASH_STATUS_OK = ['finaliz', 'aprovad', 'aprobad', 'conclu', 'complet', 'pago', 'pagad'];
+
+// Explica na tela por que nada foi importado — antes a área ficava vazia, sem
+// dizer se o arquivo estava errado ou se o sistema havia falhado.
+function flashDiagnosticoHtml(diag) {
+  if (!diag) return '';
+  const d = diag.descartes || {};
+  const motivos = [];
+  if (d.status) motivos.push(`${d.status} com a prestação de contas ainda não concluída`);
+  if (d.semData) motivos.push(`${d.semData} com data em formato não reconhecido`);
+  if (d.semValor) motivos.push(`${d.semValor} com valor em formato não reconhecido`);
+  if (d.semDescricao) motivos.push(`${d.semDescricao} sem descrição da movimentação`);
+  const c = diag.colunasDetectadas;
+  return `<div class="alert-item late" style="margin:12px 0">
+    <strong>Nenhum lançamento foi importado deste arquivo.</strong>
+    <div style="margin-top:8px; font-size:12.5px; line-height:1.7">
+      Aba lida: <strong>${esc(diag.aba || '—')}</strong>${diag.abas && diag.abas.length > 1 ? ` · o arquivo tem ${diag.abas.length} abas (${esc(diag.abas.join(', '))})` : ''}<br>
+      Linhas após o cabeçalho: <strong>${diag.lidas || 0}</strong><br>
+      ${c ? `Colunas identificadas — data: <strong>${esc(c.data || '—')}</strong> · movimentação: <strong>${esc(c.movimentacao || '—')}</strong> · valor: <strong>${esc(c.valor || '—')}</strong>${c.status ? ` · situação: <strong>${esc(c.status)}</strong>` : ''}<br>` : ''}
+      ${motivos.length ? `Descartes: ${esc(motivos.join('; '))}.<br>` : ''}
+      ${(diag.exemplos || []).length ? `Exemplos: ${diag.exemplos.map(x => esc(x)).join('; ')}.<br>` : ''}
+      ${(diag.primeirasLinhas || []).length ? `Primeiras linhas lidas:<br><span class="mono" style="font-size:11.5px">${diag.primeirasLinhas.map(l => esc(l)).join('<br>')}</span>` : ''}
+    </div>
+  </div>`;
+}
+
 async function parseFlashXLSX(file) {
   if (!window.XLSX) throw new Error('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
   const buf = await file.arrayBuffer();
@@ -3484,54 +3566,68 @@ async function parseFlashXLSX(file) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, blankrows: false });
 
+  // diag acompanha o parse e alimenta a explicação na tela quando nada entra.
+  const diag = { abas: wb.SheetNames, aba: wb.SheetNames[0], cabecalho: null, colunasDetectadas: null,
+    lidas: 0, descartes: { status: 0, semData: 0, semValor: 0, semDescricao: 0 }, exemplos: [] };
+
   const norm = s => String(s ?? '').toLowerCase().trim();
+  const achaCol = (row, chaves) => row.findIndex(c => chaves.some(k => c.includes(k)));
   let headerIdx = -1, col = {};
-  for (let i = 0; i < Math.min(rows.length, 10); i++) {
-    const row = rows[i].map(norm);
-    const dCol = row.findIndex(c => c.includes('data'));
-    const mCol = row.findIndex(c => c.includes('movimenta'));
-    const vCol = row.findIndex(c => c.includes('valor'));
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const row = (rows[i] || []).map(norm);
+    const dCol = achaCol(row, FLASH_COLUNAS.data);
+    const mCol = achaCol(row, FLASH_COLUNAS.mov);
+    const vCol = achaCol(row, FLASH_COLUNAS.valor);
     if (dCol > -1 && mCol > -1 && vCol > -1) {
       headerIdx = i;
       col = { data: dCol, mov: mCol, valor: vCol,
-        pessoa: row.findIndex(c => c.includes('pessoa')),
-        status: row.findIndex(c => c.includes('presta')) };
+        pessoa: achaCol(row, FLASH_COLUNAS.pessoa), status: achaCol(row, FLASH_COLUNAS.status) };
+      diag.cabecalho = (rows[i] || []).map(c => String(c ?? ''));
+      diag.colunasDetectadas = { data: diag.cabecalho[dCol], movimentacao: diag.cabecalho[mCol], valor: diag.cabecalho[vCol],
+        pessoa: col.pessoa > -1 ? diag.cabecalho[col.pessoa] : null,
+        status: col.status > -1 ? diag.cabecalho[col.status] : null };
       break;
     }
   }
-  if (headerIdx === -1) throw new Error('Não foi possível reconhecer as colunas desta planilha (esperado: Data, Movimentação, Valor).');
-
-  const toDateISO = v => {
-    if (v instanceof Date) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}-${String(v.getDate()).padStart(2, '0')}`;
-    const s = String(v || '').trim();
-    const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
-    return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
-  };
-  const toValor = v => {
-    let s = String(v ?? '').replace(/\u00a0/g, ' ').replace(/[R$\s]/g, '').replace(/^-/, '');
-    if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
-    const n = Number(s);
-    return isFinite(n) ? n : null;
-  };
+  if (headerIdx === -1) {
+    const e = new Error('Não foi possível reconhecer as colunas desta planilha. Esperado algo como Data/Fecha, Movimentação/Movimiento e Valor/Importe.');
+    e.diag = { ...diag, primeirasLinhas: rows.slice(0, 6).map(r => (r || []).map(c => String(c ?? '')).filter(Boolean).join(' | ')).filter(Boolean) };
+    throw e;
+  }
 
   const out = [];
   for (let i = headerIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
+    const row = rows[i] || [];
+    diag.lidas++;
     if (col.status > -1) {
       const st = normalizeTxt(row[col.status]);
-      if (st && !st.includes('finaliz')) continue; // pula lançamentos ainda não finalizados
+      if (st && !FLASH_STATUS_OK.some(k => st.includes(k))) {
+        diag.descartes.status++;
+        if (diag.exemplos.length < 3) diag.exemplos.push(`situação "${String(row[col.status])}" não reconhecida como concluída`);
+        continue;
+      }
     }
-    const data = toDateISO(row[col.data]);
-    const valor = toValor(row[col.valor]);
+    const data = flashParseData(row[col.data]);
+    const valor = flashParseValor(row[col.valor]);
     const movRaw = String(row[col.mov] ?? '').trim();
-    if (!data || valor === null || !movRaw) continue;
+    if (!data) {
+      diag.descartes.semData++;
+      if (diag.exemplos.length < 3) diag.exemplos.push(`data "${String(row[col.data] ?? '')}" em formato não reconhecido`);
+      continue;
+    }
+    if (valor === null) {
+      diag.descartes.semValor++;
+      if (diag.exemplos.length < 3) diag.exemplos.push(`valor "${String(row[col.valor] ?? '')}" em formato não reconhecido`);
+      continue;
+    }
+    if (!movRaw) { diag.descartes.semDescricao++; continue; }
     const tokens = movRaw.split(/\s+/);
     const conceitoOriginal = tokens[tokens.length - 1] || '';
     const categoria = FLASH_CONCEITO_MAP[normalizeTxt(conceitoOriginal)] || '';
     const pessoa = col.pessoa > -1 ? String(row[col.pessoa] ?? '').trim() : '';
     out.push({ data, valor, descricao: movRaw, pessoa, conceitoOriginal, categoria });
   }
-  return out;
+  return { linhas: out, diag };
 }
 
 async function importarFlashModal(s) {
@@ -3542,12 +3638,13 @@ async function importarFlashModal(s) {
 
   let rows = [];
   let avisos = [];
+  let diag = null; // preenchido pelo parse; explica na tela quando nada entra
 
   const draw = () => {
     const box = $('#fl-preview');
     const avisosHtml = avisos.length
       ? `<div class="alert-item late" style="margin:12px 0">🚫 ${avisos.join('<br>🚫 ')}<br><br>Confira se é o arquivo certo antes de importar.</div>` : '';
-    if (!rows.length) { box.innerHTML = avisosHtml; return; }
+    if (!rows.length) { box.innerHTML = avisosHtml + flashDiagnosticoHtml(diag); return; }
     const prontos = rows.filter(r => r.categoria).length;
     const pendentes = rows.length - prontos;
     box.innerHTML = avisosHtml + `
@@ -3607,11 +3704,19 @@ async function importarFlashModal(s) {
         const bate = nomeArq === nomeColab || nomeColab.includes(nomeArq) || nomeArq.includes(nomeColab.split(' ')[0]);
         if (!bate) avisos.push(`O nome no arquivo ("${esc(nome)}") não parece bater com o colaborador desta solicitação ("${esc(s.colaborador_name)}").`);
       }
-      rows = await parseFlashXLSX(file);
+      const parsed = await parseFlashXLSX(file);
+      rows = parsed.linhas; diag = parsed.diag;
       const foraNome = s.colaborador_name ? rows.filter(r => r.pessoa && normalizeTxt(r.pessoa) !== normalizeTxt(s.colaborador_name)).length : 0;
       if (foraNome) avisos.push(`${foraNome} linha(s) do arquivo têm um nome diferente na coluna "Pessoa" — confira se é mesmo o arquivo certo.`);
       draw();
-    } catch (e) { toast(e.message); }
+    } catch (e) {
+      // O erro fica na tela (e não só num toast que desaparece), junto com o
+      // que o sistema conseguiu ler do arquivo — sem isso o usuário não tem
+      // como saber por que a importação não trouxe nada.
+      rows = []; diag = e.diag || null;
+      $('#fl-preview').innerHTML = `<div class="alert-item late" style="margin:12px 0">⚠️ ${esc(e.message)}</div>` + flashDiagnosticoHtml(diag);
+      toast(e.message);
+    }
   };
 }
 

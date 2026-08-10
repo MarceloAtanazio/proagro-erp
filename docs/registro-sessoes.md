@@ -478,3 +478,31 @@ A ANP não tem uma API JSON pública e estável. O dado oficial é publicado sem
 - Dados de teste removidos (0 restantes); `node --check` OK.
 
 **Observação levada ao usuário:** a solicitação id=41 (Marcelo, 15/06/2026) está com `data_fim = 3000-12-31`, o que a mantém eternamente "Em viagem". Parece erro de digitação — não alterado sem autorização.
+
+## 2026-08-10 — Correção: importação do Flash não trazia dados (arquivo em espanhol)
+
+**Problema reportado:** ao importar o arquivo de despesas da OT 156 ("Comprobación de Viáticos … Gustavo do Amaral.xlsx"), a tela não trazia nenhum dado — e **sem nenhuma mensagem**.
+
+### Duas falhas encontradas (ambas reproduzidas antes de corrigir)
+1. **Descarte silencioso:** em `importarFlashModal`, `if (!rows.length) { box.innerHTML = avisosHtml; return; }` deixava a área vazia quando o arquivo era lido mas nenhuma linha passava pelos filtros. O usuário não tinha como saber se o arquivo estava errado ou se o sistema falhou.
+2. **Parser assumia formato brasileiro.** O arquivo vem da conta do Flash da matriz, em espanhol:
+   - Cabeçalhos `Fecha`/`Movimiento`/`Importe` não eram reconhecidos (buscava só `data`/`movimenta`/`valor`) → erro em toast que desaparece;
+   - Valor em formato mexicano `1,250.50` virava `NaN` → **todas as linhas descartadas** → tela em branco (este é o sintoma exato do print).
+
+Reprodução registrada: planilha pt-BR → 2 linhas OK; cabeçalho es → "CABECALHO NAO RECONHECIDO"; valor `1,250.50` → 0 linhas com `descartes.semValor = 1`.
+
+### Correção (`public/app.js`)
+- **`flashParseValor`** (nova): interpreta o valor sem assumir idioma. Havendo vírgula e ponto, o separador que aparece por último é o decimal; havendo só um, 3 dígitos depois indicam milhar (`1.250` = 1250) e 1–2 dígitos indicam decimal (`250.50`). Também remove símbolos de moeda (R$, $, MXN/BRL/USD) e usa valor absoluto.
+- **`flashParseData`** (nova): aceita `Date`, `dd/mm/aaaa`, `dd-mm-aaaa`, `aaaa-mm-dd`, `dd/mm/aa` e o número serial do Excel.
+- **`FLASH_COLUNAS`**: rótulos aceitos em pt-BR e es-MX (data/fecha; movimenta/movimient/concepto/descri; valor/importe/monto; pessoa/persona/colaborador/empleado; presta/rendi/estado/situa). Cabeçalho procurado nas 15 primeiras linhas (era 10).
+- **`FLASH_STATUS_OK`**: situações aceitas como concluídas em pt e es (finaliz, aprovad/aprobad, conclu, complet, pago/pagad) — `Pendiente`/`Rechazado` seguem descartados.
+- **`flashDiagnosticoHtml`** (nova): quando nada é importado, a tela passa a mostrar aba lida (e quantas abas o arquivo tem), linhas encontradas, colunas identificadas, contagem de descartes por motivo e exemplos concretos. O erro de cabeçalho também exibe as primeiras linhas do arquivo, para identificar o formato na hora.
+- `parseFlashXLSX` passou a retornar `{ linhas, diag }` (chamador atualizado); o `catch` escreve o erro **na tela**, não só num toast.
+
+### Verificação
+- **34 casos unitários** nas funções reais extraídas do arquivo (não reimplementadas): 12 formatos de valor, 9 de data, 3 cabeçalhos (pt-BR, es-MX e variante `Fecha de gasto`/`Concepto`/`Monto`), 10 situações de status — todos corretos.
+- **Ponta a ponta no navegador**, com 3 planilhas `.xlsx` reais geradas e carregadas via File API: pt-BR → 2 linhas (baseline preservado); **es-MX com `1,250.50` → 2 linhas importadas com valor correto** e a linha `Pendiente` descartada; planilha com cabeçalho inválido → erro claro com as primeiras linhas do arquivo.
+- Diagnóstico visual conferido: menciona aba, nº de linhas, colunas, descartes e exemplos.
+- Arquivos temporários de teste removidos; `node --check` OK.
+
+**Observação:** a correção cobre os formatos mais prováveis, mas não vi o arquivo real da OT 156. Se ainda não importar, a tela agora dirá exatamente o motivo (colunas lidas e descartes) — basta enviar essa mensagem.
