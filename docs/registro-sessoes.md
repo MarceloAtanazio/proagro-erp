@@ -457,3 +457,24 @@ A ANP não tem uma API JSON pública e estável. O dado oficial é publicado sem
 - Validação de margem (negativa e > 200 rejeitadas); troca de margem para 15% recalculou sem rebuscar a ANP (7,54 = 6,56×1,15); "Atualizar agora" rebuscou de fato (novo timestamp) e **preservou** a margem configurada (não voltou para 10% sozinho). Margem devolvida a 10% ao final do teste (único ajuste revertido — os demais valores são o estado real desejado).
 - Log de auditoria cobrindo as 3 ações (ajuste de margem, atualização manual, atualização automática).
 - Frontend testado com sessão real autenticada: painel renderiza os 3 valores corretos, sem o campo antigo de preço manual; botão "Atualizar agora" muda para "Buscando na ANP…" durante a chamada e reabre o modal com os dados atualizados. Sem erros de console; `node --check` OK nos dois arquivos.
+
+## 2026-08-10 — Correção: status das ordens de Viáticos não avançava sozinho
+
+**Problema reportado:** ordens com o período já encerrado continuavam em "Transferência Agendada" (e uma em "Liberado", outra em "Em viagem"). Regra de negócio esclarecida pelo usuário: **"Transferência Agendada" é o único status marcado à mão** (o agendamento é feito na plataforma do Flash); todos os outros devem seguir as datas automaticamente.
+
+**Causa raiz (confirmada no banco antes de alterar):** a rotina automática tinha `WHERE status_manual = false`. Como `POST /:id/status` grava `status_manual = true` em qualquer ajuste manual, marcar "Transferência Agendada" **congelava o registro para sempre**. Evidência: os 6 registros errados tinham `status_manual = true`; os 2 corretos tinham `false` — correlação perfeita.
+
+### Correção (`api/index.js`, rotina no `GET /api/viaticos/solicitacoes`)
+- Removida a trava por `status_manual`: a faixa de status por calendário (`liberado`, `em_viagem`, `aguardando_comprovacao`, `transferencia_agendada`) volta a ser sempre recalculada pelas datas.
+- `transferencia_agendada` é preservada **enquanto a viagem não começou** (`hoje < data_inicio`) — é a marcação manual do Flash. A partir da data de início, o registro volta a seguir o calendário.
+- `status_manual` é resetado para `false` quando a regra assume o registro, para a tela não seguir exibindo "definido manualmente".
+- `em_approvals` continua fora da faixa (é decisão de aprovação, não de calendário) — marcação manual ali segue preservada.
+- Ganho extra: o `UPDATE` agora tem `AND status <> <status calculado>`, então não grava nada quando não há mudança (antes reescrevia as linhas a cada abertura da tela — apontado na auditoria de 29/07).
+
+### Verificação
+- **Dados reais corrigidos:** os 6 registros presos passaram para `aguardando_comprovacao` com `status_manual=false` (ids 38, 42, 43, 46, 48, 55).
+- **3 casos de teste** criados no banco e removidos depois: (A) transferência agendada em viagem futura → **preservada** com `manual=true`; (B) "liberado" manual em viagem em andamento → `em_viagem`; (C) transferência agendada em viagem em andamento → `em_viagem`.
+- **Eficiência:** após a rotina rodar, a consulta que simula o `WHERE` retorna **0 linhas** — confirma que não há escrita desnecessária a cada GET.
+- Dados de teste removidos (0 restantes); `node --check` OK.
+
+**Observação levada ao usuário:** a solicitação id=41 (Marcelo, 15/06/2026) está com `data_fim = 3000-12-31`, o que a mantém eternamente "Em viagem". Parece erro de digitação — não alterado sem autorização.

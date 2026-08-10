@@ -1941,22 +1941,37 @@ app.delete('/api/viaticos/tud/:id', requireAuth, requireEdit('viaticos'), h(asyn
 
 // ---- Solicitações ----
 app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
-  // Atualiza sozinho o status pelas datas (antes da viagem = Liberado, dentro
-  // do período = Em viagem, depois = Aguardando comprovação) — mas só para
-  // quem NÃO teve o status alterado manualmente (status_manual=false),
-  // respeitando qualquer ajuste manual feito depois. "Transferência Agendada"
-  // fica congelado até a data de início chegar — só a partir daí passa a
-  // seguir a mesma lógica automática das demais.
+  // Atualiza sozinho o status pelas datas: antes da viagem = Liberado, dentro
+  // do período = Em viagem, depois do fim = Aguardando comprovação.
+  //
+  // "Transferência Agendada" é a ÚNICA marcação manual desta faixa (o
+  // agendamento é feito na plataforma do Flash, fora do ERP), então ela é
+  // preservada enquanto a viagem não começou. A partir da data de início, o
+  // registro volta a seguir as datas como os demais.
+  //
+  // Não existe mais trava por `status_manual`: antes, um único ajuste manual
+  // congelava o registro para sempre, e como "Transferência Agendada" é
+  // sempre marcada à mão, essas ordens nunca evoluíam — ficavam com o status
+  // errado depois do fim da viagem. `status_manual` volta a false quando a
+  // regra assume o registro, para a tela não seguir dizendo "definido
+  // manualmente". `em_approvals` continua fora desta faixa: é decisão de
+  // aprovação, não de calendário.
   const today = hojeISO();
-  await query(`
-    UPDATE erp_viaticos_solicitacoes
-    SET status = CASE
+  const STATUS_POR_DATA = `CASE
       WHEN status = 'transferencia_agendada' AND $1 < data_inicio THEN 'transferencia_agendada'
       WHEN $1 < data_inicio THEN 'liberado'
       WHEN $1 > data_fim THEN 'aguardando_comprovacao'
       ELSE 'em_viagem'
-    END
-    WHERE status_manual = false AND status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada')`, [today]);
+    END`;
+  await query(`
+    UPDATE erp_viaticos_solicitacoes
+    SET status = ${STATUS_POR_DATA},
+        status_manual = CASE
+          WHEN status = 'transferencia_agendada' AND $1 < data_inicio THEN status_manual
+          ELSE false
+        END
+    WHERE status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada')
+      AND status <> ${STATUS_POR_DATA}`, [today]);
 
   const escopo = await viaticosEscopo(req.user);
   const rows = await query(`
