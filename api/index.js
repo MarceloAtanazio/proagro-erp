@@ -1468,6 +1468,26 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
   const receberFuturasQ = await query(`SELECT description, amount, due_date, client_name FROM erp_receivables
     WHERE status='pendente' ORDER BY due_date LIMIT 20`);
 
+  // ---- Pendentes com vencimento DENTRO do período filtrado ----
+  // Usado pela Solicitação de Aporte: ali a relação precisa ser a lista
+  // completa do que vence no período escolhido, sem LIMIT — `futuras` acima é
+  // outra coisa (os 20 próximos pendentes de qualquer data, para os cards da
+  // tela) e mostrava 20 de 97 títulos no relatório. Só `status='pendente'`:
+  // pago e baixado ficam de fora. O recorte por data de vencimento é o mesmo
+  // que o ledger usa para um título pendente, então a soma daqui é exatamente
+  // a saída projetada do período que sustenta o valor do aporte.
+  const pagarPeriodoQ = centroCusto
+    ? await query(`SELECT p.description, p.amount, p.due_date, p.cost_center, p.category, s.name AS party
+         FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id
+        WHERE p.status='pendente' AND p.due_date BETWEEN $1 AND $2 AND p.cost_center=$3
+        ORDER BY p.due_date, s.name NULLS LAST, p.description`, [de, ate, centroCusto])
+    : await query(`SELECT p.description, p.amount, p.due_date, p.cost_center, p.category, s.name AS party
+         FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id=p.supplier_id
+        WHERE p.status='pendente' AND p.due_date BETWEEN $1 AND $2
+        ORDER BY p.due_date, s.name NULLS LAST, p.description`, [de, ate]);
+  const receberPeriodoQ = await query(`SELECT description, amount, due_date, client_name FROM erp_receivables
+    WHERE status='pendente' AND due_date BETWEEN $1 AND $2 ORDER BY due_date, client_name NULLS LAST, description`, [de, ate]);
+
   // ---- Distribuição por categoria dentro do período filtrado (mesmos registros do ledger exibido) ----
   const dentroPeriodo = ds => ds >= de && ds <= ate;
   const despCatMap = {};
@@ -1501,6 +1521,14 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
     futuras: {
       pagar: pagarFuturasQ.map(r => ({ ...r, amount: n(r.amount) })),
       receber: receberFuturasQ.map(r => ({ ...r, amount: n(r.amount) }))
+    },
+    pendentesPeriodo: {
+      pagar: pagarPeriodoQ.map(r => ({ ...r, amount: n(r.amount) })),
+      receber: receberPeriodoQ.map(r => ({ ...r, amount: n(r.amount) })),
+      // Arredondado: a soma de dezenas de valores acumula erro de ponto
+      // flutuante (…,0500000005) e o número vai cru para a célula do Excel.
+      totalPagar: Number(pagarPeriodoQ.reduce((s, r) => s + n(r.amount), 0).toFixed(2)),
+      totalReceber: Number(receberPeriodoQ.reduce((s, r) => s + n(r.amount), 0).toFixed(2))
     },
     categorias: {
       despesas: despCatRows.map(r => ({ category: r.category, total: n(r.total) })),

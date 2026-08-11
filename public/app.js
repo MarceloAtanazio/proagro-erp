@@ -1407,15 +1407,17 @@ async function aportePDF(d, dados, completo) {
     }
 
     if (completo) {
-      const secao = (titulo, head, body, colStyles) => {
+      const secao = (titulo, head, body, colStyles, foot) => {
         if (!body.length) return;
         if (y > pageH - 40) { doc.addPage(); y = 20; }
         doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
         doc.text(titulo, MARGIN, y); y += 5;
         doc.autoTable({
           startY: y, margin: { left: MARGIN, right: MARGIN }, head: [head], body,
+          foot: foot ? [foot] : undefined,
           styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
           headStyles: { fillColor: VERDE, textColor: 255, fontSize: 8 },
+          footStyles: { fillColor: VERDE_CLARO, textColor: [30, 38, 32], fontStyle: 'bold', fontSize: 8 },
           columnStyles: colStyles || {},
           didParseCell: aportePintarNegativos
         });
@@ -1436,14 +1438,23 @@ async function aportePDF(d, dados, completo) {
           { 1: { halign: 'right', cellWidth: 34 } });
       }
 
-      secao('Próximos títulos a pagar (pendentes)', ['Vencimento', 'Fornecedor / descrição', 'Centro de custo', 'Valor'],
-        d.futuras.pagar.map(r => [brDate(r.due_date), `${r.party ? r.party + ' — ' : ''}${r.description}`, r.cost_center || '—', brl(r.amount)]),
-        { 0: { cellWidth: 22 }, 3: { halign: 'right', cellWidth: 26 } });
+      // Relação COMPLETA do que vence no período filtrado (só pendentes — pago e
+      // baixado ficam de fora). Antes vinha de `d.futuras`, que traz os 20
+      // próximos pendentes de qualquer data: mostrava 20 de 97 títulos e não
+      // respeitava o período do relatório.
+      const pend = d.pendentesPeriodo || { pagar: [], receber: [], totalPagar: 0, totalReceber: 0 };
+      secao(`Contas a pagar no período (${pend.pagar.length} título${pend.pagar.length === 1 ? '' : 's'} em aberto)`,
+        ['Vencimento', 'Fornecedor / descrição', 'Centro de custo', 'Valor'],
+        pend.pagar.map(r => [brDate(r.due_date), `${r.party ? r.party + ' — ' : ''}${r.description}`, r.cost_center || '—', brl(r.amount)]),
+        { 0: { cellWidth: 22 }, 3: { halign: 'right', cellWidth: 26 } },
+        ['', 'Total a pagar no período', '', brl(pend.totalPagar)]);
 
-      if (d.futuras.receber.length) {
-        secao('Próximos títulos a receber (pendentes)', ['Vencimento', 'Cliente / descrição', 'Valor'],
-          d.futuras.receber.map(r => [brDate(r.due_date), `${r.client_name ? r.client_name + ' — ' : ''}${r.description}`, brl(r.amount)]),
-          { 0: { cellWidth: 22 }, 2: { halign: 'right', cellWidth: 26 } });
+      if (pend.receber.length) {
+        secao(`Contas a receber no período (${pend.receber.length} título${pend.receber.length === 1 ? '' : 's'} em aberto)`,
+          ['Vencimento', 'Cliente / descrição', 'Valor'],
+          pend.receber.map(r => [brDate(r.due_date), `${r.client_name ? r.client_name + ' — ' : ''}${r.description}`, brl(r.amount)]),
+          { 0: { cellWidth: 22 }, 2: { halign: 'right', cellWidth: 26 } },
+          ['', 'Total a receber no período', brl(pend.totalReceber)]);
       }
     }
 
@@ -1518,15 +1529,30 @@ function aporteExcel(d, dados, completo) {
       wsCat['!cols'] = [{ wch: 34 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, wsCat, 'Por categoria');
 
-      const wsTit = XLSX.utils.aoa_to_sheet([
-        ['TÍTULOS A PAGAR PENDENTES'], ['Vencimento', 'Fornecedor', 'Descrição', 'Centro de custo', 'Valor'],
-        ...d.futuras.pagar.map(r => [brDate(r.due_date), r.party || '', r.description, r.cost_center || '', r.amount]),
-        [], ['TÍTULOS A RECEBER PENDENTES'], ['Vencimento', 'Cliente', 'Descrição', 'Valor'],
-        ...d.futuras.receber.map(r => [brDate(r.due_date), r.client_name || '', r.description, r.amount])
-      ]);
-      Object.keys(wsTit).filter(k => /^[DE]\d+$/.test(k)).forEach(k => { if (typeof wsTit[k].v === 'number') wsTit[k].z = APORTE_MONEY_FMT; });
-      wsTit['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 40 }, { wch: 20 }, { wch: 16 }];
-      XLSX.utils.book_append_sheet(wb, wsTit, 'Títulos pendentes');
+      // Relação completa do que vence no período (só pendentes), não os "20
+       // próximos de qualquer data" que vinham de `d.futuras`.
+      const pend = d.pendentesPeriodo || { pagar: [], receber: [], totalPagar: 0, totalReceber: 0 };
+      const linhasTit = [
+        [`CONTAS A PAGAR NO PERÍODO (${brDate(d.de)} a ${brDate(d.ate)}) — SOMENTE EM ABERTO`],
+        ['Vencimento', 'Fornecedor', 'Descrição', 'Categoria', 'Centro de custo', 'Valor'],
+        ...pend.pagar.map(r => [brDate(r.due_date), r.party || '', r.description, r.category || '', r.cost_center || '', r.amount]),
+        ['', '', '', '', `Total (${pend.pagar.length} título${pend.pagar.length === 1 ? '' : 's'})`, pend.totalPagar]
+      ];
+      if (pend.receber.length) {
+        linhasTit.push(
+          [], [`CONTAS A RECEBER NO PERÍODO (${brDate(d.de)} a ${brDate(d.ate)}) — SOMENTE EM ABERTO`],
+          ['Vencimento', 'Cliente', 'Descrição', 'Valor'],
+          ...pend.receber.map(r => [brDate(r.due_date), r.client_name || '', r.description, r.amount]),
+          ['', '', `Total (${pend.receber.length} título${pend.receber.length === 1 ? '' : 's'})`, pend.totalReceber]
+        );
+      }
+      const wsTit = XLSX.utils.aoa_to_sheet(linhasTit);
+      // Formata qualquer célula numérica — mais robusto que fixar letras de
+      // coluna, já que os dois blocos têm larguras diferentes.
+      Object.keys(wsTit).forEach(k => { if (k[0] !== '!' && typeof wsTit[k].v === 'number') wsTit[k].z = APORTE_MONEY_FMT; });
+      wsTit['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 44 }, { wch: 22 }, { wch: 22 }, { wch: 16 }];
+      wsTit['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 1, c: 0 }, e: { r: 1 + pend.pagar.length, c: 5 } }) };
+      XLSX.utils.book_append_sheet(wb, wsTit, 'Contas a pagar do período');
     }
 
     XLSX.writeFile(wb, `solicitacao_aporte_${completo ? 'completo' : 'resumido'}_${d.de}_a_${d.ate}.xlsx`);

@@ -671,3 +671,32 @@ Resultado: logo de 17,82 a 24,77 mm, centro em **21,30 mm** contra **21,29 mm** 
 Rodada a função **real** `aportePDF` no navegador, com `addImage` e `text` instrumentados para capturar as coordenadas efetivamente usadas — confirmando logo em `y=17.82` e as três baselines em 18 / 23,5 / 28.
 
 **Sobre o download:** desta vez a interceptação do `save` funcionou. O ponto que faltava nas tentativas anteriores era substituir o **construtor** `jspdf.jsPDF` e sobrescrever `save` **na instância** logo após o `new` — `save` é propriedade própria do objeto, não do prototype, então mexer no prototype nunca surtia efeito. Conferido no disco: nenhum arquivo criado nos 2 minutos do teste (os arquivos de 17:32/17:34 na pasta Downloads são os que o próprio usuário gerou).
+
+---
+
+## 2026-08-11 — Solicitação de Aporte passa a listar todas as contas a pagar do período
+
+**Pedido:** no quadro "Próximos títulos a pagar (pendentes)" do relatório de Aporte, listar **todas as contas a pagar do período selecionado** para a extração (sem as já pagas/baixadas), no PDF e no Excel.
+
+**Causa:** a tabela vinha de `d.futuras.pagar`, que no backend é `status='pendente' ORDER BY due_date LIMIT 20` — **sem nenhum filtro de data e cortando em 20 linhas**. No período 01/08–30/09 existem **97 títulos pendentes (R$ 1.042.241,05)**: o relatório mostrava 20, e os 20 primeiros pendentes de qualquer data, não os do período pedido. É por isso que o print terminava em 25/08.
+
+### Backend (`api/index.js`)
+Novo bloco `pendentesPeriodo` no `/api/reports/fluxo-caixa`, com `pagar`, `receber`, `totalPagar` e `totalReceber`: `status='pendente' AND due_date BETWEEN de AND ate`, **sem LIMIT**, ordenado por vencimento → fornecedor → descrição, respeitando o filtro de centro de custo. Passou a trazer também `category`.
+
+O `futuras` **não foi alterado**: ele alimenta os cards "Contas a pagar/receber futuras" da tela do Fluxo de Caixa, onde "os 20 próximos" é exatamente o comportamento desejado.
+
+Só `status='pendente'` — na base existem apenas `pago` e `pendente`, então pago/baixado fica de fora por construção (no período há 12 títulos pagos, corretamente excluídos). O recorte por vencimento é o mesmo que o ledger usa para título pendente, então a soma da tabela é a saída projetada que sustenta o valor do aporte. Totais arredondados a 2 casas: somar dezenas de valores acumulava erro de ponto flutuante (`…,0500000005`) e o número ia cru para a célula do Excel.
+
+### PDF e Excel
+- Título passou a ser **"Contas a pagar no período (N títulos em aberto)"**, com **linha de total** (o helper `secao()` ganhou suporte a rodapé, com fundo verde-claro).
+- Excel: aba renomeada para **"Contas a pagar do período"**, com cabeçalho no padrão + coluna **Categoria**, linha de **Total (N títulos)** e **autofiltro** na faixa de dados. A formatação de moeda passou a varrer qualquer célula numérica, em vez de fixar letras de coluna — os dois blocos (pagar/receber) têm larguras diferentes.
+- A tabela de "a receber" seguiu o mesmo critério de período, para o documento não misturar dois recortes diferentes.
+- O modo **Resumido** continua sem essas tabelas (é o de uma página).
+
+### Verificação
+- SQL testado direto no banco: **01/08–31/08 → 45 títulos / R$ 488.842,27** e **01/08–30/09 → 97 / R$ 1.042.241,05**; **zero** registros fora do período, ordenação por vencimento correta, e o filtro por centro de custo devolvendo só o centro pedido (27 títulos em "Administrativo").
+- PDF e Excel gerados com os **97 títulos reais** exportados do banco: PDF com **97 linhas** e rodapé "Total a pagar no período — R$ 1.042.241,05"; Excel com 100 linhas (título + cabeçalho + 97 + total), primeira linha 15/08 Budget e última 30/09 Rodrigo, célula de total em `F100` = **1042241.05** (numérica, formato de moeda com `[Red]`, **sem resíduo de ponto flutuante**) e autofiltro em `A2:F99`.
+- Resumido conferido: só a aba "Solicitação", sem a tabela nova.
+- **Nada baixado:** `doc.save` (na instância) e `XLSX.writeFile` interceptados; `find -mmin -3` na pasta Downloads sem nenhum arquivo novo. Arquivo de fixture removido.
+
+**Nota:** hoje não há títulos pendentes vencidos antes de 01/08 (conferido: zero). Se um dia houver, eles **não** entram nesta tabela — ficam no saldo inicial do período, que é como o cálculo do aporte já os trata.
