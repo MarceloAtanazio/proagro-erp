@@ -1295,8 +1295,8 @@ function aporteEscolherModo(d, formato) {
     `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o documento <strong>completo</strong> (com evolução do saldo, despesas por categoria e títulos pendentes) ou <strong>resumido</strong> (necessidade e resumo financeiro)?</p>`,
     [
       { label: 'Cancelar', onClick: closeModal },
-      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? aportePDF(d, dados, false) : aporteExcel(d, dados, false); } },
-      { label: 'Completo', cls: 'primary', onClick: () => { closeModal(); formato === 'pdf' ? aportePDF(d, dados, true) : aporteExcel(d, dados, true); } }
+      { label: 'Resumido', onClick: async () => { closeModal(); formato === 'pdf' ? await aportePDF(d, dados, false) : await aporteExcel(d, dados, false); } },
+      { label: 'Completo', cls: 'primary', onClick: async () => { closeModal(); formato === 'pdf' ? await aportePDF(d, dados, true) : await aporteExcel(d, dados, true); } }
     ]);
 }
 
@@ -1472,7 +1472,267 @@ async function aportePDF(d, dados, completo) {
   }
 }
 
-function aporteExcel(d, dados, completo) {
+// Paleta e medidas da identidade ProAgro nas planilhas — os mesmos valores do
+// CSS e dos PDFs, em ARGB (formato que o Excel usa).
+const APORTE_XL = {
+  verde: 'FF00783F', verdeEscuro: 'FF005C30', verdeClaro: 'FFEAF4EE',
+  ink: 'FF1A2B22', ink2: 'FF43554B', muted: 'FF74847B',
+  linha: 'FFD2DAD5', branco: 'FFFFFFFF', zebra: 'FFF7FAF8', vermelho: 'FFB23A2F'
+};
+const XL_FONTE = 'Calibri';
+const xlBordaFina = { style: 'thin', color: { argb: APORTE_XL.linha } };
+const xlTodasBordas = { top: xlBordaFina, left: xlBordaFina, bottom: xlBordaFina, right: xlBordaFina };
+
+// Cabeçalho de marca: faixa verde, logo à direita e o bloco de identificação —
+// o mesmo desenho do PDF, para os dois documentos serem reconhecíveis como o
+// mesmo relatório. Devolve o número da linha onde o conteúdo pode começar.
+function aporteXlCabecalho(wb, ws, subtitulo, idLogo, colunasLargura) {
+  ws.columns = colunasLargura.map(w => ({ width: w }));
+  const ultimaCol = colunasLargura.length;
+  const letraFim = ws.getColumn(ultimaCol).letter;
+
+  // faixa verde fina no topo, como a barra dos PDFs
+  ws.mergeCells(`A1:${letraFim}1`);
+  ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verde } };
+  ws.getRow(1).height = 6;
+
+  ws.getCell('A2').value = 'Solicitação de Aporte';
+  ws.getCell('A2').font = { name: XL_FONTE, size: 18, bold: true, color: { argb: APORTE_XL.ink } };
+  ws.getRow(2).height = 26;
+  ws.getCell('A3').value = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+  ws.getCell('A3').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
+  ws.getCell('A4').value = subtitulo;
+  ws.getCell('A4').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
+
+  if (idLogo != null) {
+    // Ancorado nas últimas colunas, alinhado ao bloco de texto à esquerda.
+    ws.addImage(idLogo, { tl: { col: Math.max(0, ultimaCol - 2), row: 1.2 }, ext: { width: 150, height: 35 } });
+  }
+  // linha divisória
+  ws.mergeCells(`A5:${letraFim}5`);
+  ws.getCell('A5').border = { bottom: { style: 'medium', color: { argb: APORTE_XL.verde } } };
+  ws.getRow(5).height = 4;
+  return 7;
+}
+
+// Faixa de título de tabela (verde, texto branco).
+function aporteXlTituloTabela(ws, linha, texto, nCols) {
+  ws.mergeCells(linha, 1, linha, nCols);
+  const c = ws.getCell(linha, 1);
+  c.value = texto;
+  c.font = { name: XL_FONTE, size: 11, bold: true, color: { argb: APORTE_XL.branco } };
+  c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verde } };
+  c.alignment = { vertical: 'middle', indent: 1 };
+  ws.getRow(linha).height = 20;
+}
+
+// Linha de cabeçalho de colunas (verde escuro, texto branco).
+function aporteXlCabecalhoColunas(ws, linha, rotulos, alinhamentos) {
+  rotulos.forEach((r, i) => {
+    const c = ws.getCell(linha, i + 1);
+    c.value = r;
+    c.font = { name: XL_FONTE, size: 9.5, bold: true, color: { argb: APORTE_XL.branco } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verdeEscuro } };
+    c.alignment = { vertical: 'middle', horizontal: (alinhamentos && alinhamentos[i]) || 'left', wrapText: true };
+    c.border = xlTodasBordas;
+  });
+  ws.getRow(linha).height = 18;
+}
+
+// Corpo de tabela com zebra, bordas, moeda e negativos em vermelho.
+function aporteXlCorpo(ws, linhaInicial, linhas, colsMoeda, alinhamentos) {
+  linhas.forEach((valores, idx) => {
+    const linha = linhaInicial + idx;
+    valores.forEach((v, i) => {
+      const c = ws.getCell(linha, i + 1);
+      c.value = v;
+      c.font = { name: XL_FONTE, size: 9.5, color: { argb: APORTE_XL.ink2 } };
+      c.border = xlTodasBordas;
+      c.alignment = { vertical: 'middle', horizontal: (alinhamentos && alinhamentos[i]) || 'left' };
+      if (idx % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.zebra } };
+      if (colsMoeda && colsMoeda.includes(i) && typeof v === 'number') {
+        c.numFmt = APORTE_MONEY_FMT;
+        if (v < 0) c.font = { name: XL_FONTE, size: 9.5, bold: true, color: { argb: APORTE_XL.vermelho } };
+      }
+    });
+  });
+  return linhaInicial + linhas.length;
+}
+
+// Linha de total: fundo verde-claro, negrito.
+function aporteXlTotal(ws, linha, valores, colsMoeda, alinhamentos) {
+  valores.forEach((v, i) => {
+    const c = ws.getCell(linha, i + 1);
+    c.value = v;
+    c.font = { name: XL_FONTE, size: 10, bold: true, color: { argb: APORTE_XL.ink } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verdeClaro } };
+    c.border = { ...xlTodasBordas, top: { style: 'medium', color: { argb: APORTE_XL.verde } } };
+    c.alignment = { vertical: 'middle', horizontal: (alinhamentos && alinhamentos[i]) || 'left' };
+    if (colsMoeda && colsMoeda.includes(i) && typeof v === 'number') {
+      c.numFmt = APORTE_MONEY_FMT;
+      if (v < 0) c.font = { name: XL_FONTE, size: 10, bold: true, color: { argb: APORTE_XL.vermelho } };
+    }
+  });
+}
+
+// Isolado numa função para o teste poder interceptar o download sem gravar nada
+// em disco (o writeFile do SheetJS baixa direto, e foi de onde vieram arquivos
+// de teste na pasta do usuário antes).
+function aporteBaixarPlanilha(blob, nomeArquivo) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nomeArquivo;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// Excel da Solicitação de Aporte com a identidade da ProAgro. Se o ExcelJS não
+// tiver carregado, cai na versão sem estilo (SheetJS) em vez de falhar: melhor
+// entregar a planilha simples do que não entregar.
+async function aporteExcel(d, dados, completo) {
+  if (!window.ExcelJS) return aporteExcelSimples(d, dados, completo);
+  try {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+    wb.created = new Date();
+    const now = new Date();
+    const subtitulo = `Emitida em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${dados.solicitante || (USER ? USER.name : '')}`;
+    const idLogo = wb.addImage({ base64: LOGO_PROAGRO_PNG, extension: 'png' });
+    const pend = d.pendentesPeriodo || { pagar: [], receber: [], totalPagar: 0, totalReceber: 0 };
+
+    // ---------- Aba 1: Solicitação ----------
+    const ws = wb.addWorksheet('Solicitação', { views: [{ showGridLines: false }] });
+    let L = aporteXlCabecalho(wb, ws, subtitulo, idLogo, [42, 24, 16, 16, 18]);
+
+    // Valor solicitado em destaque
+    ws.mergeCells(L, 1, L, 5);
+    const cLabel = ws.getCell(L, 1);
+    cLabel.value = 'VALOR SOLICITADO';
+    cLabel.font = { name: XL_FONTE, size: 9, bold: true, color: { argb: APORTE_XL.verde } };
+    cLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verdeClaro } };
+    cLabel.alignment = { vertical: 'middle', indent: 1 };
+    ws.getRow(L).height = 16;
+    L++;
+    ws.mergeCells(L, 1, L, 5);
+    const cValor = ws.getCell(L, 1);
+    cValor.value = dados.valor;
+    cValor.numFmt = APORTE_MONEY_FMT;
+    cValor.font = { name: XL_FONTE, size: 22, bold: true, color: { argb: APORTE_XL.verde } };
+    cValor.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verdeClaro } };
+    cValor.alignment = { vertical: 'middle', indent: 1 };
+    ws.getRow(L).height = 32;
+    L += 2;
+
+    aporteXlTituloTabela(ws, L, 'Dados da solicitação', 5); L++;
+    aporteXlCabecalhoColunas(ws, L, ['Indicador', 'Valor', '', '', ''], ['left', 'right']); L++;
+    L = aporteXlCorpo(ws, L, [
+      ['Período analisado', `${brDate(d.de)} a ${brDate(d.ate)}`],
+      ['Centro de custo', d.centroCusto || 'Todos'],
+      ['Pior momento de caixa no período', d.aporte && d.aporte.diaPior ? brDate(d.aporte.diaPior) : '—'],
+      ['Saldo no pior momento', d.aporte ? d.aporte.piorSaldo : 0],
+      ['Aporte necessário (calculado)', d.aporte ? d.aporte.necessario : 0],
+      ['Necessidade em 90 dias (contexto)', d.alerta.necessidade],
+      ['Horizonte dos 90 dias', brDate(d.alerta.horizonte)]
+    ], [1], ['left', 'right']);
+    L += 1;
+
+    aporteXlTituloTabela(ws, L, 'Resumo financeiro do período', 5); L++;
+    aporteXlCabecalhoColunas(ws, L, ['Indicador', 'Valor', '', '', ''], ['left', 'right']); L++;
+    L = aporteXlCorpo(ws, L, [
+      ['Saldo inicial do período', d.resumo.saldoInicial],
+      ['Total de entradas', d.resumo.totalEntradas],
+      ['Total de saídas', d.resumo.totalSaidas],
+      ['Saldo bancário atual (hoje)', d.resumo.saldoAtual],
+      ['Saldo ao fim do período', d.aporte ? d.aporte.saldoFinalPeriodo : 0],
+      ['Saldo previsto (todo o pendente)', d.resumo.saldoPrevisto]
+    ], [1], ['left', 'right']);
+    L += 1;
+
+    if (dados.justificativa) {
+      aporteXlTituloTabela(ws, L, 'Justificativa', 5); L++;
+      ws.mergeCells(L, 1, L + 2, 5);
+      const cj = ws.getCell(L, 1);
+      cj.value = dados.justificativa;
+      cj.font = { name: XL_FONTE, size: 9.5, color: { argb: APORTE_XL.ink2 } };
+      cj.alignment = { vertical: 'top', wrapText: true, indent: 1 };
+      cj.border = xlTodasBordas;
+      L += 4;
+    }
+
+    ws.mergeCells(L, 1, L + 1, 5);
+    const cNota = ws.getCell(L, 1);
+    cNota.value = 'Valor calculado a partir dos títulos de Contas a Pagar e Contas a Receber lançados no ERP na data de emissão, considerando a data de pagamento/recebimento quando já realizado e a de vencimento quando pendente. Alterações posteriores nos lançamentos mudam a necessidade apurada.';
+    cNota.font = { name: XL_FONTE, size: 8, italic: true, color: { argb: APORTE_XL.muted } };
+    cNota.alignment = { vertical: 'top', wrapText: true };
+
+    if (completo) {
+      // ---------- Aba 2: Evolução do saldo ----------
+      const wsF = wb.addWorksheet('Evolução do saldo', { views: [{ showGridLines: false }] });
+      let F = aporteXlCabecalho(wb, wsF, subtitulo, idLogo, [18, 18, 18, 20]);
+      aporteXlTituloTabela(wsF, F, `Evolução do saldo — ${brDate(d.de)} a ${brDate(d.ate)}`, 4); F++;
+      const cabF = F;
+      aporteXlCabecalhoColunas(wsF, F, ['Período', 'Entradas', 'Saídas', 'Saldo acumulado'], ['left', 'right', 'right', 'right']); F++;
+      aporteXlCorpo(wsF, F, d.buckets.map(b => [b.label, b.entradas, b.saidas, b.saldo]), [1, 2, 3], ['left', 'right', 'right', 'right']);
+      wsF.views = [{ state: 'frozen', ySplit: cabF, showGridLines: false }];
+
+      // ---------- Aba 3: Por categoria ----------
+      const wsC = wb.addWorksheet('Por categoria', { views: [{ showGridLines: false }] });
+      let C = aporteXlCabecalho(wb, wsC, subtitulo, idLogo, [40, 20]);
+      aporteXlTituloTabela(wsC, C, 'Despesas por categoria no período', 2); C++;
+      aporteXlCabecalhoColunas(wsC, C, ['Categoria', 'Total'], ['left', 'right']); C++;
+      C = aporteXlCorpo(wsC, C, d.categorias.despesas.map(x => [x.category, x.total]), [1], ['left', 'right']);
+      aporteXlTotal(wsC, C, ['Total de despesas', d.categorias.despesas.reduce((s, x) => s + x.total, 0)], [1], ['left', 'right']);
+      C += 2;
+      if (d.categorias.receitas.length) {
+        aporteXlTituloTabela(wsC, C, 'Receitas por categoria no período', 2); C++;
+        aporteXlCabecalhoColunas(wsC, C, ['Categoria', 'Total'], ['left', 'right']); C++;
+        C = aporteXlCorpo(wsC, C, d.categorias.receitas.map(x => [x.category, x.total]), [1], ['left', 'right']);
+        aporteXlTotal(wsC, C, ['Total de receitas', d.categorias.receitas.reduce((s, x) => s + x.total, 0)], [1], ['left', 'right']);
+      }
+
+      // ---------- Aba 4: Contas a pagar do período ----------
+      const wsP = wb.addWorksheet('Contas a pagar do período', { views: [{ showGridLines: false }] });
+      let P = aporteXlCabecalho(wb, wsP, subtitulo, idLogo, [13, 30, 44, 22, 22, 16]);
+      aporteXlTituloTabela(wsP, P, `Contas a pagar no período (${brDate(d.de)} a ${brDate(d.ate)}) — somente títulos em aberto`, 6); P++;
+      const cabP = P;
+      aporteXlCabecalhoColunas(wsP, P, ['Vencimento', 'Fornecedor', 'Descrição', 'Categoria', 'Centro de custo', 'Valor'],
+        ['center', 'left', 'left', 'left', 'left', 'right']); P++;
+      const primeiraP = P;
+      P = aporteXlCorpo(wsP, P, pend.pagar.map(r => [brDate(r.due_date), r.party || '—', r.description, r.category || '—', r.cost_center || '—', r.amount]),
+        [5], ['center', 'left', 'left', 'left', 'left', 'right']);
+      aporteXlTotal(wsP, P, ['', '', '', '', `Total (${pend.pagar.length} título${pend.pagar.length === 1 ? '' : 's'})`, pend.totalPagar], [5],
+        ['left', 'left', 'left', 'left', 'right', 'right']);
+      wsP.views = [{ state: 'frozen', ySplit: cabP, showGridLines: false }];
+      if (pend.pagar.length) wsP.autoFilter = { from: { row: cabP, column: 1 }, to: { row: P - 1, column: 6 } };
+
+      // ---------- Aba 5: Contas a receber (só se houver) ----------
+      if (pend.receber.length) {
+        const wsR = wb.addWorksheet('Contas a receber do período', { views: [{ showGridLines: false }] });
+        let R = aporteXlCabecalho(wb, wsR, subtitulo, idLogo, [13, 30, 50, 16]);
+        aporteXlTituloTabela(wsR, R, `Contas a receber no período (${brDate(d.de)} a ${brDate(d.ate)}) — somente títulos em aberto`, 4); R++;
+        const cabR = R;
+        aporteXlCabecalhoColunas(wsR, R, ['Vencimento', 'Cliente', 'Descrição', 'Valor'], ['center', 'left', 'left', 'right']); R++;
+        R = aporteXlCorpo(wsR, R, pend.receber.map(r => [brDate(r.due_date), r.client_name || '—', r.description, r.amount]), [3],
+          ['center', 'left', 'left', 'right']);
+        aporteXlTotal(wsR, R, ['', '', `Total (${pend.receber.length} título${pend.receber.length === 1 ? '' : 's'})`, pend.totalReceber], [3],
+          ['left', 'left', 'right', 'right']);
+        wsR.views = [{ state: 'frozen', ySplit: cabR, showGridLines: false }];
+      }
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    aporteBaixarPlanilha(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      `solicitacao_aporte_${completo ? 'completo' : 'resumido'}_${d.de}_a_${d.ate}.xlsx`);
+    toast('Solicitação de aporte gerada em Excel.');
+  } catch (e) {
+    console.error(e);
+    toast('Não foi possível gerar o Excel formatado: ' + e.message + ' — gerando a versão simples.');
+    aporteExcelSimples(d, dados, completo);
+  }
+}
+
+// Versão sem estilo (SheetJS), mantida como reserva caso o ExcelJS não carregue.
+function aporteExcelSimples(d, dados, completo) {
   if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
   try {
     const wb = XLSX.utils.book_new();

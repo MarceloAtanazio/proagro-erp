@@ -700,3 +700,35 @@ Só `status='pendente'` — na base existem apenas `pago` e `pendente`, então p
 - **Nada baixado:** `doc.save` (na instância) e `XLSX.writeFile` interceptados; `find -mmin -3` na pasta Downloads sem nenhum arquivo novo. Arquivo de fixture removido.
 
 **Nota:** hoje não há títulos pendentes vencidos antes de 01/08 (conferido: zero). Se um dia houver, eles **não** entram nesta tabela — ficam no saldo inicial do período, que é como o cálculo do aporte já os trata.
+
+---
+
+## 2026-08-11 — Excel da Solicitação de Aporte com a identidade ProAgro
+
+**Pedido:** deixar o Excel emitido em "Solicitar aporte" com mais a cara da ProAgro Seguros, como nos outros documentos.
+
+**Situação:** a identidade visual do sistema está nos **PDFs** (faixa verde, logo, razão social, linha de emissão). Todos os Excel do ERP eram planilhas cruas — cabeçalho de texto e nada mais. E havia um impedimento técnico: **a edição community do SheetJS não escreve estilo de célula** (cor, fonte, borda são recurso da versão Pro), então não havia como colorir nada com a biblioteca em uso.
+
+**Solução:** ExcelJS 4.4.0 (via CDN) só para este relatório, que escreve estilos e imagens. `aporteExcel` virou assíncrona e, se o ExcelJS não tiver carregado, **cai na versão antiga** (renomeada para `aporteExcelSimples`) em vez de falhar — melhor entregar a planilha simples do que não entregar.
+
+### O que a planilha passou a ter
+- **Cabeçalho de marca em todas as abas**, no mesmo desenho do PDF: faixa verde no topo, "Solicitação de Aporte" em 18pt, razão social, linha "Emitida em … por …" e o **logo da ProAgro** à direita.
+- **Valor solicitado em destaque**, em bloco verde-claro, 22pt.
+- Tabelas com **faixa de título verde**, cabeçalho de coluna verde-escuro com texto branco, **zebra**, bordas finas, moeda em `R$` e **negativos em vermelho e negrito** (mesma regra do PDF).
+- **Linha de total** com fundo verde-claro e borda superior verde.
+- **Painel congelado** no cabeçalho e **autofiltro** na relação de contas a pagar; linhas de grade desligadas; larguras de coluna definidas.
+- Nota metodológica no pé da aba principal, como no PDF.
+- Abas: `Solicitação`, `Evolução do saldo`, `Por categoria`, `Contas a pagar do período` e, quando houver, `Contas a receber do período`. O Resumido continua com uma aba só.
+
+### Correções de segurança e de peso encontradas no caminho
+- **O navegador carregava `xlsx@0.18.5`** do jsdelivr — a linha com as duas CVEs de severidade alta sem correção. O `package.json` tinha sido atualizado para 0.20.3 na auditoria, mas o `index.html` ficou atrás (e é o browser que gera todo o Excel do sistema). Passou a carregar **0.20.3 do CDN oficial da SheetJS**.
+- Eu estava chamando `wb.addImage` uma vez por aba, gravando **4 cópias do logo** no arquivo. Um único id serve para todas: arquivo caiu de **77 KB para 35 KB**.
+
+### Verificação
+- **Round-trip real:** planilha gerada com os **97 títulos do banco** e **lida de volta** com o ExcelJS para inspecionar o que foi de fato gravado — faixa verde `FF00783F`, título 18pt negrito, razão social e linha de emissão, logo presente (**1 cópia, exibida nas 4 abas**), cabeçalho de coluna `FF005C30` com fonte branca negrito, zebra `FFF7FAF8` alternando, bordas, formato de moeda, **saldo −244.344,54 em vermelho negrito (`FFB23A2F`)** com o positivo acima em cinza normal, painel congelado (`frozen ySplit=8`), autofiltro `A8:F105`, total em `F106` = `1042241.05` com fundo `FFEAF4EE`.
+- **Resumido**: uma aba, 24 KB, valor solicitado e justificativa presentes.
+- **Fallback**: com `window.ExcelJS` removido, gera a versão simples pelo SheetJS em vez de quebrar.
+- **Risco da troca de versão do SheetJS testado:** a importação do Flash (`XLSX.read`) foi exercitada com planilhas geradas na hora — pt-BR (2 linhas, `1.250,50` → 1250.5) e **es-MX (`1,250.50` → 1250.5)**, com `Pendiente`/`Rechazado` descartados e cabeçalho inválido dando erro claro. Nada regrediu.
+- **Nada baixado:** o download foi isolado em `aporteBaixarPlanilha` justamente para o teste poder interceptá-lo; `find -mmin -5` na pasta Downloads sem arquivos novos. Fixture removida.
+
+**Observação:** os demais Excel do ERP (Contas a Pagar, Fluxo de Caixa, Conciliação, Viáticos) continuam sem estilo. Se quiser a mesma identidade neles, os helpers `aporteXl*` já estão prontos para reaproveitar.
