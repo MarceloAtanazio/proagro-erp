@@ -732,3 +732,30 @@ Só `status='pendente'` — na base existem apenas `pago` e `pendente`, então p
 - **Nada baixado:** o download foi isolado em `aporteBaixarPlanilha` justamente para o teste poder interceptá-lo; `find -mmin -5` na pasta Downloads sem arquivos novos. Fixture removida.
 
 **Observação:** os demais Excel do ERP (Contas a Pagar, Fluxo de Caixa, Conciliação, Viáticos) continuam sem estilo. Se quiser a mesma identidade neles, os helpers `aporteXl*` já estão prontos para reaproveitar.
+
+---
+
+## 2026-08-11 — Logo do Excel do Aporte: sobreposição corrigida
+
+**Problema reportado (com prints):** o logo aparecia descentralizado, quebrado e **em cima do texto** em algumas abas.
+
+**Causa:** eu ancorei a imagem por **contagem de colunas** (`col: ultimaCol - 2`), não pela largura real da aba. O resultado dependia de quantas colunas a aba tinha:
+- "Por categoria" (2 colunas) → `2 - 2 = 0` → logo ancorado na **coluna A**, exatamente sobre o título;
+- "Evolução do saldo" (4 colunas) → coluna 2, ainda sobre o texto;
+- "Contas a pagar" (6 colunas) → coluna 4, por sorte sem colisão.
+
+Além disso o texto do cabeçalho dividia linha com a imagem, então qualquer erro de âncora virava sobreposição.
+
+### Correção
+- Âncora calculada em **pixels**: `xlLarguraPx` converte largura de coluna do Excel em pixels (7px por caractere + 5 de padding) e `aporteXlColunaEmX` devolve o índice de coluna **fracionário** correspondente a uma posição horizontal. O logo passa a ser alinhado à direita com 8px de folga, **independente do número de colunas**.
+- O logo ganhou uma **faixa própria** (linhas 2 e 3, 18pt cada = 36px), onde não existe texto nenhum. O bloco de identificação — título, razão social e linha de emissão — desceu para as linhas 4 a 6. Sobreposição deixa de ser possível por construção, não por cálculo dar certo.
+- Em aba estreita demais para o logo de 150px, ele é reduzido proporcionalmente (mínimo 70px) em vez de vazar.
+- **Aba "Solicitação" tinha 5 colunas para tabelas de 2**, o que deixava três células verdes vazias à direita do cabeçalho (visível no print). Passou a ter 2 colunas, e os cabeçalhos não têm mais rótulos vazios.
+- Coluna "Fornecedor" de 30 para 36, que estava cortando nomes como "Budget Assessoria Contábil e Fiscal LT…".
+
+### Verificação
+- Geometria conferida por cálculo nas 5 abas: largura total 430 a 1101px, logo sempre **dentro dos limites**, com exatamente **8px de folga à direita** em todas.
+- Arquivo real gerado com os 97 títulos e **lido de volta**: 1 logo por aba, ancorado na linha reservada, e a varredura das linhas 2–3 retorna **nenhuma célula com texto** em nenhuma das abas — ou seja, o logo não tem com o que colidir.
+- Varredura procurando **célula verde sem conteúdo** (o defeito do print): **nenhuma**. Cabeçalhos das duas tabelas com exatamente 2 colunas preenchidas.
+- Negativo segue em vermelho (`FFB23A2F`); arquivo continua em 35 KB.
+- **Nada baixado:** os `.xlsx` de 18:08/18:09 na pasta Downloads são os que o usuário gerou (o de 18:09 é o do print) e o `~$…xlsx` é o arquivo de trava do Excel com a planilha aberta — não foram tocados. Fixture removida.

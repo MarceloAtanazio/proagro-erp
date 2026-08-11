@@ -1483,36 +1483,68 @@ const XL_FONTE = 'Calibri';
 const xlBordaFina = { style: 'thin', color: { argb: APORTE_XL.linha } };
 const xlTodasBordas = { top: xlBordaFina, left: xlBordaFina, bottom: xlBordaFina, right: xlBordaFina };
 
-// Cabeçalho de marca: faixa verde, logo à direita e o bloco de identificação —
-// o mesmo desenho do PDF, para os dois documentos serem reconhecíveis como o
-// mesmo relatório. Devolve o número da linha onde o conteúdo pode começar.
+// Largura de coluna do Excel -> pixels. A unidade do Excel é "quantos caracteres
+// da fonte padrão cabem"; a conversão usada pelo próprio formato é 7px por
+// caractere + 5px de padding da célula.
+const xlLarguraPx = w => Math.round(w * 7 + 5);
+// Converte uma posição horizontal em pixels para índice de coluna fracionário,
+// que é o que o ExcelJS aceita como âncora de imagem. É isso que permite
+// alinhar o logo à direita sem depender de QUANTAS colunas a aba tem.
+function aporteXlColunaEmX(larguras, x) {
+  let acc = 0;
+  for (let i = 0; i < larguras.length; i++) {
+    const w = xlLarguraPx(larguras[i]);
+    if (acc + w > x) return i + (x - acc) / w;
+    acc += w;
+  }
+  return larguras.length;
+}
+
+// Cabeçalho de marca, igual em todas as abas: faixa verde, logo alinhado à
+// direita numa FAIXA PRÓPRIA (linhas 2-3, sem nenhum texto) e, abaixo, o bloco
+// de identificação. O logo ficava ancorado por contagem de colunas
+// (`ultimaCol - 2`), então em abas estreitas — "Por categoria" tem 2 colunas —
+// caía em cima do título. Agora a âncora vem da largura real em pixels, e o
+// texto nunca divide linha com a imagem. Devolve a linha onde o conteúdo começa.
 function aporteXlCabecalho(wb, ws, subtitulo, idLogo, colunasLargura) {
   ws.columns = colunasLargura.map(w => ({ width: w }));
-  const ultimaCol = colunasLargura.length;
-  const letraFim = ws.getColumn(ultimaCol).letter;
+  const letraFim = ws.getColumn(colunasLargura.length).letter;
+  const larguraTotal = colunasLargura.reduce((s, w) => s + xlLarguraPx(w), 0);
 
   // faixa verde fina no topo, como a barra dos PDFs
   ws.mergeCells(`A1:${letraFim}1`);
   ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verde } };
   ws.getRow(1).height = 6;
 
-  ws.getCell('A2').value = 'Solicitação de Aporte';
-  ws.getCell('A2').font = { name: XL_FONTE, size: 18, bold: true, color: { argb: APORTE_XL.ink } };
-  ws.getRow(2).height = 26;
-  ws.getCell('A3').value = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
-  ws.getCell('A3').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
-  ws.getCell('A4').value = subtitulo;
-  ws.getCell('A4').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
-
-  if (idLogo != null) {
-    // Ancorado nas últimas colunas, alinhado ao bloco de texto à esquerda.
-    ws.addImage(idLogo, { tl: { col: Math.max(0, ultimaCol - 2), row: 1.2 }, ext: { width: 150, height: 35 } });
+  // Faixa do logo: duas linhas de 18pt (36px) reservadas só para a imagem.
+  const MARGEM = 8;
+  let logoW = 150, logoH = 35;
+  if (larguraTotal < logoW + MARGEM * 2) {           // aba muito estreita: reduz
+    logoW = Math.max(70, larguraTotal - MARGEM * 2);
+    logoH = Math.round(logoW * (139 / 600));
   }
+  ws.getRow(2).height = 18;
+  ws.getRow(3).height = 18;
+  if (idLogo != null) {
+    ws.addImage(idLogo, {
+      tl: { col: aporteXlColunaEmX(colunasLargura, Math.max(0, larguraTotal - MARGEM - logoW)), row: 1 },
+      ext: { width: logoW, height: logoH }
+    });
+  }
+
+  ws.getCell('A4').value = 'Solicitação de Aporte';
+  ws.getCell('A4').font = { name: XL_FONTE, size: 18, bold: true, color: { argb: APORTE_XL.ink } };
+  ws.getRow(4).height = 26;
+  ws.getCell('A5').value = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+  ws.getCell('A5').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
+  ws.getCell('A6').value = subtitulo;
+  ws.getCell('A6').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
+
   // linha divisória
-  ws.mergeCells(`A5:${letraFim}5`);
-  ws.getCell('A5').border = { bottom: { style: 'medium', color: { argb: APORTE_XL.verde } } };
-  ws.getRow(5).height = 4;
-  return 7;
+  ws.mergeCells(`A7:${letraFim}7`);
+  ws.getCell('A7').border = { bottom: { style: 'medium', color: { argb: APORTE_XL.verde } } };
+  ws.getRow(7).height = 4;
+  return 9;
 }
 
 // Faixa de título de tabela (verde, texto branco).
@@ -1602,10 +1634,10 @@ async function aporteExcel(d, dados, completo) {
 
     // ---------- Aba 1: Solicitação ----------
     const ws = wb.addWorksheet('Solicitação', { views: [{ showGridLines: false }] });
-    let L = aporteXlCabecalho(wb, ws, subtitulo, idLogo, [42, 24, 16, 16, 18]);
+    let L = aporteXlCabecalho(wb, ws, subtitulo, idLogo, [46, 26]);
 
     // Valor solicitado em destaque
-    ws.mergeCells(L, 1, L, 5);
+    ws.mergeCells(L, 1, L, 2);
     const cLabel = ws.getCell(L, 1);
     cLabel.value = 'VALOR SOLICITADO';
     cLabel.font = { name: XL_FONTE, size: 9, bold: true, color: { argb: APORTE_XL.verde } };
@@ -1613,7 +1645,7 @@ async function aporteExcel(d, dados, completo) {
     cLabel.alignment = { vertical: 'middle', indent: 1 };
     ws.getRow(L).height = 16;
     L++;
-    ws.mergeCells(L, 1, L, 5);
+    ws.mergeCells(L, 1, L, 2);
     const cValor = ws.getCell(L, 1);
     cValor.value = dados.valor;
     cValor.numFmt = APORTE_MONEY_FMT;
@@ -1623,8 +1655,8 @@ async function aporteExcel(d, dados, completo) {
     ws.getRow(L).height = 32;
     L += 2;
 
-    aporteXlTituloTabela(ws, L, 'Dados da solicitação', 5); L++;
-    aporteXlCabecalhoColunas(ws, L, ['Indicador', 'Valor', '', '', ''], ['left', 'right']); L++;
+    aporteXlTituloTabela(ws, L, 'Dados da solicitação', 2); L++;
+    aporteXlCabecalhoColunas(ws, L, ['Indicador', 'Valor'], ['left', 'right']); L++;
     L = aporteXlCorpo(ws, L, [
       ['Período analisado', `${brDate(d.de)} a ${brDate(d.ate)}`],
       ['Centro de custo', d.centroCusto || 'Todos'],
@@ -1636,8 +1668,8 @@ async function aporteExcel(d, dados, completo) {
     ], [1], ['left', 'right']);
     L += 1;
 
-    aporteXlTituloTabela(ws, L, 'Resumo financeiro do período', 5); L++;
-    aporteXlCabecalhoColunas(ws, L, ['Indicador', 'Valor', '', '', ''], ['left', 'right']); L++;
+    aporteXlTituloTabela(ws, L, 'Resumo financeiro do período', 2); L++;
+    aporteXlCabecalhoColunas(ws, L, ['Indicador', 'Valor'], ['left', 'right']); L++;
     L = aporteXlCorpo(ws, L, [
       ['Saldo inicial do período', d.resumo.saldoInicial],
       ['Total de entradas', d.resumo.totalEntradas],
@@ -1649,8 +1681,8 @@ async function aporteExcel(d, dados, completo) {
     L += 1;
 
     if (dados.justificativa) {
-      aporteXlTituloTabela(ws, L, 'Justificativa', 5); L++;
-      ws.mergeCells(L, 1, L + 2, 5);
+      aporteXlTituloTabela(ws, L, 'Justificativa', 2); L++;
+      ws.mergeCells(L, 1, L + 2, 2);
       const cj = ws.getCell(L, 1);
       cj.value = dados.justificativa;
       cj.font = { name: XL_FONTE, size: 9.5, color: { argb: APORTE_XL.ink2 } };
@@ -1659,7 +1691,7 @@ async function aporteExcel(d, dados, completo) {
       L += 4;
     }
 
-    ws.mergeCells(L, 1, L + 1, 5);
+    ws.mergeCells(L, 1, L + 1, 2);
     const cNota = ws.getCell(L, 1);
     cNota.value = 'Valor calculado a partir dos títulos de Contas a Pagar e Contas a Receber lançados no ERP na data de emissão, considerando a data de pagamento/recebimento quando já realizado e a de vencimento quando pendente. Alterações posteriores nos lançamentos mudam a necessidade apurada.';
     cNota.font = { name: XL_FONTE, size: 8, italic: true, color: { argb: APORTE_XL.muted } };
@@ -1692,7 +1724,7 @@ async function aporteExcel(d, dados, completo) {
 
       // ---------- Aba 4: Contas a pagar do período ----------
       const wsP = wb.addWorksheet('Contas a pagar do período', { views: [{ showGridLines: false }] });
-      let P = aporteXlCabecalho(wb, wsP, subtitulo, idLogo, [13, 30, 44, 22, 22, 16]);
+      let P = aporteXlCabecalho(wb, wsP, subtitulo, idLogo, [13, 36, 44, 22, 22, 16]);
       aporteXlTituloTabela(wsP, P, `Contas a pagar no período (${brDate(d.de)} a ${brDate(d.ate)}) — somente títulos em aberto`, 6); P++;
       const cabP = P;
       aporteXlCabecalhoColunas(wsP, P, ['Vencimento', 'Fornecedor', 'Descrição', 'Categoria', 'Centro de custo', 'Valor'],
