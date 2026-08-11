@@ -124,6 +124,7 @@ function openModal(title, bodyHTML, buttons, opts) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHTML;
   document.querySelector('.modal').classList.toggle('modal-wide', !!(opts && opts.wide));
+  document.querySelector('.modal').classList.toggle('modal-xwide', !!(opts && opts.xwide));
   const foot = $('#modal-footer'); foot.innerHTML = '';
   (buttons || []).forEach(b => {
     const btn = el('button', 'btn ' + (b.cls || ''), b.label);
@@ -5700,6 +5701,110 @@ async function renderViaticosConfig() {
   document.querySelectorAll('[data-del-colab]').forEach(b => b.onclick = () => confirmDelete('este colaborador', `/api/colaboradores/${b.dataset.delColab}`, renderViaticosConfig));
 }
 
+// ---- Validadores de documento do colaborador ----
+// Conferem os dígitos verificadores da CNH e o formato da placa. São AVISOS na
+// tela (não travam o cadastro): o backend só barra o que é inequívoco, porque
+// recusar um documento legítimo por variação de algoritmo seria pior que
+// mostrar um alerta para a pessoa reconferir.
+function viaConferirCNH(bruto) {
+  const d = String(bruto || '').replace(/\D/g, '');
+  if (!d) return { cls: 'off', label: 'Não informado' };
+  if (d.length !== 11) return { cls: 'late', label: `${d.length} de 11 dígitos` };
+  if (/^(\d)\1{10}$/.test(d)) return { cls: 'late', label: 'Número inválido (dígitos repetidos)' };
+  let s1 = 0, s2 = 0;
+  for (let i = 0; i < 9; i++) { s1 += Number(d[i]) * (9 - i); s2 += Number(d[i]) * (1 + i); }
+  let dv1 = s1 % 11, desconto = 0;
+  if (dv1 >= 10) { dv1 = 0; desconto = 2; }
+  let dv2 = s2 % 11;
+  dv2 = dv2 >= 10 ? 0 : dv2 - desconto;
+  if (dv2 < 0) dv2 += 11;
+  return (dv1 === Number(d[9]) && dv2 === Number(d[10]))
+    ? { cls: 'ok', label: 'Nº com dígitos conferidos' }
+    : { cls: 'warn', label: 'Dígitos verificadores não conferem — reconfira' };
+}
+function viaConferirPlaca(bruto) {
+  const p = String(bruto || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!p) return { cls: 'off', label: 'Não informada' };
+  if (/^[A-Z]{3}\d[A-Z]\d{2}$/.test(p)) return { cls: 'ok', label: `Placa Mercosul (${p})` };
+  if (/^[A-Z]{3}\d{4}$/.test(p)) return { cls: 'ok', label: `Placa modelo antigo (${p.slice(0, 3)}-${p.slice(3)})` };
+  return { cls: 'late', label: 'Formato inválido — use ABC-1234 ou ABC1D23' };
+}
+const viaBadge = s => `<span class="badge ${s.cls}">${esc(s.label)}</span>`;
+
+// Anexos embutidos na própria seção do formulário. Propositalmente NÃO usa
+// openAttachments: aquele fluxo abre outro modal e substituiria o formulário,
+// jogando fora tudo que a pessoa já tinha digitado e não salvou.
+async function colabAnexosInline(type, colabId, mountId, kindPadrao) {
+  const box = document.getElementById(mountId);
+  if (!box) return;
+  const podeEditar = canEditPage('viaticos');
+  const desenhar = items => {
+    box.innerHTML = `
+      <div class="ec-anexos-head">
+        <strong>Documentos anexados</strong>
+        <span class="ec-anexos-n">${items.length ? `${items.length} arquivo(s)` : 'nenhum'}</span>
+      </div>
+      ${items.length ? items.map(a => `
+        <div class="ec-anexo-item">
+          <span>${KIND_ICON[a.kind] || '📎'}</span>
+          <div class="ec-anexo-nome" title="${esc(a.file_name)}">${esc(a.file_name)}</div>
+          <small>${fmtSize(a.byte_size)} · ${brDate(a.created_at.slice(0, 10))}</small>
+          <button class="btn sm" data-ver="${a.id}" type="button">Ver</button>
+          ${podeEditar ? `<button class="btn sm danger-ghost" data-rem="${a.id}" type="button">Excluir</button>` : ''}
+        </div>`).join('') : '<div class="ec-anexo-vazio">Nenhum documento anexado nesta seção.</div>'}
+      ${podeEditar ? `
+      <div class="ec-anexo-add">
+        <input type="file" id="${mountId}-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.docx">
+        <button class="btn sm primary" id="${mountId}-send" type="button">📎 Anexar</button>
+        <small>Até 3 MB — PDF ou foto do documento.</small>
+      </div>` : ''}`;
+
+    box.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => colabVerAnexo(b.dataset.ver));
+    box.querySelectorAll('[data-rem]').forEach(b => b.onclick = async () => {
+      if (b.dataset.confirmando !== '1') { b.dataset.confirmando = '1'; b.textContent = 'Confirmar?'; return; }
+      try { await api(`/api/attachments/${b.dataset.rem}`, { method: 'DELETE' }); toast('Anexo excluído.'); carregar(); }
+      catch (e) { toast(e.message); }
+    });
+    const send = document.getElementById(`${mountId}-send`);
+    if (send) send.onclick = async () => {
+      const input = document.getElementById(`${mountId}-file`), file = input.files[0];
+      if (!file) return toast('Selecione um arquivo.');
+      if (file.size > 3 * 1024 * 1024) return toast('Arquivo acima do limite de 3 MB.');
+      send.disabled = true; send.textContent = 'Enviando…';
+      try {
+        const data = await readFileAsBase64(file);
+        await api(`/api/attachments/${type}/${colabId}`, { method: 'POST', body: {
+          file_name: file.name, mime_type: file.type || 'application/octet-stream', kind: kindPadrao, data
+        }});
+        toast('Documento anexado.'); input.value = ''; carregar();
+      } catch (e) { toast(e.message); }
+      finally { send.disabled = false; send.textContent = '📎 Anexar'; }
+    };
+  };
+  const carregar = async () => {
+    try { desenhar(await api(`/api/attachments/${type}/${colabId}`)); }
+    catch (e) { box.innerHTML = `<div class="ec-anexo-vazio">${esc(e.message)}</div>`; }
+  };
+  box.innerHTML = '<div class="ec-anexo-vazio">Carregando anexos…</div>';
+  carregar();
+}
+
+// Abre o documento numa aba nova, em vez de num modal: manter o formulário de
+// edição aberto por trás é o ponto — quem está conferindo a CNH normalmente
+// está justamente preenchendo a validade ao lado.
+async function colabVerAnexo(attId) {
+  try {
+    const r = await api(`/api/attachments/file/${attId}`);
+    const bin = atob(r.data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([bytes], { type: r.mime_type }));
+    const aba = window.open(url, '_blank');
+    if (!aba) toast('O navegador bloqueou a nova aba. Libere pop-ups para ver o documento.');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast(e.message || 'Não foi possível abrir o anexo.'); }
+}
+
 async function formEditarColaborador(c, usuarios) {
   const body = `
     ${fld('ec-nome', 'Nome', 'text', c.name)}
@@ -5711,32 +5816,55 @@ async function formEditarColaborador(c, usuarios) {
       ${fldSel('ec-municipio', 'Município (cidade-base)', [{ v: '', t: c.cidade_base_uf ? '— selecione —' : '— escolha o estado primeiro —' }], '')}
     </div>
 
-    <h4 style="margin:16px 0 8px">Habilitação do motorista (CNH)</h4>
-    <div class="field-row">
-      ${fld('ec-cnh-numero', 'Nº da CNH', 'text', c.cnh_numero || '')}
-      ${fldSel('ec-cnh-categoria', 'Categoria', [{ v: '', t: '— não informado —' }, ...['A', 'B', 'AB', 'C', 'D', 'E'].map(x => ({ v: x, t: x }))], c.cnh_categoria || '')}
-      ${fld('ec-cnh-validade', 'Validade da CNH', 'date', c.cnh_validade || '')}
+    <div class="ec-sec">
+      <div class="ec-sec-head">
+        <h4>🪪 Habilitação do motorista (CNH)</h4>
+        <span class="ec-sec-badges" id="ec-badges-cnh"></span>
+      </div>
+      <div class="field-row">
+        ${fld('ec-cnh-numero', 'Nº da CNH', 'text', c.cnh_numero || '', 'inputmode="numeric" maxlength="14" placeholder="11 dígitos"')}
+        ${fldSel('ec-cnh-categoria', 'Categoria', [{ v: '', t: '— não informado —' }, ...['A', 'B', 'AB', 'C', 'D', 'E'].map(x => ({ v: x, t: x }))], c.cnh_categoria || '')}
+        ${fld('ec-cnh-validade', 'Validade da CNH', 'date', c.cnh_validade || '')}
+      </div>
+      ${fld('ec-cnh-restricoes', 'Restrições (ex.: uso de lentes corretivas, só veículo automático)', 'text', c.cnh_restricoes || '')}
+      <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-motorista-apto" ${c.motorista_apto === false ? '' : 'checked'}> Motorista apto para dirigir a serviço da empresa</label>
+      <div class="field"><label>Observações sobre o motorista</label><textarea id="ec-motorista-obs" rows="2" placeholder="Ex.: restrição médica temporária, pendência de reciclagem, etc.">${esc(c.motorista_observacao || '')}</textarea></div>
+      <div class="ec-anexos" id="ec-anexos-cnh"></div>
     </div>
-    ${fld('ec-cnh-restricoes', 'Restrições (ex.: uso de lentes corretivas, só veículo automático)', 'text', c.cnh_restricoes || '')}
-    <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-motorista-apto" ${c.motorista_apto === false ? '' : 'checked'}> Motorista apto para dirigir a serviço da empresa</label>
-    <div class="field"><label>Observações sobre o motorista</label><textarea id="ec-motorista-obs" rows="2" placeholder="Ex.: restrição médica temporária, pendência de reciclagem, etc.">${esc(c.motorista_observacao || '')}</textarea></div>
 
-    <h4 style="margin:16px 0 8px">Veículo próprio (pra Solicitação de Viáticos)</h4>
-    <div class="field-row">
-      ${fld('ec-placa', 'Placa', 'text', c.veiculo_placa || '')}
-      ${fld('ec-modelo', 'Modelo', 'text', c.veiculo_modelo || '')}
-      ${fld('ec-ano', 'Ano', 'text', c.veiculo_ano || '')}
-      ${fld('ec-consumo', 'Consumo (km/L)', 'number', c.veiculo_consumo_kml || '', 'step="0.1" min="0"')}
+    <div class="ec-sec">
+      <div class="ec-sec-head">
+        <h4>🚙 Veículo próprio (pra Solicitação de Viáticos)</h4>
+        <span class="ec-sec-badges" id="ec-badges-veiculo"></span>
+      </div>
+      <div class="field-row">
+        ${fld('ec-placa', 'Placa', 'text', c.veiculo_placa || '', 'maxlength="8" placeholder="ABC-1234 ou ABC1D23" style="text-transform:uppercase"')}
+        ${fld('ec-modelo', 'Modelo', 'text', c.veiculo_modelo || '')}
+        ${fld('ec-ano', 'Ano', 'text', c.veiculo_ano || '', 'inputmode="numeric" maxlength="4"')}
+        ${fld('ec-consumo', 'Consumo (km/L)', 'number', c.veiculo_consumo_kml || '', 'step="0.1" min="0"')}
+      </div>
+      ${fld('ec-crlv-validade', 'Validade do CRLV (licenciamento)', 'date', c.veiculo_crlv_validade || '')}
+      <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-veiculo-apto" ${c.veiculo_apto === false ? '' : 'checked'}> Veículo apto para uso a serviço da empresa</label>
+      <div class="field"><label>Observações sobre o veículo</label><textarea id="ec-veiculo-obs" rows="2" placeholder="Ex.: revisão pendente, problema mecânico, etc.">${esc(c.veiculo_observacao || '')}</textarea></div>
+      <div class="ec-anexos" id="ec-anexos-veiculo"></div>
     </div>
-    ${fld('ec-crlv-validade', 'Validade do CRLV (licenciamento)', 'date', c.veiculo_crlv_validade || '')}
-    <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-possui-seguro" ${c.veiculo_possui_seguro ? 'checked' : ''}> Possui seguro do veículo</label>
-    <div id="ec-seguro-fields" class="field-row" style="${c.veiculo_possui_seguro ? '' : 'display:none'}">
-      ${fld('ec-seguradora', 'Seguradora', 'text', c.veiculo_seguradora || '')}
-      ${fld('ec-apolice', 'Nº da apólice', 'text', c.veiculo_apolice || '')}
-      ${fld('ec-seguro-validade', 'Validade do seguro', 'date', c.veiculo_seguro_validade || '')}
-    </div>
-    <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-veiculo-apto" ${c.veiculo_apto === false ? '' : 'checked'}> Veículo apto para uso a serviço da empresa</label>
-    <div class="field"><label>Observações sobre o veículo</label><textarea id="ec-veiculo-obs" rows="2" placeholder="Ex.: revisão pendente, problema mecânico, etc.">${esc(c.veiculo_observacao || '')}</textarea></div>`;
+
+    <div class="ec-sec">
+      <div class="ec-sec-head">
+        <h4>🛡️ Apólice de seguro do veículo</h4>
+        <span class="ec-sec-badges" id="ec-badges-seguro"></span>
+      </div>
+      <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="ec-possui-seguro" ${c.veiculo_possui_seguro ? 'checked' : ''}> O veículo possui seguro</label>
+      <div id="ec-seguro-fields" style="${c.veiculo_possui_seguro ? '' : 'display:none'}">
+        <div class="field-row">
+          ${fld('ec-seguradora', 'Seguradora', 'text', c.veiculo_seguradora || '')}
+          ${fld('ec-apolice', 'Nº da apólice', 'text', c.veiculo_apolice || '')}
+          ${fld('ec-seguro-validade', 'Vigência até', 'date', c.veiculo_seguro_validade || '')}
+        </div>
+        <p class="hint" style="margin:0 0 4px">Marcando "possui seguro", seguradora, nº da apólice e vigência passam a ser obrigatórios — sem os três o campo não serve de controle.</p>
+      </div>
+      <div class="ec-anexos" id="ec-anexos-seguro"></div>
+    </div>`;
 
   openModal(`Editar colaborador — ${esc(c.name)}`, body,
     [{ label: 'Cancelar', onClick: closeModal },
@@ -5759,8 +5887,44 @@ async function formEditarColaborador(c, usuarios) {
           }});
           closeModal(); toast('Colaborador atualizado.'); renderViaticosConfig();
         } catch (e) { modalError(e.message); }
-     }}]);
-  $('#ec-possui-seguro').onchange = e => { $('#ec-seguro-fields').style.display = e.target.checked ? '' : 'none'; };
+     }}], { xwide: true });
+
+  // ---- Validadores ao vivo: o estado de cada seção aparece no cabeçalho dela,
+  // então dá pra ver de longe qual documento está vencido ou faltando.
+  const pintarBadges = () => {
+    const cnh = viaConferirCNH($('#ec-cnh-numero').value);
+    const cnhVal = viaStatusValidadeDoc($('#ec-cnh-validade').value || null);
+    $('#ec-badges-cnh').innerHTML = viaBadge(cnh) + ' ' + viaBadge(cnhVal);
+
+    const placa = viaConferirPlaca($('#ec-placa').value);
+    const crlv = viaStatusValidadeDoc($('#ec-crlv-validade').value || null);
+    $('#ec-badges-veiculo').innerHTML = viaBadge(placa) + ' ' + viaBadge({ ...crlv, label: 'CRLV: ' + crlv.label });
+
+    const temSeguro = $('#ec-possui-seguro').checked;
+    if (!temSeguro) {
+      $('#ec-badges-seguro').innerHTML = viaBadge({ cls: 'off', label: 'Sem seguro declarado' });
+    } else {
+      const faltando = [];
+      if (!$('#ec-seguradora').value.trim()) faltando.push('seguradora');
+      if (!$('#ec-apolice').value.trim()) faltando.push('nº da apólice');
+      if (!$('#ec-seguro-validade').value) faltando.push('vigência');
+      $('#ec-badges-seguro').innerHTML = faltando.length
+        ? viaBadge({ cls: 'late', label: 'Falta preencher: ' + faltando.join(', ') })
+        : viaBadge({ ...viaStatusValidadeDoc($('#ec-seguro-validade').value), label: 'Vigente: ' + viaStatusValidadeDoc($('#ec-seguro-validade').value).label });
+    }
+  };
+  ['ec-cnh-numero', 'ec-cnh-validade', 'ec-placa', 'ec-crlv-validade', 'ec-seguradora', 'ec-apolice', 'ec-seguro-validade']
+    .forEach(id => { const e = $('#' + id); if (e) { e.oninput = pintarBadges; e.onchange = pintarBadges; } });
+  $('#ec-possui-seguro').onchange = e => {
+    $('#ec-seguro-fields').style.display = e.target.checked ? '' : 'none';
+    pintarBadges();
+  };
+  pintarBadges();
+
+  // Anexos por seção, carregados dentro do próprio formulário.
+  colabAnexosInline('colab_cnh', c.id, 'ec-anexos-cnh', 'outro');
+  colabAnexosInline('colab_veiculo', c.id, 'ec-anexos-veiculo', 'outro');
+  colabAnexosInline('colab_seguro', c.id, 'ec-anexos-seguro', 'contrato');
 
   // Município (cidade-base) em lista suspensa, filtrada pelo estado — evita
   // erro de digitação (acento, grafia) que faria a regra de hospedagem na

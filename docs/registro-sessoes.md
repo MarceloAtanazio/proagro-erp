@@ -597,3 +597,39 @@ Medido no navegador com a tela renderizada:
 - estado **"ainda não buscado"** (ANP nunca consultada, com erro na última tentativa) conferido: layout intacto, alerta de falha aparecendo, preço final como "—";
 - **mobile 375px**: as três colunas empilham (`grid-template-columns: 257px`), rodapé empilha, e a página **não rola lateralmente**;
 - console sem erros de layout ou JS.
+
+---
+
+## 2026-08-11 — Documentos do colaborador: anexos, validadores e seção de apólice
+
+**Pedido:** ampliar a caixa de "Editar colaborador" (Viáticos → Configurações), e adicionar em "Habilitação do motorista (CNH)" e "Veículo próprio" um botão de anexo com algum tipo de validador, além de criar uma seção equivalente para a **apólice de seguro do veículo**.
+
+**Descoberta:** os campos de seguro (`veiculo_seguradora`, `veiculo_apolice`, `veiculo_seguro_validade`) **já existiam**, mas ficavam escondidos atrás do checkbox "Possui seguro do veículo" — por isso não apareciam na tela. Não foi preciso criar coluna nenhuma; o seguro virou seção própria, no mesmo padrão das outras duas.
+
+### Largura
+Modal ia a 560px. Criada a classe `.modal-xwide` (1040px) e a opção `xwide` em `openModal` — o `wide` existente (900px) ainda apertava as linhas de 4 campos.
+
+### Anexos (3 seções)
+`erp_attachments` tinha um **CHECK constraint** aceitando só `payable`/`receivable`/`viatico`. Migração em `supabase/migrations/2026-08-11-anexos-colaborador.sql` amplia o conjunto com `colab_cnh`, `colab_veiculo` e `colab_seguro`, e cria índice `(entity_type, entity_id)`. **Operação aditiva** — nenhuma linha alterada; o rollback está comentado no próprio arquivo. Aplicada em produção dentro de transação, com contagem antes/depois conferida (73 = 73).
+
+Assim os documentos reaproveitam toda a máquina que já existia: limite de 3 MB, whitelist de MIME, conferência da assinatura do arquivo (impede SVG/HTML renomeado), download, exclusão e log de auditoria (a mensagem do log passou a nomear a seção em vez de dizer sempre "título a pagar/a receber").
+
+**Privacidade:** CNH e apólice são documentos pessoais. Os tipos `colab_*` exigem permissão de **edição** em Viáticos até para *visualizar* — diferente dos comprovantes de despesa, que quem tem só leitura pode ver. Sem isso, um colaborador de campo baixaria a CNH de um colega trocando o id na URL.
+
+**UX:** os anexos são embutidos na própria seção (`colabAnexosInline`), **não** via `openAttachments`. Aquele fluxo abre outro modal e substituiria o formulário, jogando fora tudo que estivesse digitado e não salvo. Visualizar abre em aba nova (blob), mantendo o formulário aberto por trás. Excluir pede confirmação em dois cliques no próprio botão.
+
+### Validadores
+- **CNH:** confere os 11 dígitos e os **dois dígitos verificadores**. É **aviso**, não trava: existem variações de implementação do DV, e recusar uma CNH legítima seria pior que pedir uma reconferência. O backend barra apenas o inequívoco (quantidade de dígitos, dígitos todos repetidos).
+- **Placa:** aceita modelo antigo (ABC-1234) e Mercosul (ABC1D23), normaliza para maiúsculas sem separador no banco.
+- **Ano** (1950 até ano+1) e **consumo km/L** (0 a 100).
+- **Vigências** (CNH, CRLV, seguro) com o `viaStatusValidadeDoc` já existente: vencido (vermelho), vence em ≤30 dias (amarelo), válido (verde).
+- **Apólice:** marcar "possui seguro" torna seguradora, nº e vigência obrigatórios — antes dava para marcar o checkbox e não preencher nada, o que anulava o controle. Validado nas duas pontas.
+- O estado de cada seção aparece em **badges no cabeçalho dela**, atualizando conforme se digita.
+
+### Verificação
+- **21 casos** nos validadores do front e **25 casos** nos do backend, com as funções reais extraídas dos arquivos (não reimplementadas) — todos corretos. Inclui as duas placas que já existem no banco (`QXY3B60`, `ACN-8164`), que **continuam sendo aceitas**.
+- Conferidor de CNH: testado contra **486 mutações de um dígito**, detecta **484 (99,6%)** — as 2 que passam são limitação inerente do módulo 11 com a regra de "DV ≥ 10 vira 0", aceitável para um aviso.
+- Banco: INSERT real dos três tipos novos **dentro de transação com ROLLBACK** — os três aceitos, um tipo inventado corretamente recusado pelo CHECK, e 73 linhas antes = 73 depois (nada gravado).
+- Tela, com `api` stubado bloqueando toda gravação: modal em **1040px**, três seções com validador e área de anexo; badges corretos em vencido/vencendo/válido, placa nos dois formatos, obrigatoriedade progressiva do seguro; payload do Salvar com a placa normalizada; upload enviando `colab_seguro` com kind `contrato` e `colab_cnh` com `outro`; exclusão só chamando a API no segundo clique; **e o formulário intacto depois de mexer nos anexos**.
+- Modo leitura conferido: sem permissão de edição, a área de anexo não mostra o seletor de arquivo.
+- **Mobile 375px:** achado e corrigido um vazamento de 21px — `input[type=file]` tem largura intrínseca própria e precisava de `min-width:0`. Depois: vazamento zero nas três seções, sem rolagem lateral.

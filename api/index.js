@@ -242,7 +242,13 @@ const AUDIT_MAP = {
   'POST /api/receivables/:id/receive': req => `Baixou o recebimento do recebível ID ${req.params.id}`,
   'POST /api/receivables/:id/unreceive': req => `Estornou a baixa do recebível ID ${req.params.id}`,
   'DELETE /api/receivables/:id': req => `Excluiu o recebível ID ${req.params.id}`,
-  'POST /api/attachments/:type/:id': req => `Anexou um documento (${req.body.file_name || ''}) ao título ${req.params.type === 'payable' ? 'a pagar' : 'a receber'} ID ${req.params.id}`,
+  'POST /api/attachments/:type/:id': req => {
+    const onde = {
+      payable: 'ao título a pagar', receivable: 'ao título a receber', viatico: 'à despesa de viático',
+      colab_cnh: 'à CNH do colaborador', colab_veiculo: 'ao veículo do colaborador', colab_seguro: 'à apólice de seguro do colaborador'
+    }[req.params.type] || `ao registro (${req.params.type})`;
+    return `Anexou um documento (${req.body.file_name || ''}) ${onde} ID ${req.params.id}`;
+  },
   'DELETE /api/attachments/:id': req => `Excluiu o anexo ID ${req.params.id}`,
   'POST /api/settings/categories': req => `Criou a categoria "${req.body.name}" (${req.body.type})`,
   'PUT /api/settings/categories/:id': req => `Editou a categoria ID ${req.params.id}`,
@@ -762,7 +768,19 @@ app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async 
 // ------------------------------------------------------------
 // Anexos (boletos, notas fiscais, comprovantes) — armazenados no banco
 // ------------------------------------------------------------
-const ATTACH_TYPES = { payable: 'pagar', receivable: 'receber', viatico: 'viaticos' };
+// Documentos de colaborador (CNH, veículo/CRLV, apólice de seguro) usam a mesma
+// máquina de anexos dos títulos — validação de MIME, conferência da assinatura
+// do arquivo, download e log de auditoria já vêm de graça.
+const ATTACH_TYPES = {
+  payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
+  colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos'
+};
+const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)', colab_seguro: 'apólice de seguro' };
+// CNH e apólice são documentos pessoais: quem tem apenas leitura em Viáticos
+// (o próprio colaborador de campo) enxerga suas viagens, mas não pode baixar
+// documento de colega. Por isso estes tipos exigem permissão de EDIÇÃO até
+// para visualizar — diferente dos comprovantes de despesa.
+const ehAnexoColaborador = type => Object.prototype.hasOwnProperty.call(ATTACH_TIPOS_COLAB, type);
 const ATTACH_KINDS = ['boleto', 'nota_fiscal', 'comprovante', 'contrato', 'outro'];
 const MAX_ATTACH_BYTES = 3 * 1024 * 1024; // 3 MB por arquivo (limite seguro p/ Vercel)
 // Formatos aceitos como comprovante: os que a operação realmente usa
@@ -837,6 +855,9 @@ app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
   if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
   const page = pageForType(a.entity_type);
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
+  if (ehAnexoColaborador(a.entity_type) && req.user.role !== 'admin' && !canEdit(req.user, page)) {
+    return res.status(403).json({ error: 'Documentos pessoais de colaborador só podem ser abertos por quem administra Viáticos.' });
+  }
   if (a.entity_type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, a.entity_id))) {
     return res.status(403).json({ error: 'Este anexo pertence à viagem de outro colaborador.' });
   }
@@ -848,6 +869,9 @@ app.get('/api/attachments/count/:type', requireAuth, h(async (req, res) => {
   const page = pageForType(req.params.type);
   if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão.' });
+  if (ehAnexoColaborador(req.params.type) && req.user.role !== 'admin' && !canEdit(req.user, page)) {
+    return res.status(403).json({ error: 'Sem permissão.' });
+  }
   // Em viáticos a contagem também respeita o escopo do colaborador — antes
   // devolvia o total da empresa inteira (achado C2).
   const escopoViatico = req.params.type === 'viatico' ? await viaticosEscopo(req.user) : null;
@@ -872,6 +896,9 @@ app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const page = pageForType(req.params.type);
   if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
   if (req.user.role !== 'admin' && !canView(req.user, page)) return res.status(403).json({ error: 'Sem permissão para visualizar.' });
+  if (ehAnexoColaborador(req.params.type) && req.user.role !== 'admin' && !canEdit(req.user, page)) {
+    return res.status(403).json({ error: 'Documentos pessoais de colaborador só podem ser vistos por quem administra Viáticos.' });
+  }
   if (req.params.type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, req.params.id))) {
     return res.status(403).json({ error: 'Esta despesa pertence à viagem de outro colaborador.' });
   }
@@ -916,10 +943,13 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const mime = mimeDoConteudo(buf, mimeInformado);
   if (!mime) return res.status(415).json({ error: 'O conteúdo do arquivo não corresponde a um formato permitido. Verifique se o arquivo não está corrompido ou renomeado.' });
 
-  // Confirma que o título existe.
-  const table = { payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas' }[req.params.type];
+  // Confirma que o registro dono do anexo existe.
+  const table = {
+    payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas',
+    colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores'
+  }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
-  if (!own.length) return res.status(404).json({ error: 'Título não encontrado.' });
+  if (!own.length) return res.status(404).json({ error: ehAnexoColaborador(req.params.type) ? 'Colaborador não encontrado.' : 'Título não encontrado.' });
 
   const ins = await query(
     `INSERT INTO erp_attachments (entity_type, entity_id, kind, file_name, mime_type, byte_size, data, uploaded_by)
@@ -1745,17 +1775,71 @@ async function viaticosEscopo(user) {
   return rows.length ? rows.map(r => r.id) : [-1];
 }
 
+// ---- Validação de documentos do colaborador ----
+// A CNH tem 11 dígitos, com os dois últimos verificadores. O BACKEND só barra o
+// que é inequívoco (quantidade de dígitos e repetição óbvia): existem variações
+// de implementação do dígito verificador, e recusar o cadastro de uma CNH
+// legítima seria pior que deixar passar um dígito trocado. A conferência dos
+// verificadores é feita na tela, como AVISO visível (viaConferirCNH em app.js).
+function cnhFormatoValido(bruto) {
+  const d = String(bruto || '').replace(/\D/g, '');
+  if (d.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(d)) return false; // 00000000000, 11111111111...
+  return true;
+}
+// Placa: modelo antigo (ABC-1234) e Mercosul (ABC1D23). Normaliza para
+// maiúsculas sem separador, para a comparação não depender de como foi digitada.
+function placaNormalizada(bruto) {
+  const p = String(bruto || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (/^[A-Z]{3}\d{4}$/.test(p) || /^[A-Z]{3}\d[A-Z]\d{2}$/.test(p)) return p;
+  return null;
+}
+// Valida só o que foi preenchido: campo vazio continua sendo opcional.
+function validarDocsColaborador(b) {
+  if (sanitize(b.cnh_numero) && !cnhFormatoValido(b.cnh_numero)) {
+    return 'Nº da CNH deve ter 11 dígitos.';
+  }
+  if (sanitize(b.veiculo_placa) && !placaNormalizada(b.veiculo_placa)) {
+    return 'Placa inválida — use ABC-1234 (modelo antigo) ou ABC1D23 (Mercosul).';
+  }
+  if (sanitize(b.veiculo_ano)) {
+    const ano = Number(String(b.veiculo_ano).replace(/\D/g, ''));
+    const limite = new Date().getFullYear() + 1;
+    if (!isFinite(ano) || ano < 1950 || ano > limite) return `Ano do veículo inválido (use um valor entre 1950 e ${limite}).`;
+  }
+  if (b.veiculo_consumo_kml) {
+    const c = Number(b.veiculo_consumo_kml);
+    if (!isFinite(c) || c <= 0 || c > 100) return 'Consumo (km/L) inválido — informe um valor entre 0 e 100.';
+  }
+  // Marcou que tem seguro: a apólice precisa ter identificação e vigência,
+  // senão o "possui seguro" não serve de controle nenhum.
+  if (b.veiculo_possui_seguro === true) {
+    if (!sanitize(b.veiculo_seguradora)) return 'Informe a seguradora (ou desmarque "possui seguro").';
+    if (!sanitize(b.veiculo_apolice)) return 'Informe o nº da apólice (ou desmarque "possui seguro").';
+    if (!b.veiculo_seguro_validade) return 'Informe a validade do seguro (ou desmarque "possui seguro").';
+  }
+  return null;
+}
+
 app.get('/api/colaboradores', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
   const escopo = await viaticosEscopo(req.user);
-  res.json(await query(
-    `SELECT * FROM erp_colaboradores ${escopo ? 'WHERE id = ANY($1)' : ''} ORDER BY ativo DESC, name`,
-    escopo ? [escopo] : []));
+  const rows = await query(
+    `SELECT c.*,
+       (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='colab_cnh'     AND a.entity_id=c.id) AS anexos_cnh,
+       (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='colab_veiculo' AND a.entity_id=c.id) AS anexos_veiculo,
+       (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='colab_seguro'  AND a.entity_id=c.id) AS anexos_seguro
+     FROM erp_colaboradores c ${escopo ? 'WHERE c.id = ANY($1)' : ''} ORDER BY c.ativo DESC, c.name`,
+    escopo ? [escopo] : []);
+  res.json(rows);
 }));
 
 app.post('/api/colaboradores', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
   if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
+  const erroDoc = validarDocsColaborador(b);
+  if (erroDoc) return res.status(400).json({ error: erroDoc });
+  if (b.veiculo_placa) b.veiculo_placa = placaNormalizada(b.veiculo_placa);
   const ins = await query(`INSERT INTO erp_colaboradores
     (name, cargo, tier, usuario_id, cidade_base_uf, cidade_base_municipio, veiculo_placa, veiculo_modelo, veiculo_consumo_kml,
      veiculo_ano, veiculo_crlv_validade, veiculo_possui_seguro, veiculo_seguradora, veiculo_apolice, veiculo_seguro_validade,
@@ -1775,6 +1859,9 @@ app.put('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async 
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });
   if (!['A', 'B'].includes(b.tier)) return res.status(400).json({ error: 'Tier inválido (A ou B).' });
+  const erroDoc = validarDocsColaborador(b);
+  if (erroDoc) return res.status(400).json({ error: erroDoc });
+  if (b.veiculo_placa) b.veiculo_placa = placaNormalizada(b.veiculo_placa);
   await query(`UPDATE erp_colaboradores SET name=$1, cargo=$2, tier=$3, ativo=$4, usuario_id=$5,
     cidade_base_uf=$6, cidade_base_municipio=$7, veiculo_placa=$8, veiculo_modelo=$9, veiculo_consumo_kml=$10,
     veiculo_ano=$11, veiculo_crlv_validade=$12, veiculo_possui_seguro=$13, veiculo_seguradora=$14, veiculo_apolice=$15,
