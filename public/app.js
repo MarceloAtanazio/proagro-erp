@@ -1326,13 +1326,25 @@ async function aportePDF(d, dados, completo) {
     const now = new Date();
 
     doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+
+    // Cabeçalho: o logo fica centralizado verticalmente em relação ao bloco de
+    // texto (título + as duas linhas de identificação). Antes era fixo em y=10,
+    // preso ao topo, enquanto o texto descia até y=28 — o logo parecia solto,
+    // desalinhado das letras. As medidas são calculadas a partir dos próprios
+    // tamanhos de fonte, então continuam certas se o cabeçalho mudar.
+    const TIT_BASE = 18, LIN1_BASE = 23.5, LIN2_BASE = 28;
+    const mm = pt => pt / 72 * 25.4;
+    const topoTexto = TIT_BASE - mm(16) * 0.717;   // altura de caixa alta do título
+    const baseTexto = LIN2_BASE + mm(8.5) * 0.21;  // descida da última linha
     const logoW = 30, logoH = logoW * (139 / 600);
-    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', pageW - MARGIN - logoW, 10, logoW, logoH);
+    const logoY = (topoTexto + baseTexto) / 2 - logoH / 2;
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', pageW - MARGIN - logoW, logoY, logoW, logoH);
+
     doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(30, 38, 32);
-    doc.text('Solicitação de Aporte', MARGIN, 18);
+    doc.text('Solicitação de Aporte', MARGIN, TIT_BASE);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...CINZA);
-    doc.text(`${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}`, MARGIN, 23.5);
-    doc.text(`Emitida em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${dados.solicitante || (USER ? USER.name : '')}`, MARGIN, 28);
+    doc.text(`${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}`, MARGIN, LIN1_BASE);
+    doc.text(`Emitida em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${dados.solicitante || (USER ? USER.name : '')}`, MARGIN, LIN2_BASE);
     doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 31, pageW - MARGIN, 31);
 
     let y = 38;

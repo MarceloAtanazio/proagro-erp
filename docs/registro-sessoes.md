@@ -653,3 +653,21 @@ Assim os documentos reaproveitam toda a máquina que já existia: limite de 3 MB
 - **Integração com o autoTable real**, no navegador, usando os mesmos dados do print (saldo virando em 30/08): exatamente **4 células** vermelhas e em negrito — as quatro negativas —, e numa segunda tabela com descrições contendo hífen, apenas o `-R$ 90,00` do estorno ficou vermelho.
 - Os três `didParseCell: aportePintarNegativos` conferidos no código da função.
 - **Nenhum arquivo foi baixado:** o teste monta o documento e inspeciona as células, sem nunca chamar `doc.save` — que é a única forma confiável de testar geração de PDF aqui, conforme registrado na sessão anterior.
+
+---
+
+## 2026-08-11 — Logo alinhado ao texto no cabeçalho da Solicitação de Aporte
+
+**Pedido:** alinhar o logo com as letras no relatório de Solicitação de Aporte — estava visivelmente deslocado para cima.
+
+**Causa:** o cabeçalho do Aporte é o único com logo **à direita** e um bloco de texto de **três linhas** (título em y=18, razão social em 23.5, "Emitida em…" em 28). O logo estava fixo em `y=10`, herdado do padrão dos outros relatórios — que têm o logo à esquerda com apenas duas linhas curtas ao lado, onde o topo fixo funciona. Aqui o texto descia até ~28,6 mm e o logo terminava em 16,95 mm: o centro do logo ficava **7,81 mm acima** do centro do bloco de texto.
+
+### Correção
+O `y` do logo passou a ser **calculado**, centralizando-o verticalmente em relação ao bloco de texto, a partir dos próprios tamanhos de fonte (altura de caixa alta do título e descida da última linha) — se o cabeçalho mudar de tamanho, o alinhamento acompanha. As três baselines viraram constantes (`TIT_BASE`, `LIN1_BASE`, `LIN2_BASE`) para não haver número solto repetido.
+
+Resultado: logo de 17,82 a 24,77 mm, centro em **21,30 mm** contra **21,29 mm** do texto — diferença de 0,004 mm. Folga de 6,23 mm até a linha separadora (y=31) e 14,82 mm até a faixa verde do topo, sem sobreposição.
+
+### Verificação
+Rodada a função **real** `aportePDF` no navegador, com `addImage` e `text` instrumentados para capturar as coordenadas efetivamente usadas — confirmando logo em `y=17.82` e as três baselines em 18 / 23,5 / 28.
+
+**Sobre o download:** desta vez a interceptação do `save` funcionou. O ponto que faltava nas tentativas anteriores era substituir o **construtor** `jspdf.jsPDF` e sobrescrever `save` **na instância** logo após o `new` — `save` é propriedade própria do objeto, não do prototype, então mexer no prototype nunca surtia efeito. Conferido no disco: nenhum arquivo criado nos 2 minutos do teste (os arquivos de 17:32/17:34 na pasta Downloads são os que o próprio usuário gerou).
