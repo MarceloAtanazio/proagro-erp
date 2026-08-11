@@ -574,3 +574,26 @@ O cálculo estava **correto** — alimentação R$ 140 × 3 dias = 420, táxi (8
 - `node --check` OK nos dois arquivos; arquivos de teste removidos.
 
 **Não alterado:** o registro id 62 continua com `valor_solicitado` NULL no banco — a tela já exibe R$ 975,00 pelo fallback, e o campo é gravado na primeira vez que a solicitação for salva em "Editar". Um UPDATE de backfill não foi executado por não ter autorização para escrever em produção.
+
+---
+
+## 2026-08-11 — Card do combustível (ANP) ocupando a largura toda das Configurações
+
+**Pedido:** expandir o quadro do preço automático da ANP para preencher o espaço vazio à direita, na tela de Configurações de Viáticos.
+
+**Causa:** o card tinha `max-width:520px` fixo, dentro de um modal `modal-wide` de 900px (≈856px úteis) — sobravam ~336px vazios à direita.
+
+### Mudança
+- Removido o `max-width`; o card passa a usar a largura disponível.
+- Os três valores saíram da tabela estreita (`via-resumo-tbl`, que empilhava as linhas e quebrava o rótulo "Preço médio ANP (Gasolina Comum, Brasil)" em três linhas) e foram para **três colunas lado a lado**: preço da ANP · margem de segurança · preço final. O preço final continua destacado em verde, agora como bloco próprio.
+- Rodapé reorganizado: a data da última atualização à esquerda e os botões "Salvar margem" / "Atualizar agora" à direita, na mesma linha.
+- Novas classes em `styles.css` (`.anp-card`, `.anp-grid`, `.anp-box`, `.anp-margem`, `.anp-rodape`), com números em `tabular-nums` e as três colunas virando uma só abaixo de 720px.
+
+### Verificação
+Medido no navegador com a tela renderizada:
+- card em **856px = exatamente o espaço útil do modal, zero sobra** (era 520px);
+- três colunas de ~265px, mesma altura, **sem vazamento horizontal** em nenhuma delas, e os valores cabendo numa linha;
+- rodapé com data e botões na mesma linha;
+- estado **"ainda não buscado"** (ANP nunca consultada, com erro na última tentativa) conferido: layout intacto, alerta de falha aparecendo, preço final como "—";
+- **mobile 375px**: as três colunas empilham (`grid-template-columns: 257px`), rodapé empilha, e a página **não rola lateralmente**;
+- console sem erros de layout ou JS.

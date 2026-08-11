@@ -5591,21 +5591,33 @@ async function renderViaticosConfig() {
     ? new Date(viaConfig.combustivel_anp_atualizado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null;
   const body = `
-    <div class="card" style="margin-bottom:16px; max-width:520px">
+    <div class="card anp-card">
       <h4 style="margin:0 0 4px">⛽ Combustível — preço automático (ANP)</h4>
-      <p class="hint" style="margin:0 0 10px">Buscado sozinho toda semana no Levantamento de Preços da ANP (média nacional, Gasolina Comum) — não precisa preencher. Usado no cálculo de rota de Carro Próprio e Aluguel de Carro.</p>
+      <p class="hint" style="margin:0 0 12px">Buscado sozinho toda semana no Levantamento de Preços da ANP (média nacional, Gasolina Comum) — não precisa preencher. Usado no cálculo de rota de Carro Próprio e Aluguel de Carro.</p>
       ${viaConfig.combustivel_anp_erro ? `<div class="alert-item late" style="margin-bottom:10px">⚠️ Última busca falhou: ${esc(viaConfig.combustivel_anp_erro)}. O valor abaixo é o último obtido com sucesso.</div>` : ''}
-      <table class="via-resumo-tbl">
-        <tr><td>Preço médio ANP (Gasolina Comum, Brasil)</td><td>${anpValor != null ? brl(anpValor) : '<span style="color:var(--muted)">ainda não buscado</span>'}</td></tr>
-        <tr><td>Margem de segurança</td><td>
-          <input id="cfg-margem" type="number" step="0.1" min="0" max="200" value="${esc(margem)}" style="width:70px; text-align:right">% do valor da ANP
-        </td></tr>
-        <tr style="font-weight:700; background:var(--verde-050)"><td>Preço final usado nos cálculos</td><td style="font-size:16px">${viaConfig.preco_combustivel_litro != null ? brl(viaConfig.preco_combustivel_litro) : '—'}</td></tr>
-      </table>
-      <p class="hint" style="margin:8px 0 12px">${atualizadoEm ? `Atualizado em ${atualizadoEm}` : 'Nunca atualizado'}${viaConfig.combustivel_anp_semana_fim ? ` · semana da pesquisa ANP encerrada em ${brDate(viaConfig.combustivel_anp_semana_fim)}` : ''}.</p>
-      <div class="btn-group">
-        <button class="btn primary" id="cfg-margem-save" type="button">Salvar margem</button>
-        <button class="btn" id="cfg-anp-refresh" type="button">Atualizar agora</button>
+      <div class="anp-grid">
+        <div class="anp-box">
+          <small>Preço médio ANP <span style="white-space:nowrap">(Gasolina Comum, Brasil)</span></small>
+          <strong>${anpValor != null ? brl(anpValor) : '<span style="color:var(--muted); font-weight:600; font-size:14px">ainda não buscado</span>'}</strong>
+        </div>
+        <div class="anp-box">
+          <small>Margem de segurança</small>
+          <div class="anp-margem">
+            <input id="cfg-margem" type="number" step="0.1" min="0" max="200" value="${esc(margem)}">
+            <span>% do valor da ANP</span>
+          </div>
+        </div>
+        <div class="anp-box final">
+          <small>Preço final usado nos cálculos</small>
+          <strong>${viaConfig.preco_combustivel_litro != null ? brl(viaConfig.preco_combustivel_litro) : '—'}</strong>
+        </div>
+      </div>
+      <div class="anp-rodape">
+        <p class="hint" style="margin:0">${atualizadoEm ? `Atualizado em ${atualizadoEm}` : 'Nunca atualizado'}${viaConfig.combustivel_anp_semana_fim ? ` · semana da pesquisa ANP encerrada em ${brDate(viaConfig.combustivel_anp_semana_fim)}` : ''}.</p>
+        <div class="btn-group">
+          <button class="btn primary" id="cfg-margem-save" type="button">Salvar margem</button>
+          <button class="btn" id="cfg-anp-refresh" type="button">Atualizar agora</button>
+        </div>
       </div>
     </div>
     <p class="hint">Estacionamento é sempre lançado "por recibo" (sem teto) e Veículo próprio fica fora da TUD — não precisam de configuração aqui.</p>
