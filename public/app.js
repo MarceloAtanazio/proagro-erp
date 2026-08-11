@@ -1009,6 +1009,7 @@ async function renderFluxo() {
       </select>
       <button class="btn" id="fx-clear">Limpar filtros</button>
       <div class="spacer"></div>
+      <button class="btn primary" id="fx-aporte">💰 Solicitar aporte</button>
       <button class="btn" id="fx-csv">CSV</button>
       <button class="btn" id="fx-xlsx">Excel</button>
       <button class="btn" id="fx-pdf">PDF</button>
@@ -1193,6 +1194,7 @@ async function renderFluxo() {
   $('#fx-csv').onclick = () => askCompletoOuResumido('CSV', exportCSVCompleto, exportCSVResumo);
   $('#fx-xlsx').onclick = () => askCompletoOuResumido('Excel', exportXLSXCompleto, exportXLSXResumo);
   $('#fx-pdf').onclick = () => askCompletoOuResumido('PDF', exportPDFCompletoFn, exportPDFResumoFn);
+  $('#fx-aporte').onclick = () => abrirSolicitacaoAporte(d);
 
   makeChart($('#ch-saldo'), {
     type: 'line',
@@ -1231,6 +1233,278 @@ async function renderFluxo() {
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + brl(ctx.parsed.x) } } },
         scales: { x: { ticks: { font: { family: 'DM Sans' } }, grid: { color: '#EDF1EE' } }, y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } } }
     });
+  }
+}
+
+// ============================================================
+// SOLICITAÇÃO DE APORTE (Fluxo de Caixa)
+// Documento para pedir recurso à matriz. O valor é o "aporte necessário"
+// calculado no servidor para o PERÍODO FILTRADO (quanto zera o pior momento
+// de caixa até a data final escolhida) — diferente do alerta da tela, que
+// olha 90 dias fixos à frente. Os dois números aparecem no documento: o
+// solicitado e, como contexto, o do horizonte de 90 dias, para a matriz ver
+// se o pedido cobre só o período ou o risco inteiro.
+// ============================================================
+const APORTE_MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+
+function abrirSolicitacaoAporte(d) {
+  const necessario = d.aporte ? d.aporte.necessario : 0;
+  const horizonte90 = d.alerta ? d.alerta.necessidade : 0;
+  const cobreMenosQueRisco = horizonte90 > necessario + 0.005;
+
+  openModal('Solicitação de aporte à matriz', `
+    <p class="hint" style="margin-top:0">Baseada nos filtros aplicados na tela: período de <strong>${brDate(d.de)}</strong> a <strong>${brDate(d.ate)}</strong>${d.centroCusto ? ` · centro de custo <strong>${esc(d.centroCusto)}</strong>` : ''}.</p>
+    <table class="via-resumo-tbl">
+      <tr><td>Pior momento de caixa no período</td><td>${d.aporte && d.aporte.diaPior ? brDate(d.aporte.diaPior) : '—'}</td></tr>
+      <tr><td>Saldo no pior momento</td><td class="${(d.aporte && d.aporte.piorSaldo) < 0 ? 'neg' : ''}">${brl(d.aporte ? d.aporte.piorSaldo : 0)}</td></tr>
+      <tr style="font-weight:700; background:var(--verde-050)"><td>Aporte necessário no período</td><td style="font-size:16px">${brl(necessario)}</td></tr>
+    </table>
+    ${necessario <= 0
+      ? `<div class="alert-item ok" style="margin:12px 0">✅ Neste período o caixa não fica negativo — não há aporte a solicitar. Você ainda pode gerar o documento (valor zero) se precisar registrar a análise.</div>`
+      : cobreMenosQueRisco
+        ? `<div class="alert-item warn" style="margin:12px 0">⚠️ Atenção: este pedido cobre <strong>até ${brDate(d.ate)}</strong>. Olhando 90 dias à frente (até ${brDate(d.alerta.horizonte)}), a necessidade sobe para <strong>${brl(horizonte90)}</strong>. Considere ampliar o período do filtro se quiser pedir de uma vez.</div>`
+        : ''}
+    ${fld('ap-valor', 'Valor a solicitar (R$) — ajuste se quiser arredondar', 'number', necessario ? necessario.toFixed(2) : '', 'step="0.01" min="0"')}
+    ${fld('ap-solicitante', 'Solicitante', 'text', USER ? USER.name : '')}
+    <div class="field"><label for="ap-just">Justificativa / observações (aparece no documento)</label>
+      <textarea id="ap-just" rows="3" placeholder="Ex.: cobertura da operação de campo e folha do período; sem previsão de entradas relevantes."></textarea></div>
+    <p class="hint">Escolha o formato e o nível de detalhe. O <strong>Resumido</strong> traz a necessidade e o resumo financeiro; o <strong>Completo</strong> inclui a evolução do saldo, as despesas por categoria e os títulos pendentes que formam o déficit.</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'Excel', onClick: () => aporteEscolherModo(d, 'excel') },
+      { label: 'PDF', cls: 'primary', onClick: () => aporteEscolherModo(d, 'pdf') }
+    ], { wide: true });
+}
+
+// Guarda o que foi digitado antes de trocar de modal (o openModal seguinte
+// substitui o corpo e perderia os campos).
+function aporteColetarDados(d) {
+  const valorInput = $('#ap-valor');
+  const valor = valorInput ? Number(valorInput.value) : 0;
+  return {
+    valor: isFinite(valor) && valor >= 0 ? valor : (d.aporte ? d.aporte.necessario : 0),
+    solicitante: $('#ap-solicitante') ? $('#ap-solicitante').value.trim() : (USER ? USER.name : ''),
+    justificativa: $('#ap-just') ? $('#ap-just').value.trim() : ''
+  };
+}
+
+function aporteEscolherModo(d, formato) {
+  const dados = aporteColetarDados(d);
+  openModal(`Solicitação de aporte — ${formato === 'pdf' ? 'PDF' : 'Excel'}`,
+    `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o documento <strong>completo</strong> (com evolução do saldo, despesas por categoria e títulos pendentes) ou <strong>resumido</strong> (necessidade e resumo financeiro)?</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? aportePDF(d, dados, false) : aporteExcel(d, dados, false); } },
+      { label: 'Completo', cls: 'primary', onClick: () => { closeModal(); formato === 'pdf' ? aportePDF(d, dados, true) : aporteExcel(d, dados, true); } }
+    ]);
+}
+
+async function aportePDF(d, dados, completo) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
+    const MARGIN = 14;
+    const now = new Date();
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 30, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', pageW - MARGIN - logoW, 10, logoW, logoH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(30, 38, 32);
+    doc.text('Solicitação de Aporte', MARGIN, 18);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...CINZA);
+    doc.text(`${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}`, MARGIN, 23.5);
+    doc.text(`Emitida em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${dados.solicitante || (USER ? USER.name : '')}`, MARGIN, 28);
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 31, pageW - MARGIN, 31);
+
+    let y = 38;
+    // Valor solicitado em destaque — é a informação que a matriz precisa ver primeiro.
+    doc.setFillColor(...VERDE_CLARO); doc.roundedRect(MARGIN, y, pageW - MARGIN * 2, 22, 2, 2, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...VERDE);
+    doc.text('VALOR SOLICITADO', MARGIN + 6, y + 7);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20);
+    doc.text(brl(dados.valor), MARGIN + 6, y + 17);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...CINZA);
+    doc.text(`Período considerado: ${brDate(d.de)} a ${brDate(d.ate)}`, pageW - MARGIN - 6, y + 12, { align: 'right' });
+    y += 30;
+
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid',
+      body: [
+        ['Período analisado', `${brDate(d.de)} a ${brDate(d.ate)}`],
+        ['Centro de custo', d.centroCusto || 'Todos'],
+        ['Pior momento de caixa no período', d.aporte && d.aporte.diaPior ? brDate(d.aporte.diaPior) : '—'],
+        ['Saldo no pior momento', brl(d.aporte ? d.aporte.piorSaldo : 0)],
+        ['Aporte necessário (calculado)', brl(d.aporte ? d.aporte.necessario : 0)],
+        ['Necessidade em 90 dias (contexto)', `${brl(d.alerta.necessidade)} — até ${brDate(d.alerta.horizonte)}`]
+      ],
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42] },
+      columnStyles: { 0: { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 72 }, 1: { halign: 'right' } }
+    });
+    y = doc.lastAutoTable.finalY + 8;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
+    doc.text('Resumo financeiro do período', MARGIN, y); y += 5;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN },
+      head: [['Indicador', 'Valor']],
+      body: [
+        ['Saldo inicial do período', brl(d.resumo.saldoInicial)],
+        ['Total de entradas', brl(d.resumo.totalEntradas)],
+        ['Total de saídas', brl(d.resumo.totalSaidas)],
+        ['Saldo bancário atual (hoje)', brl(d.resumo.saldoAtual)],
+        ['Saldo ao fim do período', brl(d.aporte ? d.aporte.saldoFinalPeriodo : 0)],
+        ['Saldo previsto (todo o pendente)', brl(d.resumo.saldoPrevisto)]
+      ],
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5 },
+      headStyles: { fillColor: VERDE, textColor: 255 },
+      columnStyles: { 1: { halign: 'right' } },
+      didParseCell: hook => {
+        if (hook.section === 'body' && hook.column.index === 1 && String(hook.cell.raw).startsWith('-')) hook.cell.styles.textColor = VERMELHO;
+      }
+    });
+    y = doc.lastAutoTable.finalY + 8;
+
+    if (dados.justificativa) {
+      if (y > pageH - 45) { doc.addPage(); y = 20; }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
+      doc.text('Justificativa', MARGIN, y); y += 5;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+      const linhas = doc.splitTextToSize(dados.justificativa, pageW - MARGIN * 2 - 6);
+      const alturaBox = Math.max(12, linhas.length * 4.5 + 6);
+      doc.setDrawColor(210, 218, 213); doc.rect(MARGIN, y, pageW - MARGIN * 2, alturaBox);
+      doc.text(linhas, MARGIN + 3, y + 6);
+      y += alturaBox + 8;
+    }
+
+    if (completo) {
+      const secao = (titulo, head, body, colStyles) => {
+        if (!body.length) return;
+        if (y > pageH - 40) { doc.addPage(); y = 20; }
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE);
+        doc.text(titulo, MARGIN, y); y += 5;
+        doc.autoTable({
+          startY: y, margin: { left: MARGIN, right: MARGIN }, head: [head], body,
+          styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
+          headStyles: { fillColor: VERDE, textColor: 255, fontSize: 8 },
+          columnStyles: colStyles || {}
+        });
+        y = doc.lastAutoTable.finalY + 8;
+      };
+
+      secao('Evolução do saldo no período', ['Período', 'Entradas', 'Saídas', 'Saldo acumulado'],
+        d.buckets.map(b => [b.label, brl(b.entradas), brl(b.saidas), brl(b.saldo)]),
+        { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } });
+
+      secao('Despesas por categoria no período', ['Categoria', 'Total'],
+        d.categorias.despesas.map(x => [x.category, brl(x.total)]),
+        { 1: { halign: 'right', cellWidth: 34 } });
+
+      if (d.categorias.receitas.length) {
+        secao('Receitas por categoria no período', ['Categoria', 'Total'],
+          d.categorias.receitas.map(x => [x.category, brl(x.total)]),
+          { 1: { halign: 'right', cellWidth: 34 } });
+      }
+
+      secao('Próximos títulos a pagar (pendentes)', ['Vencimento', 'Fornecedor / descrição', 'Centro de custo', 'Valor'],
+        d.futuras.pagar.map(r => [brDate(r.due_date), `${r.party ? r.party + ' — ' : ''}${r.description}`, r.cost_center || '—', brl(r.amount)]),
+        { 0: { cellWidth: 22 }, 3: { halign: 'right', cellWidth: 26 } });
+
+      if (d.futuras.receber.length) {
+        secao('Próximos títulos a receber (pendentes)', ['Vencimento', 'Cliente / descrição', 'Valor'],
+          d.futuras.receber.map(r => [brDate(r.due_date), `${r.client_name ? r.client_name + ' — ' : ''}${r.description}`, brl(r.amount)]),
+          { 0: { cellWidth: 22 }, 2: { halign: 'right', cellWidth: 26 } });
+      }
+    }
+
+    if (y > pageH - 32) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    const nota = doc.splitTextToSize('Valor calculado a partir dos títulos de Contas a Pagar e Contas a Receber lançados no ERP na data de emissão, considerando a data de pagamento/recebimento quando já realizado e a de vencimento quando pendente. Alterações posteriores nos lançamentos mudam a necessidade apurada.', pageW - MARGIN * 2);
+    doc.text(nota, MARGIN, y); y += nota.length * 4 + 12;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    doc.text(`Solicitado por ${dados.solicitante || (USER ? USER.name : '')} em ${now.toLocaleDateString('pt-BR')}`, MARGIN, y);
+
+    doc.save(`solicitacao_aporte_${completo ? 'completo' : 'resumido'}_${d.de}_a_${d.ate}.pdf`);
+    toast('Solicitação de aporte gerada em PDF.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
+}
+
+function aporteExcel(d, dados, completo) {
+  if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  try {
+    const wb = XLSX.utils.book_new();
+    const now = new Date();
+
+    const linhas = [
+      ['SOLICITAÇÃO DE APORTE'],
+      [COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME],
+      [`Emitida em ${now.toLocaleDateString('pt-BR')} por ${dados.solicitante || (USER ? USER.name : '')}`],
+      [],
+      ['Valor solicitado', dados.valor],
+      ['Período analisado', `${brDate(d.de)} a ${brDate(d.ate)}`],
+      ['Centro de custo', d.centroCusto || 'Todos'],
+      ['Pior momento de caixa no período', d.aporte && d.aporte.diaPior ? brDate(d.aporte.diaPior) : '—'],
+      ['Saldo no pior momento', d.aporte ? d.aporte.piorSaldo : 0],
+      ['Aporte necessário (calculado)', d.aporte ? d.aporte.necessario : 0],
+      ['Necessidade em 90 dias (contexto)', d.alerta.necessidade],
+      ['Horizonte dos 90 dias', brDate(d.alerta.horizonte)],
+      [],
+      ['RESUMO FINANCEIRO DO PERÍODO'],
+      ['Saldo inicial do período', d.resumo.saldoInicial],
+      ['Total de entradas', d.resumo.totalEntradas],
+      ['Total de saídas', d.resumo.totalSaidas],
+      ['Saldo bancário atual (hoje)', d.resumo.saldoAtual],
+      ['Saldo ao fim do período', d.aporte ? d.aporte.saldoFinalPeriodo : 0],
+      ['Saldo previsto (todo o pendente)', d.resumo.saldoPrevisto]
+    ];
+    if (dados.justificativa) linhas.push([], ['JUSTIFICATIVA'], [dados.justificativa]);
+
+    const ws = XLSX.utils.aoa_to_sheet(linhas);
+    // Formata como moeda as células de valor (coluna B) das linhas monetárias.
+    [5, 9, 10, 11, 15, 16, 17, 18, 19, 20].forEach(r => { const cel = ws['B' + r]; if (cel && typeof cel.v === 'number') cel.z = APORTE_MONEY_FMT; });
+    ws['!cols'] = [{ wch: 38 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Solicitação');
+
+    if (completo) {
+      const wsFluxo = XLSX.utils.aoa_to_sheet([
+        ['Período', 'Entradas', 'Saídas', 'Saldo acumulado'],
+        ...d.buckets.map(b => [b.label, b.entradas, b.saidas, b.saldo])
+      ]);
+      for (let i = 0; i < d.buckets.length; i++) {
+        ['B', 'C', 'D'].forEach(cl => { const cel = wsFluxo[cl + (i + 2)]; if (cel) cel.z = APORTE_MONEY_FMT; });
+      }
+      wsFluxo['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, wsFluxo, 'Evolução do saldo');
+
+      const wsCat = XLSX.utils.aoa_to_sheet([
+        ['DESPESAS POR CATEGORIA'], ['Categoria', 'Total'],
+        ...d.categorias.despesas.map(x => [x.category, x.total]),
+        [], ['RECEITAS POR CATEGORIA'], ['Categoria', 'Total'],
+        ...d.categorias.receitas.map(x => [x.category, x.total])
+      ]);
+      Object.keys(wsCat).filter(k => /^B\d+$/.test(k)).forEach(k => { if (typeof wsCat[k].v === 'number') wsCat[k].z = APORTE_MONEY_FMT; });
+      wsCat['!cols'] = [{ wch: 34 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, wsCat, 'Por categoria');
+
+      const wsTit = XLSX.utils.aoa_to_sheet([
+        ['TÍTULOS A PAGAR PENDENTES'], ['Vencimento', 'Fornecedor', 'Descrição', 'Centro de custo', 'Valor'],
+        ...d.futuras.pagar.map(r => [brDate(r.due_date), r.party || '', r.description, r.cost_center || '', r.amount]),
+        [], ['TÍTULOS A RECEBER PENDENTES'], ['Vencimento', 'Cliente', 'Descrição', 'Valor'],
+        ...d.futuras.receber.map(r => [brDate(r.due_date), r.client_name || '', r.description, r.amount])
+      ]);
+      Object.keys(wsTit).filter(k => /^[DE]\d+$/.test(k)).forEach(k => { if (typeof wsTit[k].v === 'number') wsTit[k].z = APORTE_MONEY_FMT; });
+      wsTit['!cols'] = [{ wch: 14 }, { wch: 30 }, { wch: 40 }, { wch: 20 }, { wch: 16 }];
+      XLSX.utils.book_append_sheet(wb, wsTit, 'Títulos pendentes');
+    }
+
+    XLSX.writeFile(wb, `solicitacao_aporte_${completo ? 'completo' : 'resumido'}_${d.de}_a_${d.ate}.xlsx`);
+    toast('Solicitação de aporte gerada em Excel.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o Excel: ' + e.message);
   }
 }
 

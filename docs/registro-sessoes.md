@@ -506,3 +506,39 @@ Reprodução registrada: planilha pt-BR → 2 linhas OK; cabeçalho es → "CABE
 - Arquivos temporários de teste removidos; `node --check` OK.
 
 **Observação:** a correção cobre os formatos mais prováveis, mas não vi o arquivo real da OT 156. Se ainda não importar, a tela agora dirá exatamente o motivo (colunas lidas e descartes) — basta enviar essa mensagem.
+
+---
+
+## 2026-08-11 — Solicitação de Aporte no Fluxo de Caixa (PDF + Excel, Resumido/Completo)
+
+**Pedido:** dentro de Fluxo de Caixa, poder gerar uma solicitação de aporte à matriz **de acordo com os filtros aplicados** — 01/08 a 31/08 pede R$ 244.208,72; 01/08 a 30/09 pede R$ 652.071,50 — com PDF e Excel, nas opções Resumido e Completo.
+
+### Backend (`api/index.js`, `/api/reports/fluxo-caixa`)
+O endpoint já calculava um `alerta` olhando **90 dias fixos à frente**, o que não responde ao pedido: o valor precisa refletir a janela filtrada. Foi adicionado um objeto `aporte` calculado **dentro do período**:
+
+- varre cada dia do intervalo com o `saldoNaData()` já existente e guarda o **pior saldo** e **o dia em que ele ocorre**;
+- `necessario` = valor absoluto do pior saldo quando negativo (zero se o caixa nunca fica negativo);
+- devolve também `saldoFinalPeriodo`, para o documento mostrar como o mês fecha depois do aporte.
+
+O `alerta` de 90 dias foi mantido — passou a ser usado como **aviso de horizonte** no modal (ver abaixo), não como o valor do pedido.
+
+### Frontend (`public/app.js`)
+- Botão **"💰 Solicitar aporte"** na barra de ferramentas do Fluxo de Caixa, ao lado das exportações; usa exatamente o `d` (payload) do filtro em tela — nenhuma segunda consulta, nenhum recálculo no cliente.
+- Modal `abrirSolicitacaoAporte(d)`: tabela com **pior momento de caixa**, **saldo no pior momento** e **aporte necessário no período**; valor já preenchido e editável (o usuário pode arredondar para cima), solicitante preenchido com o usuário logado e campo de justificativa.
+- **Aviso de horizonte:** se a necessidade de 90 dias for maior que a do período filtrado, o modal alerta com os dois números e sugere ampliar o pedido — evita pedir R$ 244 mil hoje e precisar de mais R$ 400 mil em setembro.
+- Quatro geradores: `aportePDF` e `aporteExcel`, cada um em Resumido e Completo, na mesma linguagem visual dos outros relatórios (cabeçalho ProAgro, moeda pt-BR, jsPDF + autotable / SheetJS).
+  - **Resumido:** identificação, período, valor solicitado, pior momento, saldo final projetado, solicitante e justificativa.
+  - **Completo:** o resumido + evolução do saldo dia a dia, quebra por categoria e a relação de títulos pendentes que compõem a necessidade.
+
+### Verificação
+- Backend conferido contra os números do próprio pedido: **31/08 → R$ 244.208,72** (pior dia 30/08) e **30/09 → R$ 652.071,50** (pior dia 30/09), **iguais aos informados**, e estáveis nas granularidades dia/semana/mês.
+- Ponta a ponta no navegador com dados reais da API: os 4 documentos foram gerados sem erro; abas do Excel corretas (`Solicitação` no resumido; `Solicitação`, `Evolução do saldo`, `Por categoria`, `Títulos pendentes` no completo).
+- Modal conferido nos dois filtros: tabela, valor pré-preenchido, solicitante e a coleta dos campos editados; o aviso de 90 dias aparece no filtro de agosto e **não** aparece no de setembro (correto, pois lá o período já cobre o pior cenário).
+- `node --check` OK nos dois arquivos.
+
+### Registro de uma falha minha
+Durante o teste de geração, **dois PDFs de teste foram efetivamente baixados** para a pasta Downloads do usuário (arquivos `.tmp` de 138 KB e 47 KB). Eu havia tentado bloquear o download por dois caminhos e **ambos falharam**, por motivos que só descobri depois:
+- sobrescrever `doc.save` no *prototype* não funciona — no jsPDF `save` é **propriedade própria da instância**;
+- interceptar `HTMLAnchorElement.prototype.click` e `window.open` não funciona — o FileSaver dispara `dispatchEvent(new MouseEvent('click'))`, que não passa por `.click()`.
+
+Os dois arquivos foram identificados com certeza (PDFs contendo "Solicitação"/"Aporte", gravados um minuto antes) e **removidos**. **Regra para as próximas vezes:** não invocar o caminho de salvamento em teste. Validar a montagem do documento (dados, tabelas, formatação) sem chamar `save`/`writeFile`; a interceptação por fora não é confiável.

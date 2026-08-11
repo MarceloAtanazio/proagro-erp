@@ -1446,10 +1446,26 @@ app.get('/api/reports/fluxo-caixa', requireAuth, requireViewAny(['dashboard', 'f
   const despCatRows = Object.entries(despCatMap).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
   const recCatRows = Object.entries(recCatMap).map(([category, total]) => ({ category, total })).sort((a, b) => b.total - a.total);
 
+  // ---- Aporte necessário DENTRO do período filtrado ----
+  // Diferente do `alerta` (que olha 90 dias fixos à frente, para nunca
+  // esconder um risco fora do filtro), aqui a conta acompanha o período que o
+  // usuário escolheu: é o valor que zera o pior momento de caixa até a data
+  // final do filtro — a base da Solicitação de Aporte à matriz. Calculado dia
+  // a dia (e não por bucket) para não perder o pior dia quando a
+  // granularidade é semanal/mensal e o fundo do poço cai no meio do bucket.
+  let piorSaldoPeriodo = null, diaPiorPeriodo = null;
+  diasNoPeriodo.forEach(dstr => {
+    const v = saldoNaData(dstr);
+    if (piorSaldoPeriodo === null || v < piorSaldoPeriodo) { piorSaldoPeriodo = v; diaPiorPeriodo = dstr; }
+  });
+  const saldoFinalPeriodo = diasNoPeriodo.length ? saldoNaData(diasNoPeriodo[diasNoPeriodo.length - 1]) : saldoInicial;
+  const aporteNecessario = (piorSaldoPeriodo !== null && piorSaldoPeriodo < 0) ? Math.abs(piorSaldoPeriodo) : 0;
+
   res.json({
     de, ate, granularidade, centroCusto, situacao,
     resumo: { saldoInicial, totalEntradas, totalSaidas, saldoAtual, saldoPrevisto },
     buckets,
+    aporte: { necessario: aporteNecessario, piorSaldo: piorSaldoPeriodo ?? 0, diaPior: diaPiorPeriodo, saldoFinalPeriodo },
     alerta: { diaCritico, necessidade, diaPior, horizonte: horizonteAlerta },
     futuras: {
       pagar: pagarFuturasQ.map(r => ({ ...r, amount: n(r.amount) })),
