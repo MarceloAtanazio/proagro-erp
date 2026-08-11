@@ -283,7 +283,8 @@ const AUDIT_MAP = {
   },
   'POST /api/viaticos/solicitacoes/autosservico': (req, body) => `Colaborador enviou uma solicitação de viático via autosserviço (ID ${body && body.id})`,
   'PUT /api/viaticos/solicitacoes/:id': req => `Editou a solicitação de viático ID ${req.params.id}`,
-  'POST /api/viaticos/solicitacoes/:id/status': req => `Alterou manualmente o status da solicitação de viático ID ${req.params.id} para "${req.body.status}"`,
+  'POST /api/viaticos/solicitacoes/:id/status': req => `Alterou manualmente o status da solicitação de viático ID ${req.params.id} para "${req.body.status}"` +
+    (req.body.valor_liberado ? ` e registrou o valor liberado de R$ ${Number(req.body.valor_liberado).toFixed(2)}` : ''),
   'POST /api/viaticos/solicitacoes/:id/fechar': (req, body) => `Fechou/conferiu a solicitação de viático ID ${req.params.id} — resultado: ${body && body.status}` +
     (body && body.status === 'divergente' ? ` (pendência de ${fmtBRL(body.valor_pendencia)})` : body && body.status === 'devolvido' ? ` (${fmtBRL(body.valor_devolvido)} devolvido à carteira)` : ''),
   'POST /api/viaticos/solicitacoes/:id/arquivar': req => `Arquivou a solicitação de viático ID ${req.params.id}`,
@@ -1921,13 +1922,19 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   // período e itens de transporte brutos (auditoria 2026-07-29, achado A4).
   const tud = await query('SELECT tier, categoria_local, tipo_despesa, valor_diaria FROM erp_viaticos_tud');
   const { categoriaLocal, cat } = viaRecalcularPrevisao(b, colab, tud);
+  // O total da previsão é o `valor_solicitado`: é o que o colaborador pediu e o
+  // número que a Tesouraria precisa ver para agendar a transferência. Sem isso
+  // gravado, a solicitação aparecia zerada na lista (o cálculo ficava só dentro
+  // de `previsao_por_categoria`, que nenhuma tela lia). `valor_liberado` segue
+  // 0 de propósito: só recebe valor quando a transferência sai no Flash.
+  const totalSolicitado = Number(Object.values(cat).reduce((s, v) => s + (Number(v) || 0), 0).toFixed(2));
 
   const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
     (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, objetivo, data_inicio, data_fim,
-     valor_liberado, previsao_por_categoria, transporte_detalhes, notes, created_by, origem)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,'colaborador') RETURNING id`,
+     valor_solicitado, valor_liberado, previsao_por_categoria, transporte_detalhes, notes, created_by, origem)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,'colaborador') RETURNING id`,
     [colab.id, colab.tier, categoriaLocal, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo),
-     sanitize(b.objetivo), b.data_inicio, b.data_fim, JSON.stringify(cat), JSON.stringify(b.transporte_detalhes || {}),
+     sanitize(b.objetivo), b.data_inicio, b.data_fim, totalSolicitado, JSON.stringify(cat), JSON.stringify(b.transporte_detalhes || {}),
      sanitize(b.notes), req.user.id]);
   res.json({ ok: true, id: ins[0].id });
 }));
@@ -2069,6 +2076,16 @@ app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), 
 app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const status = req.body.status;
   if (!['em_approvals', 'transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(status)) return res.status(400).json({ error: 'Status inválido para esta transição.' });
+  // Agendar a transferência é o momento em que o dinheiro passa a existir (é
+  // feito na plataforma do Flash), então a tela pode enviar junto o valor
+  // efetivamente transferido. Só é aceito nesta transição.
+  if (req.body.valor_liberado !== undefined && req.body.valor_liberado !== null && req.body.valor_liberado !== '') {
+    if (status !== 'transferencia_agendada') return res.status(400).json({ error: 'O valor liberado só pode ser informado ao agendar a transferência.' });
+    const lib = Number(req.body.valor_liberado);
+    if (!isFinite(lib) || lib < 0) return res.status(400).json({ error: 'Valor liberado inválido.' });
+    await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true, valor_liberado=$2 WHERE id=$3', [status, lib, req.params.id]);
+    return res.json({ ok: true });
+  }
   await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true WHERE id=$2', [status, req.params.id]);
   res.json({ ok: true });
 }));

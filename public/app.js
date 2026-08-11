@@ -3246,6 +3246,16 @@ const DESP_CAT_LABEL = {
   taxi_uber: 'Táxis / Uber',
   veiculo: 'Veículo Próprio'
 };
+// Valor pedido na solicitação. Prefere `valor_solicitado` (gravado pelo backend);
+// se estiver vazio — caso das solicitações feitas antes de o campo passar a ser
+// gravado — soma a memória de cálculo por categoria, que sempre existe.
+function viaTotalSolicitado(s) {
+  if (s && Number(s.valor_solicitado) > 0) return Number(s.valor_solicitado);
+  const p = s && s.previsao_por_categoria;
+  if (p && typeof p === 'object') return Object.values(p).reduce((t, v) => t + (Number(v) || 0), 0);
+  return 0;
+}
+
 const VIA_STATUS_LABEL = {
   em_approvals: 'Em Approvals', transferencia_agendada: 'Transferência Agendada', liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação',
   comprovado: 'Comprovado', devolvido: 'Devolvido (sobrou)', divergente: 'Divergente (estourou)', arquivado: 'Arquivado'
@@ -3320,7 +3330,7 @@ async function renderViaticos() {
     });
     lastFiltered = filtered;
     $('#tbl').innerHTML = `
-      <thead><tr><th>Colaborador</th><th>Tier</th><th>Local</th><th>Período</th><th class="num">Liberado</th>
+      <thead><tr><th>Colaborador</th><th>Tier</th><th>Local</th><th>Período</th><th class="num">Solicitado</th><th class="num">Liberado</th>
         <th class="num">Comprovado</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(s => {
         const dif = s.valor_liberado - s.valor_comprovado;
@@ -3331,7 +3341,8 @@ async function renderViaticos() {
           <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small style="color:var(--muted)">OT ${esc(s.ordem_trabalho)}</small>` : ''}
             ${Array.isArray(s.destinos) && s.destinos.length ? `<br><small style="color:var(--muted)">${s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ')}</small>` : ''}</td>
           <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
-          <td class="num">${brl(s.valor_liberado)}</td>
+          <td class="num">${brl(viaTotalSolicitado(s))}</td>
+          <td class="num">${brl(s.valor_liberado)}${!s.valor_liberado && viaTotalSolicitado(s) > 0 ? '<br><small style="color:var(--muted)">a transferir</small>' : ''}</td>
           <td class="num">${brl(s.valor_comprovado)}${s.anexos_count ? ` <small style="color:var(--muted)">(📎${s.anexos_count})</small>` : ''}</td>
           <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
           <td class="actions">${READONLY
@@ -3341,7 +3352,7 @@ async function renderViaticos() {
             <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>`}
           </td>
         </tr>`;
-      }).join('') || '<tr><td colspan="8"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
+      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
@@ -3429,7 +3440,7 @@ async function formSolicitacao(existing) {
     </div>
     ${fld('vs-expira', 'Dinheiro disponível no Flash até', 'date', existing ? (existing.data_expiracao_flash || '') : '')}
     <div class="field-row">
-      ${fld('vs-solicitado', 'Valor solicitado (referência)', 'number', existing ? existing.valor_solicitado || '' : '', 'step="0.01" min="0"')}
+      ${fld('vs-solicitado', 'Valor solicitado (referência)', 'number', existing ? (viaTotalSolicitado(existing) || '') : '', 'step="0.01" min="0"')}
       ${fld('vs-liberado', 'Valor liberado no Flash', 'number', existing ? existing.valor_liberado : '', 'step="0.01" min="0"')}
     </div>
     ${fld('vs-notes', 'Observações', 'text', existing ? existing.notes || '' : '')}`;
@@ -3619,14 +3630,32 @@ async function viewSolicitacao(id) {
       </div>
       ${s.motivo || s.objetivo ? `<p style="margin:10px 0 0; font-size:13px; color:var(--ink-2)">${s.motivo ? `<strong>${esc(s.motivo)}</strong>` : ''}${s.motivo && s.objetivo ? ' — ' : ''}${s.objetivo ? esc(s.objetivo) : ''}</p>` : ''}
     </div>`;
+  // Memória de cálculo da solicitação: mostra de onde vem o valor pedido. Ficava
+  // gravada e nunca era exibida, então uma solicitação do autosserviço parecia
+  // zerada até a Tesouraria digitar o valor liberado.
+  const solicitado = viaTotalSolicitado(s);
+  const prev = (s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object') ? s.previsao_por_categoria : {};
+  const prevLinhas = Object.entries(prev).filter(([, v]) => Number(v) > 0);
+  const memoriaHtml = prevLinhas.length ? `
+    <div class="card" style="margin-bottom:14px; padding:12px 16px">
+      <div style="font-size:12.5px; color:var(--muted); margin-bottom:8px">Memória de cálculo da solicitação${s.origem === 'colaborador' ? ' (enviada pelo colaborador e recalculada pelo sistema)' : ''}</div>
+      <table class="via-resumo-tbl" style="width:100%">
+        <tbody>${prevLinhas.map(([k, v]) => `<tr><td>${DESP_CAT_LABEL[k] || esc(k)}</td><td class="num">${brl(Number(v))}</td></tr>`).join('')}
+        <tr><td><strong>Total solicitado</strong></td><td class="num"><strong>${brl(solicitado)}</strong></td></tr></tbody>
+      </table>
+    </div>` : '';
+
   const body = `
     ${infoOT}
     <div class="grid kpis" style="margin-bottom:14px">
-      <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div></div>
+      <div class="card kpi"><div class="label">Solicitado</div><div class="value">${brl(solicitado)}</div></div>
+      <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div>
+        ${!s.valor_liberado && solicitado > 0 ? '<div style="font-size:11.5px; color:var(--muted)">aguardando transferência no Flash</div>' : ''}</div>
       <div class="card kpi blue"><div class="label">Comprovado</div><div class="value">${brl(comprovado)}</div></div>
       <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
     </div>
+    ${memoriaHtml}
     ${!finalizada && !somenteLeitura ? `
     <div class="field-row" style="align-items:flex-end; margin-bottom:14px">
       ${fldSel('vs-status-sel', 'Status da viagem', Object.entries(STATUS_ATIVO_LABEL).map(([v, t]) => ({ v, t })), s.status)}
@@ -3684,10 +3713,34 @@ async function viewSolicitacao(id) {
 
   if (!finalizada && !somenteLeitura) {
     $('#btn-import-flash').onclick = () => importarFlashModal(s);
-    $('#vs-status-update').onclick = async () => {
+    const aplicarStatus = async (novo, valorLiberado) => {
+      const payload = { status: novo };
+      if (valorLiberado !== undefined) payload.valor_liberado = valorLiberado;
+      try {
+        await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: payload });
+        toast(valorLiberado !== undefined ? 'Transferência agendada e valor liberado registrado.' : 'Status atualizado.');
+        viewSolicitacao(id);
+      } catch (e) { toast(e.message); }
+    };
+    $('#vs-status-update').onclick = () => {
       const novo = $('#vs-status-sel').value;
-      try { await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: { status: novo } }); toast('Status atualizado.'); viewSolicitacao(id); }
-      catch (e) { toast(e.message); }
+      // A transferência é feita na plataforma do Flash, então é aqui que o valor
+      // liberado passa a existir. Sem pedir, a solicitação continuava com
+      // Liberado R$ 0,00 e não havia como fechar a comprovação depois.
+      if (novo === 'transferencia_agendada' && !s.valor_liberado) {
+        return openModal('Agendar transferência no Flash', `
+          <p style="font-size:13.5px; color:var(--ink-2)">A solicitação pede <strong>${brl(solicitado)}</strong>.
+          Informe quanto foi efetivamente transferido no Flash — é esse valor que será comparado com a comprovação.</p>
+          <div class="field">${fld('vs-lib-novo', 'Valor liberado no Flash', 'number', solicitado || '', 'step="0.01" min="0"')}</div>
+          <p style="font-size:12px; color:var(--muted)">Se ainda não sabe o valor, deixe zerado e preencha depois em "Editar".</p>`,
+          [{ label: 'Cancelar', onClick: closeModal },
+           { label: 'Agendar transferência', cls: 'primary', onClick: () => {
+             const v = Number($('#vs-lib-novo').value);
+             if (!isFinite(v) || v < 0) return toast('Informe um valor válido.');
+             closeModal(); aplicarStatus(novo, v);
+           } }]);
+      }
+      aplicarStatus(novo);
     };
     let editingDespId = null;
     const resetForm = () => {

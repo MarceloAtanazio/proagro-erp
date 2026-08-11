@@ -542,3 +542,35 @@ Durante o teste de geração, **dois PDFs de teste foram efetivamente baixados**
 - interceptar `HTMLAnchorElement.prototype.click` e `window.open` não funciona — o FileSaver dispara `dispatchEvent(new MouseEvent('click'))`, que não passa por `.click()`.
 
 Os dois arquivos foram identificados com certeza (PDFs contendo "Solicitação"/"Aporte", gravados um minuto antes) e **removidos**. **Regra para as próximas vezes:** não invocar o caminho de salvamento em teste. Validar a montagem do documento (dados, tabelas, formatação) sem chamar `save`/`writeFile`; a interceptação por fora não é confiável.
+
+---
+
+## 2026-08-11 — Solicitação via autosserviço aparecia zerada (Liberado R$ 0,00)
+
+**Problema reportado:** solicitação feita pelo botão "Solicitar viagem" (OT 35, em nome do próprio usuário); ao mudar o status para "Transferência Agendada", o valor não apareceu na coluna **Liberado** nem no detalhe aberto pelo botão **Comprovar**.
+
+### Investigação (SELECT em produção, sem alterar nada)
+Registro id 62 / OT 35:
+```
+origem: colaborador   status: transferencia_agendada
+valor_solicitado: NULL      valor_liberado: 0.00
+previsao_por_categoria: { taxi_uber: 555, alimentacao: 420 }
+```
+O cálculo estava **correto** — alimentação R$ 140 × 3 dias = 420, táxi (85+100) × 3 = 555, total **R$ 975,00**; hospedagem zero porque a base do colaborador e o destino são ambos São Paulo/SP (regra de hospedagem só quando há pernoite fora da cidade base). O valor simplesmente **não era gravado nem exibido em lugar nenhum**.
+
+### Três defeitos encontrados
+1. **`api/index.js:1925` — o INSERT do autosserviço não gravava `valor_solicitado`.** O total ficava apenas dentro de `previsao_por_categoria`, um JSONB que nenhuma tela lia. A solicitação nascia sem valor visível.
+2. **`public/app.js` — a lista não tinha coluna "Solicitado".** Mostrava só `valor_liberado`, que legitimamente é 0 até a Tesouraria transferir no Flash. Resultado: solicitação legítima parecendo vazia.
+3. **`POST /:id/status` não pedia o valor liberado.** Como a transferência é feita na plataforma do Flash, agendar é justamente o momento em que o valor passa a existir — mas a tela mudava só o status, deixando `valor_liberado` em 0 e sem como fechar a comprovação depois.
+
+### Correções
+- **Backend:** o autosserviço passa a gravar `valor_solicitado` = soma da previsão recalculada no servidor (o recálculo servidor-side do achado A4 continua sendo a fonte da verdade; `valor_liberado` segue 0 de propósito). A rota de status aceita `valor_liberado` opcional, **somente** na transição para `transferencia_agendada`, com validação de número ≥ 0; o log de auditoria passa a registrar o valor junto da mudança de status.
+- **Frontend:** helper `viaTotalSolicitado(s)` — usa `valor_solicitado` e, quando vazio, soma `previsao_por_categoria`, de modo que **as solicitações já existentes passam a exibir o valor sem precisar migrar o banco**. Nova coluna **Solicitado** na lista, com "a transferir" sob o Liberado zerado. No detalhe: KPI **Solicitado** + bloco **Memória de cálculo** (valor por categoria e total) que antes ficava invisível. Ao escolher "Transferência Agendada" com Liberado zerado, abre modal pedindo o valor transferido, pré-preenchido com o solicitado e com a opção de deixar zerado. O campo "Valor solicitado" do formulário de edição passou a vir pré-preenchido com o total calculado (antes vinha vazio nos registros antigos).
+
+### Verificação
+- Telas testadas ponta a ponta com o **registro real da OT 35 exportado do banco** e injetado via stub do `api` (o stub **bloqueia qualquer POST/PUT**, então nada foi gravado): lista mostra **Solicitado R$ 975,00** / Liberado R$ 0,00 "a transferir", com cabeçalho e corpo alinhados em 9 colunas; detalhe mostra os 4 KPIs e a memória "Táxis/Uber R$ 555,00 · Alimentação R$ 420,00 · Total R$ 975,00".
+- Modal de agendamento: título e texto corretos, campo pré-preenchido com 975, **valor negativo recusado sem chamar a API**, e o payload capturado foi exatamente `POST /api/viaticos/solicitacoes/62/status { status: 'transferencia_agendada', valor_liberado: 975 }`.
+- SQL novo validado com **`PREPARE`/`DEALLOCATE`** (o Postgres analisa a instrução sem executá-la): INSERT com 14 parâmetros e `valor_solicitado` como `numeric` na posição 10; UPDATE com 3 parâmetros. Nenhum dado inserido ou alterado.
+- `node --check` OK nos dois arquivos; arquivos de teste removidos.
+
+**Não alterado:** o registro id 62 continua com `valor_solicitado` NULL no banco — a tela já exibe R$ 975,00 pelo fallback, e o campo é gravado na primeira vez que a solicitação for salva em "Editar". Um UPDATE de backfill não foi executado por não ter autorização para escrever em produção.
