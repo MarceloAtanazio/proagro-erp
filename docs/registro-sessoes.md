@@ -633,3 +633,23 @@ Assim os documentos reaproveitam toda a máquina que já existia: limite de 3 MB
 - Tela, com `api` stubado bloqueando toda gravação: modal em **1040px**, três seções com validador e área de anexo; badges corretos em vencido/vencendo/válido, placa nos dois formatos, obrigatoriedade progressiva do seguro; payload do Salvar com a placa normalizada; upload enviando `colab_seguro` com kind `contrato` e `colab_cnh` com `outro`; exclusão só chamando a API no segundo clique; **e o formulário intacto depois de mexer nos anexos**.
 - Modo leitura conferido: sem permissão de edição, a área de anexo não mostra o seletor de arquivo.
 - **Mobile 375px:** achado e corrigido um vazamento de 21px — `input[type=file]` tem largura intrínseca própria e precisava de `min-width:0`. Depois: vazamento zero nas três seções, sem rolagem lateral.
+
+---
+
+## 2026-08-11 — Valores negativos em vermelho no relatório de Solicitação de Aporte
+
+**Pedido:** destacar os valores negativos em vermelho no relatório gerado em Fluxo de Caixa → Solicitar aporte.
+
+**Situação:** só a tabela "Resumo financeiro do período" pintava negativos, e apenas na coluna de valor. A tabela **"Evolução do saldo no período"** — justamente a que mostra o dia em que o caixa vira negativo, a informação central do pedido — saía toda em preto. O Excel já estava correto: o formato numérico `APORTE_MONEY_FMT` inclui `[Red]` para negativos.
+
+### Correção (`public/app.js`)
+- Novo `aportePintarNegativos(hook)`, aplicado como `didParseCell` nas **três** tabelas do PDF (dados do aporte, resumo financeiro e todas as seções do modo Completo, que passam pelo helper `secao()`). Negativos saem em **vermelho e negrito**.
+- O critério não é "começa com hífen": uma descrição de título como "- ajuste de contrato" ficaria vermelha sem motivo. Só casa valor monetário — `APORTE_NEGATIVO_RE = /^-\s*(R\$\s*)?\d[\d.]*(,\d+)?$/`.
+- Só pinta o corpo da tabela (`section === 'body'`), nunca cabeçalho ou rodapé.
+- Removido o `const VERMELHO` da função, que ficou órfão depois de a cor migrar para o helper.
+
+### Verificação
+- **19 casos** no detector, com a função real extraída do arquivo: pinta `-R$ 244.344,54`, `-1.234,56`, `-R$ 0,01`, valor com espaços em volta; **não** pinta positivo, zero, data, texto, `- ajuste de contrato`, `Porto Seguro - parcela 3`, vazio, `null`, só-hífen, travessão, nem negativo em cabeçalho/rodapé.
+- **Integração com o autoTable real**, no navegador, usando os mesmos dados do print (saldo virando em 30/08): exatamente **4 células** vermelhas e em negrito — as quatro negativas —, e numa segunda tabela com descrições contendo hífen, apenas o `-R$ 90,00` do estorno ficou vermelho.
+- Os três `didParseCell: aportePintarNegativos` conferidos no código da função.
+- **Nenhum arquivo foi baixado:** o teste monta o documento e inspeciona as células, sem nunca chamar `doc.save` — que é a única forma confiável de testar geração de PDF aqui, conforme registrado na sessão anterior.

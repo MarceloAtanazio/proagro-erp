@@ -1300,13 +1300,28 @@ function aporteEscolherModo(d, formato) {
     ]);
 }
 
+// Todo valor negativo do relatório sai em vermelho e negrito: num pedido de
+// aporte, o dia em que o caixa vira é justamente o que a matriz precisa achar
+// na hora. Vale para qualquer célula, em qualquer tabela do documento.
+// Só casa valor monetário negativo ("-R$ 244.344,54", "-1.234,56"). Não basta
+// começar com "-": a descrição de um título pode começar com hífen e ficaria
+// vermelha sem motivo.
+const APORTE_NEGATIVO_RE = /^-\s*(R\$\s*)?\d[\d.]*(,\d+)?$/;
+function aportePintarNegativos(hook) {
+  if (hook.section !== 'body') return;
+  if (APORTE_NEGATIVO_RE.test(String(hook.cell.raw == null ? '' : hook.cell.raw).trim())) {
+    hook.cell.styles.textColor = [178, 58, 47];
+    hook.cell.styles.fontStyle = 'bold';
+  }
+}
+
 async function aportePDF(d, dados, completo) {
   if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
   try {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
-    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
     const MARGIN = 14;
     const now = new Date();
 
@@ -1342,7 +1357,8 @@ async function aportePDF(d, dados, completo) {
         ['Necessidade em 90 dias (contexto)', `${brl(d.alerta.necessidade)} — até ${brDate(d.alerta.horizonte)}`]
       ],
       styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42] },
-      columnStyles: { 0: { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 72 }, 1: { halign: 'right' } }
+      columnStyles: { 0: { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 72 }, 1: { halign: 'right' } },
+      didParseCell: aportePintarNegativos
     });
     y = doc.lastAutoTable.finalY + 8;
 
@@ -1362,9 +1378,7 @@ async function aportePDF(d, dados, completo) {
       styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5 },
       headStyles: { fillColor: VERDE, textColor: 255 },
       columnStyles: { 1: { halign: 'right' } },
-      didParseCell: hook => {
-        if (hook.section === 'body' && hook.column.index === 1 && String(hook.cell.raw).startsWith('-')) hook.cell.styles.textColor = VERMELHO;
-      }
+      didParseCell: aportePintarNegativos
     });
     y = doc.lastAutoTable.finalY + 8;
 
@@ -1390,7 +1404,8 @@ async function aportePDF(d, dados, completo) {
           startY: y, margin: { left: MARGIN, right: MARGIN }, head: [head], body,
           styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
           headStyles: { fillColor: VERDE, textColor: 255, fontSize: 8 },
-          columnStyles: colStyles || {}
+          columnStyles: colStyles || {},
+          didParseCell: aportePintarNegativos
         });
         y = doc.lastAutoTable.finalY + 8;
       };
