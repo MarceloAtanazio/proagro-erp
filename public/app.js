@@ -3545,7 +3545,7 @@ async function renderRelatorios() {
 // VIÁTICOS
 // ============================================================
 const TIER_LABEL = { A: 'A — Diretoria/Gerência', B: 'B — Coordenação/Técnicos' };
-const MOTIVO_OPTIONS = ['Monitoramento', 'Sinistro', 'Comercial'];
+const MOTIVO_OPTIONS = ['Comercial', 'Monitoramento', 'Prévia', 'Reinspeção', 'Sinistro'];
 const LOCAL_LABEL = { interior: 'Interior', capital: 'Capital', sp_df_rj_intl: 'SP/DF/RJ + Internacional' };
 
 // Capital de cada UF — usada para calcular automaticamente a "Categoria de
@@ -3779,7 +3779,9 @@ async function formSolicitacao(existing) {
       </div>
       <div id="vs-destinos-list"></div>
     </div>
-    ${fldSel('vs-motivo', 'Motivo', MOTIVO_OPTIONS.map(m => ({ v: m, t: m })), existing ? existing.motivo : MOTIVO_OPTIONS[0])}
+    ${/* Sem valor pré-selecionado: a lista é alfabética, e usar o 1º item faria
+          a solicitação nascer com um motivo que ninguém escolheu. */''}
+    ${fldSel('vs-motivo', 'Motivo', [{ v: '', t: '— selecione —' }, ...MOTIVO_OPTIONS.map(m => ({ v: m, t: m }))], existing ? (existing.motivo || '') : '')}
     <div class="field-row">
       ${fld('vs-inicio', 'Início da viagem', 'date', existing ? existing.data_inicio : todayISO())}
       ${fld('vs-fim', 'Fim da viagem', 'date', existing ? existing.data_fim : todayISO())}
@@ -4422,8 +4424,11 @@ async function renderSolicitacaoAutosservico() {
   const [tud, viaConfig] = await Promise.all([api('/api/viaticos/tud'), api('/api/viaticos/config')]);
   VIA_WIZ = {
     colab, tud, preco_combustivel: viaConfig.preco_combustivel_litro,
+    // Motivo começa vazio de propósito: com todos os campos obrigatórios, deixar
+    // um valor pré-selecionado faria a solicitação sair com um motivo que a
+    // pessoa nunca escolheu (antes vinha "Monitoramento" por ser o 1º da lista).
     ordem_trabalho: '', categoria_local: 'interior', internacional: false, destinos: [], data_inicio: todayISO(), data_fim: todayISO(),
-    motivo: MOTIVO_OPTIONS[0], objetivo: '',
+    motivo: '', objetivo: '',
     transporte: {
       aviao: false, onibus: false, aluguel_carro: false, carro_proprio: false, taxi_uber: false,
       aviao_trechos: [], onibus_trechos: [], alugueis: [], taxi_uber_corridas: [],
@@ -4825,6 +4830,78 @@ async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, s
   }
 }
 
+// ---- Obrigatoriedade das etapas do assistente ----
+// Devolvem null quando está tudo preenchido, ou { msg, foco } apontando o campo
+// que falta. Ficam fora das funções de render para poderem ser testadas e para
+// a mesma regra valer na etapa e no envio final.
+const viaNumOk = v => { const n = viaNum(v); return isFinite(n) && n > 0; };
+
+function viaWizValidarEtapa2(v) {
+  if (!String(v.ordem_trabalho || '').trim()) return { msg: 'Informe o nº da Ordem de Trabalho.', foco: 'w2-ot' };
+  if (!v.destinos || !v.destinos.length) return { msg: 'Adicione ao menos um destino (cidade da Ordem de Trabalho).', foco: 'w2-mun' };
+  if (!v.data_inicio || !v.data_fim) return { msg: 'Preencha as datas de saída e de retorno.', foco: !v.data_inicio ? 'w2-inicio' : 'w2-fim' };
+  if (v.data_fim < v.data_inicio) return { msg: 'Data de retorno não pode ser antes da saída.', foco: 'w2-fim' };
+  if (!v.motivo) return { msg: 'Selecione o motivo da viagem.', foco: 'w2-motivo' };
+  if (!MOTIVO_OPTIONS.includes(v.motivo)) return { msg: 'Motivo inválido.', foco: 'w2-motivo' };
+  if (!String(v.objetivo || '').trim()) return { msg: 'Descreva o objetivo da viagem.', foco: 'w2-objetivo' };
+  return null;
+}
+
+// Etapa 3: além das travas de combinação, cada transporte marcado precisa ter os
+// dados que formam o custo dele — antes era possível marcar "Avião" e avançar
+// sem nenhum trecho, e a previsão saía zerada.
+function viaWizValidarEtapa3(t) {
+  const marcados = ['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].filter(k => t[k]);
+  if (!marcados.length) return { msg: 'Selecione ao menos um meio de transporte.' };
+
+  if (t.aviao) {
+    if (!t.aviao_trechos.length) return { msg: 'Adicione ao menos um trecho de avião.' };
+    const i = t.aviao_trechos.findIndex(x => !String(x.origem || '').trim() || !String(x.destino || '').trim() || !x.data || !viaNumOk(x.valor));
+    if (i >= 0) return { msg: `Trecho de avião ${i + 1}: preencha origem, destino, data e valor.` };
+  }
+  if (t.onibus) {
+    if (!t.onibus_trechos.length) return { msg: 'Adicione ao menos um trecho de ônibus.' };
+    const i = t.onibus_trechos.findIndex(x => !String(x.origem || '').trim() || !String(x.destino || '').trim() || !x.data || !viaNumOk(x.valor));
+    if (i >= 0) return { msg: `Trecho de ônibus ${i + 1}: preencha origem, destino, data e valor.` };
+  }
+  if (t.aluguel_carro) {
+    if (!t.alugueis.length) return { msg: 'Adicione ao menos um aluguel de carro.' };
+    for (let i = 0; i < t.alugueis.length; i++) {
+      const a = t.alugueis[i], n = i + 1;
+      if (!String(a.locadora || '').trim()) return { msg: `Aluguel ${n}: informe a locadora.` };
+      if (!viaNumOk(a.valor_diaria)) return { msg: `Aluguel ${n}: informe o valor da diária.` };
+      if (!viaNumOk(a.dias)) return { msg: `Aluguel ${n}: informe a quantidade de diárias.` };
+      if (!String(a.retirada_local || '').trim()) return { msg: `Aluguel ${n}: informe o local de retirada.` };
+      if (!a.retirada_data) return { msg: `Aluguel ${n}: informe a data de retirada.` };
+      if (!String(a.devolucao_local || '').trim()) return { msg: `Aluguel ${n}: informe o local de devolução.` };
+      if (!a.devolucao_data) return { msg: `Aluguel ${n}: informe a data de devolução.` };
+      if (!viaNumOk(a.distancia_km)) return { msg: `Aluguel ${n}: calcule a rota (ou informe a distância) para apurar o combustível.` };
+      if (!viaNumOk(a.combustivel_valor)) return { msg: `Aluguel ${n}: informe o valor de combustível.` };
+    }
+  }
+  if (t.carro_proprio) {
+    const r = t.carro_proprio_rota || {};
+    if (!viaNumOk(r.distancia_km)) return { msg: 'Carro próprio: calcule a rota (ou informe a distância percorrida).' };
+    if (!viaNumOk(r.combustivel_valor)) return { msg: 'Carro próprio: informe o valor de combustível.' };
+  }
+  if (t.taxi_uber) {
+    if (!t.taxi_uber_corridas.length) return { msg: 'Adicione ao menos uma corrida de táxi/Uber.' };
+    const i = t.taxi_uber_corridas.findIndex(x => !String(x.origem || '').trim() || !String(x.destino || '').trim() || !viaNumOk(x.valor));
+    if (i >= 0) return { msg: `Corrida ${i + 1} de táxi/Uber: preencha origem, destino e valor.` };
+  }
+  return null;
+}
+
+// Avisa e leva o foco ao campo que falta — só o toast obrigava a pessoa a
+// caçar o campo na tela.
+function viaWizAvisar(erro) {
+  toast(erro.msg);
+  if (erro.foco) {
+    const el = document.getElementById(erro.foco);
+    if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+}
+
 function viaWizStep1() {
   const w = VIA_WIZ, c = $('#content');
   c.innerHTML = `
@@ -4872,8 +4949,8 @@ function viaWizStep2() {
           ${fld('w2-inicio', 'Data de saída', 'date', w.data_inicio)}
           ${fld('w2-fim', 'Data de retorno', 'date', w.data_fim)}
         </div>
-        ${fldSel('w2-motivo', 'Motivo', MOTIVO_OPTIONS.map(m => ({ v: m, t: m })), w.motivo)}
-        <div class="field"><label>Objetivo da viagem</label><textarea id="w2-objetivo" rows="3">${esc(w.objetivo)}</textarea></div>
+        ${fldSel('w2-motivo', 'Motivo', [{ v: '', t: '— selecione —' }, ...MOTIVO_OPTIONS.map(m => ({ v: m, t: m }))], w.motivo)}
+        <div class="field"><label>Objetivo da viagem</label><textarea id="w2-objetivo" rows="3" placeholder="Descreva o que será feito na viagem.">${esc(w.objetivo)}</textarea></div>
       </div>
       <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button><button class="btn primary" id="wiz-next">Avançar</button></div>
     </div>`;
@@ -4910,12 +4987,17 @@ function viaWizStep2() {
   $('#w2-internacional').onchange = e => { w.internacional = e.target.checked; renderCategoria(); };
   $('#wiz-back').onclick = () => viaWizStep1();
   $('#wiz-next').onclick = () => {
-    if (!$('#w2-inicio').value || !$('#w2-fim').value) return toast('Preencha as datas da viagem.');
-    if ($('#w2-fim').value < $('#w2-inicio').value) return toast('Data de retorno não pode ser antes da saída.');
-    if (!w.destinos.length) return toast('Adicione ao menos um destino antes de avançar.');
-    w.ordem_trabalho = $('#w2-ot').value; w.categoria_local = viaCalcularCategoriaLocal(w.destinos, w.internacional);
+    // Todos os campos desta etapa são obrigatórios: uma solicitação sem OT,
+    // motivo ou objetivo chegava na aprovação sem contexto nenhum.
+    const erro = viaWizValidarEtapa2({
+      ordem_trabalho: $('#w2-ot').value, destinos: w.destinos,
+      data_inicio: $('#w2-inicio').value, data_fim: $('#w2-fim').value,
+      motivo: $('#w2-motivo').value, objetivo: $('#w2-objetivo').value
+    });
+    if (erro) return viaWizAvisar(erro);
+    w.ordem_trabalho = $('#w2-ot').value.trim(); w.categoria_local = viaCalcularCategoriaLocal(w.destinos, w.internacional);
     w.data_inicio = $('#w2-inicio').value; w.data_fim = $('#w2-fim').value;
-    w.motivo = $('#w2-motivo').value; w.objetivo = $('#w2-objetivo').value;
+    w.motivo = $('#w2-motivo').value; w.objetivo = $('#w2-objetivo').value.trim();
     viaWizStep3();
   };
 }
@@ -5008,6 +5090,8 @@ function viaWizStep3() {
   $('#wiz-next').onclick = () => {
     const conflitos = viaTransporteConflitos();
     if (conflitos.length) { toast(`Combinação de transportes não permitida: ${conflitos.join('; ')}. Ajuste antes de avançar.`); return; }
+    const erro = viaWizValidarEtapa3(w.transporte);
+    if (erro) return viaWizAvisar(erro);
     viaWizStep4();
   };
 }
@@ -5738,6 +5822,10 @@ function viaWizStep5() {
     try { await viaGerarPDF(w, r); } finally { btn.disabled = false; btn.textContent = txt; }
   };
   $('#wiz-enviar').onclick = async () => {
+    // Revalida tudo antes de enviar: dá para chegar aqui, voltar, apagar um
+    // campo e avançar de novo pelos botões das etapas.
+    const erro = viaWizValidarEtapa2(w) || viaWizValidarEtapa3(w.transporte);
+    if (erro) return toast(`Não é possível enviar: ${erro.msg}`);
     try {
       await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
         // categoria_local e previsao_por_categoria vão só como referência —

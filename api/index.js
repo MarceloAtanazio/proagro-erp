@@ -2022,14 +2022,23 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   if (!colabRows.length) return res.status(403).json({ error: 'Seu usuário não está vinculado a um colaborador de viáticos.' });
   const colab = colabRows[0];
   const b = req.body;
-  if (b.motivo && !MOTIVO_OPTIONS.includes(b.motivo)) return res.status(400).json({ error: 'Motivo inválido.' });
+  // No autosserviço todos os campos são obrigatórios — a solicitação vai direto
+  // para aprovação e uma sem OT, motivo ou objetivo chega sem contexto nenhum.
+  // A tela já barra, mas a regra não pode depender só dela.
+  if (!sanitize(b.ordem_trabalho)) return res.status(400).json({ error: 'Informe o nº da Ordem de Trabalho.' });
+  if (!b.motivo) return res.status(400).json({ error: 'Selecione o motivo da viagem.' });
+  if (!MOTIVO_OPTIONS.includes(b.motivo)) return res.status(400).json({ error: 'Motivo inválido.' });
+  if (!sanitize(b.objetivo)) return res.status(400).json({ error: 'Descreva o objetivo da viagem.' });
   if (!isDate(b.data_inicio) || !isDate(b.data_fim)) return res.status(400).json({ error: 'Datas do período inválidas.' });
   if (b.data_fim < b.data_inicio) return res.status(400).json({ error: 'Data final não pode ser antes da inicial.' });
-  if (b.destinos !== undefined) {
-    if (!Array.isArray(b.destinos)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
-    for (const d of b.destinos) {
-      if (!d || typeof d.uf !== 'string' || d.uf.length !== 2 || !sanitize(d.municipio)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
-    }
+  if (!Array.isArray(b.destinos) || !b.destinos.length) return res.status(400).json({ error: 'Informe ao menos um destino.' });
+  for (const d of b.destinos) {
+    if (!d || typeof d.uf !== 'string' || d.uf.length !== 2 || !sanitize(d.municipio)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
+  }
+  // Ao menos um meio de transporte, senão a previsão sai só com diárias.
+  const tp = (b.transporte_detalhes && typeof b.transporte_detalhes === 'object') ? b.transporte_detalhes : {};
+  if (!['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].some(k => tp[k])) {
+    return res.status(400).json({ error: 'Selecione ao menos um meio de transporte.' });
   }
   // categoria_local e previsao_por_categoria NUNCA vêm do cliente: o front só
   // usa esses cálculos para o colaborador ver o número antes de enviar — quem
@@ -2125,7 +2134,7 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
     valor_devolvido: n(r.valor_devolvido), valor_pendencia: n(r.valor_pendencia), valor_comprovado: n(r.valor_comprovado) })));
 }));
 
-const MOTIVO_OPTIONS = ['Monitoramento', 'Sinistro', 'Comercial'];
+const MOTIVO_OPTIONS = ['Comercial', 'Monitoramento', 'Prévia', 'Reinspeção', 'Sinistro'];
 
 function validateSolicitacao(b) {
   if (!b.colaborador_id) return 'Selecione o colaborador.';

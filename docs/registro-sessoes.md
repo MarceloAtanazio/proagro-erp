@@ -759,3 +759,34 @@ Além disso o texto do cabeçalho dividia linha com a imagem, então qualquer er
 - Varredura procurando **célula verde sem conteúdo** (o defeito do print): **nenhuma**. Cabeçalhos das duas tabelas com exatamente 2 colunas preenchidas.
 - Negativo segue em vermelho (`FFB23A2F`); arquivo continua em 35 KB.
 - **Nada baixado:** os `.xlsx` de 18:08/18:09 na pasta Downloads são os que o usuário gerou (o de 18:09 é o do print) e o `~$…xlsx` é o arquivo de trava do Excel com a planilha aberta — não foram tocados. Fixture removida.
+
+---
+
+## 2026-08-12 — Solicitação de Viáticos: campos obrigatórios e dois motivos novos
+
+**Pedido:** (1) não deixar avançar de etapa sem preencher tudo — todos os dados obrigatórios; (2) acrescentar "Prévia" e "Reinspeção" ao motivo, em ordem alfabética.
+
+### Motivos
+`MOTIVO_OPTIONS` passou de `['Monitoramento', 'Sinistro', 'Comercial']` para **`['Comercial', 'Monitoramento', 'Prévia', 'Reinspeção', 'Sinistro']`**, nos dois arquivos (front e back) — a lista é espelhada e o backend valida contra ela.
+
+**Efeito colateral que precisei tratar:** dois lugares usavam `MOTIVO_OPTIONS[0]` como valor inicial. Com a ordem alfabética, isso mudaria o padrão de "Monitoramento" para "Comercial" sem ninguém pedir — uma solicitação sairia rotulada como Comercial por acidente. Os dois passaram a abrir com **"— selecione —"**, sem motivo assumido (coerente com tudo virar obrigatório).
+
+### Obrigatoriedade
+Antes, a etapa 2 só exigia datas e destino: dava para avançar **sem OT e sem objetivo**, e a solicitação chegava na aprovação sem contexto. A etapa 3 só checava conflito de combinação — dava para marcar "Avião" e avançar **sem nenhum trecho**, com a previsão saindo zerada.
+
+Criadas `viaWizValidarEtapa2` e `viaWizValidarEtapa3`, fora das funções de render (para serem testáveis e para a mesma regra valer na etapa e no envio):
+- **Etapa 2:** nº da OT, ao menos um destino, as duas datas (retorno não antes da saída), motivo válido e objetivo — todos rejeitando string só com espaços.
+- **Etapa 3:** ao menos um meio de transporte e, para cada um marcado, os dados que formam o custo — avião/ônibus (origem, destino, data, valor por trecho), aluguel (locadora, diária, nº de diárias, retirada e devolução com local e data, distância e combustível), carro próprio (distância e combustível) e táxi/Uber (origem, destino, valor por corrida).
+- Etapas 1 e 4 são só leitura, não têm o que validar.
+- `viaWizAvisar` além do toast **leva o foco e rola até o campo** que falta — antes o aviso obrigava a caçar o campo na tela.
+- O botão **Enviar** revalida as duas etapas: dá para chegar ao resumo, voltar, apagar um campo e retornar pelos botões.
+
+**Backend** (`POST /api/viaticos/solicitacoes/autosservico`): passou a exigir OT, motivo, objetivo, ao menos um destino e ao menos um meio de transporte. `destinos` era validado só `if (b.destinos !== undefined)` — ausente passava batido. A regra não pode depender só da tela. O formulário do admin **não** foi endurecido: ali o motivo segue opcional, como era.
+
+**Interpretação que assumi:** exigi os campos que identificam a viagem e formam o custo. Deixei opcionais os que costumam não existir no momento do pedido — companhia aérea, nº do voo e horários. Se quiser esses também obrigatórios, é uma linha em `viaWizValidarEtapa3`.
+
+### Verificação
+- **34 casos unitários** nos dois validadores, com as funções reais extraídas do arquivo: campo por campo da etapa 2 (incluindo "só espaços", retorno antes da saída, motivo fora da lista e os dois motivos novos aceitos) e cada transporte da etapa 3 (sem item, item incompleto, valor zero, apontando o índice certo quando o 2º trecho é que está ruim, diária com vírgula, e combinação avião+táxi válida).
+- **Ponta a ponta no navegador** (gravação bloqueada): o suspenso mostra `— selecione —` + os 5 motivos em ordem, **sem pré-seleção**; tentando avançar vazio a tela **permanece na etapa 2** e o aviso muda conforme se preenche — OT → destino → motivo → objetivo; com tudo preenchido vai para a etapa 3. Na etapa 3: sem transporte, com avião sem trecho e com trecho vazio, **fica na etapa 3**; com o trecho completo avança. Etapa 4 segue para o resumo. No resumo, apagando o objetivo, o Enviar responde "Não é possível enviar: Descreva o objetivo da viagem."
+- Listas de motivo conferidas como **idênticas** entre front e back e em ordem alfabética pt-BR; nenhum `MOTIVO_OPTIONS[0]` restante.
+- `node --check` OK; console sem erros.
