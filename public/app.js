@@ -4685,6 +4685,26 @@ function viaPedagioTotal(bloco) {
   const porTrecho = viaPedagioPonderado(bloco && bloco.trechos);
   return porTrecho > 0 ? porTrecho : (Number(bloco && bloco.pedagio_valor) || 0);
 }
+// O campo "Pedágio total" do formulário passa a ser a soma da coluna de pedágio
+// da tabela de trechos e fica TRAVADO, igual a distância e combustível: quem
+// digita é a tabela, trecho por trecho. Enquanto nenhum pedágio for informado o
+// campo segue liberado, para quem quiser lançar só o valor total.
+function viaSincronizarPedagioTotal(input, bloco, trechos) {
+  if (!input) return;
+  const total = viaPedagioPonderado(trechos);
+  if (total > 0) {
+    bloco.pedagio_valor = total.toFixed(2);
+    input.value = bloco.pedagio_valor;
+    input.disabled = true;
+  } else {
+    input.disabled = false;
+  }
+}
+// Sem API de pedágio confiável hoje, o colaborador consulta o valor no Rotas
+// Brasil e transcreve por trecho. O botão é só um atalho para o site.
+const ROTAS_BRASIL_URL = 'https://rotasbrasil.com.br/';
+const viaBotaoRotasBrasil = () => `<a class="btn sm" href="${ROTAS_BRASIL_URL}" target="_blank" rel="noopener noreferrer"
+  title="Abre o Rotas Brasil em outra aba para consultar o pedágio do trajeto">🛣️ Consultar pedágio no Rotas Brasil</a>`;
 // Aceita "250.50" ou "250,50" — o campo de diária de aluguel virou texto
 // livre (sem as setinhas do input numérico) pra facilitar a digitação.
 function viaNum(v) {
@@ -5238,8 +5258,9 @@ function viaRenderAluguelBlock() {
         <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio total (R$)', 'number', viaPedagioPonderado(a.trechos) > 0 ? viaPedagioPonderado(a.trechos).toFixed(2) : (a.pedagio_valor || ''), `step="0.01" min="0" ${viaPedagioPonderado(a.trechos) > 0 ? 'disabled' : ''}`)}</div>
         <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="al-manual-${i}" ${a.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
         <p class="hint" style="margin-top:8px">${viaPedagioPonderado(a.trechos) > 0
-          ? 'Pedágio somado a partir da tabela de trechos acima (valor de uma passagem × repetições).'
-          : 'Calcule a rota para informar o pedágio por trecho — ou preencha aqui o valor total, se preferir.'}</p>
+          ? 'Pedágio somado automaticamente a partir da coluna de pedágio da tabela de trechos acima — por isso o campo está travado.'
+          : 'Calcule a rota e informe o pedágio de cada trecho na tabela: o total vem somado daqui. Ou preencha o total direto neste campo, se preferir.'}</p>
+        <div style="margin:-2px 0 10px">${viaBotaoRotasBrasil()}</div>
         <div class="field-row">${fld(`al-estacqtd-${i}`, 'Estacionamento — Qtd.', 'number', a.estacionamento_qtd || 1, 'min="1"')}${fld(`al-estacvalor-${i}`, 'Valor unitário (R$)', 'number', a.estacionamento_valor || '', 'step="0.01" min="0"')}</div>
         <p style="font-weight:600">Total da diária: ${brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))}</p>
         <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
@@ -5351,6 +5372,7 @@ function viaRenderAluguelBlock() {
         if (kmEl) { kmEl.value = a.distancia_km; kmEl.disabled = true; }
         if (combEl) { combEl.value = a.combustivel_valor; combEl.disabled = true; }
         if (manualEl) manualEl.checked = false;
+        viaSincronizarPedagioTotal(document.getElementById(`al-pedagio-${i}`), a, trechos);
       }, () => viaRenderAluguelBlock());
     };
   });
@@ -5389,8 +5411,9 @@ function viaRenderProprioBlock() {
     </div>
     <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="w3-proprio-manual" ${rota.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
     <p class="hint" style="margin-top:8px">${viaPedagioPonderado(rota.trechos) > 0
-      ? 'Pedágio somado a partir da tabela de trechos acima (valor de uma passagem × repetições).'
-      : 'Calcule a rota para informar o pedágio por trecho — ou preencha aqui o valor total, se preferir.'}</p>
+      ? 'Pedágio somado automaticamente a partir da coluna de pedágio da tabela de trechos acima — por isso o campo está travado.'
+      : 'Calcule a rota e informe o pedágio de cada trecho na tabela: o total vem somado daqui. Ou preencha o total direto neste campo, se preferir.'}</p>
+    <div style="margin:-2px 0 10px">${viaBotaoRotasBrasil()}</div>
     <div class="field-row">
       ${fld('w3-proprio-estac-qtd', 'Estacionamento — Qtd.', 'number', rota.estacionamento_qtd, 'min="1"')}
       ${fld('w3-proprio-estac-valor', 'Valor unitário (R$)', 'number', rota.estacionamento_valor, 'step="0.01" min="0"')}
@@ -5413,6 +5436,7 @@ function viaRenderProprioBlock() {
       $('#w3-proprio-km').value = rota.distancia_km; $('#w3-proprio-km').disabled = true;
       $('#w3-proprio-comb').value = rota.combustivel_valor; $('#w3-proprio-comb').disabled = true;
       $('#w3-proprio-manual').checked = false;
+      viaSincronizarPedagioTotal($('#w3-proprio-pedagio'), rota, trechos);
     }, () => viaRenderProprioBlock());
 }
 

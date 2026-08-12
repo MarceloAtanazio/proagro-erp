@@ -193,6 +193,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 .btn.blue { background: var(--azul-700); border-color: var(--azul-700); color: #fff; }
 .btn.danger-ghost { color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+a.btn { text-decoration: none; }   /* .btn usado em link (ex.: atalho do Rotas Brasil) */
 .btn.block { width: 100%; justify-content: center; padding: 11px; font-size: 14px; }
 .btn:disabled { opacity: .5; cursor: default; }
 

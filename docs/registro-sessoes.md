@@ -840,3 +840,28 @@ Ponta a ponta no navegador, com gravação bloqueada e **rota real calculada pel
 - `node --check` OK; console sem erros de aplicação.
 
 **Nota:** o combustível é calculado sobre o km sem truncar, então pode divergir alguns centavos de uma conta feita à mão com o km arredondado exibido (263,9 → R$ 190,27 contra R$ 190,31). Comportamento que já existia antes desta mudança; não alterei para não mexer no valor de rotas já calculadas.
+
+---
+
+## 2026-08-12 — Pedágio total travado pela soma dos trechos + atalho para o Rotas Brasil
+
+Vale para **Carro Próprio e Aluguel de Carro** (usam o mesmo componente de rota).
+
+### 1. Pedágio total preenchido e travado
+O campo "Pedágio total (R$)" do formulário já era preenchido com a soma dos trechos **na renderização**, mas não acompanhava a digitação: quem lançava o pedágio na tabela via o rodapé dela mudar e o campo de baixo continuar vazio e editável — dois lugares para o mesmo número, e o campo do formulário é o que alimenta a previsão.
+
+Novo `viaSincronizarPedagioTotal(input, bloco, trechos)`, chamado nos dois blocos a cada atualização de linha: soma a coluna de pedágio, escreve no campo e o **trava**, igual a distância e combustível. Se todos os pedágios voltarem a zero, o campo é **liberado** de novo — quem não calcula rota (ou prefere lançar só o total) continua podendo digitar ali. O valor travado é gravado em `pedagio_valor`, então segue para a previsão mesmo com o input desabilitado.
+
+Os textos de ajuda dos dois blocos foram corrigidos: falavam em "valor de uma passagem × repetições", que deixou de existir quando a coluna de repetições saiu.
+
+### 2. Atalho para o Rotas Brasil
+Sem uma API de pedágio confiável, o valor é consultado manualmente. Foi adicionado o botão **"🛣️ Consultar pedágio no Rotas Brasil"** (`https://rotasbrasil.com.br/`) logo abaixo do campo de pedágio, nos dois blocos, abrindo em outra aba com `rel="noopener noreferrer"`. Regra `a.btn { text-decoration: none }` no CSS, já que `.btn` nunca havia sido usado em link.
+
+Não tentei montar a URL com origem/destino preenchidos: o site não tem parâmetros de consulta documentados e chutar produziria link quebrado.
+
+### Verificação
+Ponta a ponta com rota real do OSRM, nos dois blocos:
+- **Carro Próprio:** campo liberado e vazio antes e depois de calcular a rota; digitando 18,50 e 7,25 em dois trechos, o campo passou a **R$ 25,75 travado**, batendo com o rodapé da tabela e com o modelo; **zerando os dois, o campo destravou**.
+- **Aluguel de Carro:** 10 + 11 + 12 → **33,00 travado**, igual ao rodapé e ao modelo, e aparecendo na etapa 4 como "🛣️ Pedágio (informado na rota) R$ 33,00" dentro do total previsto.
+- Botão conferido nos dois blocos: texto, `href`, `target="_blank"`, `rel` e sem sublinhado. `https://rotasbrasil.com.br/` respondendo **HTTP 200**.
+- `node --check` OK; console sem erros de aplicação.
