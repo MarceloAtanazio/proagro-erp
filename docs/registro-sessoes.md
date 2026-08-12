@@ -790,3 +790,14 @@ Criadas `viaWizValidarEtapa2` e `viaWizValidarEtapa3`, fora das funções de ren
 - **Ponta a ponta no navegador** (gravação bloqueada): o suspenso mostra `— selecione —` + os 5 motivos em ordem, **sem pré-seleção**; tentando avançar vazio a tela **permanece na etapa 2** e o aviso muda conforme se preenche — OT → destino → motivo → objetivo; com tudo preenchido vai para a etapa 3. Na etapa 3: sem transporte, com avião sem trecho e com trecho vazio, **fica na etapa 3**; com o trecho completo avança. Etapa 4 segue para o resumo. No resumo, apagando o objetivo, o Enviar responde "Não é possível enviar: Descreva o objetivo da viagem."
 - Listas de motivo conferidas como **idênticas** entre front e back e em ordem alfabética pt-BR; nenhum `MOTIVO_OPTIONS[0]` restante.
 - `node --check` OK; console sem erros.
+
+---
+
+## 2026-08-12 — Assistente de Viáticos um pouco mais largo
+
+**Pedido:** expandir o quadro de "Dados da viagem" para os dois lados, sem exagerar.
+
+`.via-wiz-container` de **760px para 900px** (+18%). Afeta as etapas 1, 2 e 4, que usam o mesmo invólucro; a 3 já usava `-wide` (1240px, por causa do mapa) e a 5 usa `-lg` (920px) — então a mudança também deixa a largura **mais uniforme ao longo do assistente**, sem o salto de 760 → 1240 → 760 → 920 de antes.
+
+### Verificação
+Medido no navegador nas 5 etapas: container em 900px nas etapas de formulário (contra 980 na 3 e 920 na 5), **sem vazamento horizontal** em nenhuma, com 65–72px de sobra de cada lado numa janela de 1280px. Em **tablet (768px)** o container fica em 725px e em **celular (375px)** em 347px, sem rolagem lateral em nenhum dos dois — o `max-width` cede naturalmente.

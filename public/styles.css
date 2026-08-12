@@ -384,7 +384,10 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    .via-wiz-container-lg / .via-wiz-container-wide) para que o conjunto
    inteiro — progresso, card e botões — respire igual dos dois lados em
    telas largas, em vez de ficar grudado na borda esquerda do .content. */
-.via-wiz-container { max-width: 760px; margin: 0 auto; }
+/* 900px (era 760): os campos de "Dados da viagem" ficavam estreitos demais para
+   a tela, com muita sobra dos dois lados. Fica perto do -lg da etapa 5, o que
+   deixa a largura mais uniforme ao longo do assistente. */
+.via-wiz-container { max-width: 900px; margin: 0 auto; }
 .via-wiz-container-lg { max-width: 920px; margin: 0 auto; }
 .via-wiz-container-wide { max-width: 1240px; margin: 0 auto; }
 .via-wiz-topbar { margin-bottom:10px; }
