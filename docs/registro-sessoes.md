@@ -865,3 +865,31 @@ Ponta a ponta com rota real do OSRM, nos dois blocos:
 - **Aluguel de Carro:** 10 + 11 + 12 → **33,00 travado**, igual ao rodapé e ao modelo, e aparecendo na etapa 4 como "🛣️ Pedágio (informado na rota) R$ 33,00" dentro do total previsto.
 - Botão conferido nos dois blocos: texto, `href`, `target="_blank"`, `rel` e sem sublinhado. `https://rotasbrasil.com.br/` respondendo **HTTP 200**.
 - `node --check` OK; console sem erros de aplicação.
+
+---
+
+## 2026-08-12 — Botão de pedágio ao lado do cálculo, campo travado e paradas manuais só com voo
+
+### 1. Botão do Rotas Brasil ao lado de "Calcular rota automaticamente"
+Estava logo abaixo do campo de pedágio; passou para a mesma linha do botão de calcular rota (`.btn-group`), nos dois blocos — Carro Próprio e Aluguel de Carro.
+
+### 2. "Pedágio total" travado como os vizinhos
+O campo ficava editável enquanto nenhum pedágio tivesse sido informado. Agora usa o **mesmo `kmCombDisabled`** de distância e combustível: travado por padrão, e liberado apenas por **"✏️ Rota não pôde ser calculada — preencher km/combustível manualmente"**, que é a chave dos outros dois. Os três passam a se comportar igual.
+
+`viaSincronizarPedagioTotal` também deixou de reabilitar o campo quando os pedágios voltavam a zero — agora ele apenas esvazia e continua travado, respeitando o `manual_override`. Textos de ajuda dos dois blocos atualizados.
+
+### 3. "Rodei apenas por lugares específicos no destino" só com voo preenchido
+A opção só faz sentido quando a viagem tem voo (chegar de avião e usar o carro apenas dentro do destino, em vez de rodar as cidades da OT saindo da base). Agora ela **só aparece** quando "Avião" está marcado **e** existe pelo menos um trecho com origem, destino, data e valor.
+
+- `viaTemVooPreenchido()` decide, e `viaAtualizarVisibilidadeUsoLocal()` aplica em todos os aluguéis.
+- Chamada a cada digitação nos campos do voo, ao adicionar/remover trecho e ao marcar/desmarcar Avião. Só alterna `display` — não redesenha o bloco — justamente porque roda enquanto a pessoa digita, e um re-render tiraria o foco do campo.
+- **Se a opção estava marcada e o voo deixa de existir, `uso_local` volta a false** e o bloco é redesenhado. Sem isso o roteiro ficaria preso nas paradas manuais com a opção invisível, sem a pessoa entender por quê.
+
+### Verificação
+Ponta a ponta com rota real do OSRM:
+- **Botão:** confirmado dentro do mesmo `.btn-group` do "Calcular rota" nos dois blocos.
+- **Travamento:** antes de calcular, os três campos travados; marcando "preencher manualmente", os três liberam; desmarcando, os três voltam a travar. Após calcular e digitar 18,50 + 7,25, o campo mostrou **R$ 25,75 travado**, igual ao rodapé da tabela e ao modelo; **zerando os pedágios o campo esvaziou e permaneceu travado** (comportamento novo, antes destravava).
+- **Visibilidade da opção:** escondida sem avião; escondida com avião marcado mas sem trecho; escondida com trecho vazio; escondida com só origem e com origem+destino; **aparece apenas com o voo completo**. Marcando a opção e depois desmarcando Avião, ela desaparece e `uso_local` volta a false no modelo.
+- Console sem erros de aplicação.
+
+**Ponto em aberto:** o pedido mencionava "assim você usa os dados diretamente de lá". Implementei a regra de visibilidade, que era o pedido explícito. Se a ideia também era **pré-preencher o município de retirada a partir do destino do voo**, isso é possível — `br-aviacao.js` traz a cidade de cada IATA —, mas o casamento entre a cidade do dataset de aeroportos e o município do IBGE não é exato (acento e grafia divergem em vários casos), então preferi confirmar antes em vez de arriscar preencher a cidade errada.

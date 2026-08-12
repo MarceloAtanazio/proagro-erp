@@ -4692,14 +4692,39 @@ function viaPedagioTotal(bloco) {
 function viaSincronizarPedagioTotal(input, bloco, trechos) {
   if (!input) return;
   const total = viaPedagioPonderado(trechos);
-  if (total > 0) {
-    bloco.pedagio_valor = total.toFixed(2);
-    input.value = bloco.pedagio_valor;
-    input.disabled = true;
-  } else {
-    input.disabled = false;
-  }
+  bloco.pedagio_valor = total > 0 ? total.toFixed(2) : '';
+  input.value = bloco.pedagio_valor;
+  // Travado junto com distância e combustível: os três vêm da rota. Só libera
+  // com "preencher manualmente", que é a chave dos outros dois.
+  input.disabled = !bloco.manual_override;
 }
+// "Rodei apenas por lugares específicos no destino" só faz sentido quando a
+// viagem tem voo: é o caso de chegar de avião e usar o carro apenas dentro do
+// destino, em vez de rodar as cidades da OT saindo da base. Sem voo informado a
+// opção some — e, se estava marcada, volta para o modo normal, senão o roteiro
+// ficaria preso nas paradas manuais sem a pessoa ver por quê.
+function viaTemVooPreenchido() {
+  const t = VIA_WIZ && VIA_WIZ.transporte;
+  if (!t || !t.aviao) return false;
+  return (t.aviao_trechos || []).some(x =>
+    String(x.origem || '').trim() && String(x.destino || '').trim() && x.data && viaNum(x.valor) > 0);
+}
+// Mostra/esconde a opção em todos os aluguéis sem redesenhar o bloco inteiro —
+// isso é chamado enquanto a pessoa digita os dados do voo, e um re-render
+// tiraria o foco do campo. Só redesenha se precisar desmarcar alguém.
+function viaAtualizarVisibilidadeUsoLocal() {
+  const w = VIA_WIZ;
+  if (!w || !w.transporte.aluguel_carro) return;
+  const liberado = viaTemVooPreenchido();
+  let precisaRedesenhar = false;
+  (w.transporte.alugueis || []).forEach((a, i) => {
+    const wrap = document.getElementById(`al-usolocal-wrap-${i}`);
+    if (wrap) wrap.style.display = liberado ? '' : 'none';
+    if (!liberado && a.uso_local) { a.uso_local = false; precisaRedesenhar = true; }
+  });
+  if (precisaRedesenhar) viaRenderAluguelBlock();
+}
+
 // Sem API de pedágio confiável hoje, o colaborador consulta o valor no Rotas
 // Brasil e transcreve por trecho. O botão é só um atalho para o site.
 const ROTAS_BRASIL_URL = 'https://rotasbrasil.com.br/';
@@ -5108,7 +5133,7 @@ function viaWizStep3() {
   viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock(); viaRenderTaxiUberBlock();
   viaAplicarTravasTransporte();
 
-  $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); viaAplicarTravasTransporte(); };
+  $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); viaAplicarTravasTransporte(); viaAtualizarVisibilidadeUsoLocal(); };
   $('#w3-onibus').onchange = e => { w.transporte.onibus = e.target.checked; viaRenderOnibusBlock(); viaAplicarTravasTransporte(); };
   $('#w3-aluguel').onchange = e => { w.transporte.aluguel_carro = e.target.checked; viaRenderAluguelBlock(); viaAplicarTravasTransporte(); };
   $('#w3-proprio').onchange = e => { w.transporte.carro_proprio = e.target.checked; viaRenderProprioBlock(); viaAplicarTravasTransporte(); };
@@ -5176,10 +5201,12 @@ function viaRenderAviaoBlock() {
   const campos = { cia: 'cia', numero_voo: 'voo', classe: 'classe', origem: 'origem', destino: 'destino', data: 'data', saida: 'saida', chegada: 'chegada', valor: 'valor' };
   w.transporte.aviao_trechos.forEach((t, i) => Object.entries(campos).forEach(([campo, elKey]) => {
     const input = document.getElementById(`av-${elKey}-${i}`);
-    if (input) input.oninput = () => { t[campo] = input.value; };
+    // Cada digitação no voo pode liberar/esconder a opção de paradas manuais
+    // do Aluguel de Carro, que depende de ter voo preenchido.
+    if (input) input.oninput = () => { t[campo] = input.value; viaAtualizarVisibilidadeUsoLocal(); };
     if (input && elKey === 'classe') input.onchange = () => { t[campo] = input.value; };
   }));
-  box.querySelectorAll('[data-rmaviao]').forEach(b => b.onclick = () => { w.transporte.aviao_trechos.splice(Number(b.dataset.rmaviao), 1); viaRenderAviaoBlock(); });
+  box.querySelectorAll('[data-rmaviao]').forEach(b => b.onclick = () => { w.transporte.aviao_trechos.splice(Number(b.dataset.rmaviao), 1); viaRenderAviaoBlock(); viaAtualizarVisibilidadeUsoLocal(); });
   $('#w3-add-aviao').onclick = () => { w.transporte.aviao_trechos.push({ cia: '', numero_voo: '', classe: 'Econômica', origem: '', destino: '', data: w.data_inicio, saida: '', chegada: '', valor: '' }); viaRenderAviaoBlock(); };
 }
 
@@ -5241,7 +5268,9 @@ function viaRenderAluguelBlock() {
         </div>
         <p class="hint" style="margin:-4px 0 10px">A rota do carro alugado parte e retorna ao <strong>município de retirada</strong> informado acima — não à cidade-base. Assim, quando você voa até outra cidade e aluga o carro lá, o trecho feito de avião não entra no cálculo.</p>
 
-        <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Rodei apenas por lugares específicos no destino — quero listar as paradas manualmente (em vez de usar as cidades da OT)</label>
+        <div id="al-usolocal-wrap-${i}" style="${viaTemVooPreenchido() ? '' : 'display:none'}">
+          <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Rodei apenas por lugares específicos no destino — quero listar as paradas manualmente (em vez de usar as cidades da OT)</label>
+        </div>
 
         ${a.uso_local ? `
         <div class="field"><label>Paradas visitadas (na ordem em que foram visitadas)</label>
@@ -5253,14 +5282,16 @@ function viaRenderAluguelBlock() {
           <div id="al-paradas-list-${i}"></div>
         </div>` : ''}
 
-        <button class="btn" id="al-calc-${i}" type="button">📍 Calcular rota automaticamente</button>
+        <div class="btn-group" style="gap:8px">
+          <button class="btn" id="al-calc-${i}" type="button">📍 Calcular rota automaticamente</button>
+          ${viaBotaoRotasBrasil()}
+        </div>
         <div id="al-status-${i}" style="margin-top:8px"></div>
-        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio total (R$)', 'number', viaPedagioPonderado(a.trechos) > 0 ? viaPedagioPonderado(a.trechos).toFixed(2) : (a.pedagio_valor || ''), `step="0.01" min="0" ${viaPedagioPonderado(a.trechos) > 0 ? 'disabled' : ''}`)}</div>
+        <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio total (R$)', 'number', viaPedagioPonderado(a.trechos) > 0 ? viaPedagioPonderado(a.trechos).toFixed(2) : (a.pedagio_valor || ''), `step="0.01" min="0" ${kmCombDisabled}`)}</div>
         <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="al-manual-${i}" ${a.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
         <p class="hint" style="margin-top:8px">${viaPedagioPonderado(a.trechos) > 0
           ? 'Pedágio somado automaticamente a partir da coluna de pedágio da tabela de trechos acima — por isso o campo está travado.'
-          : 'Calcule a rota e informe o pedágio de cada trecho na tabela: o total vem somado daqui. Ou preencha o total direto neste campo, se preferir.'}</p>
-        <div style="margin:-2px 0 10px">${viaBotaoRotasBrasil()}</div>
+          : 'Informe o pedágio de cada trecho na tabela acima: o total é somado automaticamente neste campo, que fica travado como a distância e o combustível. Para digitar o total à mão, marque "preencher manualmente".'}</p>
         <div class="field-row">${fld(`al-estacqtd-${i}`, 'Estacionamento — Qtd.', 'number', a.estacionamento_qtd || 1, 'min="1"')}${fld(`al-estacvalor-${i}`, 'Valor unitário (R$)', 'number', a.estacionamento_valor || '', 'step="0.01" min="0"')}</div>
         <p style="font-weight:600">Total da diária: ${brl(viaNum(a.valor_diaria) * (Number(a.dias) || 0))}</p>
         <button class="btn sm danger-ghost" data-rmaluguel="${i}" type="button">Remover aluguel</button>
@@ -5402,18 +5433,20 @@ function viaRenderProprioBlock() {
   box.innerHTML = `<div class="via-subcard"><h4>🚙 Carro Próprio</h4>
     ${avisoDoc}
     <p class="hint">Veículo cadastrado: <strong>${esc(colab.veiculo_modelo || 'não informado')}</strong>${colab.veiculo_placa ? ' — placa ' + esc(colab.veiculo_placa) : ''}${colab.veiculo_consumo_kml ? ` (consumo ${colab.veiculo_consumo_kml} km/L)` : ''}</p>
-    <button class="btn primary" id="w3-proprio-calc" type="button">📍 Calcular rota automaticamente</button>
+    <div class="btn-group" style="gap:8px">
+      <button class="btn primary" id="w3-proprio-calc" type="button">📍 Calcular rota automaticamente</button>
+      ${viaBotaoRotasBrasil()}
+    </div>
     <div id="w3-proprio-status" style="margin-top:8px"></div>
     <div class="field-row" style="margin-top:10px">
       ${fld('w3-proprio-km', 'Distância percorrida (km)', 'number', rota.distancia_km, `step="0.1" min="0" ${kmCombDisabled}`)}
       ${fld('w3-proprio-comb', 'Combustível (R$)', 'number', rota.combustivel_valor, `step="0.01" min="0" ${kmCombDisabled}`)}
-      ${fld('w3-proprio-pedagio', 'Pedágio total (R$)', 'number', viaPedagioPonderado(rota.trechos) > 0 ? viaPedagioPonderado(rota.trechos).toFixed(2) : rota.pedagio_valor, `step="0.01" min="0" ${viaPedagioPonderado(rota.trechos) > 0 ? 'disabled' : ''}`)}
+      ${fld('w3-proprio-pedagio', 'Pedágio total (R$)', 'number', viaPedagioPonderado(rota.trechos) > 0 ? viaPedagioPonderado(rota.trechos).toFixed(2) : rota.pedagio_valor, `step="0.01" min="0" ${kmCombDisabled}`)}
     </div>
     <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="w3-proprio-manual" ${rota.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
     <p class="hint" style="margin-top:8px">${viaPedagioPonderado(rota.trechos) > 0
       ? 'Pedágio somado automaticamente a partir da coluna de pedágio da tabela de trechos acima — por isso o campo está travado.'
-      : 'Calcule a rota e informe o pedágio de cada trecho na tabela: o total vem somado daqui. Ou preencha o total direto neste campo, se preferir.'}</p>
-    <div style="margin:-2px 0 10px">${viaBotaoRotasBrasil()}</div>
+      : 'Informe o pedágio de cada trecho na tabela acima: o total é somado automaticamente neste campo, que fica travado como a distância e o combustível. Para digitar o total à mão, marque "preencher manualmente".'}</p>
     <div class="field-row">
       ${fld('w3-proprio-estac-qtd', 'Estacionamento — Qtd.', 'number', rota.estacionamento_qtd, 'min="1"')}
       ${fld('w3-proprio-estac-valor', 'Valor unitário (R$)', 'number', rota.estacionamento_valor, 'step="0.01" min="0"')}
