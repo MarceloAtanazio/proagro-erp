@@ -801,3 +801,42 @@ Criadas `viaWizValidarEtapa2` e `viaWizValidarEtapa3`, fora das funções de ren
 
 ### Verificação
 Medido no navegador nas 5 etapas: container em 900px nas etapas de formulário (contra 980 na 3 e 920 na 5), **sem vazamento horizontal** em nenhuma, com 65–72px de sobra de cada lado numa janela de 1280px. Em **tablet (768px)** o container fica em 725px e em **celular (375px)** em 347px, sem rolagem lateral em nenhum dos dois — o `max-width` cede naturalmente.
+
+---
+
+## 2026-08-12 — Aluguel de Carro: local por município, km rodado no destino e fim da rolagem
+
+Levantamento da equipe, três ajustes na etapa 3 da Solicitação de Viáticos.
+
+### 1. Local de retirada/devolução por Estado + Município
+Eram campos de **texto livre com autocomplete** de endereços (Photon), o que gerava valores como "São Paulo, Região Sudeste, Brasil" — imprecisos, sujeitos a erro de grafia e longos demais para a tabela de trechos.
+
+Passaram a ser **Estado + Município em cascata**, do mesmo dataset dos destinos da OT, com um checkbox **"🏠 Retirada e devolução na cidade-base (Município/UF)"** que preenche os quatro campos de uma vez (desmarcar limpa, para a base não ficar gravada como se tivesse sido escolhida à mão).
+
+`retirada_local` / `devolucao_local` continuam existindo como texto `"Município/UF"`, porque a validação, o resumo e o PDF já leem esses campos — não foi preciso mexer neles. O cálculo de rota agora recebe `{ uf, municipio }`, a mesma forma que já usava para a cidade-base e para os destinos, e o `retirada_coord` (lat/lng do autocomplete) deixou de ser necessário.
+
+**Ganho de tabela:** o rótulo do trecho encurtou de "São Paulo, Região Sudeste, Brasil → Jundiaí/SP" para **"São Paulo/SP → Jundiaí/SP"**, o que já resolveu boa parte do item 3.
+
+### 2. Coluna "Km no destino" no lugar de "Repetições"
+A rota calculada só conhece a ida até cada parada e a volta ao ponto de partida — os deslocamentos dentro do destino (hotel ↔ local da visita) não apareciam. Antes isso era aproximado por "repetições" do trecho, o que é indireto e não bate com a realidade.
+
+Agora cada trecho tem um campo de **km rodados no destino**, digitado livremente. Ele entra na **quilometragem total e no combustível**, tanto na linha quanto no rodapé, e é propagado para os campos de km/combustível do aluguel (portanto para a previsão da etapa 4 e para o resumo). Quando há km informado, a célula de distância passa a mostrar `38.2 km / total 78.2 km`.
+
+**Compatibilidade:** `repeticoes` saiu da tela mas **continua sendo multiplicada no cálculo** (`viaKmTrecho`), porque solicitações gravadas antes desta mudança têm repetições > 1 — ignorá-las mudaria o valor de registros já aprovados. Para os novos, repetições é sempre 1 e o resultado é `km + km no destino`.
+
+A coluna "Pedágio total" foi removida (era o valor × repetições): agora se informa o **total pago no trecho**, direto. A tabela foi de 6 para 5 colunas.
+
+### 3. Fim da barra de rolagem
+- `.via-wiz-container-wide` de **1240 para 1400px**; coluna do formulário de `flex:1.1` para `1.5` e o mapa de `0.9` para `0.85` — o formulário é quem tem a tabela.
+- O layout de duas colunas saiu do `style` inline para a classe `.via-wiz-2col`, e **abaixo de 1400px de janela o mapa vai para baixo**, ocupando a linha inteira. Sem isso, numa janela de 1280px a coluna ficava em 592px para uma tabela de 664px e a barra voltava.
+- `.via-trechos-tbl` com `white-space: nowrap` nas colunas numéricas e quebra só no rótulo do trecho.
+
+### Verificação
+Ponta a ponta no navegador, com gravação bloqueada e **rota real calculada pelo OSRM**:
+- **Item 1:** os quatro campos suspensos presentes, nenhum campo de texto livre restante, município travado em "— escolha o estado —" antes de escolher a UF, e o checkbox da base preenchendo `SP` / `São Paulo` nos dois lados com `retirada_local = "São Paulo/SP"`.
+- **Item 2:** rota São Paulo → Jundiaí → Campinas → Sorocaba deu 275,1 km / R$ 198,36; digitando 40 km no 2º trecho foi para **315,1 km / R$ 227,20** (275,1+40 e 315,1÷10×7,21 conferem), com a linha exibindo "38.2 km / total 78.2 km". Num segundo cenário, 25 km em cada um dos 3 trechos levou 188,9 → **263,9 km**, e o R$ 190,31 apareceu na previsão da etapa 4 e no total; o itinerário do resumo mostra "54.3 km + 25.0 km no destino = 79.3 km".
+- **Item 3:** em janela de **1680px** fica lado a lado (formulário 847px, mapa 498px) com a tabela em 773px de 773px — **sem barra**; em **1280px** empilha e a tabela fica em 891px de 891px — **sem barra**. Nenhuma rolagem lateral da página em nenhum dos dois.
+- Validação da etapa 3 reconferida com os campos novos: sem retirada, sem devolução e sem km, cada um com sua mensagem; o aluguel completo passa. Carro Próprio usa o mesmo componente e herdou a coluna.
+- `node --check` OK; console sem erros de aplicação.
+
+**Nota:** o combustível é calculado sobre o km sem truncar, então pode divergir alguns centavos de uma conta feita à mão com o km arredondado exibido (263,9 → R$ 190,27 contra R$ 190,31). Comportamento que já existia antes desta mudança; não alterei para não mexer no valor de rotas já calculadas.

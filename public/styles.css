@@ -389,7 +389,25 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    deixa a largura mais uniforme ao longo do assistente. */
 .via-wiz-container { max-width: 900px; margin: 0 auto; }
 .via-wiz-container-lg { max-width: 920px; margin: 0 auto; }
-.via-wiz-container-wide { max-width: 1240px; margin: 0 auto; }
+/* 1400px (era 1240): a etapa 3 tem o formulário e o mapa lado a lado, e a
+   tabela de trechos ficava com barra de rolagem horizontal na coluna estreita. */
+.via-wiz-container-wide { max-width: 1400px; margin: 0 auto; }
+/* Etapa 3: formulário + mapa lado a lado. O formulário leva a maior parte
+   porque é onde fica a tabela de trechos. Abaixo de 1400px de janela não sobra
+   largura para a tabela nessa divisão, então o mapa vai para baixo e ocupa a
+   linha inteira — melhor que uma tabela rolando na horizontal e um mapa
+   apertado em 350px. */
+.via-wiz-2col { display: flex; gap: 20px; align-items: flex-start; }
+.via-wiz-2col > .card { min-width: 0; flex: 1.5; }
+.via-wiz-2col > .via-map-card { flex: 0.85; }
+@media (max-width: 1400px) {
+  .via-wiz-2col { flex-direction: column; }
+  .via-wiz-2col > .card, .via-wiz-2col > .via-map-card { flex: 1 1 auto; width: 100%; }
+}
+/* Tabela de trechos: nada de quebrar o rótulo do trecho em 5 linhas, e os
+   números com largura previsível. */
+.via-trechos-tbl th, .via-trechos-tbl td { white-space: nowrap; }
+.via-trechos-tbl td:first-child, .via-trechos-tbl th:first-child { white-space: normal; min-width: 150px; }
 .via-wiz-topbar { margin-bottom:10px; }
 .via-wiz-cancelar {
   appearance:none; background:none; border:none; padding:4px 0; cursor:pointer;

@@ -4653,23 +4653,28 @@ async function viaCalcularRota(pontoFixo, intermediarios) {
 // Quando o usuário refaz o cálculo (reordenar/remover cidade), os trechos
 // mudam de índice — casamos pelo rótulo "De → Para" pra manter o valor de
 // repetição que ele já tinha ajustado, em vez de resetar tudo pra 1.
-function viaMesclarRepeticoes(novosTrechos, trechosAntigos) {
+function viaMesclarAjustesTrechos(novosTrechos, trechosAntigos) {
   const mapa = {};
-  (trechosAntigos || []).forEach(t => { mapa[`${t.de}→${t.para}`] = { repeticoes: t.repeticoes, pedagio: t.pedagio }; });
+  (trechosAntigos || []).forEach(t => { mapa[`${t.de}→${t.para}`] = { repeticoes: t.repeticoes, pedagio: t.pedagio, km_extra: t.km_extra }; });
   return novosTrechos.map(t => {
     const ant = mapa[`${t.de}→${t.para}`] || {};
-    return { ...t, repeticoes: ant.repeticoes || 1, pedagio: ant.pedagio != null ? ant.pedagio : '' };
+    return { ...t, repeticoes: ant.repeticoes || 1, pedagio: ant.pedagio != null ? ant.pedagio : '',
+      km_extra: ant.km_extra != null ? ant.km_extra : '' };
   });
 }
-// Soma km × repetições — usado quando um trecho do roteiro foi percorrido
-// mais de uma vez (ex.: deslocamento diário entre a cidade do hotel e a do
-// evento), o que o cálculo de rota simples (ida até cada destino e volta à
-// base) não capturaria sozinho.
-function viaKmPonderado(trechos) { return (trechos || []).reduce((s, t) => s + t.km * (t.repeticoes || 1), 0); }
-// Pedágio segue a mesma lógica das repetições: o valor informado é o de UMA
-// passagem no trecho, e o total considera quantas vezes o trecho foi
-// percorrido (auditoria 2026-07-29, achado B2 — antes o pedágio era um campo
-// único que ficava de fora da multiplicação, subestimando o reembolso).
+// Km de um trecho = distância da rota + `km_extra`, a quilometragem rodada por
+// conta própria enquanto se está naquele destino (hotel ↔ local da visita, por
+// exemplo), que o cálculo de rota — ida a cada parada e volta ao ponto de
+// partida — não tem como conhecer. É digitada por quem viaja.
+//
+// `repeticoes` não é mais editável na tela (foi substituída pelo km_extra), mas
+// continua sendo multiplicada aqui: solicitações gravadas antes desta mudança
+// têm repetições > 1, e ignorá-las mudaria o valor de registros já aprovados.
+function viaKmTrecho(t) { return t.km * (t.repeticoes || 1) + viaNum(t.km_extra); }
+function viaKmPonderado(trechos) { return (trechos || []).reduce((s, t) => s + viaKmTrecho(t), 0); }
+// Pedágio informado por trecho. O valor digitado é o total do trecho; o fator de
+// repetição só sobrevive para não alterar registros antigos (auditoria
+// 2026-07-29, achado B2 — antes o pedágio era um campo único fora do cálculo).
 function viaPedagioPonderado(trechos) {
   return (trechos || []).reduce((s, t) => s + viaNum(t.pedagio) * (t.repeticoes || 1), 0);
 }
@@ -4721,16 +4726,16 @@ function viaAtualizarMapa(pontos, geometry) {
 
 function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix) {
   const legsHtml = trechos.map((t, i) => {
+    const kmTotal = viaKmTrecho(t);
+    const comb = consumo ? (kmTotal / consumo * preco) : 0;
     const rep = t.repeticoes || 1;
-    const comb = consumo ? (t.km * rep / consumo * preco) : 0;
-    const pedTrecho = viaNum(t.pedagio) * rep;
     return `<tr>
-      <td>${esc(t.de)} → ${esc(t.para)}</td>
-      <td class="num">${t.km.toFixed(1)} km</td>
-      <td class="num" style="width:90px"><input type="number" min="1" step="1" value="${rep}" data-legrep="${i}" style="width:56px; text-align:center" title="Quantas vezes esse trecho foi percorrido no total (cada ida ou volta conta 1)"></td>
+      <td>${esc(viaLabelCurto(t.de))} → ${esc(viaLabelCurto(t.para))}</td>
+      <td class="num">${t.km.toFixed(1)} km${rep > 1 ? ` <small style="color:var(--muted)">×${rep}</small>` : ''}
+        ${viaNum(t.km_extra) > 0 ? `<br><small style="color:var(--muted)" id="${idPrefix}-legkmtot-${i}">total ${kmTotal.toFixed(1)} km</small>` : `<span id="${idPrefix}-legkmtot-${i}"></span>`}</td>
+      <td class="num" style="width:104px"><input type="number" min="0" step="0.1" placeholder="0" value="${esc(t.km_extra || '')}" data-legkm="${i}" style="width:74px; text-align:right" title="Km rodados por conta própria enquanto esteve neste destino — hotel, almoço, deslocamentos até o local da visita"></td>
       <td class="num" id="${idPrefix}-legcomb-${i}">${comb > 0 ? brl(comb) : '—'}</td>
-      <td class="num" style="width:110px"><input type="number" min="0" step="0.01" placeholder="0,00" value="${esc(t.pedagio || '')}" data-legped="${i}" style="width:76px; text-align:right" title="Valor do pedágio de UMA passagem neste trecho — é multiplicado pelas repetições"></td>
-      <td class="num" id="${idPrefix}-legpedtot-${i}">${pedTrecho > 0 ? brl(pedTrecho) : '—'}</td>
+      <td class="num" style="width:104px"><input type="number" min="0" step="0.01" placeholder="0,00" value="${esc(t.pedagio || '')}" data-legped="${i}" style="width:74px; text-align:right" title="Pedágio total pago neste trecho"></td>
     </tr>`;
   }).join('');
   const kmPonderado = viaKmPonderado(trechos);
@@ -4750,16 +4755,17 @@ function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix)
     </div>`;
   }).join('');
   return `
-    <div class="table-wrap" style="margin-top:10px"><table><thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Repetições</th><th class="num">Combustível</th><th class="num">Pedágio (1 passagem)</th><th class="num">Pedágio total</th></tr></thead>
+    <div class="table-wrap" style="margin-top:10px"><table class="via-trechos-tbl">
+    <thead><tr><th>Trecho</th><th class="num">Distância</th><th class="num">Km no destino</th><th class="num">Combustível</th><th class="num">Pedágio (R$)</th></tr></thead>
     <tbody>${legsHtml}</tbody>
     <tfoot><tr style="font-weight:700; background:var(--verde-050,#EAF5EC)">
-      <td colspan="2">Total considerando repetições</td>
+      <td>Total</td>
       <td class="num" id="${idPrefix}-totalkm">${kmPonderado.toFixed(1)} km</td>
-      <td class="num" id="${idPrefix}-totalcomb">${brl(combTotal)}</td>
       <td></td>
+      <td class="num" id="${idPrefix}-totalcomb">${brl(combTotal)}</td>
       <td class="num" id="${idPrefix}-totalped">${brl(pedagioTotal)}</td>
     </tr></tfoot></table></div>
-    <p class="hint" style="margin-top:8px">Se algum trecho foi percorrido mais de uma vez — por exemplo, deslocamentos diários entre a cidade do hotel e a do evento — aumente as "Repetições" dele. Cada unidade conta uma passagem (ida OU volta); um vaivém em 3 dias, por exemplo, são 6 repetições. No pedágio, informe o valor de <strong>uma passagem</strong> pelo trecho: o total é multiplicado pelas repetições, igual ao combustível.</p>
+    <p class="hint" style="margin-top:8px">A coluna <strong>"Km no destino"</strong> é para a quilometragem que você roda por conta própria enquanto está naquele destino — hotel, almoço, deslocamentos até o local da visita. A rota calculada só conhece a ida até cada parada e a volta ao ponto de partida, então esses km precisam ser informados aqui: eles entram na quilometragem total e no combustível. No pedágio, informe o <strong>total pago no trecho</strong>.</p>
     <p style="margin-top:12px; font-size:13px; margin-bottom:2px"><strong>Ordem do roteiro</strong></p>
     <p class="hint" style="margin-top:0">Use as setas para mudar a sequência ou o × para remover uma parada — a rota é recalculada na hora.</p>
     <div class="via-route-list">${reorderHtml}</div>`;
@@ -4783,23 +4789,25 @@ async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, s
   statusEl.innerHTML = '<div class="alert-item warn">Calculando rota (pode levar alguns segundos se houver endereços pra geocodificar)…</div>';
   try {
     const { total_km, legs, pontos, geometry } = await viaCalcularRota(pontoFixo, intermediarios);
-    const trechos = viaMesclarRepeticoes(legs, trechosAntigos);
+    const trechos = viaMesclarAjustesTrechos(legs, trechosAntigos);
     const kmPonderado = viaKmPonderado(trechos);
     // meta leva pontos/geometry para o chamador persistir e reaproveitar no
     // resumo (mapa da etapa 5) e no PDF. Ajuste de repetição não passa meta.
     onSucesso(kmPonderado, trechos, { pontos, geometry, total_km });
     viaAtualizarMapa(pontos, geometry);
-    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km passando uma vez por trecho (ida até cada parada e volta ao ponto de partida). Ajuste as repetições abaixo se algum trecho foi percorrido mais vezes. Pedágio segue manual.</div>`
+    statusEl.innerHTML = `<div class="alert-item ok">✅ Rota calculada: ${total_km.toFixed(1)} km — ida até cada parada e volta ao ponto de partida. Informe abaixo os km rodados dentro de cada destino e o pedágio de cada trecho.</div>`
       + viaRenderRotaDetalhe(intermediarios, trechos, colab.veiculo_consumo_kml, preco, idPrefix);
     const recalcular = () => { onReorder(); viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, statusElId, idPrefix, trechos, onSucesso, onReorder); };
     // Redesenha os subtotais da linha e do rodapé (km, combustível e pedágio)
     // sem chamar o OSRM de novo — vale tanto para repetições quanto pedágio.
     const atualizarLinha = i => {
-      const consumo = colab.veiculo_consumo_kml, rep = trechos[i].repeticoes || 1;
-      const comb = consumo ? (trechos[i].km * rep / consumo * preco) : 0;
+      const consumo = colab.veiculo_consumo_kml;
+      const kmLinha = viaKmTrecho(trechos[i]);
+      const comb = consumo ? (kmLinha / consumo * preco) : 0;
       const cellComb = document.getElementById(`${idPrefix}-legcomb-${i}`); if (cellComb) cellComb.textContent = comb > 0 ? brl(comb) : '—';
-      const pedLinha = viaNum(trechos[i].pedagio) * rep;
-      const cellPed = document.getElementById(`${idPrefix}-legpedtot-${i}`); if (cellPed) cellPed.textContent = pedLinha > 0 ? brl(pedLinha) : '—';
+      // O "total" abaixo da distância só aparece quando há km informado no destino.
+      const cellKmTot = document.getElementById(`${idPrefix}-legkmtot-${i}`);
+      if (cellKmTot) cellKmTot.innerHTML = viaNum(trechos[i].km_extra) > 0 ? `total ${kmLinha.toFixed(1)} km` : '';
       const novoKm = viaKmPonderado(trechos);
       const combTotal = consumo ? (novoKm / consumo * preco) : 0;
       const cellTotalKm = document.getElementById(`${idPrefix}-totalkm`); if (cellTotalKm) cellTotalKm.textContent = `${novoKm.toFixed(1)} km`;
@@ -4807,11 +4815,10 @@ async function viaExecutarCalculoRota(pontoFixo, intermediarios, colab, preco, s
       const cellTotalPed = document.getElementById(`${idPrefix}-totalped`); if (cellTotalPed) cellTotalPed.textContent = brl(viaPedagioPonderado(trechos));
       onSucesso(novoKm, trechos);
     };
-    statusEl.querySelectorAll('[data-legrep]').forEach(inp => {
-      inp.onchange = () => {
-        const i = Number(inp.dataset.legrep);
-        trechos[i].repeticoes = Math.max(1, Math.round(Number(inp.value)) || 1);
-        inp.value = trechos[i].repeticoes;
+    statusEl.querySelectorAll('[data-legkm]').forEach(inp => {
+      inp.oninput = () => {
+        const i = Number(inp.dataset.legkm);
+        trechos[i].km_extra = inp.value;
         atualizarLinha(i);
       };
     });
@@ -4871,9 +4878,9 @@ function viaWizValidarEtapa3(t) {
       if (!String(a.locadora || '').trim()) return { msg: `Aluguel ${n}: informe a locadora.` };
       if (!viaNumOk(a.valor_diaria)) return { msg: `Aluguel ${n}: informe o valor da diária.` };
       if (!viaNumOk(a.dias)) return { msg: `Aluguel ${n}: informe a quantidade de diárias.` };
-      if (!String(a.retirada_local || '').trim()) return { msg: `Aluguel ${n}: informe o local de retirada.` };
+      if (!String(a.retirada_local || '').trim()) return { msg: `Aluguel ${n}: escolha o estado e o município de retirada.` };
       if (!a.retirada_data) return { msg: `Aluguel ${n}: informe a data de retirada.` };
-      if (!String(a.devolucao_local || '').trim()) return { msg: `Aluguel ${n}: informe o local de devolução.` };
+      if (!String(a.devolucao_local || '').trim()) return { msg: `Aluguel ${n}: escolha o estado e o município de devolução.` };
       if (!a.devolucao_data) return { msg: `Aluguel ${n}: informe a data de devolução.` };
       if (!viaNumOk(a.distancia_km)) return { msg: `Aluguel ${n}: calcule a rota (ou informe a distância) para apurar o combustível.` };
       if (!viaNumOk(a.combustivel_valor)) return { msg: `Aluguel ${n}: informe o valor de combustível.` };
@@ -5052,8 +5059,8 @@ function viaWizStep3() {
   c.innerHTML = `
     <div class="via-wiz-container-wide">
       ${viaWizProgress(3)}
-      <div style="display:flex; gap:20px; align-items:flex-start">
-        <div class="card" style="flex:1.1; min-width:0">
+      <div class="via-wiz-2col">
+        <div class="card">
           <h3 style="margin-bottom:6px">Transporte</h3>
           <p class="hint" style="margin-bottom:14px">Marque o que se aplica a esta viagem — dá pra combinar (ex.: avião pra chegar + carro alugado no destino). Combinações não permitidas ficam bloqueadas: Carro Próprio não combina com nada, e Avião e Ônibus não combinam entre si.</p>
           <div class="via-transport-grid">
@@ -5069,7 +5076,7 @@ function viaWizStep3() {
           <div id="w3-proprio-block"></div>
           <div id="w3-taxiuber-block"></div>
         </div>
-        <div class="card via-map-card" style="flex:0.9; min-width:0">
+        <div class="card via-map-card">
           <h3 style="margin-bottom:10px">Mapa da rota</h3>
           <div id="via-map" style="display:none"></div>
           <p class="hint" id="via-map-placeholder">O mapa aparece aqui depois de calcular uma rota (Carro Próprio ou Aluguel de Carro).</p>
@@ -5182,6 +5189,15 @@ function viaRenderAluguelBlock() {
   const w = VIA_WIZ, box = $('#w3-aluguel-block');
   box.style.display = w.transporte.aluguel_carro ? '' : 'none';
   if (!w.transporte.aluguel_carro) { box.innerHTML = ''; return; }
+  // Retirada/devolução por Estado + Município (não mais digitação livre): evita
+  // erro de grafia e devolve um ponto que o cálculo de rota já sabe resolver,
+  // do mesmo jeito que faz com os destinos da OT.
+  const temBase = !!(w.colab.cidade_base_uf && w.colab.cidade_base_municipio);
+  const ufOpcoes = [{ v: '', t: '— selecione —' }, ...BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }))];
+  const munOpcoes = (uf, atual) => uf
+    ? [{ v: '', t: '— selecione —' }, ...(BR_LOCALIDADES.municipios[uf] || []).map(m => ({ v: m, t: m }))]
+    : [{ v: '', t: '— escolha o estado —' }];
+
   box.innerHTML = `<div class="via-subcard"><h4>🚗 Aluguel de Carro</h4>
     ${w.transporte.alugueis.map((a, i) => {
       const kmCombDisabled = a.manual_override ? '' : 'disabled';
@@ -5192,9 +5208,18 @@ function viaRenderAluguelBlock() {
           <div class="field"><label for="al-diaria-${i}">Valor da diária (R$)</label><input id="al-diaria-${i}" type="text" inputmode="decimal" placeholder="0,00" value="${esc(a.valor_diaria || '')}"></div>
           ${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}
         </div>
-        <div class="field-row">${fld(`al-retlocal-${i}`, 'Local de retirada', 'text', a.retirada_local || '', 'placeholder="Digite o nome do lugar ou o endereço…" autocomplete="off"')}${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}</div>
-        <div class="field-row">${fld(`al-devlocal-${i}`, 'Local de devolução', 'text', a.devolucao_local || '', 'placeholder="Digite o nome do lugar ou o endereço…" autocomplete="off"')}${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}</div>
-        <p class="hint" style="margin:-4px 0 10px">A rota do carro alugado parte e retorna ao <strong>"Local de retirada"</strong> informado acima — não à cidade-base. Assim, quando você voa até outra cidade e aluga o carro lá, o trecho feito de avião não entra no cálculo.</p>
+        ${temBase ? `<label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-localbase-${i}" ${a.local_base ? 'checked' : ''}> 🏠 Retirada e devolução na cidade-base (${esc(w.colab.cidade_base_municipio)}/${esc(w.colab.cidade_base_uf)})</label>` : ''}
+        <div class="field-row">
+          ${fldSel(`al-retuf-${i}`, 'Estado (retirada)', ufOpcoes, a.retirada_uf || '')}
+          ${fldSel(`al-retmun-${i}`, 'Município (retirada)', munOpcoes(a.retirada_uf, a.retirada_municipio), a.retirada_municipio || '')}
+          ${fld(`al-retdata-${i}`, 'Data de retirada', 'date', a.retirada_data || w.data_inicio)}
+        </div>
+        <div class="field-row">
+          ${fldSel(`al-devuf-${i}`, 'Estado (devolução)', ufOpcoes, a.devolucao_uf || '')}
+          ${fldSel(`al-devmun-${i}`, 'Município (devolução)', munOpcoes(a.devolucao_uf, a.devolucao_municipio), a.devolucao_municipio || '')}
+          ${fld(`al-devdata-${i}`, 'Data de devolução', 'date', a.devolucao_data || w.data_fim)}
+        </div>
+        <p class="hint" style="margin:-4px 0 10px">A rota do carro alugado parte e retorna ao <strong>município de retirada</strong> informado acima — não à cidade-base. Assim, quando você voa até outra cidade e aluga o carro lá, o trecho feito de avião não entra no cálculo.</p>
 
         <label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-usolocal-${i}" ${a.uso_local ? 'checked' : ''}> 🛫 Rodei apenas por lugares específicos no destino — quero listar as paradas manualmente (em vez de usar as cidades da OT)</label>
 
@@ -5232,16 +5257,45 @@ function viaRenderAluguelBlock() {
     if (diariaInput) diariaInput.oninput = () => { a.valor_diaria = diariaInput.value; };
     diariaInput.onblur = () => viaRenderAluguelBlock(); // atualiza o "Total da diária" ao sair do campo
 
-    // Local de retirada/devolução: autocomplete de lugares/endereços. Se o
-    // texto for editado depois de escolher uma sugestão, o lat/lng cacheado
-    // é descartado (senão o cálculo usaria uma coordenada que não bate mais
-    // com o texto exibido).
-    viaAnexarAutocompleteEndereco(document.getElementById(`al-retlocal-${i}`),
-      v => { a.retirada_local = v; a.retirada_coord = null; },
-      s => { a.retirada_local = s.endereco; a.retirada_coord = { lat: s.lat, lng: s.lng }; });
-    viaAnexarAutocompleteEndereco(document.getElementById(`al-devlocal-${i}`),
-      v => { a.devolucao_local = v; },
-      s => { a.devolucao_local = s.endereco; });
+    // Estado → Município em cascata. `retirada_local` / `devolucao_local`
+    // continuam sendo mantidos como texto ("Município/UF") porque a validação,
+    // o resumo e o PDF já leem esses campos.
+    const ligarLocal = (prefUf, prefMun, campoUf, campoMun, campoTexto) => {
+      const selUf = document.getElementById(`al-${prefUf}-${i}`);
+      const selMun = document.getElementById(`al-${prefMun}-${i}`);
+      if (!selUf || !selMun) return;
+      const sincronizar = () => {
+        a[campoUf] = selUf.value;
+        a[campoMun] = selMun.value;
+        a[campoTexto] = (selUf.value && selMun.value) ? `${selMun.value}/${selUf.value}` : '';
+        if (campoTexto === 'retirada_local') a.retirada_coord = null;   // ponto agora vem do município
+      };
+      selUf.onchange = () => {
+        a[campoUf] = selUf.value; a[campoMun] = '';
+        selMun.innerHTML = munOpcoes(selUf.value).map(o => `<option value="${esc(o.v)}">${esc(o.t)}</option>`).join('');
+        sincronizar();
+      };
+      selMun.onchange = sincronizar;
+    };
+    ligarLocal('retuf', 'retmun', 'retirada_uf', 'retirada_municipio', 'retirada_local');
+    ligarLocal('devuf', 'devmun', 'devolucao_uf', 'devolucao_municipio', 'devolucao_local');
+
+    // "Na cidade-base": preenche os quatro campos de uma vez. Desmarcar limpa,
+    // pra não deixar a base gravada como se tivesse sido escolhida à mão.
+    const chkBase = document.getElementById(`al-localbase-${i}`);
+    if (chkBase) chkBase.onchange = e => {
+      a.local_base = e.target.checked;
+      if (a.local_base) {
+        a.retirada_uf = a.devolucao_uf = w.colab.cidade_base_uf;
+        a.retirada_municipio = a.devolucao_municipio = w.colab.cidade_base_municipio;
+        a.retirada_local = a.devolucao_local = `${w.colab.cidade_base_municipio}/${w.colab.cidade_base_uf}`;
+        a.retirada_coord = null;
+      } else {
+        a.retirada_uf = a.devolucao_uf = ''; a.retirada_municipio = a.devolucao_municipio = '';
+        a.retirada_local = a.devolucao_local = '';
+      }
+      viaRenderAluguelBlock();
+    };
 
     if (a.uso_local) {
       const renderParadas = () => {
@@ -5283,11 +5337,9 @@ function viaRenderAluguelBlock() {
       // ficar em branco. Isso evita, no caso "voou até outra cidade e
       // alugou lá", incluir por engano o trecho cidade-base → destino,
       // que na verdade foi percorrido de avião e não com o carro alugado.
-      const temRetirada = !!(a.retirada_local && a.retirada_local.trim());
-      if (a.uso_local && !temRetirada) return toast('Preencha o "Local de retirada" com o endereço completo antes de calcular.');
-      const pontoFixo = temRetirada
-        ? { endereco: a.retirada_local, lat: a.retirada_coord && a.retirada_coord.lat, lng: a.retirada_coord && a.retirada_coord.lng }
-        : { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
+      const temRetirada = !!(a.retirada_uf && a.retirada_municipio);
+      if (!temRetirada) return toast('Escolha o estado e o município de retirada antes de calcular a rota.');
+      const pontoFixo = { uf: a.retirada_uf, municipio: a.retirada_municipio };
       const intermediarios = a.uso_local ? (a.paradas || []) : w.destinos;
       viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos, meta) => {
         a.manual_override = false;
@@ -5303,7 +5355,17 @@ function viaRenderAluguelBlock() {
     };
   });
   box.querySelectorAll('[data-rmaluguel]').forEach(b => b.onclick = () => { w.transporte.alugueis.splice(Number(b.dataset.rmaluguel), 1); viaRenderAluguelBlock(); });
-  $('#w3-add-aluguel').onclick = () => { w.transporte.alugueis.push({ locadora: '', valor_diaria: '', dias: 1, retirada_local: '', retirada_data: w.data_inicio, retirada_coord: null, devolucao_local: '', devolucao_data: w.data_fim, distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false, uso_local: false, paradas: [] }); viaRenderAluguelBlock(); };
+  $('#w3-add-aluguel').onclick = () => {
+    w.transporte.alugueis.push({
+      locadora: '', valor_diaria: '', dias: 1,
+      local_base: false,
+      retirada_uf: '', retirada_municipio: '', retirada_local: '', retirada_data: w.data_inicio, retirada_coord: null,
+      devolucao_uf: '', devolucao_municipio: '', devolucao_local: '', devolucao_data: w.data_fim,
+      distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '',
+      trechos: [], manual_override: false, uso_local: false, paradas: []
+    });
+    viaRenderAluguelBlock();
+  };
 }
 
 function viaRenderProprioBlock() {
@@ -5578,7 +5640,7 @@ function viaTrajetoResumoHtml(w) {
   voos.forEach(v => itin.push(`<li><span class="via-trj-tag av">✈️ Avião</span> ${rota(v.origem, v.destino)}<br><small>${esc(v.cia || '')} ${esc(v.numero_voo || '')} · ${v.data ? brDate(v.data) : '—'} ${esc(v.saida || '')}${v.chegada ? '–' + esc(v.chegada) : ''}${v.classe ? ' · ' + esc(v.classe) : ''}</small></li>`));
   onibus.forEach(o => itin.push(`<li><span class="via-trj-tag on">🚌 Ônibus</span> ${rota(o.origem, o.destino)}<br><small>${esc(o.empresa || '')} · ${o.data ? brDate(o.data) : '—'} ${esc(o.horario || '')}</small></li>`));
   carros.forEach(c => {
-    c.legs.forEach(l => itin.push(`<li><span class="via-trj-tag ca">🚗 Carro</span> ${rota(l.de, l.para)}<br><small>${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` · ${l.repeticoes}× passagens` : ''}</small></li>`));
+    c.legs.forEach(l => itin.push(`<li><span class="via-trj-tag ca">🚗 Carro</span> ${rota(l.de, l.para)}<br><small>${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` · ${l.repeticoes}× passagens` : ''}${viaNum(l.km_extra) > 0 ? ` + ${viaNum(l.km_extra).toFixed(1)} km no destino = ${viaKmTrecho(l).toFixed(1)} km` : ''}</small></li>`));
     itin.push(`<li class="via-trj-total">Subtotal ${esc(c.titulo)}: <strong>${c.totalKm.toFixed(1)} km</strong></li>`);
   });
   return `
@@ -5756,7 +5818,7 @@ async function viaPdfTrajeto(doc, w, y, MARGIN, pageW, VERDE, VERDE_CLARO, CINZA
   onibus.forEach(o => rows.push(['Ônibus', viaLabelCurto(o.origem), viaLabelCurto(o.destino), `${o.empresa || ''} · ${o.data ? brDate(o.data) : '—'} ${o.horario || ''}`.trim()]));
   let totalKmGeral = 0;
   carros.forEach(c => {
-    c.legs.forEach(l => rows.push([c.titulo, viaLabelCurto(l.de), viaLabelCurto(l.para), `${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` (${l.repeticoes}x)` : ''}`]));
+    c.legs.forEach(l => rows.push([c.titulo, viaLabelCurto(l.de), viaLabelCurto(l.para), `${l.km.toFixed(1)} km${(l.repeticoes || 1) > 1 ? ` (${l.repeticoes}x)` : ''}${viaNum(l.km_extra) > 0 ? ` + ${viaNum(l.km_extra).toFixed(1)} no destino` : ''}`]));
     totalKmGeral += c.totalKm;
   });
   doc.autoTable({
