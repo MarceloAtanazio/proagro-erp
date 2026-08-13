@@ -94,7 +94,14 @@ async function api(path, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
   // Guarda de UX: bloqueia escrita quando a página atual é somente-leitura.
   // (A trava real está no backend; isto só evita cliques inúteis e dá mensagem clara.)
-  if (method !== 'GET' && USER && USER.role !== 'admin' && READONLY
+  //
+  // O autosserviço é a exceção: READONLY em Viáticos significa "não pode mexer
+  // nas solicitações dos outros", e não "não pode pedir a própria viagem". O
+  // colaborador de campo tem justamente esse perfil — lê a lista e envia a
+  // solicitação dele. O backend valida do mesmo jeito e só aceita a solicitação
+  // vinculada ao colaborador do próprio usuário logado.
+  const ehAutosservico = path.includes('/autosservico');
+  if (method !== 'GET' && USER && USER.role !== 'admin' && READONLY && !ehAutosservico
       && !path.includes('/auth/') && !path.startsWith('/api/users')) {
     toast('Você tem acesso somente leitura nesta seção.');
     throw new Error('Acesso somente leitura nesta seção.');

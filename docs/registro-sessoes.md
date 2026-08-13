@@ -893,3 +893,21 @@ Ponta a ponta com rota real do OSRM:
 - Console sem erros de aplicação.
 
 **Ponto em aberto:** o pedido mencionava "assim você usa os dados diretamente de lá". Implementei a regra de visibilidade, que era o pedido explícito. Se a ideia também era **pré-preencher o município de retirada a partir do destino do voo**, isso é possível — `br-aviacao.js` traz a cidade de cada IATA —, mas o casamento entre a cidade do dataset de aeroportos e o município do IBGE não é exato (acento e grafia divergem em vários casos), então preferi confirmar antes em vez de arriscar preencher a cidade errada.
+
+---
+
+## 2026-08-13 — Autosserviço bloqueado pela guarda de somente-leitura
+
+**Problema reportado:** o colaborador de campo, ao enviar a solicitação em "Solicitar viagem", recebia "Acesso somente leitura nesta seção." e não conseguia concluir. O esperado é o que já estava desenhado: **leitura** na lista de Viáticos e **acesso pleno** para pedir a própria viagem.
+
+**Causa:** a guarda de UX em `api()` (`public/app.js:97`) bloqueia qualquer método diferente de GET quando a página atual é somente-leitura. Ela olhava só o `READONLY` da página, e o autosserviço roda dentro de Viáticos — onde esse usuário tem, corretamente, permissão apenas de visualização. O backend **já liberava** (`requireAuth` + `requireAutosservico`), e o próprio código do botão "Solicitar viagem" tinha o comentário explicando a intenção ("READONLY controla EDITAR dados de terceiros, não pedir a própria viagem"); faltava a exceção na guarda.
+
+**Correção:** requisições cujo caminho contém `/autosservico` ficam de fora da guarda. Uma linha, com o porquê registrado ao lado.
+
+**Por que é seguro:** no `POST /api/viaticos/solicitacoes/autosservico` o colaborador é resolvido por `SELECT * FROM erp_colaboradores WHERE usuario_id = $1` (o usuário logado) e o INSERT usa `colab.id` — o `colaborador_id` **nunca** vem do corpo da requisição. Então um usuário só-leitura consegue criar solicitação **para si mesmo** e mais nada. Todas as outras validações do endpoint (OT, motivo, objetivo, datas, destinos, recálculo servidor-side da previsão) continuam valendo.
+
+### Verificação
+Com um usuário simulado de perfil real do campo (`role: 'user'`, `permissions: { viaticos: 'view' }`, `READONLY = true`):
+- **Assistente completo até o envio**, com `fetch` interceptado para não gravar em produção: saiu **`POST /api/viaticos/solicitacoes/autosservico`** com OT 99 e motivo "Reinspeção", e o toast foi "Solicitação enviada!" — **nenhum** aviso de somente-leitura.
+- **A lista de Viáticos segue restrita** para o mesmo usuário: sem "+ Nova solicitação", sem "Configurações", e a única ação por linha é "Ver detalhes". O botão "✈️ Solicitar viagem" aparece.
+- **A exceção não vazou:** uma escrita comum da seção (`POST /solicitacoes/:id/status`) continua bloqueada com a mensagem de somente-leitura, enquanto o caminho do autosserviço passa.
