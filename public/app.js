@@ -6393,6 +6393,9 @@ async function renderViaticosConfig() {
         </tr>`;
       }).join('')}</tbody></table></div>`;
 
+  const nAtivos = colaboradores.filter(c => c.ativo !== false).length;
+  const nInativos = colaboradores.length - nAtivos;
+
   const anpValor = viaConfig.combustivel_anp_valor, margem = viaConfig.combustivel_margem_pct != null ? viaConfig.combustivel_margem_pct : 10;
   const atualizadoEm = viaConfig.combustivel_anp_atualizado_em
     ? new Date(viaConfig.combustivel_anp_atualizado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -6437,11 +6440,34 @@ async function renderViaticosConfig() {
       <button class="btn primary" id="cb-add" type="button">+ Adicionar</button>
     </div>
     <p class="hint" style="margin-top:6px">Vínculo com usuário, cidade-base e veículo (pro autosserviço) se ajustam depois, clicando em "Editar".</p>
+    <div class="cb-filtro">
+      <label for="cb-filtro-ativo">Mostrar</label>
+      <select id="cb-filtro-ativo">
+        <option value="ativos">Somente ativos (${nAtivos})</option>
+        <option value="inativos">Somente inativos (${nInativos})</option>
+        <option value="todos">Todos (${colaboradores.length})</option>
+      </select>
+      <span class="hint" style="margin:0">Inativar preserva o histórico e os dados do colaborador — só o esconde das novas solicitações. Excluir apaga o cadastro.</span>
+    </div>
     <div class="table-wrap" style="margin-top:10px"><table class="tbl-colaboradores">
       <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th>Documentação</th><th class="actions">Ações</th></tr></thead>
-      <tbody>${colaboradores.map(c => {
-        const doc = viaStatusDocumentacaoColaborador(c);
-        return `<tr>
+      <tbody id="cb-tbody"></tbody>
+    </table></div>`;
+
+  openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { xwide: true });
+
+  // Lista de colaboradores com filtro de situação. Inativar em vez de excluir é
+  // o caminho recomendado (o histórico de viagens aponta para o cadastro), então
+  // a tela precisa deixar ver os inativos sem misturá-los com quem está ativo.
+  const FILTRO_KEY = 'cfg-colab-filtro';
+  const desenharColaboradores = () => {
+    const modo = $('#cb-filtro-ativo').value;
+    try { sessionStorage.setItem(FILTRO_KEY, modo); } catch { /* sessionStorage indisponível */ }
+    const lista = colaboradores.filter(c =>
+      modo === 'todos' ? true : modo === 'inativos' ? c.ativo === false : c.ativo !== false);
+    $('#cb-tbody').innerHTML = lista.map(c => {
+      const doc = viaStatusDocumentacaoColaborador(c);
+      return `<tr${c.ativo === false ? ' class="cb-inativo"' : ''}>
         <td class="nowrap">${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
         <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
         <td><span class="badge ${doc.cls}" title="${esc(doc.title)}">${doc.label}</span></td>
@@ -6450,10 +6476,11 @@ async function renderViaticosConfig() {
           <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>
           <button class="btn sm danger-ghost" data-del-colab="${c.id}">Excluir</button>
         </div></td></tr>`;
-      }).join('') || '<tr><td colspan="6"><div class="empty">Nenhum colaborador cadastrado.</div></td></tr>'}</tbody>
-    </table></div>`;
-
-  openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
+    }).join('') || `<tr><td colspan="6"><div class="empty">${
+      modo === 'inativos' ? 'Nenhum colaborador inativo.' : modo === 'ativos' ? 'Nenhum colaborador ativo.' : 'Nenhum colaborador cadastrado.'
+    }</div></td></tr>`;
+    ligarAcoesColaboradores();
+  };
 
   $('#cfg-margem-save').onclick = async () => {
     const v = Number($('#cfg-margem').value);
@@ -6476,11 +6503,6 @@ async function renderViaticosConfig() {
     catch (e) { toast(e.message); }
   });
 
-  document.querySelectorAll('[data-editar-colab]').forEach(b => b.onclick = () => {
-    const c = colaboradores.find(x => x.id == b.dataset.editarColab);
-    formEditarColaborador(c, usuarios);
-  });
-
   $('#cb-add').onclick = async () => {
     const nome = $('#cb-nome').value.trim();
     if (!nome) return toast('Informe o nome.');
@@ -6489,6 +6511,12 @@ async function renderViaticosConfig() {
       toast('Colaborador adicionado.'); renderViaticosConfig();
     } catch (e) { toast(e.message); }
   };
+  // Religados a cada redesenho da lista (o filtro reconstrói o tbody).
+  function ligarAcoesColaboradores() {
+  document.querySelectorAll('[data-editar-colab]').forEach(b => b.onclick = () => {
+    const c = colaboradores.find(x => x.id == b.dataset.editarColab);
+    formEditarColaborador(c, usuarios);
+  });
   document.querySelectorAll('[data-toggle-colab]').forEach(b => b.onclick = async () => {
     const c = colaboradores.find(x => x.id == b.dataset.toggleColab);
     await api(`/api/colaboradores/${c.id}`, { method: 'PUT', body: {
@@ -6505,6 +6533,13 @@ async function renderViaticosConfig() {
     renderViaticosConfig();
   });
   document.querySelectorAll('[data-del-colab]').forEach(b => b.onclick = () => confirmDelete('este colaborador', `/api/colaboradores/${b.dataset.delColab}`, renderViaticosConfig));
+  }
+
+  // Restaura o filtro escolhido na sessão e desenha a lista.
+  const filtroSalvo = (() => { try { return sessionStorage.getItem(FILTRO_KEY); } catch { return null; } })();
+  if (filtroSalvo) $('#cb-filtro-ativo').value = filtroSalvo;
+  $('#cb-filtro-ativo').onchange = desenharColaboradores;
+  desenharColaboradores();
 }
 
 // ---- Validadores de documento do colaborador ----

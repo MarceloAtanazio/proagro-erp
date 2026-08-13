@@ -969,3 +969,27 @@ A área de detalhe tinha `display:flex`, e **estilo de autor vence o `[hidden]` 
 - **No assistente nada mudou:** o alerta completo aparece, os cartões de carro próprio e aluguel seguem travados, e a barra compacta não é usada lá.
 - **Mobile 375px:** 130px fechada (os chips passam para uma linha própria), sem vazamento e sem rolagem lateral.
 - Console sem erros de aplicação.
+
+---
+
+## 2026-08-13 — Configurações de Viáticos mais larga e filtro de ativos/inativos
+
+**Pedido:** alargar a caixa de Configurações para a tabela caber bem, e criar um filtro de ativos/inativos na lista de colaboradores — a intenção é **inativar em vez de excluir**, para não perder os dados da pessoa.
+
+### Largura
+Modal passou de `wide` (900px) para `xwide` (**1040px**), a classe que já existia do cadastro de colaborador. A tabela de colaboradores mede 994px e **não rola mais na horizontal**.
+
+### Filtro de situação
+Acima da tabela, um seletor com a contagem em cada opção — **"Somente ativos (3)" / "Somente inativos (2)" / "Todos (5)"** —, começando em *Somente ativos* e lembrando a escolha na sessão. Ao lado, a explicação da diferença: inativar preserva histórico e dados, excluir apaga o cadastro.
+
+Linhas de inativos ficam visualmente apagadas (cinza, fundo levemente diferente e nome em itálico), para não serem confundidas com quem está ativo quando o filtro está em "Todos".
+
+O `tbody` passou a ser redesenhado por `desenharColaboradores()`, e os handlers de Editar/Inativar/Excluir foram extraídos para `ligarAcoesColaboradores()` — precisam ser religados a cada troca de filtro, senão os botões das linhas novas ficariam mortos.
+
+### Verificação
+- Modal em **1040px** (`modal-xwide`), corpo útil de 996px, tabela 994px, **sem rolagem horizontal** — nem na tabela de colaboradores nem nas duas de TUD.
+- O card do ANP acompanhou: **996px, preenchendo todo o espaço útil**, com as três colunas em 311px cada.
+- Filtro conferido com 5 colaboradores (3 ativos, 2 inativos): rótulos com as contagens corretas; *ativos* mostra os 3; *inativos* mostra os 2, ambos com a linha apagada; *todos* mostra os 5 com 2 apagados. Escolha persistida na sessão.
+- **Ações religadas depois do redesenho:** o botão Editar volta com handler, e o rótulo do botão de situação sai correto por linha ("Inativar" para ativo, "Ativar" para inativo).
+- **Mobile 375px:** modal 343px, filtro sem vazamento, seletor cabendo, sem rolagem lateral.
+- Console sem erros de aplicação.
