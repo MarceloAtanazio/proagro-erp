@@ -447,6 +447,28 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .via-transport-tile.disabled { opacity:.45; cursor:not-allowed; background:#F6F8F7; }
 .via-transport-tile.disabled:hover { border-color:var(--line); box-shadow:none; }
 
+/* ---- Barra compacta de documentação (Viáticos) ---- */
+.via-doc-bar { border:1px solid var(--line); border-radius:10px; background:#fff; margin-bottom:14px; overflow:hidden; }
+.via-doc-toggle {
+  appearance:none; width:100%; background:none; border:none; cursor:pointer; font:inherit; text-align:left;
+  display:flex; align-items:center; gap:10px; padding:9px 12px; color:var(--ink-2);
+}
+.via-doc-toggle:hover { background:#FAFBFA; }
+.via-doc-ico { font-size:14px; }
+.via-doc-titulo { font-size:12.5px; font-weight:600; color:var(--ink); }
+.via-doc-chips { display:flex; gap:6px; flex-wrap:wrap; flex:1 1 auto; min-width:0; }
+.via-doc-chips .badge { font-size:11px; }
+.via-doc-chevron { font-size:12px; color:var(--muted); transition:transform .15s ease; flex:0 0 auto; }
+.via-doc-toggle.aberto .via-doc-chevron { transform:rotate(180deg); }
+.via-doc-detalhe { border-top:1px solid var(--line); padding:12px; display:flex; flex-direction:column; gap:8px; }
+/* Estilo de autor vence o [hidden] da folha do navegador: sem esta regra o
+   display:flex acima mantinha o detalhe visível mesmo fechado. */
+.via-doc-detalhe[hidden] { display:none; }
+@media (max-width: 720px) {
+  .via-doc-toggle { flex-wrap:wrap; }
+  .via-doc-chips { flex-basis:100%; }
+}
+
 /* ---- Ordem do roteiro: lista de paradas ---- */
 .via-route-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
 .via-route-stop {

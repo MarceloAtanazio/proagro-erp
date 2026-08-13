@@ -944,3 +944,28 @@ Com um usuário simulado de perfil real do campo (`role: 'user'`, `permissions: 
 - Console sem erros de aplicação.
 
 **Decisão que deixo explícita:** **veículo sem seguro não bloqueia** o carro próprio — segue a regra que já existia no sistema (o seguro só é exigido quando o próprio cadastro declara possuir um). Aparece como pendência em destaque. Se a política for "sem seguro não roda a serviço", é uma linha para mudar, mas isso barraria hoje todo colaborador sem seguro declarado — preferi não decidir isso sozinho.
+
+---
+
+## 2026-08-13 — Alertas de documentação em barra compacta
+
+**Pedido:** os avisos de documentação na tela do admin estavam grandes demais, ocupando o topo inteiro. Deixar discreto, podendo ser um botão que expande.
+
+### Mudança
+Os dois blocos (o próprio e o da equipe) viraram **uma linha só** — `viaBarraDocumentacao`: ícone, o rótulo "Documentação" e **chips com os contadores** ("7 sem habilitação", "1 só aluguel", "2 vencendo", "Você não pode dirigir a serviço"), com uma seta que expande o detalhamento completo. Fechada por padrão; o estado fica no `sessionStorage`, então quem está trabalhando nas pendências não precisa reabrir a cada volta à tela. Quando não há nada a informar, a barra não é renderizada.
+
+O detalhamento em destaque **continua na etapa 3 do assistente**, que é onde ele decide algo — a pessoa está escolhendo o transporte naquele momento. Lá o alerta não foi compactado.
+
+Refatoração de apoio: `viaPainelEquipeDocumentacao` foi separada em `viaResumoEquipeDoc` (só os dados, que alimentam os contadores) e `viaDetalheEquipeDoc` (o HTML das listas), para a barra montar chips e detalhe da mesma fonte.
+
+### Um bug de CSS que o teste pegou
+A área de detalhe tinha `display:flex`, e **estilo de autor vence o `[hidden]` da folha do navegador** — então ela permanecia visível mesmo "fechada": a barra media **433px nos dois estados**, e o objetivo de discrição não era cumprido. Corrigido com uma regra explícita `.via-doc-detalhe[hidden] { display:none }`.
+
+### Verificação
+- **Fechada: 43px** (era 433px) — economia de 390px no topo, contra 266px dos cards de KPI ao lado. Abre para 433px e volta para 43px ao fechar.
+- `display` do detalhe fechado = `none`; `aria-expanded` alterna entre `false`/`true`; a seta gira.
+- Estado lembrado na sessão: abrir grava `1`, fechar grava `0`, e ao re-renderizar a tela ele volta fechado quando era esse o estado.
+- Chips corretos no cenário com 9 colaboradores: "Você não pode dirigir a serviço", "7 sem habilitação", "1 vencendo"; ao expandir, os três blocos com as listas nominais.
+- **No assistente nada mudou:** o alerta completo aparece, os cartões de carro próprio e aluguel seguem travados, e a barra compacta não é usada lá.
+- **Mobile 375px:** 130px fechada (os chips passam para uma linha própria), sem vazamento e sem rolagem lateral.
+- Console sem erros de aplicação.

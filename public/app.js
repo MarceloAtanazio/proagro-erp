@@ -3648,13 +3648,13 @@ async function renderViaticos() {
   // regulariza os cadastros, então ele precisa ver antes de a viagem ser barrada.
   const meuCadastro = meuColaborador
     || (Array.isArray(colaboradores) ? colaboradores.find(x => USER && x.usuario_id === USER.id) : null);
-  const painelProprio = meuCadastro ? viaPainelDocumentacao(viaAvaliarDocumentacao(meuCadastro), { contexto: 'viaticos' }) : '';
-  const painelEquipe = (!escopoProprio && Array.isArray(colaboradores) && colaboradores.length)
-    ? viaPainelEquipeDocumentacao(colaboradores.filter(x => x.ativo !== false), meuCadastro) : '';
+  const barraDoc = viaBarraDocumentacao(
+    meuCadastro,
+    (!escopoProprio && Array.isArray(colaboradores)) ? colaboradores.filter(x => x.ativo !== false) : null);
 
   c.innerHTML = `
     ${escopoProprio ? '<div class="ro-banner" style="margin-bottom:12px">👤 Você está vendo apenas as suas solicitações de viáticos.</div>' : ''}
-    ${painelProprio}${painelEquipe}
+    ${barraDoc}
     <div class="grid kpis" style="margin-bottom:16px">
       ${escopoProprio ? '' : `<div class="card kpi ${dash.saldoCarteira < 0 ? 'red' : ''}"><div class="label">Saldo da Carteira Flash</div>
         <div class="value ${dash.saldoCarteira < 0 ? 'neg' : ''}">${brl(dash.saldoCarteira)}</div>
@@ -3685,6 +3685,24 @@ async function renderViaticos() {
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
   if ($('#btn-solicitar-viagem')) $('#btn-solicitar-viagem').onclick = () => renderSolicitacaoAutosservico();
+
+  // Barra de documentação: começa fechada e lembra a escolha durante a sessão,
+  // pra quem está trabalhando nas pendências não ter que reabrir a cada volta.
+  const btnDoc = $('#via-doc-toggle');
+  if (btnDoc) {
+    const box = $('#via-doc-detalhe');
+    const aplicar = aberto => {
+      box.hidden = !aberto;
+      btnDoc.setAttribute('aria-expanded', String(aberto));
+      btnDoc.classList.toggle('aberto', aberto);
+    };
+    aplicar(sessionStorage.getItem('via-doc-aberto') === '1');
+    btnDoc.onclick = () => {
+      const aberto = box.hidden;
+      aplicar(aberto);
+      try { sessionStorage.setItem('via-doc-aberto', aberto ? '1' : '0'); } catch { /* sessionStorage indisponível */ }
+    };
+  }
 
   let lastFiltered = sols;
   const draw = () => {
@@ -5138,7 +5156,7 @@ function viaPainelDocumentacao(av, opts = {}) {
 // impedido de dirigir, quem só pode alugar e o que vence nos próximos 2 meses.
 // É o administrador que regulariza os cadastros, então precisa ver isso antes de
 // a viagem ser barrada no assistente.
-function viaPainelEquipeDocumentacao(colaboradores, meuCadastro) {
+function viaResumoEquipeDoc(colaboradores) {
   const semDirigir = [], soAluguel = [], vencendo = [];
   colaboradores.forEach(c => {
     const av = viaAvaliarDocumentacao(c);
@@ -5146,31 +5164,61 @@ function viaPainelEquipeDocumentacao(colaboradores, meuCadastro) {
     else if (!av.podeCarroProprio) soAluguel.push({ c, motivos: av.bloqueiosProprio.filter(b => !av.bloqueiosCNH.includes(b)) });
     av.vencendo.forEach(v => vencendo.push({ nome: c.name, doc: v.nome, data: v.data, dias: v.dias }));
   });
-  if (!semDirigir.length && !soAluguel.length && !vencendo.length) return '';
+  vencendo.sort((a, b) => a.dias - b.dias);
+  return { semDirigir, soAluguel, vencendo, temAlgo: !!(semDirigir.length || soAluguel.length || vencendo.length) };
+}
 
+function viaDetalheEquipeDoc(r) {
   const lista = arr => arr.map(x => `<li><strong>${esc(x.c.name)}</strong>${x.c.cargo ? ` (${esc(x.c.cargo)})` : ''} — ${esc(x.motivos.join('; '))}</li>`).join('');
   const blocos = [];
-  if (semDirigir.length) {
-    blocos.push(`<div class="alert-item late"><strong>🚫 ${semDirigir.length} colaborador(es) sem habilitação para dirigir a serviço</strong>
-      — não podem usar carro próprio nem alugar:<ul style="margin:6px 0 0 18px">${lista(semDirigir)}</ul></div>`);
+  if (r.semDirigir.length) {
+    blocos.push(`<div class="alert-item late"><strong>🚫 Sem habilitação para dirigir a serviço</strong>
+      — não podem usar carro próprio nem alugar:<ul style="margin:6px 0 0 18px">${lista(r.semDirigir)}</ul></div>`);
   }
-  if (soAluguel.length) {
-    blocos.push(`<div class="alert-item warn"><strong>⚠️ ${soAluguel.length} colaborador(es) só podem alugar carro</strong>
-      — CNH em dia, mas o veículo próprio está impedido:<ul style="margin:6px 0 0 18px">${lista(soAluguel)}</ul></div>`);
+  if (r.soAluguel.length) {
+    blocos.push(`<div class="alert-item warn"><strong>⚠️ Só podem alugar carro</strong>
+      — CNH em dia, mas o veículo próprio está impedido:<ul style="margin:6px 0 0 18px">${lista(r.soAluguel)}</ul></div>`);
   }
-  if (vencendo.length) {
-    vencendo.sort((a, b) => a.dias - b.dias);
+  if (r.vencendo.length) {
     blocos.push(`<div class="alert-item warn"><strong>📅 Vencendo nos próximos 2 meses</strong>
-      <ul style="margin:6px 0 0 18px">${vencendo.map(v =>
+      <ul style="margin:6px 0 0 18px">${r.vencendo.map(v =>
         `<li><strong>${esc(v.nome)}</strong> — ${esc(v.doc)} em ${brDate(v.data)} (${v.dias <= 0 ? 'hoje' : `${v.dias} dia(s)`})</li>`).join('')}</ul></div>`);
   }
-  return `<div class="card" style="margin-bottom:16px; padding:14px 16px">
-    <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px">
-      <strong style="font-size:14px">🪪 Documentação da equipe</strong>
-      <span class="hint" style="margin:0">Ajuste em Configurações → Colaboradores → Editar.</span>
-    </div>
-    <div style="display:flex; flex-direction:column; gap:8px">${blocos.join('')}</div>
-  </div>`;
+  return blocos.join('');
+}
+
+// Barra compacta de documentação: uma linha com contadores, que expande no
+// clique. Os avisos completos ocupavam o topo inteiro da tela de Viáticos — o
+// administrador precisa saber que existe pendência, não ler a lista toda a cada
+// visita. O detalhamento em destaque continua onde decide algo: na etapa de
+// transporte do assistente.
+function viaBarraDocumentacao(meuCadastro, colaboradores) {
+  const avProprio = meuCadastro ? viaAvaliarDocumentacao(meuCadastro) : null;
+  const eq = (Array.isArray(colaboradores) && colaboradores.length) ? viaResumoEquipeDoc(colaboradores) : null;
+
+  const chips = [];
+  if (avProprio && !avProprio.podeAlugar) chips.push('<span class="badge late">Você não pode dirigir a serviço</span>');
+  else if (avProprio && !avProprio.podeCarroProprio) chips.push('<span class="badge warn">Seu veículo próprio está indisponível</span>');
+  if (eq && eq.semDirigir.length) chips.push(`<span class="badge late">${eq.semDirigir.length} sem habilitação</span>`);
+  if (eq && eq.soAluguel.length) chips.push(`<span class="badge warn">${eq.soAluguel.length} só aluguel</span>`);
+  if (eq && eq.vencendo.length) chips.push(`<span class="badge warn">${eq.vencendo.length} vencendo</span>`);
+  if (!chips.length) return '';
+
+  const detalhe = (avProprio ? viaPainelDocumentacao(avProprio, { contexto: 'viaticos' }) : '')
+    + (eq && eq.temAlgo ? `<div style="display:flex; flex-direction:column; gap:8px">${viaDetalheEquipeDoc(eq)}</div>` : '');
+
+  return `<div class="via-doc-bar" id="via-doc-bar">
+      <button type="button" class="via-doc-toggle" id="via-doc-toggle" aria-expanded="false" aria-controls="via-doc-detalhe">
+        <span class="via-doc-ico">🪪</span>
+        <span class="via-doc-titulo">Documentação</span>
+        <span class="via-doc-chips">${chips.join('')}</span>
+        <span class="via-doc-chevron">▾</span>
+      </button>
+      <div class="via-doc-detalhe" id="via-doc-detalhe" hidden>
+        ${detalhe}
+        <p class="hint" style="margin:8px 0 0">Ajuste em Configurações → Colaboradores → Editar.</p>
+      </div>
+    </div>`;
 }
 
 // Modalidades barradas pela documentação do colaborador. Diferente da trava de
