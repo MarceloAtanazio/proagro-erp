@@ -911,3 +911,36 @@ Com um usuário simulado de perfil real do campo (`role: 'user'`, `permissions: 
 - **Assistente completo até o envio**, com `fetch` interceptado para não gravar em produção: saiu **`POST /api/viaticos/solicitacoes/autosservico`** com OT 99 e motivo "Reinspeção", e o toast foi "Solicitação enviada!" — **nenhum** aviso de somente-leitura.
 - **A lista de Viáticos segue restrita** para o mesmo usuário: sem "+ Nova solicitação", sem "Configurações", e a única ação por linha é "Ver detalhes". O botão "✈️ Solicitar viagem" aparece.
 - **A exceção não vazou:** uma escrita comum da seção (`POST /solicitacoes/:id/status`) continua bloqueada com a mensagem de somente-leitura, enquanto o caminho do autosserviço passa.
+
+---
+
+## 2026-08-13 — Habilitação para dirigir a serviço e alertas de documentação
+
+**Pedido:** só permitir carro próprio com **toda a documentação em dia**; só permitir aluguel com a **CNH em dia**; sem isso, a função fica indisponível. E na tela de Viáticos, alertas completos de vencimento **a partir de 2 meses** e de pendências de cadastro.
+
+### Regras (`viaAvaliarDocumentacao` em `public/app.js` — fonte única)
+- **Aluguel de carro** exige: nº e validade da CNH cadastrados, CNH não vencida e motorista não marcado como inapto.
+- **Carro próprio** exige tudo isso **mais**: veículo apto, placa, modelo, **consumo em km/L** (sem ele não há como apurar o combustível), CRLV cadastrado e não vencido, e — quando o seguro é declarado — seguradora, nº da apólice e vigência válida.
+- **Avisos que não bloqueiam:** veículo sem seguro declarado e categoria da CNH não informada.
+- **Antecedência do aviso de vencimento: 60 dias** (`VIA_DIAS_ALERTA_DOC`). O padrão de `viaStatusValidadeDoc` também passou de 30 para 60, para a coluna "Documentação" das Configurações falar a mesma língua.
+
+### Onde a regra aparece
+1. **Assistente, etapa 3:** cartões de Carro Próprio e Aluguel travados quando não habilitados, com o motivo no tooltip, e um painel em destaque explicando o bloqueio. Diferente das travas de combinação, esta vale **mesmo com o cartão já marcado** — documentação vencida não é escolha do usuário. `viaGarantirTransportePermitido()` desmarca ao entrar na etapa, para uma seleção antiga não sobreviver escondida no estado.
+2. **Validação ao avançar** (`viaWizValidarEtapa3`) recebe o colaborador e recusa a modalidade não liberada.
+3. **Servidor** (`viaBloqueiosDirecao` em `api/index.js`): o POST do autosserviço devolve **403** com o motivo. A tela bloqueia, mas quem monta a requisição na mão passaria por cima — e é o servidor que grava. As duas implementações precisam casar; o teste compara as duas em cada cenário.
+4. **Tela de Viáticos:** painel próprio para quem está vinculado a um colaborador (bloqueios, vencimentos com contagem de dias e pendências) e, para quem administra, um card **"Documentação da equipe"** com quem não pode dirigir, quem só pode alugar e o que vence nos próximos 2 meses, ordenado por urgência.
+5. **Coluna "Documentação"** das Configurações ganhou o estado **"Só aluguel"**: antes dizia "Em dia" olhando só validades, mesmo faltando placa, consumo ou apólice.
+
+### Dois bugs de data encontrados pelos testes
+- **Servidor rejeitava documento que vence hoje.** A conversão da coluna `DATE` para `America/Sao_Paulo` jogava a data um dia para trás (o pg entrega DATE como meia-noite UTC). Uma CNH válida até hoje aparecia como vencida. Corrigido lendo o dia do calendário sem conversão de fuso — diferente de `hojeISO()`, onde o fuso importa de verdade.
+- **`brDate` quebrava com o formato que a própria API envia.** Colunas DATE chegam ao navegador como `"2027-05-05T03:00:00.000Z"`, e `brDate` fazia `split('-')` direto, produzindo `05T03:00:00.000Z/05/2027`. Bug latente que os novos painéis exibiriam em destaque. Corrigido na raiz (`slice(0,10)`), o que beneficia toda a aplicação, e as datas passaram a ser normalizadas explicitamente na avaliação em vez de depender de comparação de string dar certo por sorte.
+
+### Verificação
+- **40 casos** comparando **front e servidor lado a lado** em cada cenário, nos três formatos de data que ocorrem (`'YYYY-MM-DD'`, ISO com hora da API, e `Date` do pg) — as duas implementações concordam em todos, incluindo as bordas "vence hoje" (permitido) e "venceu ontem" (bloqueado).
+- Limites do aviso: 59 dias avisa, **60 dias avisa**, 61 não; três documentos vencendo geram três linhas.
+- **Na tela**, cinco cenários percorridos até a etapa 3: cadastro completo (nada travado, sem alertas); CNH vencida (as duas modalidades travadas + alerta de não habilitado); CRLV vencido (**só carro próprio travado, aluguel liberado** + alerta explicando); cadastro vazio (as duas travadas com a lista completa de motivos + pendências); CNH vencendo em 38 dias (nada travado, alerta com a contagem). Avião e táxi/Uber nunca são travados.
+- Seleção anterior inválida é limpa ao entrar na etapa; forçando o estado, a validação recusa com o motivo; com a CNH regularizada, o aluguel passa a barrar apenas por falta dos dados do aluguel.
+- Painel da equipe conferido com 4 colaboradores: 1 sem habilitação, 1 só-aluguel, e 2 vencimentos da mesma pessoa ordenados por dias.
+- Console sem erros de aplicação.
+
+**Decisão que deixo explícita:** **veículo sem seguro não bloqueia** o carro próprio — segue a regra que já existia no sistema (o seguro só é exigido quando o próprio cadastro declara possuir um). Aparece como pendência em destaque. Se a política for "sem seguro não roda a serviço", é uma linha para mudar, mas isso barraria hoje todo colaborador sem seguro declarado — preferi não decidir isso sozinho.

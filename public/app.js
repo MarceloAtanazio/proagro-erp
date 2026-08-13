@@ -74,7 +74,10 @@ const $ = s => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const brl = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const brDate = iso => { if (!iso) return '—'; const [y,m,d] = iso.split('-'); return `${d}/${m}/${y}`; };
+// Aceita 'YYYY-MM-DD' e também o formato que o pg devolve para colunas DATE
+// depois de virar JSON ('2027-05-05T03:00:00.000Z') — sem o slice, o dia saía
+// como "05T03:00:00.000Z".
+const brDate = iso => { if (!iso) return '—'; const [y,m,d] = String(iso).slice(0, 10).split('-'); return `${d}/${m}/${y}`; };
 // Data de hoje pelo relógio local do usuário. toISOString() converte para UTC
 // e, no Brasil (UTC-3), devolveria o DIA SEGUINTE depois das 21h — fazendo os
 // formulários abrirem com a data errada à noite. 'en-CA' formata YYYY-MM-DD.
@@ -3625,9 +3628,12 @@ async function renderViaticos() {
   // controla EDITAR dados de terceiros, não pedir a própria viagem).
   // 404 (sem vínculo) é esperado para a maior parte dos usuários; qualquer
   // outro erro é logado mas não trava a tela.
-  const [dash, sols, meuColaborador] = await Promise.all([
+  const [dash, sols, meuColaborador, colaboradores] = await Promise.all([
     api('/api/viaticos/dashboard'), api('/api/viaticos/solicitacoes'),
-    api('/api/viaticos/autosservico/meu-colaborador').catch(e => { if (!/404|vínculo|vinculad/i.test(e.message || '')) console.error('[viaticos] meu-colaborador:', e); return null; })
+    api('/api/viaticos/autosservico/meu-colaborador').catch(e => { if (!/404|vínculo|vinculad/i.test(e.message || '')) console.error('[viaticos] meu-colaborador:', e); return null; }),
+    // Para os avisos de documentação. Vem com escopo: usuário restrito recebe
+    // apenas o próprio cadastro. Falha aqui não pode derrubar a página.
+    api('/api/colaboradores').catch(() => [])
   ]);
   const c = $('#content');
   const FKEY = 'filters-viaticos';
@@ -3636,8 +3642,19 @@ async function renderViaticos() {
   // Usuário restrito (só leitura em Viáticos) vê apenas as próprias
   // solicitações — o backend filtra a lista e omite os números da carteira.
   const escopoProprio = dash.saldoCarteira === null;
+
+  // Avisos de documentação: os próprios (quem está vinculado a um colaborador) e,
+  // para quem administra, o resumo de toda a equipe — é o administrador que
+  // regulariza os cadastros, então ele precisa ver antes de a viagem ser barrada.
+  const meuCadastro = meuColaborador
+    || (Array.isArray(colaboradores) ? colaboradores.find(x => USER && x.usuario_id === USER.id) : null);
+  const painelProprio = meuCadastro ? viaPainelDocumentacao(viaAvaliarDocumentacao(meuCadastro), { contexto: 'viaticos' }) : '';
+  const painelEquipe = (!escopoProprio && Array.isArray(colaboradores) && colaboradores.length)
+    ? viaPainelEquipeDocumentacao(colaboradores.filter(x => x.ativo !== false), meuCadastro) : '';
+
   c.innerHTML = `
     ${escopoProprio ? '<div class="ro-banner" style="margin-bottom:12px">👤 Você está vendo apenas as suas solicitações de viáticos.</div>' : ''}
+    ${painelProprio}${painelEquipe}
     <div class="grid kpis" style="margin-bottom:16px">
       ${escopoProprio ? '' : `<div class="card kpi ${dash.saldoCarteira < 0 ? 'red' : ''}"><div class="label">Saldo da Carteira Flash</div>
         <div class="value ${dash.saldoCarteira < 0 ? 'neg' : ''}">${brl(dash.saldoCarteira)}</div>
@@ -4909,9 +4926,17 @@ function viaWizValidarEtapa2(v) {
 // Etapa 3: além das travas de combinação, cada transporte marcado precisa ter os
 // dados que formam o custo dele — antes era possível marcar "Avião" e avançar
 // sem nenhum trecho, e a previsão saía zerada.
-function viaWizValidarEtapa3(t) {
+function viaWizValidarEtapa3(t, colab) {
   const marcados = ['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].filter(k => t[k]);
   if (!marcados.length) return { msg: 'Selecione ao menos um meio de transporte.' };
+
+  // Última barreira antes de avançar: a trava visual pode ter sido contornada
+  // (cadastro alterado com a tela aberta, ou o estado vindo de outra sessão).
+  if (colab) {
+    const av = viaAvaliarDocumentacao(colab);
+    if (t.carro_proprio && !av.podeCarroProprio) return { msg: `Carro próprio não liberado: ${av.bloqueiosProprio.join('; ')}.` };
+    if (t.aluguel_carro && !av.podeAlugar) return { msg: `Aluguel de carro não liberado: ${av.bloqueiosCNH.join('; ')}.` };
+  }
 
   if (t.aviao) {
     if (!t.aviao_trechos.length) return { msg: 'Adicione ao menos um trecho de avião.' };
@@ -5076,19 +5101,115 @@ const VIA_TRANSPORTE_IDS = { aviao: 'w3-aviao', onibus: 'w3-onibus', aluguel_car
 
 // Bloqueia os cartões incompatíveis com o que já está marcado. Cartões
 // marcados nunca são bloqueados (o usuário sempre pode desmarcar).
+// Painel de situação da documentação. Serve o assistente (explicando por que um
+// cartão está bloqueado) e a tela de Viáticos (avisando com antecedência). Só
+// aparece quando há algo a dizer — cadastro completo e longe do vencimento não
+// polui a tela.
+function viaPainelDocumentacao(av, opts = {}) {
+  const noWizard = opts.contexto === 'wizard';
+  const blocos = [];
+
+  if (!av.podeAlugar) {
+    blocos.push(`<div class="alert-item late"><strong>🚫 Você não está habilitado a dirigir a serviço.</strong>
+      Nem carro próprio, nem aluguel de carro. Motivo: ${esc(av.bloqueiosCNH.join('; '))}.
+      ${noWizard ? 'Use avião, ônibus ou táxi/Uber nesta viagem, ou' : ''} Procure o administrador para regularizar a CNH em Viáticos → Configurações → Colaboradores.</div>`);
+  } else if (!av.podeCarroProprio) {
+    blocos.push(`<div class="alert-item warn"><strong>⚠️ Veículo próprio indisponível.</strong>
+      Sua CNH está em dia, então o <strong>aluguel de carro está liberado</strong>, mas o veículo próprio não:
+      ${esc(av.bloqueiosProprio.filter(b => !av.bloqueiosCNH.includes(b)).join('; '))}.</div>`);
+  }
+
+  if (av.vencendo.length) {
+    blocos.push(`<div class="alert-item warn"><strong>📅 Documento vencendo</strong> (aviso com 2 meses de antecedência):
+      <ul style="margin:6px 0 0 18px">${av.vencendo.map(v =>
+        `<li><strong>${esc(v.nome)}</strong> vence em ${brDate(v.data)} — ${v.dias === 0 ? 'hoje' : v.dias === 1 ? 'amanhã' : `faltam ${v.dias} dias`}.</li>`).join('')}</ul>
+      Depois do vencimento a modalidade correspondente é bloqueada automaticamente.</div>`);
+  }
+
+  if (av.avisos.length && (av.podeAlugar || noWizard)) {
+    blocos.push(`<div class="alert-item">ℹ️ Pendências no cadastro (não bloqueiam a solicitação): ${esc(av.avisos.join('; '))}.</div>`);
+  }
+
+  if (!blocos.length) return '';
+  return `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px">${blocos.join('')}</div>`;
+}
+
+// Resumo da documentação da equipe, para quem administra Viáticos: quem está
+// impedido de dirigir, quem só pode alugar e o que vence nos próximos 2 meses.
+// É o administrador que regulariza os cadastros, então precisa ver isso antes de
+// a viagem ser barrada no assistente.
+function viaPainelEquipeDocumentacao(colaboradores, meuCadastro) {
+  const semDirigir = [], soAluguel = [], vencendo = [];
+  colaboradores.forEach(c => {
+    const av = viaAvaliarDocumentacao(c);
+    if (!av.podeAlugar) semDirigir.push({ c, motivos: av.bloqueiosCNH });
+    else if (!av.podeCarroProprio) soAluguel.push({ c, motivos: av.bloqueiosProprio.filter(b => !av.bloqueiosCNH.includes(b)) });
+    av.vencendo.forEach(v => vencendo.push({ nome: c.name, doc: v.nome, data: v.data, dias: v.dias }));
+  });
+  if (!semDirigir.length && !soAluguel.length && !vencendo.length) return '';
+
+  const lista = arr => arr.map(x => `<li><strong>${esc(x.c.name)}</strong>${x.c.cargo ? ` (${esc(x.c.cargo)})` : ''} — ${esc(x.motivos.join('; '))}</li>`).join('');
+  const blocos = [];
+  if (semDirigir.length) {
+    blocos.push(`<div class="alert-item late"><strong>🚫 ${semDirigir.length} colaborador(es) sem habilitação para dirigir a serviço</strong>
+      — não podem usar carro próprio nem alugar:<ul style="margin:6px 0 0 18px">${lista(semDirigir)}</ul></div>`);
+  }
+  if (soAluguel.length) {
+    blocos.push(`<div class="alert-item warn"><strong>⚠️ ${soAluguel.length} colaborador(es) só podem alugar carro</strong>
+      — CNH em dia, mas o veículo próprio está impedido:<ul style="margin:6px 0 0 18px">${lista(soAluguel)}</ul></div>`);
+  }
+  if (vencendo.length) {
+    vencendo.sort((a, b) => a.dias - b.dias);
+    blocos.push(`<div class="alert-item warn"><strong>📅 Vencendo nos próximos 2 meses</strong>
+      <ul style="margin:6px 0 0 18px">${vencendo.map(v =>
+        `<li><strong>${esc(v.nome)}</strong> — ${esc(v.doc)} em ${brDate(v.data)} (${v.dias <= 0 ? 'hoje' : `${v.dias} dia(s)`})</li>`).join('')}</ul></div>`);
+  }
+  return `<div class="card" style="margin-bottom:16px; padding:14px 16px">
+    <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px">
+      <strong style="font-size:14px">🪪 Documentação da equipe</strong>
+      <span class="hint" style="margin:0">Ajuste em Configurações → Colaboradores → Editar.</span>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:8px">${blocos.join('')}</div>
+  </div>`;
+}
+
+// Modalidades barradas pela documentação do colaborador. Diferente da trava de
+// combinação, esta vale mesmo com o cartão já marcado — documentação vencida não
+// é escolha do usuário.
+function viaTravasDocumentacao() {
+  const av = viaAvaliarDocumentacao(VIA_WIZ.colab);
+  const travas = {};
+  if (!av.podeCarroProprio) travas.carro_proprio = av.bloqueiosProprio;
+  if (!av.podeAlugar) travas.aluguel_carro = av.bloqueiosCNH;
+  return travas;
+}
+
+// Desmarca o que a documentação não permite. Chamado ao entrar na etapa 3, antes
+// de desenhar: se o cadastro mudou (ou a CNH venceu) entre uma solicitação e
+// outra, a seleção antiga não pode sobreviver escondida no estado.
+function viaGarantirTransportePermitido() {
+  const travas = viaTravasDocumentacao();
+  Object.keys(travas).forEach(k => { if (VIA_WIZ.transporte[k]) VIA_WIZ.transporte[k] = false; });
+  return travas;
+}
+
 function viaAplicarTravasTransporte() {
   const w = VIA_WIZ;
+  const travasDoc = viaTravasDocumentacao();
   const marcados = Object.keys(VIA_TRANSPORTE_IDS).filter(k => w.transporte[k]);
   Object.keys(VIA_TRANSPORTE_IDS).forEach(k => {
     const input = document.getElementById(VIA_TRANSPORTE_IDS[k]);
     if (!input) return;
     const tile = input.closest('.via-transport-tile');
     const bloqueadores = marcados.filter(m => m !== k && !VIA_TRANSPORTE_COMPAT[m].includes(k));
-    const bloqueado = !w.transporte[k] && bloqueadores.length > 0;
+    const porDoc = travasDoc[k];
+    const bloqueado = !!porDoc || (!w.transporte[k] && bloqueadores.length > 0);
     input.disabled = bloqueado;
     if (tile) {
       tile.classList.toggle('disabled', bloqueado);
-      tile.title = bloqueado ? `Não pode ser combinado com ${bloqueadores.map(b => VIA_TRANSPORTE_LABEL[b]).join(' + ')}.` : '';
+      tile.title = porDoc
+        ? `Indisponível — ${porDoc.join('; ')}.`
+        : (bloqueado ? `Não pode ser combinado com ${bloqueadores.map(b => VIA_TRANSPORTE_LABEL[b]).join(' + ')}.` : '');
     }
   });
 }
@@ -5108,6 +5229,11 @@ function viaTransporteConflitos() {
 function viaWizStep3() {
   const w = VIA_WIZ, c = $('#content');
   VIA_MAP = null; // a div #via-map é recriada do zero a cada entrada nesta etapa
+  // Documentação decide antes de desenhar: o que não é permitido já entra
+  // desmarcado, e o motivo aparece em destaque em vez de só no tooltip.
+  const travasDoc = viaGarantirTransportePermitido();
+  const av = viaAvaliarDocumentacao(w.colab);
+  const avisoDoc = viaPainelDocumentacao(av, { contexto: 'wizard' });
   c.innerHTML = `
     <div class="via-wiz-container-wide">
       ${viaWizProgress(3)}
@@ -5115,6 +5241,7 @@ function viaWizStep3() {
         <div class="card">
           <h3 style="margin-bottom:6px">Transporte</h3>
           <p class="hint" style="margin-bottom:14px">Marque o que se aplica a esta viagem — dá pra combinar (ex.: avião pra chegar + carro alugado no destino). Combinações não permitidas ficam bloqueadas: Carro Próprio não combina com nada, e Avião e Ônibus não combinam entre si.</p>
+          ${avisoDoc}
           <div class="via-transport-grid">
             <label class="via-transport-tile"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}><span class="vt-icon">✈️</span><span class="vt-name">Avião</span></label>
             <label class="via-transport-tile"><input type="checkbox" id="w3-onibus" ${w.transporte.onibus ? 'checked' : ''}><span class="vt-icon">🚌</span><span class="vt-name">Ônibus</span></label>
@@ -5149,7 +5276,7 @@ function viaWizStep3() {
   $('#wiz-next').onclick = () => {
     const conflitos = viaTransporteConflitos();
     if (conflitos.length) { toast(`Combinação de transportes não permitida: ${conflitos.join('; ')}. Ajuste antes de avançar.`); return; }
-    const erro = viaWizValidarEtapa3(w.transporte);
+    const erro = viaWizValidarEtapa3(w.transporte, w.colab);
     if (erro) return viaWizAvisar(erro);
     viaWizStep4();
   };
@@ -6105,8 +6232,71 @@ async function viaGerarPDF(w, r, opts = {}) {
 // Calcula o status de uma data de validade (CNH, CRLV, seguro): vencido,
 // vencendo em breve (dentro de "diasAlerta" dias) ou em dia. Reaproveita as
 // classes de badge já existentes no CSS (ok/warn/late/off).
-function viaStatusValidadeDoc(dataStr, diasAlerta = 30) {
+// Antecedência do aviso de vencimento de documento: 2 meses. Prazo suficiente
+// para renovar CNH/CRLV/seguro antes de a viagem ser barrada.
+const VIA_DIAS_ALERTA_DOC = 60;
+const viaDiasAte = dataStr => dataStr ? Math.round((new Date(dataStr) - new Date(todayISO())) / 86400000) : null;
+
+// FONTE ÚNICA da habilitação para dirigir a serviço. Decide o que o colaborador
+// pode usar e devolve, junto, o motivo de cada bloqueio — a mesma avaliação
+// alimenta as travas do assistente, os avisos da tela de Viáticos e a validação
+// no servidor (que é reimplementada em api/index.js, e as duas precisam casar).
+//
+// Regras: aluguel de carro exige CNH em dia; carro próprio exige CNH em dia MAIS
+// a documentação do veículo (CRLV, aptidão, e a apólice quando o seguro é
+// declarado). Consumo em km/L também entra, porque sem ele não há como apurar o
+// combustível da rota.
+function viaAvaliarDocumentacao(c) {
+  c = c || {};
+  const hoje = todayISO();
+  const aval = d => ({ data: d || null, dias: viaDiasAte(d), vencido: !!d && d < hoje,
+    vencendo: !!d && d >= hoje && viaDiasAte(d) <= VIA_DIAS_ALERTA_DOC });
+  // Normaliza para o dia do calendário. A API entrega DATE como ISO com hora
+  // ('2027-05-05T03:00:00.000Z'); Date só apareceria se a função fosse chamada
+  // fora do navegador (num teste), mas custa uma linha aceitar as duas formas.
+  const dia = v => !v ? null : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
+  const vCnh = dia(c.cnh_validade), vCrlv = dia(c.veiculo_crlv_validade), vSeg = dia(c.veiculo_seguro_validade);
+  const cnh = aval(vCnh), crlv = aval(vCrlv), seguro = aval(vSeg);
+  const temSeguro = !!c.veiculo_possui_seguro;
+  const txt = v => String(v == null ? '' : v).trim();
+
+  const bloqueiosCNH = [];
+  if (!txt(c.cnh_numero)) bloqueiosCNH.push('nº da CNH não cadastrado');
+  if (!vCnh) bloqueiosCNH.push('validade da CNH não cadastrada');
+  else if (cnh.vencido) bloqueiosCNH.push(`CNH vencida em ${brDate(vCnh)}`);
+  if (c.motorista_apto === false) bloqueiosCNH.push('motorista marcado como inapto para dirigir a serviço');
+
+  const bloqueiosProprio = bloqueiosCNH.slice();
+  if (c.veiculo_apto === false) bloqueiosProprio.push('veículo marcado como inapto para uso a serviço');
+  if (!txt(c.veiculo_placa)) bloqueiosProprio.push('placa do veículo não cadastrada');
+  if (!txt(c.veiculo_modelo)) bloqueiosProprio.push('modelo do veículo não cadastrado');
+  if (!(Number(c.veiculo_consumo_kml) > 0)) bloqueiosProprio.push('consumo (km/L) do veículo não cadastrado — sem ele não há como calcular o combustível');
+  if (!vCrlv) bloqueiosProprio.push('validade do CRLV não cadastrada');
+  else if (crlv.vencido) bloqueiosProprio.push(`CRLV vencido em ${brDate(vCrlv)}`);
+  if (temSeguro) {
+    if (!txt(c.veiculo_seguradora) || !txt(c.veiculo_apolice)) bloqueiosProprio.push('apólice de seguro incompleta (seguradora ou nº)');
+    if (!vSeg) bloqueiosProprio.push('vigência do seguro não cadastrada');
+    else if (seguro.vencido) bloqueiosProprio.push(`seguro do veículo vencido em ${brDate(vSeg)}`);
+  }
+
+  // Avisos não travam a solicitação, mas aparecem para o colaborador e para quem
+  // administra — a falta de seguro é risco relevante numa viagem a serviço.
+  const avisos = [];
+  if (!temSeguro) avisos.push('veículo sem seguro declarado');
+  if (!txt(c.cnh_categoria)) avisos.push('categoria da CNH não informada');
+
+  const vencendo = [];
+  if (cnh.vencendo) vencendo.push({ nome: 'CNH', data: vCnh, dias: cnh.dias });
+  if (crlv.vencendo) vencendo.push({ nome: 'CRLV (licenciamento)', data: vCrlv, dias: crlv.dias });
+  if (temSeguro && seguro.vencendo) vencendo.push({ nome: 'Seguro do veículo', data: vSeg, dias: seguro.dias });
+
+  return { cnh, crlv, seguro, temSeguro, bloqueiosCNH, bloqueiosProprio, avisos, vencendo,
+    podeAlugar: bloqueiosCNH.length === 0, podeCarroProprio: bloqueiosProprio.length === 0 };
+}
+
+function viaStatusValidadeDoc(dataStr, diasAlerta = VIA_DIAS_ALERTA_DOC) {
   if (!dataStr) return { label: 'Não informado', cls: 'off' };
+  dataStr = String(dataStr).slice(0, 10);   // API manda DATE como ISO com hora
   const hoje = todayISO();
   if (dataStr < hoje) return { label: `Vencido em ${brDate(dataStr)}`, cls: 'late' };
   const diffDias = Math.round((new Date(dataStr) - new Date(hoje)) / 86400000);
@@ -6127,9 +6317,18 @@ function viaStatusDocumentacaoColaborador(c) {
   const seg = c.veiculo_possui_seguro ? viaStatusValidadeDoc(c.veiculo_seguro_validade) : null;
   if (seg && seg.cls === 'late') problemas.push('seguro vencido');
   if (problemas.length) return { label: 'Verificar', cls: 'late', title: problemas.join('; ') };
-  if ([cnh, crlv, seg].some(s => s && s.cls === 'warn')) return { label: 'Vencendo', cls: 'warn', title: 'Algum documento vence nos próximos 30 dias.' };
-  if (!c.cnh_validade && !c.veiculo_crlv_validade) return { label: 'Sem dados', cls: 'off', title: 'Documentação de CNH/veículo ainda não preenchida.' };
-  return { label: 'Em dia', cls: 'ok', title: 'CNH, CRLV e seguro (se houver) em dia.' };
+  const venc = [cnh, crlv, seg].filter(s => s && s.cls === 'warn');
+  if (venc.length) return { label: 'Vencendo', cls: 'warn', title: `Vence em menos de 2 meses: ${venc.map(s => s.label).join('; ')}.` };
+  if (!c.cnh_validade && !c.veiculo_crlv_validade) return { label: 'Sem dados', cls: 'off', title: 'Documentação de CNH/veículo ainda não preenchida — o colaborador não pode alugar carro nem usar o próprio.' };
+  // "Em dia" pela validade não significa habilitado: pode faltar placa, consumo
+  // ou a apólice. Quem administra precisa ver isso na mesma coluna.
+  const av = viaAvaliarDocumentacao(c);
+  if (!av.podeCarroProprio) {
+    return { label: av.podeAlugar ? 'Só aluguel' : 'Verificar', cls: av.podeAlugar ? 'warn' : 'late',
+      title: (av.podeAlugar ? 'CNH em dia (pode alugar carro), mas não pode usar o veículo próprio: ' : 'Não habilitado: ')
+        + (av.podeAlugar ? av.bloqueiosProprio : av.bloqueiosCNH).join('; ') + '.' };
+  }
+  return { label: 'Em dia', cls: 'ok', title: 'CNH, CRLV e seguro (quando declarado) em dia — habilitado para carro próprio e aluguel.' };
 }
 
 async function renderViaticosConfig() {

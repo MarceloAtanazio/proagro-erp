@@ -1971,6 +1971,46 @@ function viaPedagioTotalServer(bloco) {
 // colaborador ver o número antes de enviar; a fonte da verdade do que fica
 // gravado — e do que a aprovação vê — é este cálculo aqui (auditoria
 // 2026-07-29, achado A4: o servidor aceitava a previsão pronta do cliente).
+// Habilitação para dirigir a serviço, no servidor. Espelha viaAvaliarDocumentacao
+// de public/app.js: aluguel exige CNH em dia; carro próprio exige CNH em dia mais
+// a documentação do veículo. A tela já bloqueia os cartões, mas quem monta a
+// requisição na mão passaria por cima — e é o servidor que grava.
+// Alterar a regra aqui pede a mesma alteração lá.
+function viaBloqueiosDirecao(colab) {
+  const hoje = hojeISO();
+  const txt = v => (v == null ? '' : String(v).trim());
+  // Coluna DATE não tem fuso: o pg a entrega como meia-noite UTC. Convertê-la
+  // para America/Sao_Paulo jogaria a data um dia para trás (e uma CNH que vence
+  // HOJE apareceria como vencida). Aqui se lê o dia do calendário como está —
+  // diferente de hojeISO(), onde o fuso importa de verdade.
+  const dataISO = v => {
+    if (!v) return null;
+    if (typeof v === 'string') return v.slice(0, 10);
+    return new Date(v).toISOString().slice(0, 10);
+  };
+  const cnhVal = dataISO(colab.cnh_validade), crlvVal = dataISO(colab.veiculo_crlv_validade), segVal = dataISO(colab.veiculo_seguro_validade);
+
+  const cnh = [];
+  if (!txt(colab.cnh_numero)) cnh.push('nº da CNH não cadastrado');
+  if (!cnhVal) cnh.push('validade da CNH não cadastrada');
+  else if (cnhVal < hoje) cnh.push('CNH vencida');
+  if (colab.motorista_apto === false) cnh.push('motorista marcado como inapto');
+
+  const proprio = cnh.slice();
+  if (colab.veiculo_apto === false) proprio.push('veículo marcado como inapto');
+  if (!txt(colab.veiculo_placa)) proprio.push('placa do veículo não cadastrada');
+  if (!txt(colab.veiculo_modelo)) proprio.push('modelo do veículo não cadastrado');
+  if (!(Number(colab.veiculo_consumo_kml) > 0)) proprio.push('consumo (km/L) do veículo não cadastrado');
+  if (!crlvVal) proprio.push('validade do CRLV não cadastrada');
+  else if (crlvVal < hoje) proprio.push('CRLV vencido');
+  if (colab.veiculo_possui_seguro) {
+    if (!txt(colab.veiculo_seguradora) || !txt(colab.veiculo_apolice)) proprio.push('apólice de seguro incompleta');
+    if (!segVal) proprio.push('vigência do seguro não cadastrada');
+    else if (segVal < hoje) proprio.push('seguro do veículo vencido');
+  }
+  return { cnh, proprio, podeAlugar: cnh.length === 0, podeCarroProprio: proprio.length === 0 };
+}
+
 function viaRecalcularPrevisao(b, colab, tud) {
   const categoriaLocal = viaCalcularCategoriaLocalServer(b.destinos, !!b.internacional);
   const ini = new Date(b.data_inicio), fim = new Date(b.data_fim);
@@ -2039,6 +2079,15 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   const tp = (b.transporte_detalhes && typeof b.transporte_detalhes === 'object') ? b.transporte_detalhes : {};
   if (!['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].some(k => tp[k])) {
     return res.status(400).json({ error: 'Selecione ao menos um meio de transporte.' });
+  }
+  // Documentação: só dirige a serviço quem está habilitado. Vale para carro
+  // próprio (documentação completa do veículo) e aluguel (CNH em dia).
+  const hab = viaBloqueiosDirecao(colab);
+  if (tp.carro_proprio && !hab.podeCarroProprio) {
+    return res.status(403).json({ error: `Carro próprio não liberado para você: ${hab.proprio.join('; ')}. Procure o administrador para regularizar o cadastro.` });
+  }
+  if (tp.aluguel_carro && !hab.podeAlugar) {
+    return res.status(403).json({ error: `Aluguel de carro não liberado para você: ${hab.cnh.join('; ')}. Procure o administrador para regularizar a CNH.` });
   }
   // categoria_local e previsao_por_categoria NUNCA vêm do cliente: o front só
   // usa esses cálculos para o colaborador ver o número antes de enviar — quem
