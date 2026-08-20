@@ -6321,16 +6321,20 @@ function viaAvaliarDocumentacao(c) {
   if (!(Number(c.veiculo_consumo_kml) > 0)) bloqueiosProprio.push('consumo (km/L) do veículo não cadastrado — sem ele não há como calcular o combustível');
   if (!vCrlv) bloqueiosProprio.push('validade do CRLV não cadastrada');
   else if (crlv.vencido) bloqueiosProprio.push(`CRLV vencido em ${brDate(vCrlv)}`);
-  if (temSeguro) {
+  // Seguro é OBRIGATÓRIO para rodar de carro próprio a serviço, independente de
+  // CNH e CRLV: é a empresa que assume o risco da viagem. Sem seguro declarado,
+  // ou com a apólice incompleta/vencida, o carro próprio fica indisponível.
+  if (!temSeguro) {
+    bloqueiosProprio.push('veículo sem seguro cadastrado (obrigatório para usar carro próprio a serviço)');
+  } else {
     if (!txt(c.veiculo_seguradora) || !txt(c.veiculo_apolice)) bloqueiosProprio.push('apólice de seguro incompleta (seguradora ou nº)');
     if (!vSeg) bloqueiosProprio.push('vigência do seguro não cadastrada');
     else if (seguro.vencido) bloqueiosProprio.push(`seguro do veículo vencido em ${brDate(vSeg)}`);
   }
 
   // Avisos não travam a solicitação, mas aparecem para o colaborador e para quem
-  // administra — a falta de seguro é risco relevante numa viagem a serviço.
+  // administra.
   const avisos = [];
-  if (!temSeguro) avisos.push('veículo sem seguro declarado');
   if (!txt(c.cnh_categoria)) avisos.push('categoria da CNH não informada');
 
   const vencendo = [];
@@ -6354,29 +6358,27 @@ function viaStatusValidadeDoc(dataStr, diasAlerta = VIA_DIAS_ALERTA_DOC) {
 // Consolida CNH + CRLV + seguro + os dois flags manuais (motorista/veículo
 // aptos) num único selo pra dar uma visão rápida na listagem de
 // colaboradores, sem precisar abrir "Editar" pra descobrir se falta algo.
+// Selo da coluna "Documentação". Deriva tudo de viaAvaliarDocumentacao, para o
+// que a lista mostra ser exatamente o que a solicitação permite. A ordem
+// importa: habilitação vem antes de vencimento — quem está sem seguro precisa
+// aparecer como "Só aluguel", e não como "Vencendo" porque a CNH vence em 40
+// dias. O fato mais consequente é o que fica visível.
 function viaStatusDocumentacaoColaborador(c) {
-  const problemas = [];
-  if (c.motorista_apto === false) problemas.push('motorista marcado como inapto');
-  if (c.veiculo_apto === false) problemas.push('veículo marcado como inapto');
-  const cnh = viaStatusValidadeDoc(c.cnh_validade);
-  if (cnh.cls === 'late') problemas.push('CNH vencida');
-  const crlv = viaStatusValidadeDoc(c.veiculo_crlv_validade);
-  if (crlv.cls === 'late') problemas.push('CRLV vencido');
-  const seg = c.veiculo_possui_seguro ? viaStatusValidadeDoc(c.veiculo_seguro_validade) : null;
-  if (seg && seg.cls === 'late') problemas.push('seguro vencido');
-  if (problemas.length) return { label: 'Verificar', cls: 'late', title: problemas.join('; ') };
-  const venc = [cnh, crlv, seg].filter(s => s && s.cls === 'warn');
-  if (venc.length) return { label: 'Vencendo', cls: 'warn', title: `Vence em menos de 2 meses: ${venc.map(s => s.label).join('; ')}.` };
-  if (!c.cnh_validade && !c.veiculo_crlv_validade) return { label: 'Sem dados', cls: 'off', title: 'Documentação de CNH/veículo ainda não preenchida — o colaborador não pode alugar carro nem usar o próprio.' };
-  // "Em dia" pela validade não significa habilitado: pode faltar placa, consumo
-  // ou a apólice. Quem administra precisa ver isso na mesma coluna.
   const av = viaAvaliarDocumentacao(c);
-  if (!av.podeCarroProprio) {
-    return { label: av.podeAlugar ? 'Só aluguel' : 'Verificar', cls: av.podeAlugar ? 'warn' : 'late',
-      title: (av.podeAlugar ? 'CNH em dia (pode alugar carro), mas não pode usar o veículo próprio: ' : 'Não habilitado: ')
-        + (av.podeAlugar ? av.bloqueiosProprio : av.bloqueiosCNH).join('; ') + '.' };
+  if (!av.podeAlugar) {
+    return { label: 'Verificar', cls: 'late',
+      title: 'Não pode dirigir a serviço (nem próprio, nem aluguel): ' + av.bloqueiosCNH.join('; ') + '.' };
   }
-  return { label: 'Em dia', cls: 'ok', title: 'CNH, CRLV e seguro (quando declarado) em dia — habilitado para carro próprio e aluguel.' };
+  if (!av.podeCarroProprio) {
+    const soProprio = av.bloqueiosProprio.filter(b => !av.bloqueiosCNH.includes(b));
+    return { label: 'Só aluguel', cls: 'warn',
+      title: 'CNH em dia (pode alugar carro), mas o veículo próprio está impedido: ' + soProprio.join('; ') + '.' };
+  }
+  if (av.vencendo.length) {
+    return { label: 'Vencendo', cls: 'warn',
+      title: 'Vence em menos de 2 meses: ' + av.vencendo.map(v => `${v.nome} em ${brDate(v.data)}`).join('; ') + '.' };
+  }
+  return { label: 'Em dia', cls: 'ok', title: 'CNH, CRLV e seguro em dia — habilitado para carro próprio e aluguel.' };
 }
 
 async function renderViaticosConfig() {

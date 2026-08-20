@@ -2003,7 +2003,12 @@ function viaBloqueiosDirecao(colab) {
   if (!(Number(colab.veiculo_consumo_kml) > 0)) proprio.push('consumo (km/L) do veículo não cadastrado');
   if (!crlvVal) proprio.push('validade do CRLV não cadastrada');
   else if (crlvVal < hoje) proprio.push('CRLV vencido');
-  if (colab.veiculo_possui_seguro) {
+  // Seguro é obrigatório para carro próprio a serviço, independente de CNH e
+  // CRLV estarem em dia: o risco da viagem é da empresa. Mesma regra da tela
+  // (viaAvaliarDocumentacao em app.js) — aqui é a que de fato barra o envio.
+  if (!colab.veiculo_possui_seguro) {
+    proprio.push('veículo sem seguro (obrigatório para usar carro próprio a serviço)');
+  } else {
     if (!txt(colab.veiculo_seguradora) || !txt(colab.veiculo_apolice)) proprio.push('apólice de seguro incompleta');
     if (!segVal) proprio.push('vigência do seguro não cadastrada');
     else if (segVal < hoje) proprio.push('seguro do veículo vencido');

@@ -993,3 +993,25 @@ O `tbody` passou a ser redesenhado por `desenharColaboradores()`, e os handlers 
 - **Ações religadas depois do redesenho:** o botão Editar volta com handler, e o rótulo do botão de situação sai correto por linha ("Inativar" para ativo, "Ativar" para inativo).
 - **Mobile 375px:** modal 343px, filtro sem vazamento, seletor cabendo, sem rolagem lateral.
 - Console sem erros de aplicação.
+
+---
+
+## 2026-08-20 — Seguro passa a ser obrigatório para carro próprio
+
+**Decisão do usuário:** sem o seguro preenchido no cadastro, o colaborador **não pode** usar carro próprio em viáticos — independente de CNH e CRLV estarem em dia. A falta de seguro gera pendência.
+
+Este era exatamente o ponto que ficou registrado como aberto quando as regras de habilitação foram criadas (naquele momento a ausência de seguro era apenas um **aviso**, seguindo a regra que já existia no sistema, e eu sinalizei que a decisão de bloquear ou não era da empresa). Agora está decidido e implementado.
+
+### Mudança
+- **`public/app.js` — `viaAvaliarDocumentacao`:** `!veiculo_possui_seguro` passou de `avisos` para `bloqueiosProprio`, com a mensagem "veículo sem seguro cadastrado (obrigatório para usar carro próprio a serviço)". Quando o seguro *é* declarado, seguem valendo as checagens de apólice completa e vigência não vencida.
+- **`api/index.js` — `viaBloqueiosDirecao`:** a mesma regra no servidor, que é onde a trava vale de verdade (a tela pode ser contornada montando a requisição na mão).
+- **`viaStatusDocumentacaoColaborador` reescrito** para derivar tudo de `viaAvaliarDocumentacao`, em vez de repetir as checagens de validade. Isso corrigiu uma **precedência errada**: quem estava sem seguro e com a CNH vencendo em menos de 2 meses aparecia como "Vencendo" em vez de "Só aluguel" — ou seja, a lista escondia o fato mais consequente. A ordem agora é: não pode dirigir → só aluguel → vencendo → em dia.
+
+O aluguel de carro **não** foi afetado: continua exigindo apenas CNH em dia, como combinado.
+
+### Verificação
+- **23 casos** com as funções reais extraídas dos dois arquivos (frontend e backend, não reimplementadas), todos corretos: sem seguro bloqueia próprio e libera aluguel nas duas pontas; CNH e CRLV com validade longa **não** liberam sem seguro; seguro declarado mas sem apólice, sem vigência ou vencido também bloqueia; com seguro completo libera.
+- **Selo da lista:** "Só aluguel" para quem não tem seguro (com o motivo no tooltip), "Em dia" para quem tem, "Verificar" para cadastro vazio, e a precedência conferida — sem seguro + CNH vencendo dá "Só aluguel", com seguro + CNH vencendo dá "Vencendo".
+- **Assistente, etapa de transporte:** com tudo em dia menos o seguro, o cartão "Carro Próprio" fica travado com o motivo no tooltip, "Aluguel de Carro" e "Avião" seguem livres, o aviso da etapa explica a situação, e **clicar no cartão travado não o seleciona** (nem no modelo, nem abre o bloco).
+- **Barra compacta de Viáticos:** chips "Seu veículo próprio está indisponível" + "1 sem habilitação" + "1 só aluguel", recolhida por padrão, e o detalhe expandido cita a falta de seguro.
+- Console sem erros de aplicação.
