@@ -5197,9 +5197,9 @@ function viaBarraDocumentacao(meuCadastro, colaboradores) {
   const eq = (Array.isArray(colaboradores) && colaboradores.length) ? viaResumoEquipeDoc(colaboradores) : null;
 
   const chips = [];
-  if (avProprio && !avProprio.podeAlugar) chips.push('<span class="badge late">Você não pode dirigir a serviço</span>');
+  if (avProprio && !avProprio.podeAlugar) chips.push('<span class="badge late">Você não está habilitado a dirigir</span>');
   else if (avProprio && !avProprio.podeCarroProprio) chips.push('<span class="badge warn">Seu veículo próprio está indisponível</span>');
-  if (eq && eq.semDirigir.length) chips.push(`<span class="badge late">${eq.semDirigir.length} sem habilitação</span>`);
+  if (eq && eq.semDirigir.length) chips.push(`<span class="badge late">${eq.semDirigir.length} não habilitado(s)</span>`);
   if (eq && eq.soAluguel.length) chips.push(`<span class="badge warn">${eq.soAluguel.length} só aluguel</span>`);
   if (eq && eq.vencendo.length) chips.push(`<span class="badge warn">${eq.vencendo.length} vencendo</span>`);
   if (!chips.length) return '';
@@ -5608,9 +5608,11 @@ function viaRenderProprioBlock() {
   box.style.display = w.transporte.carro_proprio ? '' : 'none';
   if (!w.transporte.carro_proprio) { box.innerHTML = ''; return; }
   const kmCombDisabled = rota.manual_override ? '' : 'disabled';
-  const doc = viaStatusDocumentacaoColaborador(colab);
-  const avisoDoc = (doc.cls === 'late' || doc.cls === 'warn')
-    ? `<div class="alert-item ${doc.cls === 'late' ? 'late' : 'warn'}" style="margin-bottom:10px">⚠️ Documentação do motorista/veículo pede atenção: ${esc(doc.title)}. Fale com o administrador antes de viajar com carro próprio.</div>`
+  // Quem chega aqui já passou pela trava do cartão, então o que ainda importa
+  // avisar é documento vencendo durante ou logo depois da viagem.
+  const avDoc = viaAvaliarDocumentacao(colab);
+  const avisoDoc = avDoc.vencendo.length
+    ? `<div class="alert-item warn" style="margin-bottom:10px">⏳ Atenção ao vencimento: ${esc(avDoc.vencendo.map(v => `${v.nome} vence em ${brDate(v.data)}`).join('; '))}. Regularize antes da viagem.</div>`
     : '';
   box.innerHTML = `<div class="via-subcard"><h4>🚙 Carro Próprio</h4>
     ${avisoDoc}
@@ -6358,27 +6360,37 @@ function viaStatusValidadeDoc(dataStr, diasAlerta = VIA_DIAS_ALERTA_DOC) {
 // Consolida CNH + CRLV + seguro + os dois flags manuais (motorista/veículo
 // aptos) num único selo pra dar uma visão rápida na listagem de
 // colaboradores, sem precisar abrir "Editar" pra descobrir se falta algo.
-// Selo da coluna "Documentação". Deriva tudo de viaAvaliarDocumentacao, para o
-// que a lista mostra ser exatamente o que a solicitação permite. A ordem
-// importa: habilitação vem antes de vencimento — quem está sem seguro precisa
-// aparecer como "Só aluguel", e não como "Vencendo" porque a CNH vence em 40
-// dias. O fato mais consequente é o que fica visível.
+// Selo da coluna "Documentação". Responde UMA pergunta: o que esta pessoa pode
+// usar de carro? São só três respostas possíveis — liberado para os dois, só
+// aluguel, ou nada. "Vencendo" saiu da lista de status: era um quarto rótulo
+// que competia com os outros e escondia o mais importante (quem estava sem
+// seguro E com a CNH vencendo aparecia como "Vencendo"). Virou um marcador
+// separado, que acompanha qualquer um dos três estados.
 function viaStatusDocumentacaoColaborador(c) {
   const av = viaAvaliarDocumentacao(c);
+  const vence = av.vencendo.length ? {
+    texto: `⏳ ${av.vencendo.length}`,
+    title: 'Vence em menos de 2 meses: ' + av.vencendo.map(v => `${v.nome} em ${brDate(v.data)} (${v.dias <= 0 ? 'hoje' : v.dias + ' dias'})`).join('; ') + '.'
+  } : null;
+
   if (!av.podeAlugar) {
-    return { label: 'Verificar', cls: 'late',
-      title: 'Não pode dirigir a serviço (nem próprio, nem aluguel): ' + av.bloqueiosCNH.join('; ') + '.' };
+    return { label: 'Não habilitado', cls: 'late', vence,
+      title: 'Não pode dirigir a serviço — nem carro próprio, nem aluguel. Falta: ' + av.bloqueiosCNH.join('; ') + '.' };
   }
   if (!av.podeCarroProprio) {
     const soProprio = av.bloqueiosProprio.filter(b => !av.bloqueiosCNH.includes(b));
-    return { label: 'Só aluguel', cls: 'warn',
-      title: 'CNH em dia (pode alugar carro), mas o veículo próprio está impedido: ' + soProprio.join('; ') + '.' };
+    return { label: 'Só aluguel', cls: 'warn', vence,
+      title: 'Pode alugar carro (CNH em dia), mas não pode usar o veículo próprio. Falta: ' + soProprio.join('; ') + '.' };
   }
-  if (av.vencendo.length) {
-    return { label: 'Vencendo', cls: 'warn',
-      title: 'Vence em menos de 2 meses: ' + av.vencendo.map(v => `${v.nome} em ${brDate(v.data)}`).join('; ') + '.' };
-  }
-  return { label: 'Em dia', cls: 'ok', title: 'CNH, CRLV e seguro em dia — habilitado para carro próprio e aluguel.' };
+  return { label: 'Liberado', cls: 'ok', vence,
+    title: 'Habilitado para carro próprio e para aluguel.' };
+}
+
+// Célula da coluna: o status e, quando houver, o marcador de vencimento ao lado.
+function viaCelulaDocumentacao(c) {
+  const doc = viaStatusDocumentacaoColaborador(c);
+  return `<span class="badge ${doc.cls}" title="${esc(doc.title)}">${esc(doc.label)}</span>`
+    + (doc.vence ? ` <span class="doc-vence" title="${esc(doc.vence.title)}">${doc.vence.texto}</span>` : '');
 }
 
 async function renderViaticosConfig() {
@@ -6468,11 +6480,10 @@ async function renderViaticosConfig() {
     const lista = colaboradores.filter(c =>
       modo === 'todos' ? true : modo === 'inativos' ? c.ativo === false : c.ativo !== false);
     $('#cb-tbody').innerHTML = lista.map(c => {
-      const doc = viaStatusDocumentacaoColaborador(c);
       return `<tr${c.ativo === false ? ' class="cb-inativo"' : ''}>
         <td class="nowrap">${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
         <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
-        <td><span class="badge ${doc.cls}" title="${esc(doc.title)}">${doc.label}</span></td>
+        <td class="nowrap">${viaCelulaDocumentacao(c)}</td>
         <td class="actions"><div class="btn-group">
           <button class="btn sm" data-editar-colab="${c.id}">Editar</button>
           <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>

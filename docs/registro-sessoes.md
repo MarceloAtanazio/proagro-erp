@@ -1015,3 +1015,33 @@ O aluguel de carro **não** foi afetado: continua exigindo apenas CNH em dia, co
 - **Assistente, etapa de transporte:** com tudo em dia menos o seguro, o cartão "Carro Próprio" fica travado com o motivo no tooltip, "Aluguel de Carro" e "Avião" seguem livres, o aviso da etapa explica a situação, e **clicar no cartão travado não o seleciona** (nem no modelo, nem abre o bloco).
 - **Barra compacta de Viáticos:** chips "Seu veículo próprio está indisponível" + "1 sem habilitação" + "1 só aluguel", recolhida por padrão, e o detalhe expandido cita a falta de seguro.
 - Console sem erros de aplicação.
+
+---
+
+## 2026-08-20 — Coluna "Documentação": 4 status confusos viraram 3 + marcador
+
+**Pedido:** simplificar — a coluna tinha status demais e confundia.
+
+**Diagnóstico:** os rótulos misturavam duas perguntas diferentes na mesma coluna. *Verificar*, *Só aluguel* e *Em dia* respondiam "o que essa pessoa pode usar?", enquanto *Vencendo* respondia "algum documento está perto de vencer?". Como só um rótulo cabe por linha, os dois assuntos competiam — e o menos importante ganhava: quem estava **sem seguro e com a CNH vencendo** aparecia como "Vencendo", escondendo que o carro próprio estava impedido.
+
+### Como ficou
+A coluna passou a responder **uma única pergunta** — o que a pessoa pode usar de carro —, com três respostas possíveis:
+
+| Status | Cor | Significa |
+|---|---|---|
+| **Liberado** | verde | carro próprio e aluguel |
+| **Só aluguel** | amarelo | CNH em dia, veículo próprio impedido |
+| **Não habilitado** | vermelho | nem próprio, nem aluguel |
+
+O vencimento saiu da disputa e virou um **marcador discreto ao lado** (`⏳ 1`, `⏳ 2`), que acompanha qualquer um dos três estados. O tooltip do marcador lista documento, data e dias restantes; o tooltip do status diz o que falta ("Falta: …").
+
+Rótulos antigos removidos: *Verificar*, *Em dia*, *Vencendo* e *Sem dados* (cadastro vazio agora é "Não habilitado", que é o efeito prático).
+
+Também alinhei o vocabulário da barra compacta de Viáticos ("não habilitado(s)" em vez de "sem habilitação") e o aviso do bloco de Carro Próprio no assistente, que passou a falar só de vencimento — quem chega ali já passou pela trava do cartão, então repetir bloqueio era ruído.
+
+### Verificação
+- **19 casos** com as funções reais extraídas do arquivo: o conjunto de rótulos possíveis em 11 cenários distintos é **exatamente** `Liberado | Não habilitado | Só aluguel` — nenhum quarto estado escapou.
+- Precedência conferida: CNH vencendo mantém "Liberado" **com** marcador; sem seguro + CNH vencendo dá **"Só aluguel"** com o marcador preservado (antes dava "Vencendo"); dois documentos vencendo mostram `⏳ 2`.
+- Célula renderizada: status presente, marcador só quando aplica, tooltips com o motivo e com as datas.
+- Na tela, com 6 colaboradores cobrindo todos os casos: três status distintos, cores certas, coluna sem quebra de linha e tabela sem rolagem horizontal.
+- Console sem erros de aplicação.
