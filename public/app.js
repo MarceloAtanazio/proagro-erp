@@ -2452,16 +2452,14 @@ async function renderContratos() {
       (!q || (r.titulo + ' ' + r.supplier_name + ' ' + (r.documento || '')).toLowerCase().includes(q)));
     $('#ct-tbl').innerHTML = `
       <colgroup>
-        <col class="c-ct-contrato"><col class="c-ct-forn"><col class="c-ct-cat"><col class="c-ct-valor">
-        <col class="c-ct-ciclo"><col class="c-ct-vig"><col class="c-ct-prox"><col class="c-ct-status"><col class="c-ct-acoes">
+        <col class="c-ct-contrato"><col class="c-ct-forn"><col class="c-ct-valor">
+        <col class="c-ct-vig"><col class="c-ct-prox"><col class="c-ct-status"><col class="c-ct-acoes">
       </colgroup>
-      <thead><tr><th>Contrato</th><th>Fornecedor</th><th>Categoria</th><th class="num">Valor</th><th>Ciclo</th><th>Vigência</th><th>Próx. parcela</th><th>Status</th><th class="actions">Ações</th></tr></thead>
+      <thead><tr><th>Contrato</th><th>Fornecedor</th><th class="num">Valor</th><th>Vigência</th><th>Próx. parcela</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => `<tr${r.status === 'encerrado' ? ' class="ct-row-off"' : ''}>
-        <td class="ct-titulo"><strong>${esc(r.titulo)}</strong>${r.documento ? '<span class="ct-sub">Nº ' + esc(r.documento) + '</span>' : ''}</td>
+        <td class="ct-titulo"><strong>${esc(r.titulo)}</strong><span class="ct-sub">${[r.documento ? 'Nº ' + esc(r.documento) : null, esc(r.categoria)].filter(Boolean).join(' · ')}</span></td>
         <td>${esc(r.supplier_name)}</td>
-        <td class="ct-cat">${esc(r.categoria)}</td>
-        <td class="num ct-valor">${brl(r.valor)}</td>
-        <td><span class="chip">${CONTR_PERIODO_LABEL[r.periodicidade]}</span></td>
+        <td class="num ct-valor">${brl(r.valor)}<span class="ct-sub">${CONTR_PERIODO_LABEL[r.periodicidade].toLowerCase()}</span></td>
         <td class="ct-vig">${brDate(r.data_inicio)}<span class="ct-sub">até ${r.data_fim ? brDate(r.data_fim) : 'indeterminado'}</span></td>
         <td class="ct-prox">${r.gerar_parcelas && r.proxima_geracao ? brDate(r.proxima_geracao) : '<span class="chip muted">Manual</span>'}</td>
         <td><span class="badge ${CONTR_STATUS_BADGE[r.status]}">${CONTR_STATUS_LABEL[r.status]}</span></td>
@@ -2472,7 +2470,7 @@ async function renderContratos() {
           ${r.status !== 'encerrado' ? `<button class="btn sm" data-status="${r.id}:${r.status === 'ativo' ? 'suspenso' : 'ativo'}">${r.status === 'ativo' ? 'Suspender' : 'Reativar'}</button>
              <button class="btn sm danger-ghost" data-status="${r.id}:encerrado">Encerrar</button>` : ''}
           ${!r.parcelas_geradas ? `<button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>` : ''}
-        </div></td></tr>`).join('') || '<tr><td colspan="9"><div class="empty">Nenhum contrato cadastrado ainda.</div></td></tr>'}</tbody>`;
+        </div></td></tr>`).join('') || '<tr><td colspan="7"><div class="empty">Nenhum contrato cadastrado ainda.</div></td></tr>'}</tbody>`;
     $('#ct-tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => {
       const [, id] = b.dataset.att.split(':');
       const c = rows.find(r => r.id == id);

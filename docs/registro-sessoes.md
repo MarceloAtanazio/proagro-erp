@@ -1190,3 +1190,41 @@ removido — continua recuperável no commit `dc79da9`, se um dia fizer falta.
 
 Fica registrado que o `logo-white.png` **é o logo colorido**, apesar do nome. O contraste
 dele sobre o verde-escuro é baixo de propósito agora, por escolha do usuário — não é bug.
+
+### Tabela de Contratos, segunda passada — vendo o resultado em produção
+
+Com a versão anterior no ar, o usuário apontou o que de fato estava errado: **o cabeçalho
+"AÇÕES" à esquerda e os botões jogados à direita**, os botões em duas linhas, e nomes ainda
+quebrando. O primeiro era erro meu: a regra geral do sistema (`thead th`) trava todo
+cabeçalho à esquerda, e eu alinhei os botões à direita sem corrigir o cabeçalho.
+
+A causa dos outros dois era estrutural — nove colunas não cabem. Apertar mais as colunas
+não resolveria; o que resolveu foi **remover duas**:
+
+- **Categoria** virou linha secundária sob o título, junto do número: "Nº 2026/014 · Serviços de Terceiros".
+- **Ciclo** virou linha secundária sob o valor: "R$ 7.400,00 / mensal".
+
+Nada foi escondido, e as duas informações ficaram ao lado do dado a que pertencem. Nove
+colunas viraram sete.
+
+Com isso sobrou espaço, e a redistribuição saiu de uma medição: **Vigência e Próx. parcela
+usavam quase o dobro da largura que o conteúdo pede** (datas de dez caracteres ocupando
+195px e 146px). Caíram para 8% e 7%; o excedente foi para Ações (19% → 23%) e Fornecedor
+(19% → 21%). O botão de anexo também encolheu de 44px para 36px dentro desta tabela.
+
+`.tbl-contratos th.actions { text-align: right; }` resolveu o desalinhamento.
+
+### Verificação (viewport de 1908px, a mesma do print)
+- **Botões numa linha só** nas três linhas de teste — antes eram duas.
+- **Cabeçalho alinhado com os botões:** borda direita do texto de "Ações" e borda direita
+  do último botão em 1869px, idênticas.
+- Nenhuma célula transbordando o próprio box (`scrollWidth` vs `clientWidth` em todas).
+- Sem rolagem horizontal.
+- A linha com "Gerar agora" baixou de 81px para 65px de altura.
+- **Limite conhecido:** a combinação de **seis** botões (Gerar agora + anexo + Editar +
+  Suspender + Encerrar + Excluir, que só acontece em contrato ativo, com geração
+  automática e sem parcelas geradas) precisa de 396px e tem 345 — essa quebra em duas
+  linhas. É o único caso que ainda quebra.
+- O título de 62 caracteres do contrato real e a razão social de 54 caracteres do
+  fornecedor continuam ocupando duas linhas: não cabem em uma nesta largura, e alargar
+  essas colunas só empurraria o problema para as vizinhas.
