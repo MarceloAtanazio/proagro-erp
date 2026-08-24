@@ -1066,3 +1066,99 @@ Aqui o modal padrão foi mantido (diferente dos documentos de colaborador, que p
 - **Tela**, com dois contratos (um sem anexo, um com dois) e toda gravação bloqueada: botão 📎 em ambos, com "📎 2" no que tem arquivos; modal com o título do contrato; **"Contrato assinado" pré-selecionado**; o upload enviou `POST /api/attachments/contrato/5` com `kind: 'contrato'` e o nome do arquivo; no contrato com anexos, os dois arquivos listados com Ver/Excluir.
 - **Permissão conferida:** usuário com apenas leitura em Contratos vê a lista e o botão Ver, mas **não** recebe a área de upload nem o botão Excluir.
 - Console sem erros de aplicação.
+
+---
+
+## 2026-08-24 — Acabamento visual da tabela de Contratos (e resgate do checkout local)
+
+**Pedido:** "É possível ajustar essa tabela pra ficar uma aparência um pouco melhor?" (tela Financeiro › Contratos).
+
+### Antes de mais nada: a pasta local estava desatualizada
+Ao procurar o código da tela, o módulo Contratos simplesmente não existia nos arquivos.
+Motivo: o `main` local estava **235 commits atrás** do `origin/main` e 1 commit à frente
+(`fccf161 — ProAgro ERP - versão Vercel + Supabase`, nunca enviado). Todo o trabalho das
+sessões anteriores está íntegro no GitHub; era só o checkout desta máquina que ficou parado.
+
+Solução escolhida com o usuário: `git checkout -B trabalho origin/main` — a árvore passou a
+ter o código atual e o commit local `fccf161` continua intacto no branch `main`. Nada perdido.
+
+### O problema visual
+A coluna de Ações carrega até cinco botões em texto ("Gerar agora", 📎, "Editar", "Suspender",
+"Encerrar", "Excluir"). Com a tabela em largura automática, esses botões puxavam espaço das
+outras colunas e o resultado era título, fornecedor e vigência quebrando em duas linhas cada,
+enquanto Categoria e Valor sobravam largura. O "Manual" da coluna Próx. parcela ainda saía como
+texto solto numa cor que lembrava link, parecendo algo clicável.
+
+### O que foi feito
+- **`public/styles.css`** — novo bloco `.tbl-contratos`, seguindo a convenção já usada em
+  `.tbl-pagar`: `table-layout: fixed` com as larguras declaradas por `<colgroup>`
+  (Contrato 20%, Fornecedor 15%, Categoria 9%, Valor 8%, Ciclo 6%, Vigência 10%,
+  Próx. parcela 8%, Status 6%, Ações 18%).
+- **Ações agrupadas** em `.ct-acoes` (flex com `flex-wrap` e alinhamento à direita). Em vez de
+  estourar a coluna, os botões se organizam em linhas de gap uniforme. Como o título de contrato
+  já ocupa duas linhas nos casos reais, essa quebra **não aumenta a altura da linha**.
+- **Escada visual** nas células: `.ct-sub` (bloco menor, cor `--muted`) para o nº do documento e
+  para o fim da vigência, que virou "01/08/2026 / até 31/01/2027" em vez de uma linha só que
+  quebrava no meio. Datas e valores com `tabular-nums` e sem quebra.
+- **Ciclo** virou `chip` (o mesmo componente já existente no sistema) e **"Manual"** virou
+  `chip muted` (fundo transparente, borda tracejada) — deixou de parecer link/ação.
+- `.ct-row-off` substituiu o `style="opacity:.55"` inline dos contratos encerrados.
+- **`public/app.js`** (`renderContratos`, ~linha 2453) — markup ajustado para usar as classes
+  acima. **Nenhuma mudança de comportamento:** mesmos botões, mesmos `data-*`, mesmos handlers,
+  mesmo `colspan="9"` no estado vazio.
+
+### Verificação
+- `node -e "new Function(...)"` sobre o `public/app.js` — sintaxe válida.
+- O app completo não sobe nesta máquina (sem `.env` e sem `node_modules`), então a conferência
+  foi feita num mock estático servido em `localhost` carregando o `styles.css` real, com três
+  linhas cobrindo ativo / suspenso / encerrado e o contrato de título longo do print original.
+- Medições no DOM a 1700px: nenhuma coluna com rolagem horizontal; alturas de linha 87/85/66px;
+  grupo de ações contido dentro da altura da linha; Fornecedor e Vigência sem quebra indevida.
+
+### Pendências
+- [ ] Decidir o destino do commit local `fccf161` (branch `main`): ou é descartado e o `main`
+      volta a espelhar o `origin/main`, ou o conteúdo dele é reaproveitado. Enquanto isso, o
+      trabalho segue no branch `trabalho`.
+- [ ] Commit/push destas mudanças para o `origin/main` (dispara o deploy na Vercel).
+
+## 2026-08-24 — Logo branco na sidebar e no painel do login
+
+**Pedido:** substituir o logo da ProAgro no menu lateral pelo logo branco.
+
+### O achado
+O arquivo `public/logo-white.png` **tem nome enganoso**: apesar do "white", é o logo
+**colorido** (wordmark em degradê verde). Como a sidebar e o painel do login usam
+fundo verde-escuro (`--verde-900` → `--verde-800`), o logo praticamente sumia — era
+exatamente o incômodo relatado.
+
+### O que foi feito
+- Gerado `public/logo-branco.png`: versão monocromática branca derivada do próprio
+  arquivo do projeto, recolorindo apenas os pixels com alfa > 0 e **preservando o canal
+  alfa** (fundo transparente e antialiasing das bordas intactos). 796×293, mesma
+  proporção do original (2,72), 52 KB.
+- `public/index.html` — as duas ocorrências do logo passaram a apontar para
+  `/logo-branco.png`: sidebar (linha ~71) e painel do login (linha ~33). Os dois ficam
+  sobre o mesmo gradiente verde-escuro, então o problema era idêntico nos dois lugares.
+- Comentário no HTML registrando por que existem dois arquivos e qual serve a qual fundo,
+  para o nome enganoso não induzir ao erro de novo.
+
+### Verificação
+- Arquivo gerado conferido pixel a pixel: 233.228 px totais — 194.719 transparentes,
+  24.469 opacos e 14.040 semitransparentes (as bordas suavizadas). Ou seja, só a marca
+  virou branca; o fundo continua transparente.
+- Prévia visual antes × depois montada com o `styles.css` real e as duas imagens
+  embutidas, cobrindo sidebar e painel do login.
+- A medição por DOM no navegador embutido parou de responder no meio (o painel não estava
+  compondo quadros e passou a devolver retângulos 0×0); a conferência foi concluída pelo
+  arquivo e pela prévia.
+
+### Observações
+- O arquivo que o usuário anexou no chat não pôde ser lido (imagem colada não é gravada em
+  disco). Se o logo branco **oficial** da marca for diferente deste derivado, basta salvá-lo
+  por cima de `public/logo-branco.png` — nenhuma outra mudança é necessária.
+- `logo-white.png` foi mantido no repositório; hoje ele não é mais referenciado por
+  nenhuma tela. Renomeá-lo para `logo-colorido.png` (ou removê-lo) fica como pendência.
+
+### Pendências
+- [ ] Confirmar se o logo branco oficial deve substituir o derivado.
+- [ ] Renomear ou remover o `logo-white.png` órfão.
