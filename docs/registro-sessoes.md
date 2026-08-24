@@ -1045,3 +1045,24 @@ Também alinhei o vocabulário da barra compacta de Viáticos ("não habilitado(
 - Célula renderizada: status presente, marcador só quando aplica, tooltips com o motivo e com as datas.
 - Na tela, com 6 colaboradores cobrindo todos os casos: três status distintos, cores certas, coluna sem quebra de linha e tabela sem rolagem horizontal.
 - Console sem erros de aplicação.
+
+---
+
+## 2026-08-24 — Anexo por contrato (documento assinado)
+
+**Pedido:** um botão de anexo em cada contrato, para guardar o documento devidamente assinado.
+
+### Implementação
+Reaproveitou toda a máquina de anexos já existente, em vez de criar armazenamento novo — limite de 3 MB, whitelist de MIME, **conferência da assinatura do arquivo** (impede SVG/HTML renomeado, achado C4 da auditoria), download, exclusão e log de auditoria vêm de graça.
+
+- **Migração** `supabase/migrations/2026-08-24-anexos-contrato.sql`: amplia o CHECK de `erp_attachments.entity_type` com `'contrato'`. Aditiva, com rollback documentado no arquivo. Aplicada em produção dentro de transação — **135 anexos antes, 135 depois**.
+- **Backend:** `contrato` mapeado para a página `contratos` (permissão de leitura para ver, de edição para anexar/excluir) e para a tabela `erp_contratos` na checagem de existência; mensagem de erro própria ("Contrato não encontrado"); log de auditoria dizendo "ao contrato"; e a listagem passou a devolver `attachment_count`.
+- **Frontend:** botão 📎 na coluna de ações, com a **contagem ao lado** quando já há arquivo, abrindo o modal de anexos padrão com o título do contrato. Em Contratos o tipo **"Contrato assinado" já vem pré-selecionado** — era o único lugar onde a pessoa teria de trocar de "Outro" para "Contrato" toda vez. O rótulo da opção também virou "Contrato assinado", que é mais preciso que "Contrato" dentro de uma tela de contratos.
+
+Aqui o modal padrão foi mantido (diferente dos documentos de colaborador, que precisaram de anexo embutido): a lista de contratos não é um formulário, então abrir outra janela não faz ninguém perder digitação.
+
+### Verificação
+- **Banco:** INSERT real do tipo `contrato` **dentro de transação com ROLLBACK** — aceito; um tipo inventado corretamente recusado pelo CHECK; 135 linhas antes e depois (nada gravado). Listagem devolvendo `attachment_count`.
+- **Tela**, com dois contratos (um sem anexo, um com dois) e toda gravação bloqueada: botão 📎 em ambos, com "📎 2" no que tem arquivos; modal com o título do contrato; **"Contrato assinado" pré-selecionado**; o upload enviou `POST /api/attachments/contrato/5` com `kind: 'contrato'` e o nome do arquivo; no contrato com anexos, os dois arquivos listados com Ver/Excluir.
+- **Permissão conferida:** usuário com apenas leitura em Contratos vê a lista e o botão Ver, mas **não** recebe a área de upload nem o botão Excluir.
+- Console sem erros de aplicação.

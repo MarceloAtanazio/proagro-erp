@@ -2463,11 +2463,17 @@ async function renderContratos() {
         <td><span class="badge ${CONTR_STATUS_BADGE[r.status]}">${CONTR_STATUS_LABEL[r.status]}</span></td>
         <td class="actions">
           ${r.gerar_parcelas && r.proxima_geracao && r.status === 'ativo' ? `<button class="btn sm" data-gerar="${r.id}">Gerar agora</button>` : ''}
+          <button class="btn sm att-btn" data-att="contrato:${r.id}" title="Contrato assinado e demais documentos">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
           <button class="btn sm" data-edit="${r.id}">Editar</button>
           ${r.status !== 'encerrado' ? `<button class="btn sm" data-status="${r.id}:${r.status === 'ativo' ? 'suspenso' : 'ativo'}">${r.status === 'ativo' ? 'Suspender' : 'Reativar'}</button>
              <button class="btn sm danger-ghost" data-status="${r.id}:encerrado">Encerrar</button>` : ''}
           ${!r.parcelas_geradas ? `<button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="9"><div class="empty">Nenhum contrato cadastrado ainda.</div></td></tr>'}</tbody>`;
+    $('#ct-tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => {
+      const [, id] = b.dataset.att.split(':');
+      const c = rows.find(r => r.id == id);
+      openAttachments('contrato', Number(id), c ? c.titulo : 'Contrato');
+    });
     $('#ct-tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formContrato(rows.find(r => r.id == b.dataset.edit), sups));
     $('#ct-tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('contrato', `/api/contratos/${b.dataset.del}`, renderContratos));
     $('#ct-tbl').querySelectorAll('[data-status]').forEach(b => b.onclick = async () => {
@@ -7242,7 +7248,8 @@ function confirmAction(label, fn, okMsg) {
 const KIND_LABELS = { boleto: 'Boleto', nota_fiscal: 'Nota Fiscal', comprovante: 'Comprovante', contrato: 'Contrato', outro: 'Outro' };
 const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', contrato: '📑', outro: '📎' };
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
-const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos' }[t] || 'receber');
+const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
+  colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos' }[t] || 'receber');
 
 function readFileAsBase64(file) {
   return new Promise((res, rej) => {
@@ -7298,6 +7305,10 @@ function updateAttBadge(type, id, n) {
 
 function openAttachments(type, id, label) {
   const editable = canEditPage(pageForType(type));
+  // Tipo já sugerido pelo contexto: em Contratos o anexo esperado é o próprio
+  // contrato assinado, não faz sentido a pessoa ter de escolher "Outro" e trocar.
+  const kindPadrao = type === 'contrato' ? 'contrato' : 'outro';
+  const opt = (v, t) => `<option value="${v}"${v === kindPadrao ? ' selected' : ''}>${t}</option>`;
   openModal('Anexos — ' + label, `
     ${editable ? `
     <div class="att-upload">
@@ -7305,11 +7316,11 @@ function openAttachments(type, id, label) {
         <label>Adicionar documento</label>
         <div class="att-upload-row">
           <select id="att-kind">
-            <option value="boleto">Boleto</option>
-            <option value="nota_fiscal">Nota Fiscal</option>
-            <option value="comprovante">Comprovante de pagamento</option>
-            <option value="contrato">Contrato</option>
-            <option value="outro" selected>Outro</option>
+            ${opt('boleto', 'Boleto')}
+            ${opt('nota_fiscal', 'Nota Fiscal')}
+            ${opt('comprovante', 'Comprovante de pagamento')}
+            ${opt('contrato', 'Contrato assinado')}
+            ${opt('outro', 'Outro')}
           </select>
           <input type="file" id="att-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xml,.xls,.xlsx,.docx">
           <button class="btn primary" id="att-send" type="button">Anexar</button>

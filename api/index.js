@@ -245,7 +245,8 @@ const AUDIT_MAP = {
   'POST /api/attachments/:type/:id': req => {
     const onde = {
       payable: 'ao título a pagar', receivable: 'ao título a receber', viatico: 'à despesa de viático',
-      colab_cnh: 'à CNH do colaborador', colab_veiculo: 'ao veículo do colaborador', colab_seguro: 'à apólice de seguro do colaborador'
+      colab_cnh: 'à CNH do colaborador', colab_veiculo: 'ao veículo do colaborador', colab_seguro: 'à apólice de seguro do colaborador',
+      contrato: 'ao contrato'
     }[req.params.type] || `ao registro (${req.params.type})`;
     return `Anexou um documento (${req.body.file_name || ''}) ${onde} ID ${req.params.id}`;
   },
@@ -523,7 +524,8 @@ app.get('/api/contratos', requireAuth, requireViewAny(['contratos']), h(async (r
   await gerarParcelasPendentes().catch(e => console.error('[contratos] geração automática:', e.message));
   const rows = await query(`
     SELECT c.*, s.name AS supplier_name,
-      (SELECT COUNT(*)::int FROM erp_payables p WHERE p.contract_id = c.id) AS parcelas_geradas
+      (SELECT COUNT(*)::int FROM erp_payables p WHERE p.contract_id = c.id) AS parcelas_geradas,
+      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='contrato' AND a.entity_id = c.id) AS attachment_count
     FROM erp_contratos c JOIN erp_suppliers s ON s.id = c.supplier_id
     ORDER BY CASE WHEN c.status='ativo' THEN 0 ELSE 1 END, c.data_fim NULLS LAST, c.titulo`);
   res.json(rows);
@@ -773,7 +775,8 @@ app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async 
 // do arquivo, download e log de auditoria já vêm de graça.
 const ATTACH_TYPES = {
   payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
-  colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos'
+  colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos',
+  contrato: 'contratos'
 };
 const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)', colab_seguro: 'apólice de seguro' };
 // CNH e apólice são documentos pessoais: quem tem apenas leitura em Viáticos
@@ -946,10 +949,11 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   // Confirma que o registro dono do anexo existe.
   const table = {
     payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas',
-    colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores'
+    colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
+    contrato: 'erp_contratos'
   }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
-  if (!own.length) return res.status(404).json({ error: ehAnexoColaborador(req.params.type) ? 'Colaborador não encontrado.' : 'Título não encontrado.' });
+  if (!own.length) return res.status(404).json({ error: ehAnexoColaborador(req.params.type) ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : 'Título não encontrado.' });
 
   const ins = await query(
     `INSERT INTO erp_attachments (entity_type, entity_id, kind, file_name, mime_type, byte_size, data, uploaded_by)
