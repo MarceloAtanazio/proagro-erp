@@ -1180,3 +1180,13 @@ Enviados para o `origin/main`, que é o que dispara o build na Vercel.
 `trabalho` foi removido. O commit divergente `fccf161`, que nunca tinha sido enviado, ficou
 preservado no branch `backup-fccf161` — some de vista sem ser perdido. As duas pendências
 de branch registradas mais acima estão resolvidas.
+
+### Logo branco revertido
+
+O usuário viu o resultado e preferiu o logo colorido: o branco chapado "ficou feio".
+Decisão de gosto, e é dele. `public/index.html` voltou exatamente ao estado do `8292fca`
+(sidebar e painel do login de novo com `/logo-white.png`) e o `public/logo-branco.png` foi
+removido — continua recuperável no commit `dc79da9`, se um dia fizer falta.
+
+Fica registrado que o `logo-white.png` **é o logo colorido**, apesar do nome. O contraste
+dele sobre o verde-escuro é baixo de propósito agora, por escolha do usuário — não é bug.
