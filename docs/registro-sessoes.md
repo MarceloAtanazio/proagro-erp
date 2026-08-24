@@ -1162,3 +1162,21 @@ exatamente o incômodo relatado.
 ### Pendências
 - [ ] Confirmar se o logo branco oficial deve substituir o derivado.
 - [ ] Renomear ou remover o `logo-white.png` órfão.
+
+### Encerramento da sessão — deploy e arrumação do branch
+
+O usuário notou pela página de Deployments da Vercel que nada tinha subido: o último
+deploy ainda era o `8292fca`. As mudanças estavam corretas, mas paradas na máquina —
+eu tinha perguntado se podia enviar em vez de enviar. Ficou combinado que **alteração
+solicitada é alteração no ar**: commitar e dar push conforme o trabalho vai sendo feito,
+sem parar para pedir confirmação a cada passo.
+
+- `2214430` — Tabela de Contratos: colunas com largura fixa e ações agrupadas.
+- `dc79da9` — Logo branco na sidebar e no painel do login.
+
+Enviados para o `origin/main`, que é o que dispara o build na Vercel.
+
+**Branch arrumado.** O `main` local voltou a espelhar o `origin/main` e o branch temporário
+`trabalho` foi removido. O commit divergente `fccf161`, que nunca tinha sido enviado, ficou
+preservado no branch `backup-fccf161` — some de vista sem ser perdido. As duas pendências
+de branch registradas mais acima estão resolvidas.
