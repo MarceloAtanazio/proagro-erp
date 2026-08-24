@@ -2444,31 +2444,35 @@ async function renderContratos() {
       <div class="spacer"></div>
       <button class="btn primary" id="ct-new">+ Novo contrato</button>
     </div>
-    <div class="table-wrap"><table id="ct-tbl"></table></div>`;
+    <div class="table-wrap"><table id="ct-tbl" class="tbl-contratos"></table></div>`;
 
   const draw = () => {
     const q = $('#ct-q').value.toLowerCase(), fs = $('#ct-fstatus').value;
     const filtered = rows.filter(r => (!fs || r.status === fs) &&
       (!q || (r.titulo + ' ' + r.supplier_name + ' ' + (r.documento || '')).toLowerCase().includes(q)));
     $('#ct-tbl').innerHTML = `
+      <colgroup>
+        <col class="c-ct-contrato"><col class="c-ct-forn"><col class="c-ct-cat"><col class="c-ct-valor">
+        <col class="c-ct-ciclo"><col class="c-ct-vig"><col class="c-ct-prox"><col class="c-ct-status"><col class="c-ct-acoes">
+      </colgroup>
       <thead><tr><th>Contrato</th><th>Fornecedor</th><th>Categoria</th><th class="num">Valor</th><th>Ciclo</th><th>Vigência</th><th>Próx. parcela</th><th>Status</th><th class="actions">Ações</th></tr></thead>
-      <tbody>${filtered.map(r => `<tr${r.status === 'encerrado' ? ' style="opacity:.55"' : ''}>
-        <td><strong>${esc(r.titulo)}</strong>${r.documento ? '<br><small style="color:var(--muted)">Nº ' + esc(r.documento) + '</small>' : ''}</td>
+      <tbody>${filtered.map(r => `<tr${r.status === 'encerrado' ? ' class="ct-row-off"' : ''}>
+        <td class="ct-titulo"><strong>${esc(r.titulo)}</strong>${r.documento ? '<span class="ct-sub">Nº ' + esc(r.documento) + '</span>' : ''}</td>
         <td>${esc(r.supplier_name)}</td>
-        <td>${esc(r.categoria)}</td>
-        <td class="num">${brl(r.valor)}</td>
-        <td>${CONTR_PERIODO_LABEL[r.periodicidade]}</td>
-        <td>${brDate(r.data_inicio)} – ${r.data_fim ? brDate(r.data_fim) : 'indeterminado'}</td>
-        <td>${r.gerar_parcelas && r.proxima_geracao ? brDate(r.proxima_geracao) : '<small style="color:var(--muted)">Manual</small>'}</td>
+        <td class="ct-cat">${esc(r.categoria)}</td>
+        <td class="num ct-valor">${brl(r.valor)}</td>
+        <td><span class="chip">${CONTR_PERIODO_LABEL[r.periodicidade]}</span></td>
+        <td class="ct-vig">${brDate(r.data_inicio)}<span class="ct-sub">até ${r.data_fim ? brDate(r.data_fim) : 'indeterminado'}</span></td>
+        <td class="ct-prox">${r.gerar_parcelas && r.proxima_geracao ? brDate(r.proxima_geracao) : '<span class="chip muted">Manual</span>'}</td>
         <td><span class="badge ${CONTR_STATUS_BADGE[r.status]}">${CONTR_STATUS_LABEL[r.status]}</span></td>
-        <td class="actions">
+        <td class="actions"><div class="ct-acoes">
           ${r.gerar_parcelas && r.proxima_geracao && r.status === 'ativo' ? `<button class="btn sm" data-gerar="${r.id}">Gerar agora</button>` : ''}
           <button class="btn sm att-btn" data-att="contrato:${r.id}" title="Contrato assinado e demais documentos">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
           <button class="btn sm" data-edit="${r.id}">Editar</button>
           ${r.status !== 'encerrado' ? `<button class="btn sm" data-status="${r.id}:${r.status === 'ativo' ? 'suspenso' : 'ativo'}">${r.status === 'ativo' ? 'Suspender' : 'Reativar'}</button>
              <button class="btn sm danger-ghost" data-status="${r.id}:encerrado">Encerrar</button>` : ''}
           ${!r.parcelas_geradas ? `<button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>` : ''}
-        </td></tr>`).join('') || '<tr><td colspan="9"><div class="empty">Nenhum contrato cadastrado ainda.</div></td></tr>'}</tbody>`;
+        </div></td></tr>`).join('') || '<tr><td colspan="9"><div class="empty">Nenhum contrato cadastrado ainda.</div></td></tr>'}</tbody>`;
     $('#ct-tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => {
       const [, id] = b.dataset.att.split(':');
       const c = rows.find(r => r.id == id);
