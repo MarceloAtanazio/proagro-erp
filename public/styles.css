@@ -705,24 +705,22 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .sup-sec-title:first-child { margin-top: 0; }
 #modal-body textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; box-sizing: border-box; }
 
-/* ===== Contratos — oito colunas, com o Ciclo dentro da celula do Valor =====
-   Nove colunas nao cabiam: titulo, fornecedor e vigencia quebravam em duas
-   linhas cada. Ciclo virou linha secundaria sob o valor ("R$ 7.400,00 /
-   mensal"), que e onde a informacao pertence e nao custa coluna. Categoria
-   continua tendo a propria, porque como legenda solta embaixo do titulo ela
-   parecia texto perdido.
-   As larguras saem do que o conteudo pede, nao de divisao igual: datas de dez
-   caracteres nao precisam de 190px, e o excedente vai para as colunas de texto
-   e para a de botoes. */
+/* ===== Contratos — sete colunas, largura conforme o conteudo pede =====
+   Ciclo e linha secundaria sob o valor ("R$ 7.400,00 / mensal"), que e onde a
+   informacao pertence e nao custa coluna. "Prox. parcela" saiu da listagem a
+   pedido: a parte acionavel dela e o botao "Gerar agora", que continua.
+   As larguras nao sao divisao igual — saem do que cada coluna precisa. Valor,
+   Vigencia e Status guardam textos de tamanho conhecido e ficam no minimo; o
+   que sobra vai para Contrato e Fornecedor, que sao os campos livres e os que
+   de fato quebram em duas linhas. */
 .tbl-contratos { table-layout: fixed; }
-.tbl-contratos col.c-ct-contrato { width: 20%; }
-.tbl-contratos col.c-ct-forn     { width: 16%; }
-.tbl-contratos col.c-ct-cat      { width: 11%; }
-.tbl-contratos col.c-ct-valor    { width: 8%; }
-.tbl-contratos col.c-ct-vig      { width: 8%; }
-.tbl-contratos col.c-ct-prox     { width: 7%; }
+.tbl-contratos col.c-ct-contrato { width: 25%; }
+.tbl-contratos col.c-ct-forn     { width: 22%; }
+.tbl-contratos col.c-ct-cat      { width: 10%; }
+.tbl-contratos col.c-ct-valor    { width: 7%; }
+.tbl-contratos col.c-ct-vig      { width: 7%; }
 .tbl-contratos col.c-ct-status   { width: 7%; }
-.tbl-contratos col.c-ct-acoes    { width: 23%; }
+.tbl-contratos col.c-ct-acoes    { width: 22%; }
 .tbl-contratos tbody td { padding: 12px 14px; vertical-align: top; white-space: normal; overflow-wrap: break-word; }
 .tbl-contratos tbody tr.ct-row-off { opacity: .55; }
 
@@ -733,22 +731,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-contratos .ct-titulo strong { font-weight: 600; line-height: 1.35; }
 .tbl-contratos .ct-cat { color: var(--ink-2); }
 .tbl-contratos .ct-valor { font-weight: 600; white-space: nowrap; }
-.tbl-contratos .ct-vig,
-.tbl-contratos .ct-prox { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tbl-contratos .ct-vig { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tbl-contratos .ct-vig .ct-sub { font-variant-numeric: tabular-nums; }
 
-/* Acoes encostadas no Status, nao na borda direita da tabela. Alinhadas a
-   direita elas ficavam separadas do resto da linha por um vazio de mais de
-   cem pixels, com o cabecalho "Acoes" sozinho do outro lado. A esquerda, o
-   cabecalho cai exatamente sobre o primeiro botao.
-   Os botoes tambem sao mais compactos que o .btn.sm padrao: e o que faz os
-   cinco caberem numa linha so. */
+/* Acoes encostadas no Status, nao na borda direita da tabela: alinhadas a
+   direita elas ficavam separadas do resto da linha por um vazio grande, com o
+   cabecalho sozinho do outro lado. A esquerda, o cabecalho cai exatamente
+   sobre o primeiro botao.
+   Os botoes sao mais compactos que o .btn.sm padrao — e o que faz os cinco
+   caberem numa linha so mesmo com a coluna estreita. */
 .tbl-contratos th.actions,
 .tbl-contratos td.actions { text-align: left; white-space: normal; }
 .ct-acoes { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-start; }
 .ct-acoes .btn.sm { margin: 0; padding: 4px 8px; font-size: 11.5px; }
 .tbl-contratos .att-btn { min-width: 36px; }
-
-/* Chip neutro para "Manual" — o texto solto na cor de link confundia com acao. */
-.chip.muted { background: transparent; color: var(--muted); border-style: dashed; }
 .tbl-contratos .chip { display: inline-block; line-height: 1.5; }

@@ -1263,3 +1263,34 @@ Escolha do usuário: Categoria volta a ter coluna própria e os botões encostam
 - Alturas de linha uniformes: 66, 65 e 64px (na versão anterior, 85 e 81).
 - Nenhuma célula transbordando o próprio box; sem rolagem horizontal.
 - **Limite conhecido:** seis botões (403px) ainda quebram em duas linhas.
+
+### Quarta passada — sai "Próx. parcela", Ações encurta, Contrato e Fornecedor crescem
+
+Pedido do usuário, marcado no print: encurtar a coluna Ações, alargar Contrato e Fornecedor,
+e remover Próx. parcela.
+
+- **Próx. parcela saiu** da listagem. A parte acionável dela era o botão "Gerar agora", que
+  continua. A data não ficou sem lugar: virou o `title` do botão ("Gerar agora a parcela de
+  15/03/2027 em Contas a Pagar"), então quem quiser conferir passa o mouse.
+- **"Gerar agora" virou "Gerar".** Era o botão mais largo (84px) e sozinho fazia a linha
+  quebrar em duas quando a coluna encurtou. O rótulo curto com a data no tooltip resolveu
+  sem perder o sentido.
+- **Ações: 23% → 22%.** Chegou a ser testada com 21%, mas sobravam só 6px de folga — um
+  contrato com "📎 12" (contagem de dois dígitos) já estouraria. 22% dá 22px de folga no
+  pior caso real.
+- **Contrato 20% → 25%** e **Fornecedor 16% → 22%**. Valor, Vigência e Status foram para 7%
+  cada, que é o mínimo que os textos deles pedem.
+- CSS morto removido junto: `.ct-prox`, `col.c-ct-prox` e `.chip.muted`, que só existia para
+  o "Manual" daquela coluna.
+
+### Verificação (viewport de 1908px)
+- **Contrato: 324 → 406px** (+25%). **Fornecedor: 260 → 357px** (+37%).
+- Botões numa linha só nas três linhas de teste, com folga de 22px, 34px e 232px.
+- Cabeçalho "Ações" e primeiro botão na mesma borda esquerda, 1540px.
+- Alturas de linha 66, 65 e 64px.
+- Nenhuma célula transbordando; sem rolagem horizontal.
+- Medido por `Range.getClientRects()`, o título de 62 caracteres ainda ocupa duas linhas
+  (350px de texto contra 322 disponíveis) e a razão social de 55 caracteres também. Para
+  caberem em uma linha, essas duas colunas precisariam de mais espaço do que a tabela tem.
+- **Limite conhecido:** seis botões ainda pedem 362px contra 329 disponíveis, então essa
+  combinação continua quebrando em duas linhas.
