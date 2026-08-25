@@ -1228,3 +1228,38 @@ usavam quase o dobro da largura que o conteúdo pede** (datas de dez caracteres 
 - O título de 62 caracteres do contrato real e a razão social de 54 caracteres do
   fornecedor continuam ocupando duas linhas: não cabem em uma nesta largura, e alargar
   essas colunas só empurraria o problema para as vizinhas.
+
+### Terceira passada — Categoria de volta e o vazio das Ações fechado
+
+O usuário viu a versão de sete colunas em produção e disse que tinha ficado pior. Duas
+tentativas erradas seguidas, então parei de adivinhar e perguntei, com o diagnóstico do
+que estava ruim no print:
+
+- **Vazio de mais de cem pixels entre Status e os botões.** As Ações estavam alinhadas à
+  direita dentro de uma coluna de 23%, então sobrava um buraco no meio da linha e o
+  cabeçalho "Ações" ficava sozinho no canto oposto ao resto do conteúdo.
+- **Categoria como legenda solta.** O contrato real não tem número, então a linha
+  secundária sob o título ficou só com "Serviços de Terceiros", sem o "Nº ·" na frente —
+  parecia texto perdido em vez de dado de coluna.
+- A tabela tem **uma linha só**, o que exagera a sensação de vazio.
+
+Escolha do usuário: Categoria volta a ter coluna própria e os botões encostam no Status.
+
+- **Categoria** é coluna de novo (11%), e a linha secundária do título voltou a ser apenas
+  o número do contrato, quando existe.
+- **Ciclo continua** como linha secundária sob o valor — não foi motivo de reclamação e é
+  o que permite ficar em oito colunas em vez de nove.
+- **Ações alinhadas à esquerda** (`th.actions, td.actions { text-align: left }`), então o
+  cabeçalho cai exatamente sobre o primeiro botão e o vão para o Status caiu de mais de
+  100px para 38–67px.
+- Contrato 20%, Fornecedor 16%, Categoria 11%, Valor 8%, Vigência 8%, Próx. parcela 7%,
+  Status 7%, Ações 23%.
+
+### Verificação (viewport de 1908px)
+- **Botões numa linha só nas três linhas de teste**, inclusive a que tem "Gerar agora".
+  Essa precisava de 329px e tinha exatamente 329 — quebrava por arredondamento; 1% tirado
+  do Contrato e passado para Ações resolveu (agora 345 disponíveis).
+- **Cabeçalho alinhado:** borda esquerda de "Ações" e do primeiro botão, ambas em 1524px.
+- Alturas de linha uniformes: 66, 65 e 64px (na versão anterior, 85 e 81).
+- Nenhuma célula transbordando o próprio box; sem rolagem horizontal.
+- **Limite conhecido:** seis botões (403px) ainda quebram em duas linhas.
