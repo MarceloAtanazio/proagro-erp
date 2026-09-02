@@ -301,6 +301,9 @@ const AUDIT_MAP = {
   'POST /api/viaticos/solicitacoes/:id/despesas': req => `Lançou despesa de viático (${req.body.categoria}, ${fmtBRL(req.body.valor)}) na solicitação ID ${req.params.id}`,
   'PUT /api/viaticos/despesas/:id': req => `Editou a despesa de viático ID ${req.params.id} (${req.body.categoria}, ${fmtBRL(req.body.valor)})`,
   'DELETE /api/viaticos/despesas/:id': req => `Excluiu a despesa de viático ID ${req.params.id}`,
+  'DELETE /api/viaticos/solicitacoes/:id/despesas': (req, body) => body && body.removidas
+    ? `Limpou as despesas da solicitação de viático ID ${req.params.id}: ${body.removidas} lançamento(s), ${fmtBRL(body.total)}`
+    : null,
 
   // Suprimentos (estoque é área sensível: todo movimento fica registrado)
   'POST /api/suprimentos/itens': (req, body) => `Cadastrou o item de estoque "${req.body.nome}" (ID ${body && body.id})`,
@@ -2362,6 +2365,23 @@ app.put('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(as
 app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   await query('DELETE FROM erp_viaticos_despesas WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
+}));
+
+// Limpa TODAS as despesas de uma solicitacao, para refazer a comprovacao do
+// zero. Existe porque uma importacao que saiu errada deixava o usuario
+// excluindo linha por linha: na solicitacao 60, um duplo clique no confirmar
+// gerou 94 linhas de um arquivo de 47, e a pessoa apagou 9 na mao antes de
+// desistir. Devolve quantas sairam e a soma, que e o que a tela mostra na
+// confirmacao e o que vai para o log de auditoria.
+app.delete('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  // Sem checagem de escopo aqui, de proposito: requireEdit('viaticos') so passa
+  // admin ou quem tem nivel 'edit' na pagina, e viaticosEscopo devolve null
+  // justamente nesses dois casos. Um if (escopo) neste ponto seria codigo morto
+  // se passando por guarda de seguranca. E o mesmo motivo pelo qual o POST e o
+  // DELETE de despesa individual tambem nao checam.
+  const apagadas = await query('DELETE FROM erp_viaticos_despesas WHERE solicitacao_id=$1 RETURNING valor', [req.params.id]);
+  const total = apagadas.reduce((acc, r) => acc + n(r.valor), 0);
+  res.json({ ok: true, removidas: apagadas.length, total });
 }));
 
 // ---- Dashboard / KPIs ----

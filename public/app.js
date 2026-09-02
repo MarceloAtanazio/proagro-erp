@@ -4063,7 +4063,10 @@ async function viewSolicitacao(id) {
     ${alertBlocks.length ? `<div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px">${alertBlocks.join('')}</div>` : (despesas.length ? '<div class="alert-item ok" style="margin-bottom:14px">✅ Nenhuma divergência encontrada nas despesas lançadas.</div>' : '')}
 
     ${!finalizada && !somenteLeitura ? `
-    <div style="margin-bottom:10px"><button class="btn" id="btn-import-flash" type="button">📥 Importar lançamentos do Flash (Excel)</button></div>
+    <div style="margin-bottom:10px; display:flex; gap:8px; flex-wrap:wrap">
+      <button class="btn" id="btn-import-flash" type="button">📥 Importar lançamentos do Flash (Excel)</button>
+      ${despesas.length ? `<button class="btn danger-ghost" id="btn-limpar-desp" type="button" title="Apaga todos os lançamentos desta comprovação, para importar de novo do zero">🗑 Limpar os ${despesas.length} lançamento(s)</button>` : ''}
+    </div>
     <div class="field-row" style="align-items:flex-end">
       ${fldSel('de-cat', 'Categoria', Object.entries(DESP_CAT_LABEL).map(([v, t]) => ({ v, t })), 'hospedagem')}
       ${fld('de-data', 'Data', 'date', s.data_inicio)}
@@ -4111,6 +4114,23 @@ async function viewSolicitacao(id) {
 
   if (!finalizada && !somenteLeitura) {
     $('#btn-import-flash').onclick = () => importarFlashModal(s);
+    // Saida para importacao que saiu errada: em vez de apagar linha por linha,
+    // zera a comprovacao e permite subir o arquivo de novo. A confirmacao diz
+    // quantos lancamentos e quanto valor saem, porque isso mexe no comprovado.
+    if ($('#btn-limpar-desp')) $('#btn-limpar-desp').onclick = () => {
+      const soma = despesas.reduce((acc, x) => acc + Number(x.valor || 0), 0);
+      openModal('Limpar os lançamentos desta comprovação', `
+        <p>Serão apagados <strong>${despesas.length} lançamento(s)</strong>, somando <strong>${brl(soma)}</strong>, da comprovação de ${esc(s.colaborador_name)}.</p>
+        <p style="color:var(--muted); font-size:13px; margin-top:8px">Serve para refazer a importação do Flash do zero. Não afeta o valor solicitado nem o liberado, e não pode ser desfeito.</p>`,
+        [{ label: 'Cancelar', onClick: () => viewSolicitacao(id) },
+         { label: 'Apagar tudo', cls: 'primary', onClick: async () => {
+            try {
+              const r = await api(`/api/viaticos/solicitacoes/${id}/despesas`, { method: 'DELETE' });
+              toast(`${r.removidas} lançamento(s) apagado(s) (${brl(r.total)}). Pode importar de novo.`);
+              viewSolicitacao(id);
+            } catch (e) { modalError(e.message); }
+         }}]);
+    };
     const aplicarStatus = async (novo, valorLiberado) => {
       const payload = { status: novo };
       if (valorLiberado !== undefined) payload.valor_liberado = valorLiberado;
@@ -4403,10 +4423,24 @@ async function importarFlashModal(s) {
       if (chk.checked && !rows[i].categoria) { toast('Escolha uma categoria antes de incluir.'); chk.checked = false; }
     });
     $('#fl-confirm').onclick = async () => {
+      // A trava e o rotulo de progresso nao sao enfeite. O laco leva alguns
+      // segundos e o botao ficava habilitado e calado o tempo todo: um segundo
+      // clique disparava a importacao inteira de novo. Foi assim que a
+      // solicitacao 60 recebeu 94 linhas de um arquivo de 47 (02/09/2026).
+      const btn = $('#fl-confirm');
+      if (btn.disabled) return;
+      const rotuloOriginal = btn.textContent;
+      btn.disabled = true;
+      // Toda saida antecipada tem de devolver o botao, senao a trava vira
+      // travamento e a pessoa precisa fechar o modal para tentar de novo.
+      const liberar = () => { btn.disabled = false; btn.textContent = rotuloOriginal; };
       const selecionados = rows.filter((r, i) => box.querySelector(`.fl-inc[data-idx="${i}"]`).checked && r.categoria);
-      if (!selecionados.length) return toast('Nenhum lançamento selecionado.');
+      if (!selecionados.length) { liberar(); return toast('Nenhum lançamento selecionado.'); }
       let ok = 0;
+      let feitas = 0;
+      btn.textContent = `Importando 0 de ${selecionados.length}…`;
       for (const r of selecionados) {
+        btn.textContent = `Importando ${++feitas} de ${selecionados.length}…`;
         try {
           await api(`/api/viaticos/solicitacoes/${s.id}/despesas`, { method: 'POST', body: { categoria: r.categoria, data: r.data, valor: r.valor, descricao: r.descricao } });
           ok++;

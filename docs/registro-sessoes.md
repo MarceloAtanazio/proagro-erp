@@ -1398,3 +1398,84 @@ sem pedir ok — a cautela combinada antes era sobre não arrastar o trabalho de
 esteja na árvore, não sobre publicar o próprio. Este commit foi montado isolado a partir do
 `HEAD`, como o anterior: a árvore continua com a importação idempotente do Flash não
 commitada, e ela não foi tocada.
+
+## 2026-09-02 — Duplicação da importação do Flash: causa achada, e um botão para refazer
+
+**Relato:** ao subir a comprovação da OT 156 alguns gastos duplicaram; ao excluí-los
+manualmente "os mesmos retornaram". Pedido: um botão para desfazer a importação ou apagar
+tudo e importar de novo, e corrigir a duplicação.
+
+### O que o banco de produção mostra (solicitação 60)
+
+| Medida | Valor |
+|---|---|
+| Inserções registradas na auditoria | **94** |
+| Janela | 15:13:36 → 15:13:51 (**14,8 s**) |
+| Faixa de IDs | 558–651, **contígua**, exatamente 94 |
+| Linhas do arquivo | 47 |
+| Exclusões manuais às 15:16 | **9**, todas efetivas |
+| Restantes | 94 − 9 = **85** ✔ confere com a tela |
+
+**Nada "voltou".** As 9 exclusões funcionaram. Como sobravam 42 linhas excedentes, apagar 9
+deixou 33 ainda visíveis e a lista continuou parecendo igual — daí a impressão de que
+retornavam.
+
+**Não foram dois envios do arquivo.** A faixa de IDs é contígua e tudo cabe em 14,8 segundos:
+foi **uma execução só**. Cruzando cada par de linhas idênticas, a segunda cópia aparece
+**26 a 47 IDs depois** (média 39,3), ou seja, uma **segunda passada completa** sobre o mesmo
+arquivo, iniciada enquanto a primeira ainda rodava.
+
+### A causa
+O handler do botão "Confirmar importação" (`public/app.js`) não tinha trava nenhuma:
+
+```js
+$('#fl-confirm').onclick = async () => {
+  ...
+  for (const r of selecionados) { await api(POST ...) }   // 47 POSTs, ~7 s
+```
+
+O laço leva vários segundos e o botão continuava **habilitado e mudo** — sem rótulo de
+progresso, sem spinner. Um segundo clique disparava a importação inteira de novo.
+**Não foi erro de operação: foi a tela não informar que já estava trabalhando.**
+
+### O que foi feito
+- **Trava no botão** (`public/app.js`): `btn.disabled = true` na entrada, guarda
+  `if (btn.disabled) return`, e rótulo de progresso "Importando N de 47…". Toda saída
+  antecipada chama `liberar()`, senão a trava viraria travamento.
+- **Botão "Limpar os N lançamento(s)"** na tela de comprovação, ao lado do de importar, com
+  confirmação dizendo quantos lançamentos e quanto valor saem.
+- **Rota nova** `DELETE /api/viaticos/solicitacoes/:id/despesas`, que devolve `removidas` e
+  `total`, e grava um evento de auditoria com os dois números.
+- Sem checagem de escopo na rota, **de propósito e com comentário**: `requireEdit('viaticos')`
+  só passa admin ou quem tem nível `edit`, e `viaticosEscopo` devolve `null` exatamente nesses
+  dois casos — um `if (escopo)` ali seria código morto se passando por guarda de segurança.
+  Cheguei a escrever esse check e o removi depois que o teste provou que ele nunca dispara.
+
+### Verificação
+**Servidor** — 9 verificações no molde das suítes existentes (Express real, banco stubado):
+limpa as 94 linhas da solicitação 60; devolve a soma correta; **não toca em outra
+solicitação**; limpar de novo devolve 0 sem erro; auditoria registra uma vez com quantidade e
+valor; usuário somente-leitura recebe **403** e nada é apagado. As 24 verificações da outra
+sessão continuam passando (`npm test`).
+
+**Trava, no navegador, com o handler recortado do próprio `app.js`** e `api()` stubada com
+latência de 120 ms — com um controle contra a versão que está em produção hoje:
+
+| Handler | Cliques | POSTs | Distintos | Duplicou |
+|---|---|---|---|---|
+| Produção (HEAD) | 2 | **94** | 47 | **sim** |
+| Com a trava | 9–10 | **47** | 47 | não |
+
+Os 94 do controle são exatamente o número que a solicitação 60 registrou: a reprodução é fiel,
+e o teste detecta o bug que diz detectar.
+
+### O que continua pendente (não é desta sessão)
+- A **idempotência da importação** (P1-3) está pronta na outra sessão, mas a migração
+  `2026-09-01-flash-import-idempotente.sql` **não foi aplicada**: confirmei no banco que a
+  coluna `import_batch` não existe em produção. Ela é a proteção durável — cobre inclusive
+  este caso, porque as duas passadas carregam o mesmo lote e a mesma linha. A trava do botão
+  fecha a porta de entrada; a migração fecha a do banco.
+- **As 42 linhas excedentes da solicitação 60 não foram tocadas.** Ela está
+  `aguardando_comprovacao`, então ainda não gerou devolução errada. O caminho limpo agora é
+  usar o botão novo e importar o arquivo uma vez — evita adivinhar qual cópia de cada par
+  preservar, e os pedágios legitimamente repetidos voltam certos.
