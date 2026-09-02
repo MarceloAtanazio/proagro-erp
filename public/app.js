@@ -1516,7 +1516,11 @@ function aporteXlColunaEmX(larguras, x) {
 // (`ultimaCol - 2`), então em abas estreitas — "Por categoria" tem 2 colunas —
 // caía em cima do título. Agora a âncora vem da largura real em pixels, e o
 // texto nunca divide linha com a imagem. Devolve a linha onde o conteúdo começa.
-function aporteXlCabecalho(wb, ws, subtitulo, idLogo, colunasLargura) {
+// `titulo` é o nome que aparece em destaque na aba. Ele era fixo em
+// "Solicitação de Aporte", que é de onde este cabeçalho saiu — e por isso as
+// seis abas do fechamento de Viáticos nasceram todas com o nome errado. Agora
+// cada aba diz o que ela é; o padrão mantém o Aporte como estava.
+function aporteXlCabecalho(wb, ws, subtitulo, idLogo, colunasLargura, titulo = 'Solicitação de Aporte') {
   ws.columns = colunasLargura.map(w => ({ width: w }));
   const letraFim = ws.getColumn(colunasLargura.length).letter;
   const larguraTotal = colunasLargura.reduce((s, w) => s + xlLarguraPx(w), 0);
@@ -1526,35 +1530,38 @@ function aporteXlCabecalho(wb, ws, subtitulo, idLogo, colunasLargura) {
   ws.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: APORTE_XL.verde } };
   ws.getRow(1).height = 6;
 
-  // Faixa do logo: duas linhas de 18pt (36px) reservadas só para a imagem.
+  // O título e o logo dividem a mesma faixa. Antes havia duas linhas de 18pt
+  // reservadas só para a imagem: na planilha aberta elas apareciam vazias e
+  // empurravam o logo para cima do bloco de texto, desalinhado. O logo passou a
+  // ser ancorado sobre as próprias linhas do título, à direita — o texto fica na
+  // coluna A e a imagem na outra ponta, então não se encavalam.
   const MARGEM = 8;
   let logoW = 150, logoH = 35;
   if (larguraTotal < logoW + MARGEM * 2) {           // aba muito estreita: reduz
     logoW = Math.max(70, larguraTotal - MARGEM * 2);
     logoH = Math.round(logoW * (139 / 600));
   }
-  ws.getRow(2).height = 18;
-  ws.getRow(3).height = 18;
+
+  ws.getCell('A2').value = titulo;
+  ws.getCell('A2').font = { name: XL_FONTE, size: 18, bold: true, color: { argb: APORTE_XL.ink } };
+  ws.getRow(2).height = 26;
+  ws.getCell('A3').value = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+  ws.getCell('A3').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
+  ws.getCell('A4').value = subtitulo;
+  ws.getCell('A4').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
+
   if (idLogo != null) {
     ws.addImage(idLogo, {
-      tl: { col: aporteXlColunaEmX(colunasLargura, Math.max(0, larguraTotal - MARGEM - logoW)), row: 1 },
+      tl: { col: aporteXlColunaEmX(colunasLargura, Math.max(0, larguraTotal - MARGEM - logoW)), row: 1.15 },
       ext: { width: logoW, height: logoH }
     });
   }
 
-  ws.getCell('A4').value = 'Solicitação de Aporte';
-  ws.getCell('A4').font = { name: XL_FONTE, size: 18, bold: true, color: { argb: APORTE_XL.ink } };
-  ws.getRow(4).height = 26;
-  ws.getCell('A5').value = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
-  ws.getCell('A5').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
-  ws.getCell('A6').value = subtitulo;
-  ws.getCell('A6').font = { name: XL_FONTE, size: 9, color: { argb: APORTE_XL.muted } };
-
   // linha divisória
-  ws.mergeCells(`A7:${letraFim}7`);
-  ws.getCell('A7').border = { bottom: { style: 'medium', color: { argb: APORTE_XL.verde } } };
-  ws.getRow(7).height = 4;
-  return 9;
+  ws.mergeCells(`A5:${letraFim}5`);
+  ws.getCell('A5').border = { bottom: { style: 'medium', color: { argb: APORTE_XL.verde } } };
+  ws.getRow(5).height = 4;
+  return 7;
 }
 
 // Faixa de título de tabela (verde, texto branco).
@@ -2542,7 +2549,7 @@ async function exportViaticosFechamentoExcel(f) {
 
     // ---------- Aba 1: Resumo ----------
     const ws1 = wb.addWorksheet('Resumo', { views: [{ showGridLines: false }] });
-    let L = aporteXlCabecalho(wb, ws1, sub, idLogo, [34, 16, 18, 18, 18, 18]);
+    let L = aporteXlCabecalho(wb, ws1, sub, idLogo, [34, 16, 18, 18, 18, 18], 'Fechamento de Viáticos — Resumo');
     aporteXlTituloTabela(ws1, L, 'Números do período', 6); L++;
     aporteXlCabecalhoColunas(ws1, L, ['Indicador', 'Qtde.', 'Solicitado', 'Liberado', 'Comprovado', 'Devolvido'], ['left', C, R, R, R, R]); L++;
     L = aporteXlCorpo(ws1, L, [
@@ -2561,8 +2568,7 @@ async function exportViaticosFechamentoExcel(f) {
 
     // ---------- Aba 2: Por colaborador ----------
     const ws2 = wb.addWorksheet('Por colaborador', { views: [{ showGridLines: false }] });
-    L = aporteXlCabecalho(wb, ws2, sub, idLogo, [34, 12, 18, 18, 18, 18]);
-    aporteXlTituloTabela(ws2, L, 'Gastos por colaborador', 6); L++;
+    L = aporteXlCabecalho(wb, ws2, sub, idLogo, [34, 12, 18, 18, 18, 18], 'Gastos por colaborador');
     aporteXlCabecalhoColunas(ws2, L, ['Colaborador', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência'], ['left', C, R, R, R, R]); L++;
     L = aporteXlCorpo(ws2, L, f.porColaborador.map(l => [l.nome, l.viagens, l.liberado, l.comprovado, l.devolvido, l.pendencia]),
       [2, 3, 4, 5], ['left', C, R, R, R, R]);
@@ -2570,8 +2576,7 @@ async function exportViaticosFechamentoExcel(f) {
 
     // ---------- Aba 3: Por categoria ----------
     const ws3 = wb.addWorksheet('Por categoria', { views: [{ showGridLines: false }] });
-    L = aporteXlCabecalho(wb, ws3, sub, idLogo, [30, 14, 18, 16]);
-    aporteXlTituloTabela(ws3, L, 'Gastos por categoria', 4); L++;
+    L = aporteXlCabecalho(wb, ws3, sub, idLogo, [30, 14, 18, 16], 'Gastos por categoria');
     aporteXlCabecalhoColunas(ws3, L, ['Categoria', 'Lançamentos', 'Total', '% do comprovado'], ['left', C, R, R]); L++;
     const linha1Cat = L;
     L = aporteXlCorpo(ws3, L, f.porCategoria.map(l => [l.categoria, l.lancamentos, l.total, l.pct]), [2], ['left', C, R, R]);
@@ -2584,9 +2589,8 @@ async function exportViaticosFechamentoExcel(f) {
     // ---------- Aba 4: Pessoa x Categoria ----------
     const ws4 = wb.addWorksheet('Pessoa x Categoria', { views: [{ showGridLines: false }] });
     const largurasM = [30, ...f.matriz.categorias.map(() => 15), 16];
-    L = aporteXlCabecalho(wb, ws4, sub, idLogo, largurasM);
+    L = aporteXlCabecalho(wb, ws4, sub, idLogo, largurasM, 'Gastos por colaborador × categoria');
     const nColsM = largurasM.length;
-    aporteXlTituloTabela(ws4, L, 'Gastos por colaborador × categoria', nColsM); L++;
     const alinhaM = ['left', ...f.matriz.categorias.map(() => R), R];
     const moedaM = f.matriz.categorias.map((_, i) => i + 1).concat([nColsM - 1]);
     aporteXlCabecalhoColunas(ws4, L, ['Colaborador', ...f.matriz.categorias, 'Total'], alinhaM);
@@ -2600,8 +2604,7 @@ async function exportViaticosFechamentoExcel(f) {
     // ---------- Aba 5: Solicitacoes ----------
     const ws5 = wb.addWorksheet('Solicitações', { views: [{ showGridLines: false }] });
     const alinha5 = ['left', 'left', C, 'left', C, C, R, R, R, R, 'left'];
-    L = aporteXlCabecalho(wb, ws5, sub, idLogo, [28, 10, 8, 22, 12, 12, 16, 16, 16, 16, 22]);
-    aporteXlTituloTabela(ws5, L, 'Solicitações do período', 11); L++;
+    L = aporteXlCabecalho(wb, ws5, sub, idLogo, [28, 10, 8, 22, 12, 12, 16, 16, 16, 16, 22], 'Solicitações do período');
     aporteXlCabecalhoColunas(ws5, L, ['Colaborador', 'OT', 'Tier', 'Local / destinos', 'Início', 'Fim', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência', 'Situação'], alinha5); L++;
     L = aporteXlCorpo(ws5, L, f.sols.map(s => [s.colaborador_name, s.ordem_trabalho || '—', s.tier,
       `${LOCAL_LABEL[s.categoria_local]}${viaticosDestinoTxt(s) ? ' — ' + viaticosDestinoTxt(s) : ''}`,
@@ -2612,8 +2615,7 @@ async function exportViaticosFechamentoExcel(f) {
     // ---------- Aba 6: Extrato ----------
     const ws6 = wb.addWorksheet('Extrato', { views: [{ showGridLines: false }] });
     const alinha6 = ['left', 'left', 'left', C, 'left', 'left', R];
-    L = aporteXlCabecalho(wb, ws6, sub, idLogo, [28, 10, 22, 12, 20, 46, 16]);
-    aporteXlTituloTabela(ws6, L, 'Extrato completo de gastos', 7); L++;
+    L = aporteXlCabecalho(wb, ws6, sub, idLogo, [28, 10, 22, 12, 20, 46, 16], 'Extrato completo de gastos');
     aporteXlCabecalhoColunas(ws6, L, ['Colaborador', 'OT', 'Período', 'Data', 'Categoria', 'Descrição', 'Valor'], alinha6);
     const cabExtrato = L; L++;
     L = aporteXlCorpo(ws6, L, f.itens.map(i => [i.colaborador, i.ot, i.periodo, i.data, i.categoria, i.descricao, vlr(i.valor)]), [6], alinha6);

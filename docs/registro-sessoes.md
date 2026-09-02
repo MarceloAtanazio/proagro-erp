@@ -1553,3 +1553,50 @@ Não foi possível renderizar os PDFs neste ambiente (sem poppler), então a con
 ficou com o usuário — os quatro arquivos gerados foram enviados. O cabeçalho e o rodapé são o
 código que já estava em produção, agora numa função só, então a identidade é preservada por
 construção, não por semelhança.
+construção, não por semelhança.
+
+## 2026-09-02 — Excel do fechamento: nome da aba no título e o cabeçalho sem as linhas vazias
+
+**Relato:** todas as abas do fechamento apareciam com o título **"Solicitação de Aporte"**, e as
+linhas 2 e 3 estavam sobrando e deslocando o logo.
+
+### A causa
+`aporteXlCabecalho` tinha o título **cravado** em `A4`: `'Solicitação de Aporte'`. Ao reusar o
+helper para dar identidade ao Excel de Viáticos, as seis abas herdaram o nome do documento de
+onde o cabeçalho saiu. E as linhas 2 e 3 eram uma faixa de 18pt **reservada só para a imagem** —
+na planilha aberta apareciam vazias e empurravam o logo para cima do bloco de texto.
+
+### O que foi feito
+- **Título virou parâmetro** de `aporteXlCabecalho`, com padrão `'Solicitação de Aporte'`: o
+  Aporte segue exatamente como estava, sem tocar nas cinco chamadas dele. As seis abas do
+  fechamento passam o próprio nome — Resumo, Gastos por colaborador, Gastos por categoria,
+  Gastos por colaborador × categoria, Solicitações do período, Extrato completo de gastos.
+- **As duas linhas reservadas saíram.** O logo passou a ser ancorado sobre as próprias linhas
+  do título, à direita (`row: 1.15`): o texto fica na coluna A e a imagem na outra ponta, então
+  não se encavalam. O cabeçalho ficou: 1 faixa verde · 2 título · 3 razão social · 4 período e
+  geração · 5 divisória · 6 em branco · 7 primeiro conteúdo. Antes o conteúdo começava na 9.
+- **Cinco tarjas verdes redundantes removidas.** Com o título no cabeçalho, a tarja logo abaixo
+  repetia a mesma frase em cinco das seis abas. No Resumo as duas tarjas ficaram, porque lá são
+  duas tabelas de verdade ("Números do período" e "Prestação de contas").
+
+Isso mexe no cabeçalho **compartilhado**, então a planilha da Solicitação de Aporte também
+perde as duas linhas vazias e ganha o logo alinhado. Não havia referência de linha fixa em
+`aporteExcel` — tudo flui do `L` retornado pelo cabeçalho —, então o deslocamento é inócuo.
+
+### Verificação
+**44 checagens** sobre o `.xlsx` real, abrindo o zip e resolvendo o `sharedStrings.xml` (sem o
+qual as células com `t="s"` leem só o índice — foi o que me fez ler "0" e "61" em vez do texto
+na primeira tentativa):
+
+- As 6 abas com nome e ordem corretos.
+- Em cada aba: `A2` com o título da própria aba, `A3` com a razão social, `A4` com o período,
+  linha 6 em branco, conteúdo na 7, e **nenhuma célula com "Solicitação de Aporte"**.
+- Os quatro totais fechando em 1.820; percentual total = 100%.
+- Extrato congelado na linha 7 e com autofiltro a partir dela; uma imagem por aba.
+
+Conferido também que `aporteXlCabecalho` **sem** o parâmetro novo continua devolvendo
+"Solicitação de Aporte", e que numa aba estreita o logo encolhe de 150×35 para 120×28 em vez
+de estourar.
+
+### Pendência
+A conferência visual do logo ficou com o usuário — o ambiente não renderiza planilha.
