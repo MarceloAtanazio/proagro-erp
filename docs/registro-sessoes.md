@@ -1353,3 +1353,48 @@ Medido num mock que carrega o `styles.css` real, em três resoluções:
   aquela mudança depende de uma migração ainda não aplicada, subir tudo junto poderia
   quebrar a importação em produção. O commit foi construído a partir do `HEAD` com apenas as
   quatro edições desta sessão, via índice temporário; a árvore de trabalho não foi tocada.
+
+## 2026-09-02 — Modal do Flash: de largura livre para largura contida
+
+**Pedido:** "agora acho que ficou feio, muito aberto — deixe-o esteticamente mais bonito".
+
+Era o efeito colateral sinalizado na entrada anterior. Sem teto, a 1908px o modal ficava com
+1876px e a coluna Descrição ganhava 1310px para um texto que usa 381 — sobrava um vazio de
+quase 900px entre a descrição e o valor.
+
+### O que foi feito
+- **`modal-fluid` foi removido de vez**, do CSS e do `openModal`. Em vez de inventar mais uma
+  largura, o modal passou a usar a que o sistema já tinha: **`modal-xwide`, 1040px**. Abaixo
+  disso ele encolhe junto com a tela, porque `.modal` já tem `width: 100%` — a adaptação à
+  resolução que importa é para baixo, não para cima.
+- Colunas encostadas no que o conteúdo pede: Data 92px, **Descrição 520px**, Valor 104px,
+  Categoria 208px, Incluir 70px. A descrição mais longa mede 381px, então há folga sem sobra.
+- **Linhas mais densas:** fonte 13px e padding 9px, o que baixou a altura de 53px para 48px.
+- **A pendência passou a ser visível no campo que a resolve:** o select sem categoria fica com
+  borda e fundo âmbar, no tom `--warn` do sistema. Antes só o texto vermelho embaixo avisava,
+  e o select ficava igual ao dos lançamentos já resolvidos. O atributo `data-pendente` é posto
+  na renderização e mantido pelo `onchange`, que o remove quando a categoria é escolhida.
+- **Checkbox no verde da marca** via `accent-color`, em vez do azul padrão do navegador, que
+  brigava com a paleta; e 16px, mais fácil de acertar o clique.
+- **O aviso "Conceito não reconhecido" virou classe** (`.fl-aviso`) com a cor `--danger`, em
+  vez de um `#B23A2F` cravado em `style` inline.
+
+### Verificação
+| Viewport | Modal | Descrição | Select | Corte / rolagem |
+|---|---|---|---|---|
+| 1908px | 1040px | 520px | 184px | nenhum |
+| 1366px | 1040px | 520px | 184px | nenhum |
+| 1024px | 977px | 457px | 184px | nenhum |
+
+- Dez linhas de teste, duas delas com pendência: todas as descrições em **uma linha**.
+- Nenhuma célula, cabeçalho ou select com `scrollWidth` maior que `clientWidth` nas três
+  resoluções; `.table-wrap` e página sem rolagem horizontal.
+- Alturas de linha em 48px, e 58px nas duas que trazem o aviso de conceito.
+- Borda da pendência conferida no DOM: `rgb(226, 198, 138)`.
+
+### Nota de processo
+Ficou combinado nesta conversa que **o que é pedido aqui vai direto para o `origin/main`**,
+sem pedir ok — a cautela combinada antes era sobre não arrastar o trabalho de outra sessão que
+esteja na árvore, não sobre publicar o próprio. Este commit foi montado isolado a partir do
+`HEAD`, como o anterior: a árvore continua com a importação idempotente do Flash não
+commitada, e ela não foi tocada.

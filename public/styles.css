@@ -747,33 +747,42 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-contratos .att-btn { min-width: 36px; }
 .tbl-contratos .chip { display: inline-block; line-height: 1.5; }
 
-/* ===== Modal de largura livre =====
-   As tres larguras fixas (560px padrao, 900 do wide, 1040 do xwide) servem para
-   formulario, onde linha longa demais fica ruim de ler. Nao servem para tabela
-   de conferencia: a da importacao do Flash tem cinco colunas e, presa em 560px,
-   cortava o select de categoria no meio e empurrava a coluna Incluir para fora,
-   atras da rolagem horizontal. Sem max-width o modal ocupa o que a tela der,
-   menos o respiro de 16px que o .modal-back ja reserva de cada lado. */
-.modal.modal-fluid { max-width: none; }
-
 /* ===== Importacao do Flash — conferencia dos lancamentos =====
-   Larguras em pixel, nao em porcentagem: este modal muda de largura conforme a
-   tela, e Data, Valor, Categoria e Incluir guardam conteudo de tamanho conhecido.
-   Descricao fica com "auto" e absorve toda a sobra — e ela que precisa, porque
-   os lancamentos do Flash vem com textos longos ("WWWEmba*EMB*Viacaogar Curitiba
-   BRA Transporte publico") que antes quebravam em quatro linhas. */
-.tbl-flash { table-layout: fixed; }
-.tbl-flash col.c-fl-data  { width: 100px; }
+   A tabela tem cinco colunas e nos 560px do modal padrao o select de categoria
+   saia cortado no meio e a coluna Incluir ficava inteira para fora, atras da
+   rolagem horizontal — quem nao rolasse nao veria que existia. Sem teto nenhum
+   sobrava vazio demais: a 1900px a Descricao ganhava 1310px para um texto que
+   usa 381. Por isso o modal usa o modal-xwide (1040px), largura que o sistema
+   ja tinha: cabe tudo com folga e o conteudo nao se espalha. Abaixo disso o
+   modal encolhe junto com a tela, porque .modal ja tem width: 100%.
+
+   Larguras em pixel, nao em porcentagem: Data, Valor, Categoria e Incluir
+   guardam conteudo de tamanho conhecido, e a Descricao fica com "auto" e
+   absorve a sobra — e ela que precisa, porque os lancamentos do Flash vem com
+   textos longos que antes quebravam em tres ou quatro linhas. */
+.tbl-flash { table-layout: fixed; font-size: 13px; }
+.tbl-flash col.c-fl-data  { width: 92px; }
 .tbl-flash col.c-fl-desc  { width: auto; }
-.tbl-flash col.c-fl-valor { width: 110px; }
-.tbl-flash col.c-fl-cat   { width: 230px; }
-.tbl-flash col.c-fl-inc   { width: 80px; }
-.tbl-flash td { vertical-align: top; }
-.tbl-flash td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tbl-flash col.c-fl-valor { width: 104px; }
+.tbl-flash col.c-fl-cat   { width: 208px; }
+.tbl-flash col.c-fl-inc   { width: 70px; }
+.tbl-flash thead th { padding: 9px 12px; }
+.tbl-flash tbody td { padding: 9px 12px; vertical-align: middle; }
+.tbl-flash td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .tbl-flash .c-inc { text-align: center; }
+/* Conceito nao reconhecido: aviso de segunda linha, no tom de erro do sistema
+   em vez do vermelho cru que estava no style inline. */
+.tbl-flash .fl-aviso { display: block; margin-top: 2px; font-size: 11.5px; color: var(--danger); }
 /* O select ocupa a coluna inteira: em largura automatica ele encostava na borda
    do modal e o rotulo saia cortado ("Passagem de O..."). */
 .tbl-flash .fl-cat {
   width: 100%; padding: 5px 8px; border: 1px solid var(--line);
-  border-radius: 6px; background: #fff; font-size: 13px;
+  border-radius: 6px; background: #fff; font-size: 12.5px; color: var(--ink);
 }
+/* Pendencia em aberto fica com a borda no tom de aviso — a linha inteira ja
+   esta desmarcada, e o campo que resolve a pendencia e este. */
+.tbl-flash .fl-cat[data-pendente] {
+  border-color: #E2C68A; background: var(--warn-050); color: var(--warn);
+}
+/* O padrao do navegador e azul, que briga com o verde do sistema. */
+.tbl-flash .fl-inc { width: 16px; height: 16px; accent-color: var(--verde-700); cursor: pointer; }

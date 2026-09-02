@@ -135,7 +135,6 @@ function openModal(title, bodyHTML, buttons, opts) {
   $('#modal-body').innerHTML = bodyHTML;
   document.querySelector('.modal').classList.toggle('modal-wide', !!(opts && opts.wide));
   document.querySelector('.modal').classList.toggle('modal-xwide', !!(opts && opts.xwide));
-  document.querySelector('.modal').classList.toggle('modal-fluid', !!(opts && opts.fluid));
   const foot = $('#modal-footer'); foot.innerHTML = '';
   (buttons || []).forEach(b => {
     const btn = el('button', 'btn ' + (b.cls || ''), b.label);
@@ -4360,7 +4359,7 @@ async function importarFlashModal(s) {
   openModal(`Importar lançamentos do Flash — ${esc(s.colaborador_name)}`, `
     <div class="field"><label>Arquivo de comprovação do Flash (.xlsx)</label><input type="file" id="fl-file" accept=".xlsx,.xls"></div>
     <div id="fl-preview"></div>`,
-    [{ label: 'Voltar', onClick: () => viewSolicitacao(s.id) }], { fluid: true });
+    [{ label: 'Voltar', onClick: () => viewSolicitacao(s.id) }], { xwide: true });
 
   let rows = [];
   let avisos = [];
@@ -4382,9 +4381,9 @@ async function importarFlashModal(s) {
         <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Categoria</th><th class="c-inc">Incluir</th></tr></thead>
         <tbody>${rows.map((r, i) => `<tr>
           <td>${brDate(r.data)}</td>
-          <td>${esc(r.descricao)}${!r.categoria ? `<br><small style="color:#B23A2F">Conceito "${esc(r.conceitoOriginal)}" não reconhecido</small>` : ''}</td>
+          <td>${esc(r.descricao)}${!r.categoria ? `<small class="fl-aviso">Conceito "${esc(r.conceitoOriginal)}" não reconhecido</small>` : ''}</td>
           <td class="num">${brl(r.valor)}</td>
-          <td><select class="fl-cat" data-idx="${i}">
+          <td><select class="fl-cat" data-idx="${i}"${r.categoria ? '' : ' data-pendente'}>
             <option value="">— Pendência —</option>
             ${Object.entries(DESP_CAT_LABEL).map(([v, t]) => `<option value="${v}" ${r.categoria === v ? 'selected' : ''}>${t}</option>`).join('')}
           </select></td>
@@ -4396,6 +4395,7 @@ async function importarFlashModal(s) {
     box.querySelectorAll('.fl-cat').forEach(sel => sel.onchange = () => {
       const i = Number(sel.dataset.idx);
       rows[i].categoria = sel.value;
+      if (sel.value) sel.removeAttribute('data-pendente'); else sel.setAttribute('data-pendente', '');
       box.querySelector(`.fl-inc[data-idx="${i}"]`).checked = !!sel.value;
     });
     box.querySelectorAll('.fl-inc').forEach(chk => chk.onchange = () => {
