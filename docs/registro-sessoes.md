@@ -1479,3 +1479,77 @@ e o teste detecta o bug que diz detectar.
   `aguardando_comprovacao`, então ainda não gerou devolução errada. O caminho limpo agora é
   usar o botão novo e importar o arquivo uma vez — evita adivinhar qual cópia de cada par
   preservar, e os pedágios legitimamente repetidos voltam certos.
+
+## 2026-09-02 — Exportar de Viáticos: três relatórios, e o padrão de PDF extraído
+
+**Pedido:** o botão "Exportar" passar a oferecer três relatórios — (1) resumo do que está
+filtrado na tela, (2) extrato completo gasto por gasto, (3) fechamento do mês/período com
+extrato, gastos por colaborador, por categoria, quadro pessoa × categoria e a prestação de
+contas — todos no padrão de relatório em PDF que a plataforma já aplica, e o 3 também em Excel.
+
+### Leitura do pedido
+O pedido dizia "documento high level **em excel**" para o 3 e, na frase seguinte, "para todos
+eu quero o padrão de relatório **em PDF**". As duas coisas foram entregues: os três saem em
+PDF no padrão, e o fechamento sai **também** em Excel, com uma aba por bloco. Resumo e extrato
+já tinham Excel e continuam tendo.
+
+### O que já existia, e o que estava errado nele
+Resumo e extrato já existiam como "Resumido/Completo", mas o fluxo perguntava **primeiro o
+formato** e depois o conteúdo — a pessoa escolhia "PDF ou Excel" antes de saber o que ia sair.
+E o cabeçalho e o rodapé do PDF estavam **copiados palavra por palavra** dentro das duas
+funções: com um terceiro relatório seriam três cópias divergindo com o tempo.
+
+### O que foi feito
+- **`relatorioPDF()`** — o padrão virou função: faixa verde, logo, "PROAGRO BRASIL", título à
+  direita, quem gerou e quando, subtítulo opcional (é onde o fechamento diz o período) e o
+  rodapé com razão social e número de página. Junto vieram `relatorioFaixa()` (a tarja de
+  números), `relatorioTabelaEstilo()` (estilo único das tabelas) e `relatorioSecao()`.
+  As duas funções antigas foram reescritas sobre ele — mesmo resultado visual, sem a cópia.
+- **Menu invertido:** primeiro *qual relatório* (três opções com uma frase explicando o que
+  cada uma traz), depois *qual formato*. As opções viraram botões largos (`.rel-opcao`),
+  porque rótulo de botão de rodapé não comporta duas linhas de texto.
+- **`buildViaticosFechamento()`** — uma passada só sobre as solicitações filtradas e suas
+  despesas monta KPIs, prestação de contas por situação, gastos por colaborador, por categoria,
+  o quadro colaborador × categoria e o extrato. **PDF e Excel consomem exatamente os mesmos
+  números**: se a conta estivesse nos dois lugares, um dia os dois documentos divergiriam.
+- **`exportViaticosFechamentoPDF()`** — seis seções num documento; cada seção começa onde a
+  anterior acabou e pula de página quando não cabe o título mais duas linhas. No quadro
+  cruzado, zero vira "—" de propósito: com onze categorias, uma malha de "R$ 0,00" esconde
+  justamente as células que têm número.
+- **`exportViaticosFechamentoExcel()`** — seis abas (Resumo, Por colaborador, Por categoria,
+  Pessoa × Categoria, Solicitações, Extrato), reusando o toolkit `aporteXl*` que já dava
+  identidade ao Excel da Solicitação de Aporte. O extrato vem com cabeçalho congelado e
+  autofiltro; o quadro cruzado congela o nome e o cabeçalho. Se o ExcelJS não tiver carregado,
+  cai numa versão sem estilo em vez de não entregar nada.
+- **`viaticosPeriodoRotulo()`** — o subtítulo dos três relatórios. Sem filtro de data, diz o
+  intervalo que os dados realmente cobrem, o que é mais útil que "todos".
+
+### Verificação
+**Números (31 checagens, código real recortado do `app.js`, `api()` stubado)** — com 4 viagens,
+3 colaboradores, 3 situações e 7 lançamentos: KPIs; pendência resolvida corretamente ignorada;
+só as situações com viagem aparecem, e na ordem do fluxo, não a alfabética; ordenações por
+valor; **a matriz fecha por linha e por coluna**; percentuais somam 100%; quem não teve despesa
+fica fora do quadro cruzado; filtro vazio não quebra.
+
+**Geração (no navegador, com as mesmas bibliotecas do `index.html` e as funções reais)** — os
+quatro arquivos saíram sem exceção: resumo 1 página, extrato 1 página, **fechamento 3
+páginas**, Excel 37 KB. O `.xlsx` foi **lido de volta com ExcelJS** e conferido:
+
+| Conferência | Resultado |
+|---|---|
+| Abas, na ordem | Resumo · Por colaborador · Por categoria · Pessoa x Categoria · Solicitações · Extrato |
+| Total em "Por colaborador" | 4 viagens · 2.600 liberado · 1.820 comprovado · 600 devolvido · 120 pendência |
+| Total em "Por categoria" | 7 lançamentos · 1.820 · 100% |
+| Total do quadro cruzado | 550 + 500 + 420 + 350 = **1.820** |
+| Total do extrato | **1.820** |
+| Colunas do quadro | ordenadas por gasto (Pedágio, Hospedagem, Alimentação, Combustível) |
+| Extrato | cabeçalho congelado e autofiltro ativos |
+| Logo | presente na aba |
+
+Os quatro totais fecham no mesmo valor, que é o teste que pega erro de agregação.
+
+### Observação
+Não foi possível renderizar os PDFs neste ambiente (sem poppler), então a conferência visual
+ficou com o usuário — os quatro arquivos gerados foram enviados. O cabeçalho e o rodapé são o
+código que já estava em produção, agora numa função só, então a identidade é preservada por
+construção, não por semelhança.

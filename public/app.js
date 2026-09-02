@@ -2179,61 +2179,105 @@ async function buildViaticosItens(sols) {
   return itens;
 }
 
-async function exportViaticosResumoPDF(rows) {
+// ============================================================
+// PADRAO DE RELATORIO — Viaticos
+// O cabecalho e o rodape abaixo estavam copiados palavra por palavra dentro de
+// cada funcao de exportacao. Com tres relatorios (resumo, extrato e fechamento)
+// isso viraria tres copias divergindo com o tempo, entao virou uma funcao so.
+// Quem escrever um relatorio novo chama relatorioPDF() e ja nasce no padrao:
+// faixa verde no topo, logo, titulo a direita, quem gerou e quando, e o rodape
+// com a razao social e o numero da pagina.
+// ============================================================
+const REL_VERDE = [0, 120, 63], REL_VERDE_CLARO = [234, 245, 236],
+      REL_CINZA = [110, 120, 114], REL_VERMELHO = [178, 58, 47], REL_MARGIN = 12;
+
+function relatorioPDF(titulo, opts = {}) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: opts.orientation || 'landscape', unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(...REL_VERDE); doc.rect(0, 0, pageW, 3, 'F');
+  const logoW = 34, logoH = logoW * (139 / 600);
+  doc.addImage(LOGO_PROAGRO_PNG, 'PNG', REL_MARGIN, 11, logoW, logoH);
+  doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('PROAGRO BRASIL', REL_MARGIN + logoW + 6, 14);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...REL_CINZA);
+  doc.text('ERP Financeiro · Viáticos', REL_MARGIN + logoW + 6, 19);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...REL_VERDE);
+  doc.text(titulo, pageW - REL_MARGIN, 15, { align: 'right' });
+  const now = new Date();
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...REL_CINZA);
+  doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - REL_MARGIN, 20.5, { align: 'right' });
+  // Subtitulo opcional: e onde o fechamento diz qual periodo esta fechando.
+  if (opts.subtitulo) {
+    doc.setFontSize(8.5); doc.setTextColor(60, 70, 64);
+    doc.text(opts.subtitulo, REL_MARGIN, 25 - 1.5);
+  }
+  doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(REL_MARGIN, 25, pageW - REL_MARGIN, 25);
+
+  const rodape = () => {
+    const pageH = doc.internal.pageSize.getHeight();
+    doc.setDrawColor(...REL_VERDE); doc.setLineWidth(0.4);
+    doc.line(REL_MARGIN, pageH - 14, pageW - REL_MARGIN, pageH - 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...REL_CINZA);
+    doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, REL_MARGIN, pageH - 9);
+    doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', REL_MARGIN, pageH - 5.5);
+    doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - REL_MARGIN, pageH - 7, { align: 'right' });
+  };
+  return { doc, pageW, MARGIN: REL_MARGIN, rodape };
+}
+
+// Faixa verde-clara com os numeros de cabecalho do relatorio.
+function relatorioFaixa(doc, pageW, y, texto) {
+  doc.setFillColor(...REL_VERDE_CLARO);
+  doc.roundedRect(REL_MARGIN, y, pageW - REL_MARGIN * 2, 16, 2, 2, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...REL_VERDE);
+  doc.text(texto, REL_MARGIN + 5, y + 9);
+  return y + 16;
+}
+
+// Estilo unico das tabelas, para as tres saidas ficarem iguais.
+function relatorioTabelaEstilo(rodape, extra = {}) {
+  return Object.assign({
+    margin: { left: REL_MARGIN, right: REL_MARGIN },
+    styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+    headStyles: { fillColor: REL_VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    alternateRowStyles: { fillColor: REL_VERDE_CLARO },
+    didDrawPage: rodape
+  }, extra);
+}
+
+// Titulo de secao dentro do relatorio de fechamento.
+function relatorioSecao(doc, y, texto) {
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...REL_VERDE);
+  doc.text(texto, REL_MARGIN, y);
+  doc.setDrawColor(...REL_VERDE); doc.setLineWidth(0.3);
+  doc.line(REL_MARGIN, y + 1.6, REL_MARGIN + doc.getTextWidth(texto), y + 1.6);
+  return y + 5;
+}
+
+async function exportViaticosResumoPDF(rows, ctx = {}) {
   if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
   try {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERMELHO = [178, 58, 47];
-    const MARGIN = 12;
-
-    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
-    const logoW = 34, logoH = logoW * (139 / 600);
-    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
-    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-    doc.text('ERP Financeiro · Viáticos', MARGIN + logoW + 6, 19);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...VERDE);
-    doc.text('Relatório de Viáticos Resumido', pageW - MARGIN, 15, { align: 'right' });
-    const now = new Date();
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
-    doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
-    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
-
+    const { doc, pageW, MARGIN, rodape } = relatorioPDF('Relatório de Viáticos Resumido', { subtitulo: ctx.subtitulo });
     const totalLib = rows.reduce((s2, r) => s2 + r.valor_liberado, 0), totalComp = rows.reduce((s2, r) => s2 + r.valor_comprovado, 0);
-    doc.setFillColor(...VERDE_CLARO);
-    doc.roundedRect(MARGIN, 29, pageW - MARGIN * 2, 16, 2, 2, 'F');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
-    doc.text(`${rows.length} solicitação(ões)  ·  Total liberado: ${brl(totalLib)}  ·  Total comprovado: ${brl(totalComp)}`, MARGIN + 5, 38);
+    relatorioFaixa(doc, pageW, 29, `${rows.length} solicitação(ões)  ·  Total liberado: ${brl(totalLib)}  ·  Total comprovado: ${brl(totalComp)}`);
 
-    doc.autoTable({
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
       startY: 50,
       head: [['Colaborador', 'Tier', 'Local / OT', 'Período', 'Liberado', 'Comprovado', 'Status']],
       body: rows.map(s => [s.colaborador_name, s.tier, `${LOCAL_LABEL[s.categoria_local]}${viaticosDestinoTxt(s) ? ' — ' + viaticosDestinoTxt(s) : ''}`,
         `${brDate(s.data_inicio)} a ${brDate(s.data_fim)}`, brl(s.valor_liberado), brl(s.valor_comprovado), VIA_STATUS_LABEL[s.status]]),
-      margin: { left: MARGIN, right: MARGIN },
       styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
-      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
-      alternateRowStyles: { fillColor: VERDE_CLARO },
+      headStyles: { fillColor: REL_VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
       columnStyles: { 4: { halign: 'right' }, 5: { halign: 'right' } },
       didParseCell: hook => {
         if (hook.section === 'body' && hook.column.index === 6) {
           const st = rows[hook.row.index]?.status;
-          hook.cell.styles.textColor = (st === 'divergente') ? VERMELHO : (st === 'comprovado' || st === 'devolvido') ? VERDE : [138, 100, 20];
+          hook.cell.styles.textColor = (st === 'divergente') ? REL_VERMELHO : (st === 'comprovado' || st === 'devolvido') ? REL_VERDE : [138, 100, 20];
         }
-      },
-      didDrawPage: () => {
-        const pageH = doc.internal.pageSize.getHeight();
-        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
-        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
-        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
-        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
       }
-    });
+    }));
 
     doc.save(`viaticos_resumido_${todayISO()}.pdf`);
     toast('PDF gerado com sucesso.');
@@ -2241,7 +2285,6 @@ async function exportViaticosResumoPDF(rows) {
     console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
   }
 }
-
 function exportViaticosResumoExcel(rows) {
   if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
   const MONEY_FMT = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
@@ -2259,63 +2302,27 @@ function exportViaticosResumoExcel(rows) {
   toast('Excel exportado.');
 }
 
-async function exportViaticosDetalhadoPDF(itens) {
+async function exportViaticosDetalhadoPDF(itens, ctx = {}) {
   if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
   if (!itens.length) { toast('Nenhuma despesa lançada nas solicitações filtradas.'); return; }
   try {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
-    const MARGIN = 12;
-
-    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
-    const logoW = 34, logoH = logoW * (139 / 600);
-    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
-    doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-    doc.text('PROAGRO BRASIL', MARGIN + logoW + 6, 14);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-    doc.text('ERP Financeiro · Viáticos', MARGIN + logoW + 6, 19);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...VERDE);
-    doc.text('Relatório de Viáticos Completo', pageW - MARGIN, 15, { align: 'right' });
-    const now = new Date();
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
-    doc.text(`Gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`, pageW - MARGIN, 20.5, { align: 'right' });
-    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
-
+    const { doc, pageW, MARGIN, rodape } = relatorioPDF('Extrato de Viáticos', { subtitulo: ctx.subtitulo });
     const total = itens.reduce((s, i) => s + i.valor, 0);
-    doc.setFillColor(...VERDE_CLARO);
-    doc.roundedRect(MARGIN, 29, pageW - MARGIN * 2, 16, 2, 2, 'F');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...VERDE);
-    doc.text(`${itens.length} lançamento(s) de despesa  ·  Total comprovado: ${brl(total)}`, MARGIN + 5, 38);
+    relatorioFaixa(doc, pageW, 29, `${itens.length} lançamento(s) de despesa  ·  Total comprovado: ${brl(total)}`);
 
-    doc.autoTable({
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
       startY: 50,
       head: [['Colaborador', 'OT', 'Período', 'Status', 'Data', 'Categoria', 'Descrição', 'Valor']],
       body: itens.map(i => [i.colaborador, i.ot, i.periodo, i.status, brDate(i.data), i.categoria, i.descricao, brl(i.valor)]),
-      margin: { left: MARGIN, right: MARGIN },
-      styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
-      headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8 },
-      alternateRowStyles: { fillColor: VERDE_CLARO },
-      columnStyles: { 7: { halign: 'right' } },
-      didDrawPage: () => {
-        const pageH = doc.internal.pageSize.getHeight();
-        doc.setDrawColor(...VERDE); doc.setLineWidth(0.4);
-        doc.line(MARGIN, pageH - 14, pageW - MARGIN, pageH - 14);
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-        doc.text(COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME, MARGIN, pageH - 9);
-        doc.text('Documento de uso interno — gerado automaticamente pelo ERP Financeiro.', MARGIN, pageH - 5.5);
-        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - MARGIN, pageH - 7, { align: 'right' });
-      }
-    });
+      columnStyles: { 7: { halign: 'right' } }
+    }));
 
-    doc.save(`viaticos_completo_${todayISO()}.pdf`);
+    doc.save(`viaticos_extrato_${todayISO()}.pdf`);
     toast('PDF gerado com sucesso.');
   } catch (e) {
     console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
   }
 }
-
 function exportViaticosDetalhadoExcel(itens) {
   if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
   if (!itens.length) { toast('Nenhuma despesa lançada nas solicitações filtradas.'); return; }
@@ -2330,6 +2337,333 @@ function exportViaticosDetalhadoExcel(itens) {
   XLSX.utils.book_append_sheet(wb, ws, 'Viáticos - Detalhado');
   XLSX.writeFile(wb, `viaticos_completo_${todayISO()}.xlsx`);
   toast('Excel exportado.');
+}
+
+// ============================================================
+// FECHAMENTO DE VIATICOS — agregacoes
+// Uma unica passada sobre as solicitacoes filtradas e suas despesas monta tudo
+// o que o relatorio de fechamento mostra. Fica separado das funcoes de
+// exportacao porque PDF e Excel consomem exatamente os mesmos numeros: se a
+// conta estiver em dois lugares, um dia os dois documentos divergem.
+// ============================================================
+const vlr = x => Number(x) || 0;
+const pendenciaDe = s => (s.pendencia_resolvida ? 0 : vlr(s.valor_pendencia));
+
+async function buildViaticosFechamento(sols, periodo = {}) {
+  const itens = await buildViaticosItens(sols);
+
+  const kpis = {
+    solicitacoes: sols.length,
+    colaboradores: new Set(sols.map(s => s.colaborador_name)).size,
+    lancamentos: itens.length,
+    solicitado: sols.reduce((a, s) => a + vlr(s.valor_solicitado), 0),
+    liberado: sols.reduce((a, s) => a + vlr(s.valor_liberado), 0),
+    comprovado: sols.reduce((a, s) => a + vlr(s.valor_comprovado), 0),
+    devolvido: sols.reduce((a, s) => a + vlr(s.valor_devolvido), 0),
+    pendencia: sols.reduce((a, s) => a + pendenciaDe(s), 0)
+  };
+
+  // Prestacao de contas: onde cada viagem esta na esteira. A ordem segue a do
+  // VIA_STATUS_LABEL, que e a ordem do fluxo, e nao a alfabetica.
+  const porStatus = Object.keys(VIA_STATUS_LABEL).map(st => {
+    const doStatus = sols.filter(s => s.status === st);
+    return {
+      status: st, rotulo: VIA_STATUS_LABEL[st], qtd: doStatus.length,
+      liberado: doStatus.reduce((a, s) => a + vlr(s.valor_liberado), 0),
+      comprovado: doStatus.reduce((a, s) => a + vlr(s.valor_comprovado), 0),
+      devolvido: doStatus.reduce((a, s) => a + vlr(s.valor_devolvido), 0),
+      pendencia: doStatus.reduce((a, s) => a + pendenciaDe(s), 0)
+    };
+  }).filter(l => l.qtd > 0);
+
+  const porColaborador = [...new Set(sols.map(s => s.colaborador_name))].map(nome => {
+    const dele = sols.filter(s => s.colaborador_name === nome);
+    return {
+      nome, viagens: dele.length,
+      liberado: dele.reduce((a, s) => a + vlr(s.valor_liberado), 0),
+      comprovado: dele.reduce((a, s) => a + vlr(s.valor_comprovado), 0),
+      devolvido: dele.reduce((a, s) => a + vlr(s.valor_devolvido), 0),
+      pendencia: dele.reduce((a, s) => a + pendenciaDe(s), 0)
+    };
+  }).sort((a, b) => b.comprovado - a.comprovado);
+
+  const totalComp = itens.reduce((a, i) => a + vlr(i.valor), 0);
+  const porCategoria = [...new Set(itens.map(i => i.categoria))].map(categoria => {
+    const daCat = itens.filter(i => i.categoria === categoria);
+    const total = daCat.reduce((a, i) => a + vlr(i.valor), 0);
+    return { categoria, lancamentos: daCat.length, total, pct: totalComp ? total / totalComp : 0 };
+  }).sort((a, b) => b.total - a.total);
+
+  // Quadro pessoa x categoria. As colunas seguem a ordem de porCategoria (maior
+  // gasto primeiro), para o que importa ficar a esquerda quando a folha aperta.
+  const categorias = porCategoria.map(c => c.categoria);
+  const linhasMatriz = [...new Set(itens.map(i => i.colaborador))].map(nome => {
+    const valores = categorias.map(cat =>
+      itens.filter(i => i.colaborador === nome && i.categoria === cat).reduce((a, i) => a + vlr(i.valor), 0));
+    return { nome, valores, total: valores.reduce((a, v) => a + v, 0) };
+  }).sort((a, b) => b.total - a.total);
+  const matriz = {
+    categorias, linhas: linhasMatriz,
+    totaisPorCategoria: categorias.map((_, ci) => linhasMatriz.reduce((a, l) => a + l.valores[ci], 0)),
+    total: linhasMatriz.reduce((a, l) => a + l.total, 0)
+  };
+
+  return { sols, itens, kpis, porStatus, porColaborador, porCategoria, matriz, periodo };
+}
+
+// Rotulo do periodo que vai no subtitulo dos tres relatorios. Sem filtro de
+// data, diz o intervalo que os dados realmente cobrem — mais util que "todos".
+function viaticosPeriodoRotulo(sols, de, ate) {
+  if (de && ate) return `Período filtrado: ${brDate(de)} a ${brDate(ate)}`;
+  if (de) return `A partir de ${brDate(de)}`;
+  if (ate) return `Até ${brDate(ate)}`;
+  if (!sols.length) return 'Sem solicitações no filtro atual';
+  const datas = sols.map(s => s.data_inicio).filter(Boolean).sort();
+  const fins = sols.map(s => s.data_fim).filter(Boolean).sort();
+  return `Sem filtro de data — dados de ${brDate(datas[0])} a ${brDate(fins[fins.length - 1])}`;
+}
+
+// Fechamento em PDF: seis secoes no mesmo documento, todas no padrao.
+async function exportViaticosFechamentoPDF(f) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  if (!f.sols.length) { toast('Nenhuma solicitação no filtro atual.'); return; }
+  try {
+    const { doc, pageW, rodape } = relatorioPDF('Fechamento de Viáticos', { subtitulo: f.periodo.rotulo });
+    const pageH = doc.internal.pageSize.getHeight();
+    const k = f.kpis;
+
+    relatorioFaixa(doc, pageW, 29,
+      `${k.solicitacoes} viagem(ns) · ${k.colaboradores} colaborador(es) · ${k.lancamentos} lançamento(s)`);
+    relatorioFaixa(doc, pageW, 47,
+      `Liberado: ${brl(k.liberado)}  ·  Comprovado: ${brl(k.comprovado)}  ·  Devolvido: ${brl(k.devolvido)}  ·  Pendência: ${brl(k.pendencia)}`);
+
+    // Cada secao comeca onde a anterior acabou; se nao couber o titulo mais
+    // duas linhas de tabela, vai para a folha seguinte.
+    const secao = (titulo, minimo = 34) => {
+      let y = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 63) + 9;
+      if (y + minimo > pageH - 18) { doc.addPage(); y = 22; }
+      return relatorioSecao(doc, y, titulo);
+    };
+    const M = { halign: 'right' };
+
+    // ---- 1. Prestacao de contas por status ----
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Prestação de contas — situação das viagens'),
+      head: [['Situação', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência']],
+      body: f.porStatus.map(l => [l.rotulo, l.qtd, brl(l.liberado), brl(l.comprovado), brl(l.devolvido), brl(l.pendencia)]),
+      foot: [['Total', k.solicitacoes, brl(k.liberado), brl(k.comprovado), brl(k.devolvido), brl(k.pendencia)]],
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: { halign: 'center' }, 2: M, 3: M, 4: M, 5: M }
+    }));
+
+    // ---- 2. Gastos por colaborador ----
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Gastos por colaborador'),
+      head: [['Colaborador', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência']],
+      body: f.porColaborador.map(l => [l.nome, l.viagens, brl(l.liberado), brl(l.comprovado), brl(l.devolvido), brl(l.pendencia)]),
+      foot: [['Total', k.solicitacoes, brl(k.liberado), brl(k.comprovado), brl(k.devolvido), brl(k.pendencia)]],
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: { halign: 'center' }, 2: M, 3: M, 4: M, 5: M }
+    }));
+
+    // ---- 3. Gastos por categoria ----
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Gastos por categoria'),
+      head: [['Categoria', 'Lançamentos', 'Total', '% do comprovado']],
+      body: f.porCategoria.map(l => [l.categoria, l.lancamentos, brl(l.total), (l.pct * 100).toFixed(1) + '%']),
+      foot: [['Total', k.lancamentos, brl(f.matriz.total), '100,0%']],
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: { halign: 'center' }, 2: M, 3: M }
+    }));
+
+    // ---- 4. Quadro colaborador x categoria ----
+    // Zero vira vazio de proposito: com onze categorias, uma malha de "R$ 0,00"
+    // esconde justamente as celulas que tem numero.
+    if (f.matriz.categorias.length) {
+      doc.autoTable(relatorioTabelaEstilo(rodape, {
+        startY: secao('Gastos por colaborador × categoria'),
+        head: [['Colaborador', ...f.matriz.categorias, 'Total']],
+        body: f.matriz.linhas.map(l => [l.nome, ...l.valores.map(v => v ? brl(v) : '—'), brl(l.total)]),
+        foot: [['Total', ...f.matriz.totaisPorCategoria.map(v => v ? brl(v) : '—'), brl(f.matriz.total)]],
+        footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 6.5 },
+        styles: { font: 'helvetica', fontSize: 6.5, cellPadding: 1.4, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+        headStyles: { fillColor: REL_VERDE, textColor: 255, fontStyle: 'bold', fontSize: 6.5 },
+        columnStyles: Object.fromEntries(f.matriz.categorias.map((_, i) => [i + 1, M]).concat([[f.matriz.categorias.length + 1, M]]))
+      }));
+    }
+
+    // ---- 5. Solicitacoes do periodo ----
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Solicitações do período'),
+      head: [['Colaborador', 'OT', 'Local', 'Período', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência', 'Situação']],
+      body: f.sols.map(s => [s.colaborador_name, s.ordem_trabalho || '—', LOCAL_LABEL[s.categoria_local],
+        `${brDate(s.data_inicio)} a ${brDate(s.data_fim)}`, brl(vlr(s.valor_liberado)), brl(vlr(s.valor_comprovado)),
+        brl(vlr(s.valor_devolvido)), brl(pendenciaDe(s)), VIA_STATUS_LABEL[s.status]]),
+      columnStyles: { 4: M, 5: M, 6: M, 7: M }
+    }));
+
+    // ---- 6. Extrato completo, gasto por gasto ----
+    if (f.itens.length) {
+      doc.addPage();
+      let y = relatorioSecao(doc, 22, 'Extrato completo de gastos');
+      doc.autoTable(relatorioTabelaEstilo(rodape, {
+        startY: y,
+        head: [['Colaborador', 'OT', 'Data', 'Categoria', 'Descrição', 'Valor']],
+        body: f.itens.map(i => [i.colaborador, i.ot, brDate(i.data), i.categoria, i.descricao, brl(vlr(i.valor))]),
+        foot: [['', '', '', '', 'Total comprovado', brl(f.matriz.total)]],
+        footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+        columnStyles: { 5: M }
+      }));
+    }
+
+    doc.save(`viaticos_fechamento_${todayISO()}.pdf`);
+    toast('PDF de fechamento gerado.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
+}
+
+// Fechamento em Excel: seis abas, reusando o mesmo toolkit de estilo do Excel
+// da Solicitacao de Aporte (aporteXl*) — e por isso que as planilhas do sistema
+// saem todas com a mesma cara. Sem ExcelJS carregado, cai na versao sem estilo
+// em vez de nao entregar nada.
+async function exportViaticosFechamentoExcel(f) {
+  if (!window.ExcelJS) return exportViaticosFechamentoExcelSimples(f);
+  if (!f.sols.length) { toast('Nenhuma solicitação no filtro atual.'); return; }
+  try {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+    wb.created = new Date();
+    const now = new Date();
+    const sub = `${f.periodo.rotulo} · gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`;
+    const idLogo = wb.addImage({ base64: LOGO_PROAGRO_PNG, extension: 'png' });
+    const k = f.kpis;
+    const R = 'right', C = 'center';
+
+    // ---------- Aba 1: Resumo ----------
+    const ws1 = wb.addWorksheet('Resumo', { views: [{ showGridLines: false }] });
+    let L = aporteXlCabecalho(wb, ws1, sub, idLogo, [34, 16, 18, 18, 18, 18]);
+    aporteXlTituloTabela(ws1, L, 'Números do período', 6); L++;
+    aporteXlCabecalhoColunas(ws1, L, ['Indicador', 'Qtde.', 'Solicitado', 'Liberado', 'Comprovado', 'Devolvido'], ['left', C, R, R, R, R]); L++;
+    L = aporteXlCorpo(ws1, L, [
+      ['Viagens no período', k.solicitacoes, k.solicitado, k.liberado, k.comprovado, k.devolvido],
+      ['Colaboradores', k.colaboradores, null, null, null, null],
+      ['Lançamentos de despesa', k.lancamentos, null, null, null, null],
+      ['Pendência em aberto', null, null, null, k.pendencia, null]
+    ], [2, 3, 4, 5], ['left', C, R, R, R, R]);
+    L += 2;
+
+    aporteXlTituloTabela(ws1, L, 'Prestação de contas — situação das viagens', 6); L++;
+    aporteXlCabecalhoColunas(ws1, L, ['Situação', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência'], ['left', C, R, R, R, R]); L++;
+    L = aporteXlCorpo(ws1, L, f.porStatus.map(l => [l.rotulo, l.qtd, l.liberado, l.comprovado, l.devolvido, l.pendencia]),
+      [2, 3, 4, 5], ['left', C, R, R, R, R]);
+    aporteXlTotal(ws1, L, ['Total', k.solicitacoes, k.liberado, k.comprovado, k.devolvido, k.pendencia], [2, 3, 4, 5], ['left', C, R, R, R, R]);
+
+    // ---------- Aba 2: Por colaborador ----------
+    const ws2 = wb.addWorksheet('Por colaborador', { views: [{ showGridLines: false }] });
+    L = aporteXlCabecalho(wb, ws2, sub, idLogo, [34, 12, 18, 18, 18, 18]);
+    aporteXlTituloTabela(ws2, L, 'Gastos por colaborador', 6); L++;
+    aporteXlCabecalhoColunas(ws2, L, ['Colaborador', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência'], ['left', C, R, R, R, R]); L++;
+    L = aporteXlCorpo(ws2, L, f.porColaborador.map(l => [l.nome, l.viagens, l.liberado, l.comprovado, l.devolvido, l.pendencia]),
+      [2, 3, 4, 5], ['left', C, R, R, R, R]);
+    aporteXlTotal(ws2, L, ['Total', k.solicitacoes, k.liberado, k.comprovado, k.devolvido, k.pendencia], [2, 3, 4, 5], ['left', C, R, R, R, R]);
+
+    // ---------- Aba 3: Por categoria ----------
+    const ws3 = wb.addWorksheet('Por categoria', { views: [{ showGridLines: false }] });
+    L = aporteXlCabecalho(wb, ws3, sub, idLogo, [30, 14, 18, 16]);
+    aporteXlTituloTabela(ws3, L, 'Gastos por categoria', 4); L++;
+    aporteXlCabecalhoColunas(ws3, L, ['Categoria', 'Lançamentos', 'Total', '% do comprovado'], ['left', C, R, R]); L++;
+    const linha1Cat = L;
+    L = aporteXlCorpo(ws3, L, f.porCategoria.map(l => [l.categoria, l.lancamentos, l.total, l.pct]), [2], ['left', C, R, R]);
+    // A porcentagem vai como numero com formato de porcentagem, nao como texto:
+    // assim da para reordenar e somar na planilha sem reconverter nada.
+    f.porCategoria.forEach((_, i) => { ws3.getCell(linha1Cat + i, 4).numFmt = '0.0%'; });
+    aporteXlTotal(ws3, L, ['Total', k.lancamentos, f.matriz.total, 1], [2], ['left', C, R, R]);
+    ws3.getCell(L, 4).numFmt = '0.0%';
+
+    // ---------- Aba 4: Pessoa x Categoria ----------
+    const ws4 = wb.addWorksheet('Pessoa x Categoria', { views: [{ showGridLines: false }] });
+    const largurasM = [30, ...f.matriz.categorias.map(() => 15), 16];
+    L = aporteXlCabecalho(wb, ws4, sub, idLogo, largurasM);
+    const nColsM = largurasM.length;
+    aporteXlTituloTabela(ws4, L, 'Gastos por colaborador × categoria', nColsM); L++;
+    const alinhaM = ['left', ...f.matriz.categorias.map(() => R), R];
+    const moedaM = f.matriz.categorias.map((_, i) => i + 1).concat([nColsM - 1]);
+    aporteXlCabecalhoColunas(ws4, L, ['Colaborador', ...f.matriz.categorias, 'Total'], alinhaM);
+    const cabMatriz = L; L++;
+    L = aporteXlCorpo(ws4, L, f.matriz.linhas.map(l => [l.nome, ...l.valores, l.total]), moedaM, alinhaM);
+    aporteXlTotal(ws4, L, ['Total', ...f.matriz.totaisPorCategoria, f.matriz.total], moedaM, alinhaM);
+    // Congela o nome e o cabecalho: com onze categorias, rolar para a direita
+    // sem o nome a vista deixa o quadro ilegivel.
+    ws4.views = [{ state: 'frozen', xSplit: 1, ySplit: cabMatriz, showGridLines: false }];
+
+    // ---------- Aba 5: Solicitacoes ----------
+    const ws5 = wb.addWorksheet('Solicitações', { views: [{ showGridLines: false }] });
+    const alinha5 = ['left', 'left', C, 'left', C, C, R, R, R, R, 'left'];
+    L = aporteXlCabecalho(wb, ws5, sub, idLogo, [28, 10, 8, 22, 12, 12, 16, 16, 16, 16, 22]);
+    aporteXlTituloTabela(ws5, L, 'Solicitações do período', 11); L++;
+    aporteXlCabecalhoColunas(ws5, L, ['Colaborador', 'OT', 'Tier', 'Local / destinos', 'Início', 'Fim', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência', 'Situação'], alinha5); L++;
+    L = aporteXlCorpo(ws5, L, f.sols.map(s => [s.colaborador_name, s.ordem_trabalho || '—', s.tier,
+      `${LOCAL_LABEL[s.categoria_local]}${viaticosDestinoTxt(s) ? ' — ' + viaticosDestinoTxt(s) : ''}`,
+      s.data_inicio, s.data_fim, vlr(s.valor_liberado), vlr(s.valor_comprovado), vlr(s.valor_devolvido), pendenciaDe(s),
+      VIA_STATUS_LABEL[s.status]]), [6, 7, 8, 9], alinha5);
+    aporteXlTotal(ws5, L, ['Total', '', '', '', '', '', k.liberado, k.comprovado, k.devolvido, k.pendencia, ''], [6, 7, 8, 9], alinha5);
+
+    // ---------- Aba 6: Extrato ----------
+    const ws6 = wb.addWorksheet('Extrato', { views: [{ showGridLines: false }] });
+    const alinha6 = ['left', 'left', 'left', C, 'left', 'left', R];
+    L = aporteXlCabecalho(wb, ws6, sub, idLogo, [28, 10, 22, 12, 20, 46, 16]);
+    aporteXlTituloTabela(ws6, L, 'Extrato completo de gastos', 7); L++;
+    aporteXlCabecalhoColunas(ws6, L, ['Colaborador', 'OT', 'Período', 'Data', 'Categoria', 'Descrição', 'Valor'], alinha6);
+    const cabExtrato = L; L++;
+    L = aporteXlCorpo(ws6, L, f.itens.map(i => [i.colaborador, i.ot, i.periodo, i.data, i.categoria, i.descricao, vlr(i.valor)]), [6], alinha6);
+    aporteXlTotal(ws6, L, ['Total', '', '', '', '', '', f.matriz.total], [6], alinha6);
+    // Cabecalho congelado e autofiltro: o extrato e a aba que a pessoa garimpa.
+    ws6.views = [{ state: 'frozen', ySplit: cabExtrato, showGridLines: false }];
+    if (f.itens.length) ws6.autoFilter = { from: { row: cabExtrato, column: 1 }, to: { row: L - 1, column: 7 } };
+
+    const buf = await wb.xlsx.writeBuffer();
+    aporteBaixarPlanilha(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      `viaticos_fechamento_${todayISO()}.xlsx`);
+    toast('Excel de fechamento gerado.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o Excel: ' + e.message);
+  }
+}
+
+// Reserva sem estilo, para o caso de o ExcelJS nao ter carregado.
+function exportViaticosFechamentoExcelSimples(f) {
+  if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const MONEY = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+  const wb = XLSX.utils.book_new();
+  const add = (nome, aoa, colsMoeda) => {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    for (let r = 1; r < aoa.length; r++) {
+      (colsMoeda || []).forEach(ci => {
+        const ref = XLSX.utils.encode_cell({ r, c: ci });
+        if (ws[ref]) ws[ref].z = MONEY;
+      });
+    }
+    XLSX.utils.book_append_sheet(wb, ws, nome);
+  };
+  const k = f.kpis;
+  add('Resumo', [['Indicador', 'Valor'],
+    ['Viagens', k.solicitacoes], ['Colaboradores', k.colaboradores], ['Lançamentos', k.lancamentos],
+    ['Solicitado', k.solicitado], ['Liberado', k.liberado], ['Comprovado', k.comprovado],
+    ['Devolvido', k.devolvido], ['Pendência', k.pendencia]], [1]);
+  add('Prestação de contas', [['Situação', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência'],
+    ...f.porStatus.map(l => [l.rotulo, l.qtd, l.liberado, l.comprovado, l.devolvido, l.pendencia])], [2, 3, 4, 5]);
+  add('Por colaborador', [['Colaborador', 'Viagens', 'Liberado', 'Comprovado', 'Devolvido', 'Pendência'],
+    ...f.porColaborador.map(l => [l.nome, l.viagens, l.liberado, l.comprovado, l.devolvido, l.pendencia])], [2, 3, 4, 5]);
+  add('Por categoria', [['Categoria', 'Lançamentos', 'Total', '% do comprovado'],
+    ...f.porCategoria.map(l => [l.categoria, l.lancamentos, l.total, l.pct])], [2]);
+  add('Pessoa x Categoria', [['Colaborador', ...f.matriz.categorias, 'Total'],
+    ...f.matriz.linhas.map(l => [l.nome, ...l.valores, l.total])],
+    f.matriz.categorias.map((_, i) => i + 1).concat([f.matriz.categorias.length + 1]));
+  add('Extrato', [['Colaborador', 'OT', 'Período', 'Data', 'Categoria', 'Descrição', 'Valor'],
+    ...f.itens.map(i => [i.colaborador, i.ot, i.periodo, i.data, i.categoria, i.descricao, vlr(i.valor)])], [6]);
+  XLSX.writeFile(wb, `viaticos_fechamento_${todayISO()}.xlsx`);
+  toast('Excel de fechamento gerado (sem formatação).');
 }
 
 
@@ -3772,27 +4106,65 @@ async function renderViaticos() {
     $('#btn-new').onclick = () => formSolicitacao(null);
     $('#btn-config').onclick = () => renderViaticosConfig();
   }
-  $('#btn-export').onclick = () => openModal('Exportar Viáticos',
-    `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>`,
+  // Exportar: primeiro QUAL relatorio, depois em qual formato. A ordem importa —
+  // perguntar o formato antes obrigava a pessoa a decidir "PDF ou Excel" sem
+  // saber ainda o que ia sair. Os tres respeitam os filtros da tela.
+  $('#btn-export').onclick = () => {
+    const rotulo = viaticosPeriodoRotulo(lastFiltered, $('#f-de').value, $('#f-ate').value);
+    openModal('Exportar Viáticos', `
+      <p style="font-size:13.5px; color:var(--ink-2); margin-bottom:4px">Qual relatório você quer?</p>
+      <p style="font-size:12px; color:var(--muted); margin-bottom:14px">${esc(rotulo)} · ${lastFiltered.length} solicitação(ões) no filtro atual.</p>
+      <div class="rel-opcoes">
+        <button class="rel-opcao" data-rel="resumo" type="button">
+          <strong>1. Resumo</strong>
+          <span>Uma linha por viagem, exatamente o que está na tela: colaborador, local, período, liberado, comprovado e situação.</span>
+        </button>
+        <button class="rel-opcao" data-rel="extrato" type="button">
+          <strong>2. Extrato completo</strong>
+          <span>Gasto por gasto das viagens filtradas, com data, categoria, descrição e valor de cada lançamento.</span>
+        </button>
+        <button class="rel-opcao" data-rel="fechamento" type="button">
+          <strong>3. Fechamento do período</strong>
+          <span>Documento gerencial: prestação de contas por situação, gastos por colaborador, por categoria, o quadro colaborador × categoria e o extrato completo.</span>
+        </button>
+      </div>`,
+      [{ label: 'Cancelar', onClick: closeModal }]);
+    document.querySelectorAll('.rel-opcao').forEach(b => b.onclick = () => {
+      closeModal();
+      askViaticosFormato(b.dataset.rel, rotulo);
+    });
+  };
+
+  const REL_TITULO = { resumo: 'Resumo', extrato: 'Extrato completo', fechamento: 'Fechamento do período' };
+  const askViaticosFormato = (rel, rotulo) => openModal(`Exportar — ${REL_TITULO[rel]}`,
+    `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato?</p>
+     <p style="font-size:12px; color:var(--muted); margin-top:6px">${rel === 'fechamento'
+        ? 'O Excel sai com uma aba por bloco (resumo, colaborador, categoria, quadro cruzado, solicitações e extrato). O PDF traz tudo num documento só.'
+        : 'O PDF segue o padrão de relatório da plataforma; o Excel sai pronto para dar continuidade na planilha.'}</p>`,
     [
       { label: 'Cancelar', onClick: closeModal },
-      { label: 'Excel', onClick: () => { closeModal(); askViaticosModo('excel'); } },
-      { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); askViaticosModo('pdf'); } }
+      { label: 'Excel', onClick: () => { closeModal(); gerarViaticosRelatorio(rel, 'excel', rotulo); } },
+      { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); gerarViaticosRelatorio(rel, 'pdf', rotulo); } }
     ]);
-  const askViaticosModo = formato => openModal('Exportar Viáticos',
-    `<p style="font-size:13.5px; color:var(--ink-2)">Deseja o relatório <strong>resumido</strong> (uma linha por solicitação) ou o <strong>completo</strong> (todo o detalhamento de gastos, ordem por ordem)?</p>`,
-    [
-      { label: 'Cancelar', onClick: closeModal },
-      { label: 'Resumido', onClick: () => { closeModal(); formato === 'pdf' ? exportViaticosResumoPDF(lastFiltered) : exportViaticosResumoExcel(lastFiltered); } },
-      { label: 'Completo', cls: 'primary', onClick: async () => {
-          closeModal();
-          try {
-            toast('Preparando relatório completo…');
-            const itens = await buildViaticosItens(lastFiltered);
-            formato === 'pdf' ? exportViaticosDetalhadoPDF(itens) : exportViaticosDetalhadoExcel(itens);
-          } catch (e) { toast(e.message || 'Não foi possível montar o relatório completo.'); }
-      } }
-    ]);
+
+  async function gerarViaticosRelatorio(rel, formato, rotulo) {
+    const ctx = { subtitulo: rotulo };
+    try {
+      if (rel === 'resumo') {
+        return formato === 'pdf' ? exportViaticosResumoPDF(lastFiltered, ctx) : exportViaticosResumoExcel(lastFiltered);
+      }
+      toast(rel === 'fechamento' ? 'Montando o fechamento…' : 'Preparando o extrato…');
+      if (rel === 'extrato') {
+        const itens = await buildViaticosItens(lastFiltered);
+        return formato === 'pdf' ? exportViaticosDetalhadoPDF(itens, ctx) : exportViaticosDetalhadoExcel(itens);
+      }
+      const f = await buildViaticosFechamento(lastFiltered, { rotulo });
+      return formato === 'pdf' ? exportViaticosFechamentoPDF(f) : exportViaticosFechamentoExcel(f);
+    } catch (e) {
+      toast(e.message || 'Não foi possível montar o relatório.');
+    }
+  }
+
   draw();
 
   // Veio de um bookmark antigo de #via-solicitar: abre o assistente direto,

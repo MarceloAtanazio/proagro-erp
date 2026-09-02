@@ -786,3 +786,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 }
 /* O padrao do navegador e azul, que briga com o verde do sistema. */
 .tbl-flash .fl-inc { width: 16px; height: 16px; accent-color: var(--verde-700); cursor: pointer; }
+
+/* ===== Escolha de relatorio (Exportar Viaticos) =====
+   Tres opcoes que precisam de uma frase de explicacao cada: como lista de
+   botoes largos, e possivel ler o que cada relatorio traz antes de clicar.
+   Com os botoes do rodape do modal isso nao caberia -- rotulo de botao nao
+   comporta duas linhas de texto. */
+.rel-opcoes { display: flex; flex-direction: column; gap: 8px; }
+.rel-opcao {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; font: inherit;
+}
+.rel-opcao:hover { border-color: var(--verde-500); background: var(--verde-050); }
+.rel-opcao strong { display: block; font-size: 14px; color: var(--verde-700); margin-bottom: 3px; }
+.rel-opcao span { display: block; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
