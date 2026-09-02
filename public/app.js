@@ -135,6 +135,7 @@ function openModal(title, bodyHTML, buttons, opts) {
   $('#modal-body').innerHTML = bodyHTML;
   document.querySelector('.modal').classList.toggle('modal-wide', !!(opts && opts.wide));
   document.querySelector('.modal').classList.toggle('modal-xwide', !!(opts && opts.xwide));
+  document.querySelector('.modal').classList.toggle('modal-fluid', !!(opts && opts.fluid));
   const foot = $('#modal-footer'); foot.innerHTML = '';
   (buttons || []).forEach(b => {
     const btn = el('button', 'btn ' + (b.cls || ''), b.label);
@@ -4359,7 +4360,7 @@ async function importarFlashModal(s) {
   openModal(`Importar lançamentos do Flash — ${esc(s.colaborador_name)}`, `
     <div class="field"><label>Arquivo de comprovação do Flash (.xlsx)</label><input type="file" id="fl-file" accept=".xlsx,.xls"></div>
     <div id="fl-preview"></div>`,
-    [{ label: 'Voltar', onClick: () => viewSolicitacao(s.id) }]);
+    [{ label: 'Voltar', onClick: () => viewSolicitacao(s.id) }], { fluid: true });
 
   let rows = [];
   let avisos = [];
@@ -4376,8 +4377,9 @@ async function importarFlashModal(s) {
       <div class="alert-item ${pendentes ? 'warn' : 'ok'}" style="margin:12px 0">
         ${pendentes ? '⚠️' : '✅'} ${prontos} lançamento(s) prontos para importar${pendentes ? ` · ${pendentes} pendência(s) — escolha a categoria ou desmarque para ignorar` : ''}.
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Categoria</th><th>Incluir</th></tr></thead>
+      <div class="table-wrap"><table class="tbl-flash">
+        <colgroup><col class="c-fl-data"><col class="c-fl-desc"><col class="c-fl-valor"><col class="c-fl-cat"><col class="c-fl-inc"></colgroup>
+        <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Categoria</th><th class="c-inc">Incluir</th></tr></thead>
         <tbody>${rows.map((r, i) => `<tr>
           <td>${brDate(r.data)}</td>
           <td>${esc(r.descricao)}${!r.categoria ? `<br><small style="color:#B23A2F">Conceito "${esc(r.conceitoOriginal)}" não reconhecido</small>` : ''}</td>
@@ -4386,7 +4388,7 @@ async function importarFlashModal(s) {
             <option value="">— Pendência —</option>
             ${Object.entries(DESP_CAT_LABEL).map(([v, t]) => `<option value="${v}" ${r.categoria === v ? 'selected' : ''}>${t}</option>`).join('')}
           </select></td>
-          <td><input type="checkbox" class="fl-inc" data-idx="${i}" ${r.categoria ? 'checked' : ''}></td>
+          <td class="c-inc"><input type="checkbox" class="fl-inc" data-idx="${i}" ${r.categoria ? 'checked' : ''}></td>
         </tr>`).join('')}</tbody>
       </table></div>
       <button class="btn primary" id="fl-confirm" type="button" style="margin-top:14px">Confirmar importação</button>`;

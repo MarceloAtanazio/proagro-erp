@@ -746,3 +746,34 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .ct-acoes .btn.sm { margin: 0; padding: 4px 8px; font-size: 11.5px; }
 .tbl-contratos .att-btn { min-width: 36px; }
 .tbl-contratos .chip { display: inline-block; line-height: 1.5; }
+
+/* ===== Modal de largura livre =====
+   As tres larguras fixas (560px padrao, 900 do wide, 1040 do xwide) servem para
+   formulario, onde linha longa demais fica ruim de ler. Nao servem para tabela
+   de conferencia: a da importacao do Flash tem cinco colunas e, presa em 560px,
+   cortava o select de categoria no meio e empurrava a coluna Incluir para fora,
+   atras da rolagem horizontal. Sem max-width o modal ocupa o que a tela der,
+   menos o respiro de 16px que o .modal-back ja reserva de cada lado. */
+.modal.modal-fluid { max-width: none; }
+
+/* ===== Importacao do Flash — conferencia dos lancamentos =====
+   Larguras em pixel, nao em porcentagem: este modal muda de largura conforme a
+   tela, e Data, Valor, Categoria e Incluir guardam conteudo de tamanho conhecido.
+   Descricao fica com "auto" e absorve toda a sobra — e ela que precisa, porque
+   os lancamentos do Flash vem com textos longos ("WWWEmba*EMB*Viacaogar Curitiba
+   BRA Transporte publico") que antes quebravam em quatro linhas. */
+.tbl-flash { table-layout: fixed; }
+.tbl-flash col.c-fl-data  { width: 100px; }
+.tbl-flash col.c-fl-desc  { width: auto; }
+.tbl-flash col.c-fl-valor { width: 110px; }
+.tbl-flash col.c-fl-cat   { width: 230px; }
+.tbl-flash col.c-fl-inc   { width: 80px; }
+.tbl-flash td { vertical-align: top; }
+.tbl-flash td:first-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tbl-flash .c-inc { text-align: center; }
+/* O select ocupa a coluna inteira: em largura automatica ele encostava na borda
+   do modal e o rotulo saia cortado ("Passagem de O..."). */
+.tbl-flash .fl-cat {
+  width: 100%; padding: 5px 8px; border: 1px solid var(--line);
+  border-radius: 6px; background: #fff; font-size: 13px;
+}

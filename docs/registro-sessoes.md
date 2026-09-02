@@ -1294,3 +1294,62 @@ e remover Próx. parcela.
   caberem em uma linha, essas duas colunas precisariam de mais espaço do que a tabela tem.
 - **Limite conhecido:** seis botões ainda pedem 362px contra 329 disponíveis, então essa
   combinação continua quebrando em duas linhas.
+
+---
+
+## 2026-09-02 — Modal de importação do Flash com largura livre
+
+**Pedido:** o modal "Importar lançamentos do Flash", em Viáticos, estava cortando informação
+à direita — expandir para os dois lados e deixá-lo livre para se adaptar à resolução em uso.
+
+### A causa
+`openModal` tem três larguras e todas são fixas: 560px por padrão, 900px com `modal-wide` e
+1040px com `modal-xwide`. Faz sentido para formulário, onde linha longa demais fica ruim de
+ler. Não faz para tabela de conferência: a da importação do Flash tem cinco colunas e,
+presa nos 560px do padrão, cortava o select de categoria no meio ("Passagem de Ô…") e
+empurrava a coluna **Incluir** inteira para fora, atrás da rolagem horizontal do
+`.table-wrap` — quem não rolasse não veria que existia.
+
+### O que foi feito
+- **`openModal` aceita `{ fluid: true }`**, que aplica a classe `modal-fluid`. No CSS,
+  `.modal.modal-fluid { max-width: none; }` — sem teto, o modal ocupa o que a tela der,
+  menos os 16px de respiro que o `.modal-back` já reserva de cada lado. É o que deixa a
+  largura acompanhar a resolução em vez de um número escolhido a dedo.
+- **A tabela de conferência ganhou `<colgroup>`** com `table-layout: fixed`. As larguras
+  são em pixel, não em porcentagem, porque este modal muda de largura conforme a tela e
+  Data (100px), Valor (110px), Categoria (230px) e Incluir (80px) guardam conteúdo de
+  tamanho conhecido. **Descrição fica com `auto`** e absorve toda a sobra — é ela que
+  precisa, porque os lançamentos do Flash vêm com textos longos que antes quebravam em
+  três ou quatro linhas.
+- **O select de categoria passou a ocupar a coluna inteira** (`width: 100%`), com a mesma
+  borda e raio dos outros campos do sistema. Em largura automática ele encostava na borda
+  do modal e o rótulo saía cortado.
+- A célula do checkbox e seu cabeçalho ficaram centralizados (`.c-inc`).
+
+### Verificação
+Medido num mock que carrega o `styles.css` real, em três resoluções:
+
+| Viewport | Modal | Coluna Descrição | Select | Corte / rolagem |
+|---|---|---|---|---|
+| 1908px | 1876px | 1310px | 202px | nenhum |
+| 1366px | 1319px | 754px | 202px | nenhum |
+| 900px | 853px | 287px | 202px | nenhum |
+
+- Nenhuma célula, cabeçalho ou select com `scrollWidth` maior que `clientWidth` em qualquer
+  das três; `.table-wrap` sem rolagem horizontal; página sem rolagem horizontal.
+- Com 1876px, o select mostra "Passagem de Ônibus" inteiro — 126px de texto em 202px de
+  campo (antes o rótulo saía cortado).
+- Todas as descrições em **uma linha** (a mais longa mede 381px, contra 1282 disponíveis).
+  As linhas de 63px de altura são as que trazem o aviso "Conceito não reconhecido" embaixo;
+  as demais ficaram em 52–53px.
+
+### Observações
+- **Efeito colateral em tela larga:** a 1908px a coluna Descrição fica com 1310px para um
+  texto que usa 381px, então sobra bastante espaço vazio. É o preço de "sem teto", que foi
+  o que se pediu. Se incomodar, um teto (`max-width: min(100%, 1240px)`) é uma linha.
+- Este commit foi montado **isolado**: a árvore de trabalho tinha, ao mesmo tempo, trabalho
+  não commitado de outra sessão no mesmo `public/app.js` (importação idempotente do Flash —
+  `api/index.js`, a migração `2026-09-01-flash-import-idempotente.sql` e `tests/`). Como
+  aquela mudança depende de uma migração ainda não aplicada, subir tudo junto poderia
+  quebrar a importação em produção. O commit foi construído a partir do `HEAD` com apenas as
+  quatro edições desta sessão, via índice temporário; a árvore de trabalho não foi tocada.
