@@ -614,7 +614,13 @@ app.delete('/api/contratos/:id', requireAuth, requireEdit('contratos'), h(async 
 app.get('/api/payables', requireAuth, requireViewAny(['pagar']), h(async (req, res) => {
   const rows = await query(`
     SELECT p.*, s.name AS supplier_name,
-      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='payable' AND a.entity_id=p.id) AS attachment_count
+      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='payable' AND a.entity_id=p.id) AS attachment_count,
+      -- Conciliado = existe movimentacao bancaria conciliada apontando para este
+      -- titulo. EXISTS e nao JOIN: hoje nenhum titulo tem mais de uma linha do
+      -- extrato conciliada, mas nada no schema impede -- e com JOIN o titulo
+      -- apareceria duplicado na listagem no dia em que acontecer.
+      EXISTS (SELECT 1 FROM erp_bank_transactions b
+              WHERE b.matched_type='payable' AND b.matched_id=p.id AND b.reconciled=true) AS reconciled
     FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
     ORDER BY p.due_date`);
   res.json(rows);

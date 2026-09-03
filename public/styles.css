@@ -663,15 +663,16 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    sozinho — isso é o que causou "PAGA/MENT/O" antes. */
 .tbl-pagar thead th { text-align: center; white-space: normal; }
 .tbl-pagar col.c-id { width: 3%; }
-.tbl-pagar col.c-venc { width: 8%; }
-.tbl-pagar col.c-desc { width: 18%; }
-.tbl-pagar col.c-forn { width: 16%; }
+.tbl-pagar col.c-venc { width: 7%; }
+.tbl-pagar col.c-desc { width: 16%; }
+.tbl-pagar col.c-forn { width: 15%; }
 .tbl-pagar col.c-cat { width: 10%; }
 .tbl-pagar col.c-cc { width: 10%; }
-.tbl-pagar col.c-pm { width: 7%; }
-.tbl-pagar col.c-val { width: 10%; }
+.tbl-pagar col.c-pm { width: 6%; }
+.tbl-pagar col.c-val { width: 9%; }
 .tbl-pagar col.c-status { width: 7%; }
-.tbl-pagar col.c-acoes { width: 11%; }
+.tbl-pagar col.c-conc { width: 7%; }
+.tbl-pagar col.c-acoes { width: 10%; }
 .tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
@@ -801,3 +802,13 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rel-opcao:hover { border-color: var(--verde-500); background: var(--verde-050); }
 .rel-opcao strong { display: block; font-size: 14px; color: var(--verde-700); margin-bottom: 3px; }
 .rel-opcao span { display: block; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
+
+/* ===== Contas a Pagar — coluna "Conciliado?" =====
+   A pergunta so faz sentido para titulo ja baixado: pendente ainda nao tem o
+   que conciliar, e marcar tudo de vermelho seria alarme falso na tela inteira.
+   Por isso sao tres estados, nao dois. */
+.tbl-pagar .c-conc-cell { text-align: center; }
+.tbl-pagar .conc-sim, .tbl-pagar .conc-nao { font-size: 15px; font-weight: 700; line-height: 1; cursor: default; }
+.tbl-pagar .conc-sim { color: var(--verde-700); }
+.tbl-pagar .conc-nao { color: var(--danger); }
+.tbl-pagar .conc-na  { color: var(--muted); cursor: default; }

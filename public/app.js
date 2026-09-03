@@ -705,10 +705,10 @@ async function renderPagar() {
     $('#tbl').innerHTML = `
       <colgroup>
         <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc"><col class="c-pm">
-        <col class="c-val"><col class="c-status"><col class="c-acoes">
+        <col class="c-val"><col class="c-status"><col class="c-conc"><col class="c-acoes">
       </colgroup>
       <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de<br>Pagamento</th>
-        <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
+        <th class="num">Valor</th><th>Status</th><th class="c-conc-cell">Conciliado?</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
@@ -723,14 +723,19 @@ async function renderPagar() {
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
+          <td class="c-conc-cell">${r.status !== 'pago'
+            ? '<span class="conc-na" title="Título ainda não baixado — não há o que conciliar">—</span>'
+            : r.reconciled
+              ? '<span class="conc-sim" title="Há uma movimentação bancária conciliada com este título">✔</span>'
+              : '<span class="conc-nao" title="Baixado, mas sem movimentação bancária conciliada">✘</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente' ? `<button class="btn sm primary" data-pay="${r.id}">Baixar</button>` : `<button class="btn sm" data-unpay="${r.id}">Estornar</button>`}
             <button class="btn sm att-btn" data-att="payable:${r.id}">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="10"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="7">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="11"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="7">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="3"></td></tr></tfoot>`;
 
 
 

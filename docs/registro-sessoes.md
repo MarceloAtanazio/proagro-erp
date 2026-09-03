@@ -1706,3 +1706,45 @@ páginas (OvR) e 2 e 3 (Orçamento).
 
 ### Pendência
 Conferência visual dos PDFs com o usuário — o ambiente não renderiza PDF.
+Uma coluna que sempre diz a mesma coisa é ruído. Duas conferências no banco de produção:
+
+1. **Ninguém cria movimentação bancária automática.** A coluna `auto_generated` existe e há
+   limpeza de linhas legadas, mas nenhum `INSERT` do código atual a marca como `true` — ou seja,
+   conciliar é ação real, não subproduto da baixa.
+2. **Os números:** 255 títulos pagos, **253 conciliados e 2 não**; nenhum pendente conciliado.
+
+Os dois não conciliados são o ID 143 (Condomínio + IPTU de setembro, R$ 4.260,39) e o ID 210
+(Uniformes, R$ 9.415,00), ambos pagos em 01/09 — provavelmente o extrato do dia ainda não foi
+importado. A coluna acha agulha; vale.
+
+### Três estados, não dois
+A pergunta só faz sentido para título **baixado**. Pendente ainda não tem o que conciliar, e
+pintar a tela inteira de ✘ vermelho seria alarme falso. Então: **✔ verde** (pago e conciliado),
+**✘ vermelho** (pago sem conciliar) e **—** cinza (ainda não baixado). Cada um com `title`
+explicando o motivo.
+
+### Implementação
+- `GET /api/payables` passou a devolver `reconciled`, via **`EXISTS`** sobre
+  `erp_bank_transactions` com `matched_type='payable'` e `reconciled=true`.
+  `EXISTS` e não `JOIN`: hoje nenhum título tem duas linhas do extrato conciliadas — conferi —,
+  mas nada no schema impede, e com `JOIN` o título apareceria duplicado na listagem no dia em
+  que acontecer.
+- Coluna nova no `<colgroup>` da `.tbl-pagar` e no cabeçalho, com `colspan` do estado vazio e do
+  rodapé corrigidos de 10/2 para 11/3.
+- Larguras redistribuídas para a soma continuar em 100%: Descrição 18→16, Fornecedor 16→15,
+  Valor 10→9, Forma de pagamento 7→6, Ações 11→10, Vencimento 8→7, e 7% para a coluna nova.
+  Vencimento cedeu porque 130px para uma data de dez caracteres era folga pura.
+
+### Verificação
+- **10 checagens** com o Express real e banco stubado: a rota devolve `reconciled` booleano em
+  todo título; pago+conciliado → `true`; pago sem movimentação → `false`; movimentação **não
+  conciliada** não conta; movimentação de **recebível** não vaza para o pagável de mesmo id; e o
+  título com **duas** movimentações conciliadas volta como **uma linha só** — o caso que um
+  `JOIN` duplicaria. Duas das checagens leem o `api/index.js` e exigem que a consulta real use o
+  `EXISTS`, senão o stub estaria testando algo que o código não faz.
+- **Contra o banco de produção:** a mesma consulta devolve 392 títulos para 392 existentes
+  (nenhuma duplicação), com 253/2/0.
+- **Na tela**, a 1908px: 11 colunas no cabeçalho e no corpo, ✔ em `rgb(0,120,63)`, ✘ em
+  `rgb(178,58,47)`, — em cinza, nenhuma célula transbordando e sem rolagem horizontal.
+  O cabeçalho "Conciliado?" transbordava com 6% de largura; por isso foi para 7%.
+- As 24 verificações da outra sessão seguem passando.
