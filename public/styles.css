@@ -671,7 +671,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-pagar col.c-val    { width: 116px; }
 .tbl-pagar col.c-status { width: 140px; }
 .tbl-pagar col.c-conc   { width: 66px; }
-.tbl-pagar col.c-acoes  { width: 272px; }
+.tbl-pagar col.c-acoes  { width: 172px; }
 .tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
@@ -703,7 +703,27 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-pagar thead th.actions { background: #FAFBFA; }
 .tbl-pagar tbody tr:hover td.actions { background: #FAFCFA; }
 .tbl-pagar tfoot td:last-child { background: #FAFBFA; }
-.tbl-pagar td.actions .btn { margin: 1px 4px 1px 0; }
+.tbl-pagar td.actions .btn-ic { margin: 0 4px 0 0; }
+
+/* Botao de icone da grade: o rotulo vive no title e no aria-label, nao no
+   proprio botao. Sao as mesmas quatro acoes de antes, num terco da largura --
+   com texto elas ocupavam 272px, a coluna fixa mais larga da tabela, e ainda
+   assim a de fornecedor quebrava. */
+.btn-ic {
+  width: 30px; height: 26px; padding: 0; vertical-align: middle;
+  border: 1px solid var(--line); background: #fff; border-radius: 7px;
+  cursor: pointer; font-size: 14px; line-height: 1; color: var(--ink-2);
+  font-family: inherit;
+}
+.btn-ic:hover { border-color: #C8D2CC; background: #FAFBFA; }
+.btn-ic:disabled { opacity: .5; cursor: default; }
+/* A baixa e a acao principal da linha pendente, entao ganha a cor da marca. */
+.btn-ic.ok { color: var(--verde-700); border-color: var(--verde-500); }
+/* O excluir so fica vermelho ao ser mirado: em repouso, quatro icones em cores
+   diferentes viram ruido numa lista longa. */
+.btn-ic.perigo:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-050); }
+/* Contagem de anexos ao lado do clipe, como era no botao de texto. */
+.ic-cont { font-size: 10px; margin-left: 1px; vertical-align: super; color: var(--muted); }
 /* O cabecalho desta coluna e mais largo que o simbolo que ela guarda; com o
    espacamento de letra menor "Conc." cabe sem cortar. */
 .tbl-pagar thead th:nth-child(8) { letter-spacing: .02em; }

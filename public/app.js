@@ -729,10 +729,12 @@ async function renderPagar() {
               ? '<span class="conc-sim" title="Há uma movimentação bancária conciliada com este título">✔</span>'
               : '<span class="conc-nao" title="Baixado, mas sem movimentação bancária conciliada">✘</span>'}</td>
           <td class="actions">
-            ${r.status === 'pendente' ? `<button class="btn sm primary" data-pay="${r.id}">Baixar</button>` : `<button class="btn sm" data-unpay="${r.id}">Estornar</button>`}
-            <button class="btn sm att-btn" data-att="payable:${r.id}">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
-            <button class="btn sm" data-edit="${r.id}">Editar</button>
-            <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
+            ${r.status === 'pendente'
+              ? `<button class="btn-ic ok" data-pay="${r.id}" title="Dar baixa neste título" aria-label="Dar baixa">✓</button>`
+              : `<button class="btn-ic" data-unpay="${r.id}" title="Estornar a baixa" aria-label="Estornar a baixa">↺</button>`}
+            <button class="btn-ic" data-att="payable:${r.id}" title="Anexos deste título" aria-label="Anexos">📎${r.attachment_count ? `<span class="ic-cont">${r.attachment_count}</span>` : ''}</button>
+            <button class="btn-ic" data-edit="${r.id}" title="Editar" aria-label="Editar">✎</button>
+            <button class="btn-ic perigo" data-del="${r.id}" title="Excluir" aria-label="Excluir">🗑</button>
           </td></tr>`;
       }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
       <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="3"></td></tr></tfoot>`;

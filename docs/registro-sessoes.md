@@ -1553,7 +1553,6 @@ Não foi possível renderizar os PDFs neste ambiente (sem poppler), então a con
 ficou com o usuário — os quatro arquivos gerados foram enviados. O cabeçalho e o rodapé são o
 código que já estava em produção, agora numa função só, então a identidade é preservada por
 construção, não por semelhança.
-construção, não por semelhança.
 
 ## 2026-09-02 — Excel do fechamento: nome da aba no título e o cabeçalho sem as linhas vazias
 
@@ -1596,10 +1595,6 @@ na primeira tentativa):
 
 Conferido também que `aporteXlCabecalho` **sem** o parâmetro novo continua devolvendo
 "Solicitação de Aporte", e que numa aba estreita o logo encolhe de 150×35 para 120×28 em vez
-de estourar.
-
-### Pendência
-A conferência visual do logo ficou com o usuário — o ambiente não renderiza planilha.
 de estourar.
 
 ### Pendência
@@ -1660,6 +1655,12 @@ Aporte"), conteúdo na linha 7, e que os totais fecham: grade de despesas com Ja
 
 ### Pendência
 Conferência visual dos PDFs com o usuário — o ambiente não renderiza PDF.
+
+## 2026-09-03 — Cada análise na sua tela: Orçamento sem confronto, e Orçado × Realizado ganha relatórios
+
+**Pedido:** em "Orçamento Anual" a análise deve ser **só do orçamento**; o confronto pertence a
+"Orçado x Realizado", que também deve ganhar relatórios nos mesmos padrões.
+
 ### Orçamento Anual — o que saiu
 O confronto com o realizado foi removido inteiro: as duas seções do PDF, as três abas do Excel,
 os dois alertas que dependiam dele, o parâmetro `realizado` da análise, o helper
@@ -1706,6 +1707,13 @@ páginas (OvR) e 2 e 3 (Orçamento).
 
 ### Pendência
 Conferência visual dos PDFs com o usuário — o ambiente não renderiza PDF.
+
+## 2026-09-03 — Contas a Pagar: coluna "Conciliado?"
+
+**Pedido:** mostrar em Contas a Pagar se o título já baixado está conciliado, com ✔ verde e
+✘ vermelho.
+
+### Antes de escrever: a informação vale?
 Uma coluna que sempre diz a mesma coisa é ruído. Duas conferências no banco de produção:
 
 1. **Ninguém cria movimentação bancária automática.** A coluna `auto_generated` existe e há
@@ -1748,6 +1756,12 @@ explicando o motivo.
   `rgb(178,58,47)`, — em cinza, nenhuma célula transbordando e sem rolagem horizontal.
   O cabeçalho "Conciliado?" transbordava com 6% de largura; por isso foi para 7%.
 - As 24 verificações da outra sessão seguem passando.
+
+## 2026-09-03 — Contas a Pagar: densidade da tabela
+
+**Pedido:** os textos quebrados de Descrição e Fornecedor incomodam; parece haver espaço
+sobrando entre colunas; talvez diminuir a fonte ajude. O usuário pediu alternativas.
+
 ### A medição, antes de propor
 Comparando o que cada coluna recebia com o que o conteúdo pede (a 1908px, tabela de 1607px):
 
@@ -1795,6 +1809,7 @@ Sem rolagem horizontal, soma das larguras em 100%.
 O ganho da fonte menor foi verificado, não suposto: com as mesmas larguras e a fonte de hoje
 (proposta B, medida em paralelo), Descrição e Fornecedor continuavam quebrando em 5 das 9
 linhas. É a redução de 13,5 para 12,5px que leva as duas para uma quebra.
+
 ## 2026-09-03 — Contas a Pagar: sai a Forma de Pagamento da grade, volta a fonte, fecha o vão
 
 **Pedido:** tirar "Forma de Pagamento" **só da tela de listagem** (mantendo no cadastro e nos
@@ -1835,6 +1850,11 @@ O cabeçalho "Conc." ganhou `letter-spacing` menor para caber em 4% sem cortar.
 | Texto cortado | nenhum | nenhum |
 
 Sem rolagem horizontal; soma das larguras em 100%.
+
+## 2026-09-03 — Contas a Pagar: Categoria e Centro de Custo viram filtro, e as linhas estreitam
+
+**Pedido:** tirar as colunas "Categoria" e "Centro de Custo" da grade, devolver "Forma de
+Pagamento", transformar as duas removidas em filtros (Categoria já era), e estreitar as linhas
 como em Contas a Receber.
 
 ### O que mudou
@@ -1872,6 +1892,10 @@ Larguras: ID 3,5 · Vencimento 7 · Descrição 21 · Fornecedor 24 · Forma de 
 Valor 7 · Status 8,5 · Conc. 4 · Ações 17 = 100%.
 A coluna Valor precisou de 7% não pelos valores das linhas, mas pelo **total do rodapé**, que é
 maior que qualquer um deles e estava sendo cortado.
+
+## 2026-09-03 — Contas a Pagar: a tabela se adapta a telas menores
+
+**Relato:** numa tela menor, com o menu aberto ou recolhido, a tabela "quebrou tudo",
 principalmente os botões de ações.
 
 ### O que estava acontecendo
@@ -1907,3 +1931,58 @@ Medido em **1908, 1366, 1280 e 1100px**, com o menu **aberto e recolhido**:
 
 A 1908px a tabela ocupa 1606px sem rolagem, com a Descrição sem quebra e o Fornecedor quebrando
 nos dois nomes mais longos da base.
+
+---
+
+## 2026-09-03 — Contas a Pagar: a coluna "Ações" vira ícones
+
+**Pedido:** "Não gostei do comportamento da coluna 'Ações', esses botões mais atrapalham do que
+ajudam. Vamos otimizar eles?"
+
+### O que os botões custavam
+
+Quatro botões com texto — Baixar/Estornar, 📎, Editar, Excluir — ocupavam **272px**, a coluna
+fixa mais larga da tabela, numa tela em que Descrição e Fornecedor eram justamente as colunas
+que faltava espaço. Pior: em telas menores os quatro não cabiam numa linha e a coluna crescia
+em altura, empurrando a linha inteira para 64px.
+
+### As quatro alternativas medidas
+
+Montei as quatro lado a lado com o `styles.css` de produção e medi, em vez de opinar:
+
+| | Coluna Ações | Descrição/Fornecedor | Altura da linha | Lista de 7 títulos |
+|---|---|---|---|---|
+| Hoje — quatro botões com texto | 272px | 367px · Fornecedor quebra 2× | 64px | 388px |
+| **A — quatro ícones** | **172px** | **417px · 0 quebras** | **49px** | **343px** |
+| B — ação principal + anexo + menu | 170px | 418px · 0 quebras | 51px | 357px |
+| C — só o menu "⋯" | 72px | 467px · 0 quebras | 49px | 343px |
+
+C liberava mais espaço, mas cobrava dois cliques em toda ação. B escondia Editar e Excluir.
+A entrega quase o mesmo ganho **sem esconder nada** — foi a escolhida.
+
+### O que mudou
+
+- `public/app.js`: os quatro `.btn sm` viraram quatro `.btn-ic` — `✓` (dar baixa) ou `↺`
+  (estornar), `📎` com a contagem em `<span class="ic-cont">`, `✎` e `🗑`. Os atributos
+  `data-pay` / `data-unpay` / `data-att` / `data-edit` / `data-del` são **os mesmos**, então
+  nenhum handler precisou mudar (18 referências conferidas).
+- Cada ícone leva `title` e `aria-label` com o nome por extenso: o mouse vê o tooltip, o
+  leitor de tela ouve a ação.
+- `public/styles.css`: `col.c-acoes` de 272px para **172px**, e o novo bloco `.btn-ic`
+  (30×26px, borda fina, `✓` em verde, 🗑 em vermelho só no hover).
+
+### Medição na tela real (estrutura completa: sidebar + topbar + toolbar)
+
+| | 1908 aberto | 1366 ab./rec. | 1280 ab./rec. | 1100 ab./rec. |
+|---|---|---|---|---|
+| Células cortadas | 0 | 0 | 0 | 0 |
+| Ícones numa linha | sim | sim | sim | sim |
+| Ações visível depois de rolar | sim | sim | sim | sim |
+| Página alarga | não | não | não | não |
+
+A 1908px a tabela ocupa **1606px sem rolagem**, com Descrição e Fornecedor em **416px cada**
+e **nenhuma quebra** nos nomes mais longos da base. A altura da linha caiu de 64 para **50px**:
+a lista de 7 títulos passou de 388 para **344px**. Abaixo de 1366px a tabela chega ao seu
+`min-width` de 1220px e rola na horizontal, com a coluna Ações fixa à direita — nada é cortado.
+
+**Fora de escopo, de propósito:** Contas a Receber e Contratos seguem com os botões de texto.
