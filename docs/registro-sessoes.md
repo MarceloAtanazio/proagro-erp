@@ -1795,3 +1795,43 @@ Sem rolagem horizontal, soma das larguras em 100%.
 O ganho da fonte menor foi verificado, não suposto: com as mesmas larguras e a fonte de hoje
 (proposta B, medida em paralelo), Descrição e Fornecedor continuavam quebrando em 5 das 9
 linhas. É a redução de 13,5 para 12,5px que leva as duas para uma quebra.
+## 2026-09-03 — Contas a Pagar: sai a Forma de Pagamento da grade, volta a fonte, fecha o vão
+
+**Pedido:** tirar "Forma de Pagamento" **só da tela de listagem** (mantendo no cadastro e nos
+relatórios), fechar o espaço vazio entre "Conc." e "Ações", e voltar a fonte ao tamanho anterior.
+
+### Antes de remover, conferi onde o campo aparece
+Esconder um dado é diferente de reposicioná-lo. Confirmado que a forma de pagamento continua:
+no formulário (`fldSel('p-pm', …)`), no **CSV** (coluna `FormaPagamento` + `ChavePix`), no
+**Excel** (`'Forma de Pagamento'` + chave PIX) e no **PDF** (`PM_LABELS_PDF`). Só a grade ficou
+sem ela — `pm-cell` não existe mais no `app.js`.
+
+### O vão entre "Conc." e "Ações" tinha outra causa
+Não era largura: a regra geral do sistema (`td.actions { text-align: right }`) alinha as ações à
+direita, e como os quatro botões ocupam **duas linhas**, a de cima ficava empurrada para a ponta
+da célula. Era o mesmo defeito já corrigido na tabela de Contratos. Com `text-align: left` os
+botões começam onde a coluna começa e o cabeçalho "Ações" cai exatamente sobre eles.
+O vão caiu de **68px para 34px**; o resto é o padding legítimo das duas células.
+
+### Fonte
+Voltou para 13,5px, o tamanho do resto do sistema. **E o resultado ficou melhor do que com a
+fonte menor**: com uma coluna a menos, sobra espaço suficiente para o Fornecedor caber sem
+quebrar nenhuma vez — na versão anterior, com fonte 12,5px e 11 colunas, ele ainda quebrava.
+
+### Larguras (10 colunas)
+ID 3,5 · Vencimento 6 · **Descrição 20** · **Fornecedor 26,5** · Categoria 7,5 · Centro de Custo 7 ·
+Valor 6 · Status 8,5 · Conc. 4 · Ações 11 = 100%.
+O cabeçalho "Conc." ganhou `letter-spacing` menor para caber em 4% sem cortar.
+
+### Resultado medido (1908px)
+
+| | Antes (11 colunas, fonte 12,5) | Agora (10 colunas, fonte 13,5) |
+|---|---|---|
+| Descrição | 292px · 1 quebra | **321px · 1 quebra** |
+| Fornecedor | 357px · 1 quebra | **426px · nenhuma quebra** |
+| Vão Conc.→Ações | 68px | **34px** |
+| Cabeçalho "Ações" | desalinhado dos botões | **alinhado** |
+| Badge de status | sem quebra | sem quebra |
+| Texto cortado | nenhum | nenhum |
+
+Sem rolagem horizontal; soma das larguras em 100%.

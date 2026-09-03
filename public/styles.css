@@ -662,15 +662,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    então não precisamos (nem queremos) deixar o navegador quebrar palavras
    sozinho — isso é o que causou "PAGA/MENT/O" antes. */
 .tbl-pagar thead th { text-align: center; white-space: normal; }
-.tbl-pagar col.c-id { width: 3%; }
+.tbl-pagar col.c-id { width: 3.5%; }
 .tbl-pagar col.c-venc { width: 6%; }
-.tbl-pagar col.c-desc { width: 18%; }
-.tbl-pagar col.c-forn { width: 22%; }
+.tbl-pagar col.c-desc { width: 20%; }
+.tbl-pagar col.c-forn { width: 26.5%; }
 .tbl-pagar col.c-cat { width: 7.5%; }
-.tbl-pagar col.c-cc { width: 7.5%; }
-.tbl-pagar col.c-pm { width: 7.5%; }
-.tbl-pagar col.c-val { width: 5.5%; }
-.tbl-pagar col.c-status { width: 8%; }
+.tbl-pagar col.c-cc { width: 7%; }
+.tbl-pagar col.c-val { width: 6%; }
+.tbl-pagar col.c-status { width: 8.5%; }
 .tbl-pagar col.c-conc { width: 4%; }
 .tbl-pagar col.c-acoes { width: 11%; }
 .tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
@@ -679,7 +678,6 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-pagar td.actions .btn { margin: 2px 4px 2px 0; }
 .tbl-pagar td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tbl-pagar td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.tbl-pagar td.pm-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ===== Botão de anexos — largura fixa para não quebrar o layout da linha,
    com ou sem contagem exibida ===== */
@@ -816,27 +814,32 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    falta em Descricao e Fornecedor, que sao os campos livres. A fonte cai para
    12,5px pelo mesmo motivo -- e o que leva Fornecedor de cinco quebras para
    duas. */
-.tbl-pagar { font-size: 12.5px; }
-.tbl-pagar .btn.sm { padding: 3px 7px; font-size: 11.5px; }
 /* Colunas estreitas: padding lateral menor, no corpo e no cabecalho. */
-.tbl-pagar .id-cell, .tbl-pagar .venc-cell, .tbl-pagar .pm-cell,
-.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(9),
+.tbl-pagar .id-cell, .tbl-pagar .venc-cell,
+.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(8),
 .tbl-pagar thead th:nth-child(1), .tbl-pagar thead th:nth-child(2),
 .tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8),
-.tbl-pagar thead th:nth-child(9), .tbl-pagar thead th:nth-child(10) {
+.tbl-pagar thead th:nth-child(9) {
   padding-left: 8px; padding-right: 8px;
 }
 /* O badge de status nao quebra mais entre "Pago" e a data. */
 .tbl-pagar .badge { white-space: nowrap; }
-/* Forma de pagamento deixa de ser cortada com reticencias: com a largura atual
-   "Transferencia" cabe, e se um dia nao couber e melhor quebrar que sumir. */
-.tbl-pagar td.pm-cell { white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* ===== Coluna "Conciliado?" =====
    A pergunta so faz sentido para titulo ja baixado: pendente ainda nao tem o
    que conciliar, e marcar tudo de vermelho seria alarme falso na tela inteira.
    Por isso sao tres estados, nao dois. */
 .tbl-pagar .c-conc-cell { text-align: center; }
+/* O cabecalho desta coluna e mais largo que o simbolo que ela guarda, entao era
+   ele que definia a largura. Com o espacamento de letra menor "Conc." cabe em
+   4%, e Acoes comeca mais cedo -- o vao entre o simbolo e o primeiro botao caiu
+   de 72px para menos da metade. */
+.tbl-pagar thead th:nth-child(9) { letter-spacing: .02em; }
+/* A regra geral do sistema alinha td.actions a direita. Com os botoes em duas
+   linhas, a de cima ficava empurrada para a ponta e abria um vao de 68px depois
+   do simbolo de conciliado. A esquerda, os botoes comecam onde a coluna comeca
+   e o cabecalho "Acoes" cai sobre eles. */
+.tbl-pagar td.actions, .tbl-pagar thead th.actions { padding-left: 8px; text-align: left; }
 .tbl-pagar .conc-sim, .tbl-pagar .conc-nao { font-size: 15px; font-weight: 700; line-height: 1; cursor: default; }
 .tbl-pagar .conc-sim { color: var(--verde-700); }
 .tbl-pagar .conc-nao { color: var(--danger); }
