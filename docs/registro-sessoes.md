@@ -1835,3 +1835,40 @@ O cabeçalho "Conc." ganhou `letter-spacing` menor para caber em 4% sem cortar.
 | Texto cortado | nenhum | nenhum |
 
 Sem rolagem horizontal; soma das larguras em 100%.
+como em Contas a Receber.
+
+### O que mudou
+- **Grade com 9 colunas:** ID, Vencimento, Descrição, Fornecedor, Forma de Pagamento, Valor,
+  Status, Conc., Ações.
+- **Filtro novo de centro de custo**, ao lado do de categoria, alimentado pela constante
+  `CENTROS` — a mesma que já preenchia o campo no formulário. Entrou também na persistência dos
+  filtros, no "Limpar filtros" e no cabeçalho do PDF exportado, que agora informa o centro de
+  custo filtrado junto da categoria.
+- **Botões de ação numa linha só.** Eles pediam 265px e tinham 193, então quebravam em duas
+  linhas em todas as linhas da tabela — era isso, e não o texto, que segurava a altura. Com 17%
+  para a coluna, a **altura da linha caiu de 85px para 64px** e a lista de nove títulos, de
+  757px para 481px (−36%).
+
+### Um defeito antigo que apareceu na medição
+A 1366px a tabela **escondia 29 células**: as larguras são percentuais, então numa tela estreita
+todas encolhem juntas e o que tem `nowrap` — data, valor, badge de status — era cortado em
+silêncio. Conferi na versão já publicada: o problema é anterior a esta mudança, não veio dela.
+Corrigido com `min-width: 1600px` na tabela, deixando o `.table-wrap` rolar, que é o
+comportamento padrão das tabelas do sistema. Rolar é pior que caber, mas é muito melhor que
+esconder número.
+
+### Resultado medido
+
+| | 1908px | 1366px |
+|---|---|---|
+| Descrição em 2 linhas | 0 de 9 | 0 |
+| Fornecedor em 2 linhas | 1 de 9 | 1 |
+| Botões numa linha | sim | sim |
+| Células cortadas | **0** | **0** (antes: 29) |
+| Altura da linha | 64px | 64px |
+| Rolagem horizontal | não | sim, prevista |
+
+Larguras: ID 3,5 · Vencimento 7 · Descrição 21 · Fornecedor 24 · Forma de Pagamento 8 ·
+Valor 7 · Status 8,5 · Conc. 4 · Ações 17 = 100%.
+A coluna Valor precisou de 7% não pelos valores das linhas, mas pelo **total do rodapé**, que é
+maior que qualquer um deles e estava sendo cortado.

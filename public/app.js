@@ -669,6 +669,7 @@ async function renderPagar() {
         <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
         <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
       <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <select id="f-cc"><option value="">Todos os centros de custo</option>${CENTROS.map(x => `<option ${saved.cc === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
       <div class="date-range">
         <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
         <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
@@ -686,15 +687,16 @@ async function renderPagar() {
 
   let lastFiltered = rows;
   const draw = () => {
-    const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, fc = $('#f-cat').value, today = todayISO();
+    const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, fc = $('#f-cat').value, fcc = $('#f-cc').value, today = todayISO();
     const de = $('#f-de').value, ate = $('#f-ate').value;
-    saveFilters(FKEY, { q: $('#q').value, status: fs, cat: fc, de, ate });
+    saveFilters(FKEY, { q: $('#q').value, status: fs, cat: fc, cc: fcc, de, ate });
     const filtered = rows.filter(r => {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
       if (fs === 'pago' && r.status !== 'pago') return false;
       if (fs === 'vencido' && !late) return false;
       if (fc && r.category !== fc) return false;
+      if (fcc && (r.cost_center || '') !== fcc) return false;
       if (de && r.due_date < de) return false;
       if (ate && r.due_date > ate) return false;
       return !q || (r.description + ' ' + (r.supplier_name || '') + ' ' + (r.document || '')).toLowerCase().includes(q);
@@ -704,10 +706,10 @@ async function renderPagar() {
     const PM_LABELS = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
     $('#tbl').innerHTML = `
       <colgroup>
-        <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-cat"><col class="c-cc">
+        <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-pm">
         <col class="c-val"><col class="c-status"><col class="c-conc"><col class="c-acoes">
       </colgroup>
-      <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th>
+      <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Forma de<br>Pagamento</th>
         <th class="num">Valor</th><th>Status</th><th class="c-conc-cell" title="Conciliado com o extrato bancário?">Conc.</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
@@ -716,8 +718,7 @@ async function renderPagar() {
           <td class="venc-cell">${brDate(r.due_date)}</td>
           <td>${esc(r.description)}</td>
           <td>${esc(r.supplier_name || '—')}</td>
-          <td>${esc(r.category)}</td>
-          <td>${esc(r.cost_center || '—')}</td>
+          <td class="pm-cell">${r.payment_method ? esc(PM_LABELS[r.payment_method] || r.payment_method) : '—'}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
@@ -733,8 +734,8 @@ async function renderPagar() {
             <button class="btn sm" data-edit="${r.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="10"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="6">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="3"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="3"></td></tr></tfoot>`;
 
 
 
@@ -744,9 +745,9 @@ async function renderPagar() {
     $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('payable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('título', `/api/payables/${b.dataset.del}`, renderPagar));
   };
-  ['q', 'f-status', 'f-cat', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
+  ['q', 'f-status', 'f-cat', 'f-cc', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
   $('#btn-clear').onclick = () => {
-    $('#q').value = ''; $('#f-status').value = ''; $('#f-cat').value = ''; $('#f-de').value = ''; $('#f-ate').value = '';
+    $('#q').value = ''; $('#f-status').value = ''; $('#f-cat').value = ''; $('#f-cc').value = ''; $('#f-de').value = ''; $('#f-ate').value = '';
     saveFilters(FKEY, {});
     draw();
   };
@@ -779,6 +780,7 @@ async function renderPagar() {
     if ($('#q').value) parts.push(`Busca: "${$('#q').value}"`);
     if ($('#f-status').value) parts.push('Status: ' + ({ pendente: 'Pendentes', vencido: 'Vencidos', pago: 'Pagos' }[$('#f-status').value]));
     if ($('#f-cat').value) parts.push('Categoria: ' + $('#f-cat').value);
+    if ($('#f-cc').value) parts.push('Centro de custo: ' + $('#f-cc').value);
     if ($('#f-de').value || $('#f-ate').value) parts.push(`Período: ${$('#f-de').value ? brDate($('#f-de').value) : '—'} a ${$('#f-ate').value ? brDate($('#f-ate').value) : '—'}`);
     exportPagarPDF(lastFiltered, parts.join('   ·   '));
   };

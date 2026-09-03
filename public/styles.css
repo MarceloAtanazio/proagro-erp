@@ -655,7 +655,12 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 }
 
 /* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) ===== */
-.tbl-pagar { table-layout: fixed; }
+.tbl-pagar { table-layout: fixed; min-width: 1600px; }
+/* As larguras sao percentuais, entao numa tela estreita todas encolhem juntas e
+   o que tem nowrap -- data, valor, badge de status -- era cortado em silencio:
+   a 1366px a tabela escondia 29 celulas. Com a largura minima o .table-wrap
+   rola, que e o comportamento padrao das tabelas do sistema. Rolar e pior que
+   caber, mas e muito melhor que esconder numero. */
 /* Cabeçalhos centralizados só nesta tabela — a regra geral do sistema
    (thead th) trava alinhamento à esquerda e uma única linha. Aqui o título
    "Forma de Pagamento" tem uma quebra manual (<br>) controlada por nós,
@@ -663,19 +668,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    sozinho — isso é o que causou "PAGA/MENT/O" antes. */
 .tbl-pagar thead th { text-align: center; white-space: normal; }
 .tbl-pagar col.c-id { width: 3.5%; }
-.tbl-pagar col.c-venc { width: 6%; }
-.tbl-pagar col.c-desc { width: 20%; }
-.tbl-pagar col.c-forn { width: 26.5%; }
-.tbl-pagar col.c-cat { width: 7.5%; }
-.tbl-pagar col.c-cc { width: 7%; }
-.tbl-pagar col.c-val { width: 6%; }
+.tbl-pagar col.c-venc { width: 7%; }
+.tbl-pagar col.c-desc { width: 21%; }
+.tbl-pagar col.c-forn { width: 24%; }
+.tbl-pagar col.c-pm { width: 8%; }
+.tbl-pagar col.c-val { width: 7%; }
 .tbl-pagar col.c-status { width: 8.5%; }
 .tbl-pagar col.c-conc { width: 4%; }
-.tbl-pagar col.c-acoes { width: 11%; }
+.tbl-pagar col.c-acoes { width: 17%; }
 .tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
-.tbl-pagar td.actions .btn { margin: 2px 4px 2px 0; }
+.tbl-pagar td.actions .btn { margin: 1px 4px 1px 0; }
 .tbl-pagar td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tbl-pagar td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
@@ -815,15 +819,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    12,5px pelo mesmo motivo -- e o que leva Fornecedor de cinco quebras para
    duas. */
 /* Colunas estreitas: padding lateral menor, no corpo e no cabecalho. */
-.tbl-pagar .id-cell, .tbl-pagar .venc-cell,
-.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(8),
+.tbl-pagar .id-cell, .tbl-pagar .venc-cell, .tbl-pagar .pm-cell,
+.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(7),
 .tbl-pagar thead th:nth-child(1), .tbl-pagar thead th:nth-child(2),
-.tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8),
-.tbl-pagar thead th:nth-child(9) {
+.tbl-pagar thead th:nth-child(5), .tbl-pagar thead th:nth-child(6),
+.tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8) {
   padding-left: 8px; padding-right: 8px;
 }
 /* O badge de status nao quebra mais entre "Pago" e a data. */
 .tbl-pagar .badge { white-space: nowrap; }
+/* Forma de pagamento sem reticencias: "Transferencia" cabe na largura atual, e
+   se um dia nao couber e melhor quebrar que sumir. */
+.tbl-pagar td.pm-cell { white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* ===== Coluna "Conciliado?" =====
    A pergunta so faz sentido para titulo ja baixado: pendente ainda nao tem o
@@ -834,7 +841,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    ele que definia a largura. Com o espacamento de letra menor "Conc." cabe em
    4%, e Acoes comeca mais cedo -- o vao entre o simbolo e o primeiro botao caiu
    de 72px para menos da metade. */
-.tbl-pagar thead th:nth-child(9) { letter-spacing: .02em; }
+.tbl-pagar thead th:nth-child(8) { letter-spacing: .02em; }
 /* A regra geral do sistema alinha td.actions a direita. Com os botoes em duas
    linhas, a de cima ficava empurrada para a ponta e abria um vao de 68px depois
    do simbolo de conciliado. A esquerda, os botoes comecam onde a coluna comeca
