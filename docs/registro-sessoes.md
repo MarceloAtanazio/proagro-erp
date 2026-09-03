@@ -1600,3 +1600,63 @@ de estourar.
 
 ### Pendência
 A conferência visual do logo ficou com o usuário — o ambiente não renderiza planilha.
+de estourar.
+
+### Pendência
+A conferência visual do logo ficou com o usuário — o ambiente não renderiza planilha.
+
+## 2026-09-03 — Exportar do Orçamento Anual: resumo e análise completa
+
+**Pedido:** botão de exportar na tela de Orçamento Anual, com Excel e PDF nas versões resumida
+e completa. A completa em Excel seguindo o padrão do fechamento de Viáticos, "extremamente
+completa e detalhada"; os PDFs no padrão da plataforma, e a completa "robusta de dados e
+análises".
+
+### O que foi feito
+- **`orcamentoAnalise()`** monta tudo de uma vez, e as **quatro saídas leem os mesmos números** —
+  mesmo motivo do fechamento de Viáticos: conta repetida em dois lugares um dia diverge.
+- **`relatorioPDF()` ganhou o parâmetro `modulo`.** Ele escrevia "ERP Financeiro · Viáticos"
+  fixo, porque foi de lá que o padrão saiu; agora o Orçamento diz o nome dele. Padrão continua
+  "Viáticos", então nada muda nos relatórios existentes.
+
+### As análises da versão completa
+1. **KPIs** — receita e despesa orçadas, resultado, margem, médias mensais, meses no vermelho.
+2. **Grade mensal** de receitas e de despesas: categoria × 12 meses, com total e participação.
+3. **Resultado mês a mês** com **acumulado** e margem — é onde se vê em que ponto do ano o
+   orçamento vira o sinal. Negativos em vermelho.
+4. **Curva ABC** da despesa: classe A até 80% do acumulado, B até 95%, C o resto. Responde
+   "onde está o dinheiro" sem o leitor ter de somar.
+5. **Sazonalidade**: peso de cada mês e **desvio da média mensal**, com destaque acima de 25%.
+6. **Orçado × realizado** por categoria (despesas e receitas) e mês a mês, com % consumido e
+   situação (Dentro / Estourou / Sem realizado / Fora do orçamento).
+7. **Observações automáticas**: meses no vermelho, concentração em poucas categorias,
+   categorias sem os 12 meses, gasto realizado fora do orçamento, categorias que já estouraram.
+
+Detalhe de conta que vale registrar: a **média de uma categoria é sobre os meses em que ela
+existe**, não sobre 12. Uma verba que só aparece em novembro tem média de novembro, não um doze
+avos dela. A média sobre 12 também está lá, como `mediaAnual`, porque é a que serve para
+comparar categorias entre si.
+
+O confronto com o realizado depende da permissão de "Orçado x Realizado". Quem só tem Orçamento
+recebe 403 naquela rota — nesse caso o relatório **sai sem o confronto**, com um aviso no
+rodapé, em vez de não sair. E o realizado só é buscado na versão completa: no resumo seria uma
+requisição e um 403 no console à toa.
+
+### Verificação
+**Números — 43 checagens** sobre o código real, com um orçamento montado para os totais serem
+conferíveis de cabeça (receita 150.000, despesa 144.000, resultado 6.000): KPIs, margem,
+ordenação, participações somando 100%, resultado e acumulado mês a mês, os 6 meses no vermelho,
+classes da curva ABC (só Folha em A, Frota vira B ao passar de 80% acumulado), desvios de
+sazonalidade, confronto (Folha 50% consumida, Jurídico entrando como "Fora do orçamento",
+realizado de março somando as duas fontes), os quatro alertas, e os casos de borda: sem
+permissão de realizado, orçamento vazio, e só despesa sem receita.
+
+**Geração — 36 checagens** sobre os `.xlsx` reais, abrindo o zip e resolvendo o
+`sharedStrings.xml`. Os quatro arquivos saíram: resumo com 2 páginas e 3 abas, completo com
+**4 páginas e 9 abas**. Conferido que cada aba tem título próprio (nenhuma diz "Solicitação de
+Aporte"), conteúdo na linha 7, e que os totais fecham: grade de despesas com Jan 11.000, Nov
+23.000 e total 144.000; curva ABC somando 144.000; orçado × realizado com 144.000 contra
+53.000; e as observações trazendo o Jurídico e a concentração.
+
+### Pendência
+Conferência visual dos PDFs com o usuário — o ambiente não renderiza PDF.

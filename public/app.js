@@ -2199,6 +2199,9 @@ const REL_VERDE = [0, 120, 63], REL_VERDE_CLARO = [234, 245, 236],
       REL_CINZA = [110, 120, 114], REL_VERMELHO = [178, 58, 47], REL_MARGIN = 12;
 
 function relatorioPDF(titulo, opts = {}) {
+  // O modulo e o que aparece sob "PROAGRO BRASIL". Era fixo em Viaticos,
+  // porque foi de la que este padrao saiu.
+  const modulo = opts.modulo || 'Viáticos';
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: opts.orientation || 'landscape', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
@@ -2209,7 +2212,7 @@ function relatorioPDF(titulo, opts = {}) {
   doc.setTextColor(30, 38, 32); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
   doc.text('PROAGRO BRASIL', REL_MARGIN + logoW + 6, 14);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...REL_CINZA);
-  doc.text('ERP Financeiro · Viáticos', REL_MARGIN + logoW + 6, 19);
+  doc.text('ERP Financeiro · ' + modulo, REL_MARGIN + logoW + 6, 19);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...REL_VERDE);
   doc.text(titulo, pageW - REL_MARGIN, 15, { align: 'right' });
   const now = new Date();
@@ -3560,6 +3563,508 @@ async function conciliar(t) {
 // ============================================================
 // ORÇAMENTO ANUAL
 // ============================================================
+// ============================================================
+// ORCAMENTO ANUAL — analises para os relatorios
+// Uma funcao so monta tudo o que o resumo e o completo mostram, em PDF e em
+// Excel. Mesmo motivo do fechamento de Viaticos: conta repetida em dois lugares
+// um dia diverge, e aqui sao quatro saidas lendo os mesmos numeros.
+// ============================================================
+
+// Confronto com o realizado depende da permissao de "Orcado x Realizado". Quem
+// so tem Orcamento recebe 403 na rota de realizados — nesse caso o relatorio sai
+// so com o orcado, em vez de nao sair.
+async function orcamentoBuscarRealizado(ano) {
+  try { return await api('/api/reports/actuals/' + ano); }
+  catch (e) { return null; }
+}
+
+function orcamentoAnalise(ano, linhas, realizado) {
+  const meses = MESES;
+  const porTipo = tipo => {
+    const cats = {};
+    linhas.filter(l => l.type === tipo).forEach(l => {
+      cats[l.category] = cats[l.category] || Array(12).fill(0);
+      cats[l.category][l.month - 1] += Number(l.amount) || 0;
+    });
+    const lista = Object.entries(cats).map(([cat, m]) => {
+      const total = m.reduce((a, b) => a + b, 0);
+      const comValor = m.filter(v => v > 0);
+      const maior = Math.max(...m), menor = comValor.length ? Math.min(...comValor) : 0;
+      return {
+        cat, meses: m, total,
+        mesesComValor: comValor.length,
+        // A media e sobre os meses que TEM valor, nao sobre 12: uma verba que so
+        // existe em marco tem media de marco, nao um doze avos dela.
+        media: comValor.length ? total / comValor.length : 0,
+        mediaAnual: total / 12,
+        maiorMes: maior > 0 ? meses[m.indexOf(maior)] : '—', maiorValor: maior,
+        menorMes: menor > 0 ? meses[m.indexOf(menor)] : '—', menorValor: menor
+      };
+    }).sort((a, b) => b.total - a.total);
+    const totalMes = Array.from({ length: 12 }, (_, i) => lista.reduce((a, c) => a + c.meses[i], 0));
+    const total = lista.reduce((a, c) => a + c.total, 0);
+    lista.forEach(c => c.pct = total ? c.total / total : 0);
+    return { lista, totalMes, total };
+  };
+
+  const receitas = porTipo('receita');
+  const despesas = porTipo('despesa');
+
+  // Resultado mes a mes, com acumulado: e onde se ve em que ponto do ano o
+  // orcamento vira o sinal.
+  let acum = 0;
+  const resultado = meses.map((nome, i) => {
+    const r = receitas.totalMes[i], d = despesas.totalMes[i], res = r - d;
+    acum += res;
+    return { mes: nome, receita: r, despesa: d, resultado: res, acumulado: acum, margem: r ? res / r : null };
+  });
+
+  // Curva ABC das despesas: onde o dinheiro esta concentrado. A = ate 80% do
+  // total acumulado, B ate 95%, C o resto.
+  let ac = 0;
+  const abc = despesas.lista.map(c => {
+    ac += c.pct;
+    return { ...c, pctAcum: ac, classe: ac <= 0.8 ? 'A' : ac <= 0.95 ? 'B' : 'C' };
+  });
+
+  // Sazonalidade das despesas: quanto cada mes pesa e quanto foge da media.
+  const mediaMes = despesas.total / 12;
+  const sazonalidade = meses.map((nome, i) => ({
+    mes: nome, valor: despesas.totalMes[i],
+    pct: despesas.total ? despesas.totalMes[i] / despesas.total : 0,
+    desvio: mediaMes ? (despesas.totalMes[i] - mediaMes) / mediaMes : 0
+  }));
+
+  // Confronto com o realizado, quando ha permissao.
+  let confronto = null;
+  if (realizado) {
+    const cruzar = (tipo, orcLista, reaisBrutos) => {
+      const mapa = {};
+      orcLista.forEach(c => { mapa[c.cat] = { cat: c.cat, tipo, orcado: c.total, realizado: 0 }; });
+      (reaisBrutos || []).forEach(r => {
+        mapa[r.category] = mapa[r.category] || { cat: r.category, tipo, orcado: 0, realizado: 0 };
+        mapa[r.category].realizado += Number(r.total) || 0;
+      });
+      return Object.values(mapa).map(l => {
+        const dif = l.realizado - l.orcado;
+        return {
+          ...l, dif,
+          consumo: l.orcado ? l.realizado / l.orcado : null,
+          status: !l.orcado ? 'Fora do orçamento'
+            : l.realizado === 0 ? 'Sem realizado'
+            : (tipo === 'despesa' ? (dif > 0 ? 'Estourou' : 'Dentro') : (dif < 0 ? 'Abaixo' : 'Atingiu'))
+        };
+      }).sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif));
+    };
+    const porMes = meses.map((nome, i) => {
+      const rd = (realizado.despesas || []).filter(r => r.month === i + 1).reduce((a, r) => a + (Number(r.total) || 0), 0);
+      const rr = (realizado.receitas || []).filter(r => r.month === i + 1).reduce((a, r) => a + (Number(r.total) || 0), 0);
+      return {
+        mes: nome,
+        despesaOrcada: despesas.totalMes[i], despesaReal: rd, difDespesa: rd - despesas.totalMes[i],
+        receitaOrcada: receitas.totalMes[i], receitaReal: rr, difReceita: rr - receitas.totalMes[i]
+      };
+    });
+    confronto = {
+      despesas: cruzar('despesa', despesas.lista, realizado.despesas),
+      receitas: cruzar('receita', receitas.lista, realizado.receitas),
+      porMes,
+      totalRealDespesa: porMes.reduce((a, m) => a + m.despesaReal, 0),
+      totalRealReceita: porMes.reduce((a, m) => a + m.receitaReal, 0)
+    };
+  }
+
+  // Observacoes que o leitor teria de garimpar olhando as tabelas.
+  const alertas = [];
+  const mesesNegativos = resultado.filter(r => r.resultado < 0);
+  if (mesesNegativos.length) alertas.push(`${mesesNegativos.length} mês(es) com despesa orçada acima da receita: ${mesesNegativos.map(m => m.mes).join(', ')}.`);
+  if (!receitas.total && despesas.total) alertas.push('Não há receita orçada para o ano — o resultado é integralmente negativo.');
+  const classeA = abc.filter(c => c.classe === 'A');
+  if (classeA.length && despesas.lista.length > 2) {
+    alertas.push(`${classeA.length} de ${despesas.lista.length} categorias concentram 80% da despesa orçada (${classeA.map(c => c.cat).join(', ')}).`);
+  }
+  const parciais = despesas.lista.filter(c => c.mesesComValor > 0 && c.mesesComValor < 12);
+  if (parciais.length) alertas.push(`${parciais.length} categoria(s) de despesa não têm valor nos 12 meses — confira se é sazonal ou se ficou faltando lançar.`);
+  if (confronto) {
+    const foraOrc = confronto.despesas.filter(l => l.status === 'Fora do orçamento');
+    if (foraOrc.length) alertas.push(`${foraOrc.length} categoria(s) tiveram despesa realizada sem estar no orçamento: ${foraOrc.map(l => l.cat).join(', ')}.`);
+    const estourou = confronto.despesas.filter(l => l.status === 'Estourou');
+    if (estourou.length) alertas.push(`${estourou.length} categoria(s) já ultrapassaram o orçado.`);
+  }
+
+  const kpis = {
+    receita: receitas.total, despesa: despesas.total,
+    resultado: receitas.total - despesas.total,
+    margem: receitas.total ? (receitas.total - despesas.total) / receitas.total : null,
+    catReceitas: receitas.lista.length, catDespesas: despesas.lista.length,
+    mediaMensalDespesa: despesas.total / 12, mediaMensalReceita: receitas.total / 12,
+    mesesNegativos: mesesNegativos.length
+  };
+
+  return { ano, receitas, despesas, resultado, abc, sazonalidade, confronto, alertas, kpis, temRealizado: !!realizado };
+}
+
+// Percentual com uma casa, e travessao quando nao ha base de comparacao.
+const orcPct = v => (v === null || v === undefined || !isFinite(v)) ? '—' : (v * 100).toFixed(1) + '%';
+
+function exportOrcamentoResumoPDF(a) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { doc, pageW, rodape } = relatorioPDF('Orçamento Anual — Resumo',
+      { modulo: 'Orçamento Anual', subtitulo: `Exercício de ${a.ano}` });
+    const k = a.kpis, M = { halign: 'right' };
+
+    relatorioFaixa(doc, pageW, 29,
+      `Receita orçada: ${brl(k.receita)}  ·  Despesa orçada: ${brl(k.despesa)}  ·  Resultado: ${brl(k.resultado)}  ·  Margem: ${orcPct(k.margem)}`);
+
+    const secao = (titulo, minimo = 34) => {
+      let y = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 45) + 9;
+      if (y + minimo > doc.internal.pageSize.getHeight() - 18) { doc.addPage(); y = 22; }
+      return relatorioSecao(doc, y, titulo);
+    };
+    const bloco = (titulo, g) => {
+      if (!g.lista.length) return;
+      doc.autoTable(relatorioTabelaEstilo(rodape, {
+        startY: secao(titulo),
+        head: [['Categoria', 'Total no ano', '% do total', 'Média mensal', 'Meses com valor', 'Maior mês']],
+        body: g.lista.map(c => [c.cat, brl(c.total), orcPct(c.pct), brl(c.mediaAnual), `${c.mesesComValor}/12`, `${c.maiorMes} (${brl(c.maiorValor)})`]),
+        foot: [['Total', brl(g.total), '100,0%', brl(g.total / 12), '', '']],
+        footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+        columnStyles: { 1: M, 2: M, 3: M, 4: { halign: 'center' } }
+      }));
+    };
+    bloco('Receitas orçadas', a.receitas);
+    bloco('Despesas orçadas', a.despesas);
+
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Resultado mês a mês'),
+      head: [['Mês', 'Receita', 'Despesa', 'Resultado', 'Acumulado', 'Margem']],
+      body: a.resultado.map(r => [r.mes, brl(r.receita), brl(r.despesa), brl(r.resultado), brl(r.acumulado), orcPct(r.margem)]),
+      foot: [['Ano', brl(k.receita), brl(k.despesa), brl(k.resultado), brl(k.resultado), orcPct(k.margem)]],
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: M, 2: M, 3: M, 4: M, 5: M },
+      // Resultado negativo em vermelho: e o que o leitor procura na tabela.
+      didParseCell: h => {
+        if (h.section === 'body' && (h.column.index === 3 || h.column.index === 4)) {
+          const r = a.resultado[h.row.index];
+          const v = h.column.index === 3 ? r.resultado : r.acumulado;
+          if (v < 0) h.cell.styles.textColor = REL_VERMELHO;
+        }
+      }
+    }));
+
+    doc.save(`orcamento_${a.ano}_resumo_${todayISO()}.pdf`);
+    toast('PDF gerado com sucesso.');
+  } catch (e) { console.error(e); toast('Não foi possível gerar o PDF: ' + e.message); }
+}
+
+function exportOrcamentoCompletoPDF(a) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { doc, pageW, rodape } = relatorioPDF('Orçamento Anual — Análise completa',
+      { modulo: 'Orçamento Anual', subtitulo: `Exercício de ${a.ano}${a.temRealizado ? ' · com confronto orçado × realizado' : ''}` });
+    const k = a.kpis, M = { halign: 'right' };
+
+    relatorioFaixa(doc, pageW, 29,
+      `Receita orçada: ${brl(k.receita)}  ·  Despesa orçada: ${brl(k.despesa)}  ·  Resultado: ${brl(k.resultado)}  ·  Margem: ${orcPct(k.margem)}`);
+    relatorioFaixa(doc, pageW, 47,
+      `${k.catReceitas} categoria(s) de receita · ${k.catDespesas} de despesa · média mensal de despesa ${brl(k.mediaMensalDespesa)} · ${k.mesesNegativos} mês(es) no vermelho`);
+
+    const secao = (titulo, minimo = 34) => {
+      let y = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 63) + 9;
+      if (y + minimo > doc.internal.pageSize.getHeight() - 18) { doc.addPage(); y = 22; }
+      return relatorioSecao(doc, y, titulo);
+    };
+    // Grade de 12 meses: fonte menor, senao nao cabe na folha.
+    const estiloGrade = {
+      styles: { font: 'helvetica', fontSize: 6.3, cellPadding: 1.3, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
+      headStyles: { fillColor: REL_VERDE, textColor: 255, fontStyle: 'bold', fontSize: 6.3 },
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 6.3 }
+    };
+    const colunasNum = n => Object.fromEntries(Array.from({ length: n }, (_, i) => [i + 1, M]));
+
+    // ---- 1 e 2. Grades mensais ----
+    const grade = (titulo, g) => {
+      if (!g.lista.length) return;
+      doc.autoTable(relatorioTabelaEstilo(rodape, Object.assign({
+        startY: secao(titulo),
+        head: [['Categoria', ...MESES, 'Total', '%']],
+        body: g.lista.map(c => [c.cat, ...c.meses.map(v => v ? brl(v) : '—'), brl(c.total), orcPct(c.pct)]),
+        foot: [['Total', ...g.totalMes.map(v => v ? brl(v) : '—'), brl(g.total), '100,0%']],
+        columnStyles: colunasNum(14)
+      }, estiloGrade)));
+    };
+    grade('Receitas orçadas — grade mensal', a.receitas);
+    grade('Despesas orçadas — grade mensal', a.despesas);
+
+    // ---- 3. Resultado mensal ----
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Resultado orçado mês a mês'),
+      head: [['Mês', 'Receita', 'Despesa', 'Resultado', 'Acumulado', 'Margem']],
+      body: a.resultado.map(r => [r.mes, brl(r.receita), brl(r.despesa), brl(r.resultado), brl(r.acumulado), orcPct(r.margem)]),
+      foot: [['Ano', brl(k.receita), brl(k.despesa), brl(k.resultado), brl(k.resultado), orcPct(k.margem)]],
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: M, 2: M, 3: M, 4: M, 5: M },
+      didParseCell: h => {
+        if (h.section === 'body' && (h.column.index === 3 || h.column.index === 4)) {
+          const r = a.resultado[h.row.index];
+          if ((h.column.index === 3 ? r.resultado : r.acumulado) < 0) h.cell.styles.textColor = REL_VERMELHO;
+        }
+      }
+    }));
+
+    // ---- 4. Curva ABC ----
+    if (a.abc.length) {
+      doc.autoTable(relatorioTabelaEstilo(rodape, {
+        startY: secao('Concentração da despesa — curva ABC'),
+        head: [['Classe', 'Categoria', 'Total no ano', '% do total', '% acumulado', 'Média mensal', 'Meses com valor']],
+        body: a.abc.map(c => [c.classe, c.cat, brl(c.total), orcPct(c.pct), orcPct(c.pctAcum), brl(c.mediaAnual), `${c.mesesComValor}/12`]),
+        columnStyles: { 0: { halign: 'center' }, 2: M, 3: M, 4: M, 5: M, 6: { halign: 'center' } },
+        didParseCell: h => {
+          if (h.section === 'body' && h.column.index === 0) {
+            const cl = a.abc[h.row.index].classe;
+            h.cell.styles.fontStyle = 'bold';
+            h.cell.styles.textColor = cl === 'A' ? REL_VERMELHO : cl === 'B' ? [138, 100, 20] : REL_CINZA;
+          }
+        }
+      }));
+    }
+
+    // ---- 5. Sazonalidade ----
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: secao('Sazonalidade da despesa orçada'),
+      head: [['Mês', 'Despesa orçada', '% do ano', 'Desvio da média mensal']],
+      body: a.sazonalidade.map(s => [s.mes, brl(s.valor), orcPct(s.pct), (s.desvio >= 0 ? '+' : '') + orcPct(s.desvio)]),
+      foot: [['Ano', brl(a.despesas.total), '100,0%', `média ${brl(k.mediaMensalDespesa)}`]],
+      footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+      columnStyles: { 1: M, 2: M, 3: M },
+      didParseCell: h => {
+        if (h.section === 'body' && h.column.index === 3 && a.sazonalidade[h.row.index].desvio > 0.25) h.cell.styles.textColor = REL_VERMELHO;
+      }
+    }));
+
+    // ---- 6 e 7. Confronto com o realizado ----
+    if (a.confronto) {
+      const confronto = (titulo, linhas, tipo) => {
+        if (!linhas.length) return;
+        doc.autoTable(relatorioTabelaEstilo(rodape, {
+          startY: secao(titulo),
+          head: [['Categoria', 'Orçado', 'Realizado', 'Diferença', '% consumido', 'Situação']],
+          body: linhas.map(l => [l.cat, brl(l.orcado), brl(l.realizado), brl(l.dif), orcPct(l.consumo), l.status]),
+          columnStyles: { 1: M, 2: M, 3: M, 4: M },
+          didParseCell: h => {
+            if (h.section !== 'body') return;
+            const l = linhas[h.row.index];
+            if (h.column.index === 3 && ((tipo === 'despesa' && l.dif > 0) || (tipo === 'receita' && l.dif < 0))) h.cell.styles.textColor = REL_VERMELHO;
+            if (h.column.index === 5 && (l.status === 'Estourou' || l.status === 'Fora do orçamento')) h.cell.styles.textColor = REL_VERMELHO;
+          }
+        }));
+      };
+      confronto('Orçado × realizado — despesas por categoria', a.confronto.despesas, 'despesa');
+      confronto('Orçado × realizado — receitas por categoria', a.confronto.receitas, 'receita');
+
+      doc.autoTable(relatorioTabelaEstilo(rodape, {
+        startY: secao('Orçado × realizado — mês a mês'),
+        head: [['Mês', 'Despesa orçada', 'Despesa realizada', 'Diferença', 'Receita orçada', 'Receita realizada', 'Diferença']],
+        body: a.confronto.porMes.map(m => [m.mes, brl(m.despesaOrcada), brl(m.despesaReal), brl(m.difDespesa), brl(m.receitaOrcada), brl(m.receitaReal), brl(m.difReceita)]),
+        foot: [['Ano', brl(a.despesas.total), brl(a.confronto.totalRealDespesa), brl(a.confronto.totalRealDespesa - a.despesas.total),
+                brl(a.receitas.total), brl(a.confronto.totalRealReceita), brl(a.confronto.totalRealReceita - a.receitas.total)]],
+        footStyles: { fillColor: REL_VERDE_CLARO, textColor: REL_VERDE, fontStyle: 'bold', fontSize: 8 },
+        columnStyles: { 1: M, 2: M, 3: M, 4: M, 5: M, 6: M }
+      }));
+    }
+
+    // ---- 8. Observacoes ----
+    if (a.alertas.length) {
+      let y = secao('Observações', 20);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(60, 70, 64);
+      a.alertas.forEach(t => {
+        const linhas = doc.splitTextToSize('•  ' + t, pageW - REL_MARGIN * 2 - 4);
+        if (y + linhas.length * 4.2 > doc.internal.pageSize.getHeight() - 18) { doc.addPage(); rodape(); y = 22; }
+        doc.text(linhas, REL_MARGIN + 2, y);
+        y += linhas.length * 4.2 + 1.6;
+      });
+    }
+    if (!a.temRealizado) {
+      const y = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 70) + 8;
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...REL_CINZA);
+      doc.text('Confronto com o realizado não incluído: requer permissão de leitura em "Orçado x Realizado".', REL_MARGIN, Math.min(y, doc.internal.pageSize.getHeight() - 20));
+    }
+
+    doc.save(`orcamento_${a.ano}_completo_${todayISO()}.pdf`);
+    toast('PDF de análise completa gerado.');
+  } catch (e) { console.error(e); toast('Não foi possível gerar o PDF: ' + e.message); }
+}
+
+// Excel do orcamento, no mesmo padrao do fechamento de Viaticos: cabecalho com
+// a identidade da ProAgro por aba, tabelas com zebra e linha de total.
+async function exportOrcamentoExcel(a, completo) {
+  if (!window.ExcelJS) return exportOrcamentoExcelSimples(a, completo);
+  try {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+    wb.created = new Date();
+    const now = new Date();
+    const sub = `Exercício de ${a.ano} · gerado em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR').slice(0, 5)} por ${USER.name}`;
+    const idLogo = wb.addImage({ base64: LOGO_PROAGRO_PNG, extension: 'png' });
+    const k = a.kpis, R = 'right', C = 'center';
+    const PCT = '0.0%';
+
+    // ---------- Aba 1: Resumo ----------
+    const ws1 = wb.addWorksheet('Resumo', { views: [{ showGridLines: false }] });
+    let L = aporteXlCabecalho(wb, ws1, sub, idLogo, [38, 20, 20, 20], `Orçamento ${a.ano} — Resumo`);
+    aporteXlCabecalhoColunas(ws1, L, ['Indicador', 'Valor', 'Média mensal', 'Categorias'], ['left', R, R, C]); L++;
+    L = aporteXlCorpo(ws1, L, [
+      ['Receita orçada', k.receita, k.mediaMensalReceita, k.catReceitas],
+      ['Despesa orçada', k.despesa, k.mediaMensalDespesa, k.catDespesas],
+      ['Resultado orçado', k.resultado, k.resultado / 12, null],
+      ['Meses com resultado negativo', k.mesesNegativos, null, null]
+    ], [1, 2], ['left', R, R, C]);
+    // A margem e percentual de verdade, nao texto: da para usar em formula.
+    ws1.getCell(L, 1).value = 'Margem orçada';
+    ws1.getCell(L, 2).value = k.margem;
+    ws1.getCell(L, 2).numFmt = PCT;
+    ws1.getCell(L, 1).font = { name: XL_FONTE, size: 9.5, color: { argb: APORTE_XL.ink2 } };
+    ws1.getCell(L, 2).font = { name: XL_FONTE, size: 9.5, color: { argb: APORTE_XL.ink2 } };
+    ws1.getCell(L, 1).border = xlTodasBordas; ws1.getCell(L, 2).border = xlTodasBordas;
+    ws1.getCell(L, 2).alignment = { horizontal: R, vertical: 'middle' };
+    L += 3;
+
+    aporteXlTituloTabela(ws1, L, 'Resultado mês a mês', 6); L++;
+    aporteXlCabecalhoColunas(ws1, L, ['Mês', 'Receita', 'Despesa', 'Resultado', 'Acumulado', 'Margem'], ['left', R, R, R, R, R]); L++;
+    const l1 = L;
+    L = aporteXlCorpo(ws1, L, a.resultado.map(r => [r.mes, r.receita, r.despesa, r.resultado, r.acumulado, r.margem]), [1, 2, 3, 4], ['left', R, R, R, R, R]);
+    a.resultado.forEach((_, i) => { ws1.getCell(l1 + i, 6).numFmt = PCT; });
+    aporteXlTotal(ws1, L, ['Ano', k.receita, k.despesa, k.resultado, k.resultado, k.margem], [1, 2, 3, 4], ['left', R, R, R, R, R]);
+    ws1.getCell(L, 6).numFmt = PCT;
+
+    // ---------- Grades mensais (uma aba por tipo) ----------
+    const abaGrade = (nome, titulo, g) => {
+      const ws = wb.addWorksheet(nome, { views: [{ showGridLines: false }] });
+      const larg = [30, ...MESES.map(() => 13), 15, 9];
+      let l = aporteXlCabecalho(wb, ws, sub, idLogo, larg, titulo);
+      const alinha = ['left', ...MESES.map(() => R), R, R];
+      const moeda = MESES.map((_, i) => i + 1).concat([13]);
+      aporteXlCabecalhoColunas(ws, l, ['Categoria', ...MESES, 'Total', '%'], alinha);
+      const cab = l; l++;
+      const ini = l;
+      l = aporteXlCorpo(ws, l, g.lista.map(c => [c.cat, ...c.meses, c.total, c.pct]), moeda, alinha);
+      g.lista.forEach((_, i) => { ws.getCell(ini + i, 15).numFmt = PCT; });
+      aporteXlTotal(ws, l, ['Total', ...g.totalMes, g.total, 1], moeda, alinha);
+      ws.getCell(l, 15).numFmt = PCT;
+      ws.views = [{ state: 'frozen', xSplit: 1, ySplit: cab, showGridLines: false }];
+      return ws;
+    };
+    abaGrade('Receitas', 'Receitas orçadas — grade mensal', a.receitas);
+    abaGrade('Despesas', 'Despesas orçadas — grade mensal', a.despesas);
+
+    if (completo) {
+      // ---------- Curva ABC ----------
+      const ws4 = wb.addWorksheet('Curva ABC', { views: [{ showGridLines: false }] });
+      L = aporteXlCabecalho(wb, ws4, sub, idLogo, [10, 32, 18, 12, 14, 18, 14], 'Concentração da despesa — curva ABC');
+      aporteXlCabecalhoColunas(ws4, L, ['Classe', 'Categoria', 'Total no ano', '% do total', '% acumulado', 'Média mensal', 'Meses com valor'],
+        [C, 'left', R, R, R, R, C]); L++;
+      const i4 = L;
+      L = aporteXlCorpo(ws4, L, a.abc.map(c => [c.classe, c.cat, c.total, c.pct, c.pctAcum, c.mediaAnual, `${c.mesesComValor}/12`]),
+        [2, 5], [C, 'left', R, R, R, R, C]);
+      a.abc.forEach((_, i) => { ws4.getCell(i4 + i, 4).numFmt = PCT; ws4.getCell(i4 + i, 5).numFmt = PCT; });
+      aporteXlTotal(ws4, L, ['', 'Total', a.despesas.total, 1, 1, a.despesas.total / 12, ''], [2, 5], [C, 'left', R, R, R, R, C]);
+      ws4.getCell(L, 4).numFmt = PCT; ws4.getCell(L, 5).numFmt = PCT;
+
+      // ---------- Sazonalidade ----------
+      const ws5 = wb.addWorksheet('Sazonalidade', { views: [{ showGridLines: false }] });
+      L = aporteXlCabecalho(wb, ws5, sub, idLogo, [14, 20, 14, 22], 'Sazonalidade da despesa orçada');
+      aporteXlCabecalhoColunas(ws5, L, ['Mês', 'Despesa orçada', '% do ano', 'Desvio da média mensal'], ['left', R, R, R]); L++;
+      const i5 = L;
+      L = aporteXlCorpo(ws5, L, a.sazonalidade.map(s => [s.mes, s.valor, s.pct, s.desvio]), [1], ['left', R, R, R]);
+      a.sazonalidade.forEach((_, i) => { ws5.getCell(i5 + i, 3).numFmt = PCT; ws5.getCell(i5 + i, 4).numFmt = '+0.0%;-0.0%;0.0%'; });
+      aporteXlTotal(ws5, L, ['Ano', a.despesas.total, 1, k.mediaMensalDespesa], [1, 3], ['left', R, R, R]);
+      ws5.getCell(L, 3).numFmt = PCT;
+
+      // ---------- Orçado x Realizado ----------
+      if (a.confronto) {
+        const abaConfronto = (nome, titulo, linhas) => {
+          const ws = wb.addWorksheet(nome, { views: [{ showGridLines: false }] });
+          let l = aporteXlCabecalho(wb, ws, sub, idLogo, [32, 18, 18, 18, 14, 20], titulo);
+          aporteXlCabecalhoColunas(ws, l, ['Categoria', 'Orçado', 'Realizado', 'Diferença', '% consumido', 'Situação'], ['left', R, R, R, R, 'left']); l++;
+          const ini = l;
+          l = aporteXlCorpo(ws, l, linhas.map(x => [x.cat, x.orcado, x.realizado, x.dif, x.consumo, x.status]), [1, 2, 3], ['left', R, R, R, R, 'left']);
+          linhas.forEach((_, i) => { ws.getCell(ini + i, 5).numFmt = PCT; });
+          const so = (campo) => linhas.reduce((s, x) => s + x[campo], 0);
+          aporteXlTotal(ws, l, ['Total', so('orcado'), so('realizado'), so('dif'), so('orcado') ? so('realizado') / so('orcado') : null, ''],
+            [1, 2, 3], ['left', R, R, R, R, 'left']);
+          ws.getCell(l, 5).numFmt = PCT;
+        };
+        abaConfronto('Orç x Real Despesas', 'Orçado × realizado — despesas', a.confronto.despesas);
+        abaConfronto('Orç x Real Receitas', 'Orçado × realizado — receitas', a.confronto.receitas);
+
+        const ws8 = wb.addWorksheet('Orç x Real por mês', { views: [{ showGridLines: false }] });
+        L = aporteXlCabecalho(wb, ws8, sub, idLogo, [12, 18, 18, 18, 18, 18, 18], 'Orçado × realizado — mês a mês');
+        aporteXlCabecalhoColunas(ws8, L, ['Mês', 'Despesa orçada', 'Despesa realizada', 'Diferença', 'Receita orçada', 'Receita realizada', 'Diferença'],
+          ['left', R, R, R, R, R, R]); L++;
+        L = aporteXlCorpo(ws8, L, a.confronto.porMes.map(m => [m.mes, m.despesaOrcada, m.despesaReal, m.difDespesa, m.receitaOrcada, m.receitaReal, m.difReceita]),
+          [1, 2, 3, 4, 5, 6], ['left', R, R, R, R, R, R]);
+        aporteXlTotal(ws8, L, ['Ano', a.despesas.total, a.confronto.totalRealDespesa, a.confronto.totalRealDespesa - a.despesas.total,
+          a.receitas.total, a.confronto.totalRealReceita, a.confronto.totalRealReceita - a.receitas.total],
+          [1, 2, 3, 4, 5, 6], ['left', R, R, R, R, R, R]);
+      }
+
+      // ---------- Observações ----------
+      const ws9 = wb.addWorksheet('Observações', { views: [{ showGridLines: false }] });
+      L = aporteXlCabecalho(wb, ws9, sub, idLogo, [110], 'Observações da análise');
+      aporteXlCabecalhoColunas(ws9, L, ['Ponto de atenção'], ['left']); L++;
+      const obs = a.alertas.length ? a.alertas : ['Nenhum ponto de atenção identificado no orçamento deste exercício.'];
+      L = aporteXlCorpo(ws9, L, obs.map(t => [t]), [], ['left']);
+      if (!a.temRealizado) {
+        aporteXlCorpo(ws9, L, [['Confronto com o realizado não incluído: requer permissão de leitura em "Orçado x Realizado".']], [], ['left']);
+      }
+      ws9.getColumn(1).alignment = { wrapText: true, vertical: 'middle' };
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    aporteBaixarPlanilha(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      `orcamento_${a.ano}_${completo ? 'completo' : 'resumo'}_${todayISO()}.xlsx`);
+    toast('Excel gerado.');
+  } catch (e) { console.error(e); toast('Não foi possível gerar o Excel: ' + e.message); }
+}
+
+// Reserva sem estilo, se o ExcelJS nao tiver carregado.
+function exportOrcamentoExcelSimples(a, completo) {
+  if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
+  const MONEY = '"R$" #,##0.00;[Red]-"R$" #,##0.00';
+  const wb = XLSX.utils.book_new();
+  const add = (nome, aoa, colsMoeda) => {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    for (let r = 1; r < aoa.length; r++) (colsMoeda || []).forEach(ci => {
+      const ref = XLSX.utils.encode_cell({ r, c: ci }); if (ws[ref]) ws[ref].z = MONEY;
+    });
+    XLSX.utils.book_append_sheet(wb, ws, nome);
+  };
+  const k = a.kpis;
+  add('Resumo', [['Indicador', 'Valor'], ['Receita orçada', k.receita], ['Despesa orçada', k.despesa],
+    ['Resultado', k.resultado], ['Margem', k.margem], ['Meses negativos', k.mesesNegativos]], [1]);
+  add('Resultado mensal', [['Mês', 'Receita', 'Despesa', 'Resultado', 'Acumulado'],
+    ...a.resultado.map(r => [r.mes, r.receita, r.despesa, r.resultado, r.acumulado])], [1, 2, 3, 4]);
+  const grade = g => [['Categoria', ...MESES, 'Total'], ...g.lista.map(c => [c.cat, ...c.meses, c.total])];
+  add('Receitas', grade(a.receitas), MESES.map((_, i) => i + 1).concat([13]));
+  add('Despesas', grade(a.despesas), MESES.map((_, i) => i + 1).concat([13]));
+  if (completo) {
+    add('Curva ABC', [['Classe', 'Categoria', 'Total', '% do total', '% acumulado'],
+      ...a.abc.map(c => [c.classe, c.cat, c.total, c.pct, c.pctAcum])], [2]);
+    add('Sazonalidade', [['Mês', 'Despesa orçada', '% do ano', 'Desvio'],
+      ...a.sazonalidade.map(s => [s.mes, s.valor, s.pct, s.desvio])], [1]);
+    if (a.confronto) {
+      add('Orç x Real Despesas', [['Categoria', 'Orçado', 'Realizado', 'Diferença', 'Situação'],
+        ...a.confronto.despesas.map(l => [l.cat, l.orcado, l.realizado, l.dif, l.status])], [1, 2, 3]);
+      add('Orç x Real por mês', [['Mês', 'Despesa orçada', 'Despesa realizada', 'Receita orçada', 'Receita realizada'],
+        ...a.confronto.porMes.map(m => [m.mes, m.despesaOrcada, m.despesaReal, m.receitaOrcada, m.receitaReal])], [1, 2, 3, 4]);
+    }
+    add('Observações', [['Ponto de atenção'], ...(a.alertas.length ? a.alertas : ['Nenhum ponto de atenção.']).map(t => [t])]);
+  }
+  XLSX.writeFile(wb, `orcamento_${a.ano}_${completo ? 'completo' : 'resumo'}_${todayISO()}.xlsx`);
+  toast('Excel gerado (sem formatação).');
+}
+
 async function renderOrcamento() {
   const year = Number(sessionStorage.getItem('orc-year')) || new Date().getFullYear();
   const rows = await api('/api/budgets/' + year);
@@ -3600,6 +4105,7 @@ async function renderOrcamento() {
       <label style="font-weight:600; font-size:13px">Ano do orçamento:</label>
       <input type="number" id="o-year" value="${year}" min="2020" max="2100" style="width:100px">
       <div class="spacer"></div>
+      <button class="btn" id="btn-orc-export">Exportar</button>
       <button class="btn primary" id="btn-save">Salvar orçamento</button>
     </div>
     ${tableFor('receita', CAT_RECEITA)}
@@ -3607,6 +4113,57 @@ async function renderOrcamento() {
     <p class="hint">Digite os valores mensais orçados. O botão <strong>→12</strong> replica o valor de janeiro para os 12 meses. Clique em <strong>Salvar orçamento</strong> para gravar.</p>`;
 
   $('#o-year').onchange = e => { sessionStorage.setItem('orc-year', e.target.value); renderOrcamento(); };
+
+  // Exportar: mesma lógica do de Viáticos — primeiro qual relatório, depois o
+  // formato. Usa o que está gravado no ano, não o que está digitado na tela e
+  // ainda não foi salvo; o aviso no modal deixa isso explícito.
+  $('#btn-orc-export').onclick = () => {
+    openModal(`Exportar orçamento de ${year}`, `
+      <p style="font-size:13.5px; color:var(--ink-2); margin-bottom:4px">Qual relatório você quer?</p>
+      <p style="font-size:12px; color:var(--muted); margin-bottom:14px">Exporta o orçamento <strong>gravado</strong> do exercício de ${year}. Se houver alteração na tela ainda não salva, clique antes em "Salvar orçamento".</p>
+      <div class="rel-opcoes">
+        <button class="rel-opcao" data-orc="resumo" type="button">
+          <strong>Resumo</strong>
+          <span>Uma linha por categoria com total do ano, participação e média mensal, mais o resultado mês a mês.</span>
+        </button>
+        <button class="rel-opcao" data-orc="completo" type="button">
+          <strong>Análise completa</strong>
+          <span>Grade dos 12 meses por categoria, resultado acumulado, curva ABC de concentração, sazonalidade, confronto orçado × realizado e os pontos de atenção.</span>
+        </button>
+      </div>`,
+      [{ label: 'Cancelar', onClick: closeModal }]);
+    document.querySelectorAll('.rel-opcao').forEach(b => b.onclick = () => {
+      closeModal();
+      askOrcamentoFormato(b.dataset.orc);
+    });
+  };
+
+  const askOrcamentoFormato = tipo => openModal(
+    `Exportar — ${tipo === 'completo' ? 'Análise completa' : 'Resumo'}`,
+    `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato?</p>
+     <p style="font-size:12px; color:var(--muted); margin-top:6px">${tipo === 'completo'
+        ? 'O Excel sai com uma aba por bloco de análise; o PDF traz tudo num documento só.'
+        : 'Os dois seguem o padrão de relatório da plataforma.'}</p>`,
+    [
+      { label: 'Cancelar', onClick: closeModal },
+      { label: 'Excel', onClick: () => { closeModal(); gerarOrcamentoRelatorio(tipo, 'excel'); } },
+      { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); gerarOrcamentoRelatorio(tipo, 'pdf'); } }
+    ]);
+
+  async function gerarOrcamentoRelatorio(tipo, formato) {
+    try {
+      if (!rows.length) return toast('Não há orçamento gravado para ' + year + '.');
+      toast('Montando o relatório…');
+      // O realizado só entra na análise completa: no resumo ele não é usado, e
+      // buscá-lo à toa custaria uma requisição e um 403 no console.
+      const real = tipo === 'completo' ? await orcamentoBuscarRealizado(year) : null;
+      const a = orcamentoAnalise(year, rows, real);
+      if (formato === 'excel') return exportOrcamentoExcel(a, tipo === 'completo');
+      return tipo === 'completo' ? exportOrcamentoCompletoPDF(a) : exportOrcamentoResumoPDF(a);
+    } catch (e) {
+      toast(e.message || 'Não foi possível montar o relatório.');
+    }
+  }
 
   const recalcRow = tr => {
     let t = 0;
