@@ -663,16 +663,16 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    sozinho — isso é o que causou "PAGA/MENT/O" antes. */
 .tbl-pagar thead th { text-align: center; white-space: normal; }
 .tbl-pagar col.c-id { width: 3%; }
-.tbl-pagar col.c-venc { width: 7%; }
-.tbl-pagar col.c-desc { width: 16%; }
-.tbl-pagar col.c-forn { width: 15%; }
-.tbl-pagar col.c-cat { width: 10%; }
-.tbl-pagar col.c-cc { width: 10%; }
-.tbl-pagar col.c-pm { width: 6%; }
-.tbl-pagar col.c-val { width: 9%; }
-.tbl-pagar col.c-status { width: 7%; }
-.tbl-pagar col.c-conc { width: 7%; }
-.tbl-pagar col.c-acoes { width: 10%; }
+.tbl-pagar col.c-venc { width: 6%; }
+.tbl-pagar col.c-desc { width: 18%; }
+.tbl-pagar col.c-forn { width: 22%; }
+.tbl-pagar col.c-cat { width: 7.5%; }
+.tbl-pagar col.c-cc { width: 7.5%; }
+.tbl-pagar col.c-pm { width: 7.5%; }
+.tbl-pagar col.c-val { width: 5.5%; }
+.tbl-pagar col.c-status { width: 8%; }
+.tbl-pagar col.c-conc { width: 4%; }
+.tbl-pagar col.c-acoes { width: 11%; }
 .tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
@@ -803,7 +803,36 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rel-opcao strong { display: block; font-size: 14px; color: var(--verde-700); margin-bottom: 3px; }
 .rel-opcao span { display: block; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
 
-/* ===== Contas a Pagar — coluna "Conciliado?" =====
+/* ===== Contas a Pagar — ajuste de densidade =====
+   A tabela tem 11 colunas e nenhuma sobra: medindo o que cada uma pede contra o
+   que recebia, Valor guardava 146px para usar 79 e Conciliado guardava 114px
+   para um simbolo de 11 -- essa era refem do proprio cabecalho, nao do
+   conteudo, por isso ele virou "Conc." com o title explicando. Duas colunas
+   estavam abaixo do necessario e ninguem tinha visto: "Transferencia" saia
+   cortada com reticencias, e o badge de status quebrava em duas linhas em todas
+   as linhas pagas.
+   As colunas estreitas usam 8px de padding lateral em vez de 14: uma data ou um
+   simbolo nao precisa de 28px de respiro, e esses 12px por coluna somam o que
+   falta em Descricao e Fornecedor, que sao os campos livres. A fonte cai para
+   12,5px pelo mesmo motivo -- e o que leva Fornecedor de cinco quebras para
+   duas. */
+.tbl-pagar { font-size: 12.5px; }
+.tbl-pagar .btn.sm { padding: 3px 7px; font-size: 11.5px; }
+/* Colunas estreitas: padding lateral menor, no corpo e no cabecalho. */
+.tbl-pagar .id-cell, .tbl-pagar .venc-cell, .tbl-pagar .pm-cell,
+.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(9),
+.tbl-pagar thead th:nth-child(1), .tbl-pagar thead th:nth-child(2),
+.tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8),
+.tbl-pagar thead th:nth-child(9), .tbl-pagar thead th:nth-child(10) {
+  padding-left: 8px; padding-right: 8px;
+}
+/* O badge de status nao quebra mais entre "Pago" e a data. */
+.tbl-pagar .badge { white-space: nowrap; }
+/* Forma de pagamento deixa de ser cortada com reticencias: com a largura atual
+   "Transferencia" cabe, e se um dia nao couber e melhor quebrar que sumir. */
+.tbl-pagar td.pm-cell { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* ===== Coluna "Conciliado?" =====
    A pergunta so faz sentido para titulo ja baixado: pendente ainda nao tem o
    que conciliar, e marcar tudo de vermelho seria alarme falso na tela inteira.
    Por isso sao tres estados, nao dois. */

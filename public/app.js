@@ -708,7 +708,7 @@ async function renderPagar() {
         <col class="c-val"><col class="c-status"><col class="c-conc"><col class="c-acoes">
       </colgroup>
       <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Categoria</th><th>Centro de Custo</th><th>Forma de<br>Pagamento</th>
-        <th class="num">Valor</th><th>Status</th><th class="c-conc-cell">Conciliado?</th><th class="actions">Ações</th></tr></thead>
+        <th class="num">Valor</th><th>Status</th><th class="c-conc-cell" title="Conciliado com o extrato bancário?">Conc.</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>

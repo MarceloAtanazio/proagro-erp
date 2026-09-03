@@ -1748,3 +1748,50 @@ explicando o motivo.
   `rgb(178,58,47)`, — em cinza, nenhuma célula transbordando e sem rolagem horizontal.
   O cabeçalho "Conciliado?" transbordava com 6% de largura; por isso foi para 7%.
 - As 24 verificações da outra sessão seguem passando.
+### A medição, antes de propor
+Comparando o que cada coluna recebia com o que o conteúdo pede (a 1908px, tabela de 1607px):
+
+| Coluna | Recebia | Precisa | |
+|---|---|---|---|
+| Valor | 146px | 79px | 67px parados |
+| Conciliado? | 114px | 11px (o ✔) | refém do **cabeçalho** de 85px |
+| Fornecedor | 241px | 386px | quebrava em 6 de 9 linhas |
+| Descrição | 257px | 310px | quebrava em 5 de 9 |
+
+E dois defeitos que já existiam e ninguém tinha visto:
+- **"Transferência" saía cortada com reticências** (`text-overflow: ellipsis` num campo de 96px
+  para um texto de 112).
+- **O badge de status quebrava em duas linhas nas 9 linhas pagas** — "Pago" numa, a data noutra.
+
+### O que foi aplicado (proposta A, escolhida pelo usuário entre três)
+- Cabeçalho **"Conc."** com `title` explicando: libera 74px que o símbolo não usava.
+- **Padding lateral de 8px** nas colunas estreitas (ID, vencimento, forma de pagamento, valor,
+  status, conciliado), no corpo e no cabeçalho. 14px de cada lado é caro numa coluna que guarda
+  uma data; os 12px por coluna somam o que falta nos campos livres.
+- **`white-space: nowrap` no badge** de status.
+- **Forma de pagamento deixa de ser cortada**: sem `ellipsis`; se um dia não couber, quebra —
+  melhor que sumir.
+- **Fonte da tabela 13,5 → 12,5px** e botões proporcionalmente menores.
+- Larguras: ID 3, Vencimento 6, **Descrição 18**, **Fornecedor 22**, Categoria 7,5, Centro de
+  Custo 7,5, Forma de Pagamento 7,5, Valor 5,5, Status 8, Conc. 4, Ações 11 = 100%.
+  Categoria e Centro de Custo cederam de propósito: são rótulos curtos, e duas linhas ali
+  incomodam menos que duas linhas num nome de fornecedor.
+
+### Resultado medido
+
+| | Antes | Depois |
+|---|---|---|
+| Descrição em 2 linhas | 5 de 9 | **1** |
+| Fornecedor em 2 linhas | 6 de 9 | **1** |
+| Badge de status quebrado | 9 de 9 | **0** |
+| Texto cortado | 2 | **0** |
+| Largura da Descrição | 257px | **292px** |
+| Largura do Fornecedor | 241px | **357px** |
+| Altura da lista (9 linhas) | 756px | **702px** |
+
+Sem rolagem horizontal, soma das larguras em 100%.
+
+### Observação
+O ganho da fonte menor foi verificado, não suposto: com as mesmas larguras e a fonte de hoje
+(proposta B, medida em paralelo), Descrição e Fornecedor continuavam quebrando em 5 das 9
+linhas. É a redução de 13,5 para 12,5px que leva as duas para uma quebra.
