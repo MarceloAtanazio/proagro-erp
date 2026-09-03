@@ -1660,3 +1660,49 @@ Aporte"), conteúdo na linha 7, e que os totais fecham: grade de despesas com Ja
 
 ### Pendência
 Conferência visual dos PDFs com o usuário — o ambiente não renderiza PDF.
+### Orçamento Anual — o que saiu
+O confronto com o realizado foi removido inteiro: as duas seções do PDF, as três abas do Excel,
+os dois alertas que dependiam dele, o parâmetro `realizado` da análise, o helper
+`orcamentoBuscarRealizado` e o aviso de "requer permissão". A descrição no menu também deixou de
+prometer o confronto e passou a apontar onde ele está. O completo caiu de 4 páginas para 3 e de
+9 abas para 6 (Resumo, Receitas, Despesas, Curva ABC, Sazonalidade, Observações).
+
+### Orçado × Realizado — o que entrou
+Botão **Exportar** no lugar do antigo "Exportar CSV", com resumo e análise completa em PDF e
+Excel. O CSV saiu porque o Excel do resumo entrega as mesmas colunas com formatação, situação
+por categoria e mais três abas.
+
+**A regra de classificação é a mesma da tela, de propósito.** `ovrSituacao` reproduz o corte que
+já existia no `tableHTML`: sem orçamento; dentro do orçado (receita acima é bom, despesa acima é
+ruim); atenção quando o desvio fica em ±10%; acima/abaixo do orçado além disso. Se o relatório
+classificasse diferente, o documento impresso diria uma coisa e o sistema outra sobre a mesma
+categoria.
+
+O relatório respeita o **escopo** da tela (YTD ou ano completo) — é ele que decide até que mês o
+confronto vai.
+
+Blocos da versão completa: despesas e receitas por categoria; **mês a mês** com variação,
+% realizado e resultado acumulado; **ranking de estouros e economias**; **aderência ao
+orçamento** (quantas categorias dentro, até 10% acima, mais de 10% acima); **categorias fora do
+previsto** (gastou sem orçamento, orçada sem gasto); e as observações automáticas.
+
+### Verificação
+**Orçado × Realizado — 39 checagens** sobre o código real: totais do YTD (66.000 orçado contra
+53.000 realizado), Marketing ficando de fora por ser só de novembro, e as regras de situação
+testadas **nos dois sentidos** (despesa 5% acima vira "Atenção", 20% vira "Acima"; receita 5%
+abaixo vira "Atenção", acima vira "Dentro"). Também: ordenações, aderência somando 100% das
+categorias, mês a mês com março somando as duas despesas realizadas, acumulado batendo com
+receita real − despesa real, os quatro alertas, o ano completo, e as bordas (sem dado nenhum, só
+realizado sem orçamento).
+
+**Orçamento — 43 checagens** revalidadas depois da remoção; o teste foi atualizado para o novo
+contrato da função.
+
+**Geração — 19 checagens** sobre os `.xlsx` reais: o do Orçamento com 6 abas e **nenhuma menção a
+"realizado" em célula alguma**; o de Orçado × Realizado com 4 abas no resumo e 7 no completo,
+cada uma com título próprio, mês a mês com só 6 linhas no YTD e o período fechando 66.000 ×
+53.000, o Jurídico aparecendo em "Fora do previsto" e nas observações. Os PDFs saíram com 1 e 3
+páginas (OvR) e 2 e 3 (Orçamento).
+
+### Pendência
+Conferência visual dos PDFs com o usuário — o ambiente não renderiza PDF.
