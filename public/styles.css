@@ -654,34 +654,59 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   position: sticky; z-index: 4;
 }
 
-/* ===== Contas a Pagar — colunas com largura fixa (texto quebra dentro do bloco) ===== */
-.tbl-pagar { table-layout: fixed; min-width: 1600px; }
-/* As larguras sao percentuais, entao numa tela estreita todas encolhem juntas e
-   o que tem nowrap -- data, valor, badge de status -- era cortado em silencio:
-   a 1366px a tabela escondia 29 celulas. Com a largura minima o .table-wrap
-   rola, que e o comportamento padrao das tabelas do sistema. Rolar e pior que
-   caber, mas e muito melhor que esconder numero. */
-/* Cabeçalhos centralizados só nesta tabela — a regra geral do sistema
-   (thead th) trava alinhamento à esquerda e uma única linha. Aqui o título
-   "Forma de Pagamento" tem uma quebra manual (<br>) controlada por nós,
-   então não precisamos (nem queremos) deixar o navegador quebrar palavras
-   sozinho — isso é o que causou "PAGA/MENT/O" antes. */
-.tbl-pagar thead th { text-align: center; white-space: normal; }
-.tbl-pagar col.c-id { width: 3.5%; }
-.tbl-pagar col.c-venc { width: 7%; }
-.tbl-pagar col.c-desc { width: 21%; }
-.tbl-pagar col.c-forn { width: 24%; }
-.tbl-pagar col.c-pm { width: 8%; }
-.tbl-pagar col.c-val { width: 7%; }
-.tbl-pagar col.c-status { width: 8.5%; }
-.tbl-pagar col.c-conc { width: 4%; }
-.tbl-pagar col.c-acoes { width: 17%; }
+/* ===== Contas a Pagar — grade =====
+   As colunas estreitas tem largura em PIXEL, nao em porcentagem. Com
+   porcentagem elas encolhiam junto com a tela e o conteudo com nowrap -- data,
+   valor, badge de status -- era cortado em silencio: a 1366px a tabela chegava
+   a esconder 29 celulas. Em pixel elas nunca encolhem, e quem absorve a
+   variacao sao Descricao e Fornecedor, que sao texto e podem quebrar.
+   A largura minima cobre as colunas fixas mais um minimo para as duas de
+   texto; abaixo disso o .table-wrap rola, como nas demais tabelas do sistema. */
+.tbl-pagar { table-layout: fixed; min-width: 1220px; }
+.tbl-pagar col.c-id     { width: 52px; }
+.tbl-pagar col.c-venc   { width: 100px; }
+.tbl-pagar col.c-desc   { width: auto; }
+.tbl-pagar col.c-forn   { width: auto; }
+.tbl-pagar col.c-pm     { width: 128px; }
+.tbl-pagar col.c-val    { width: 116px; }
+.tbl-pagar col.c-status { width: 140px; }
+.tbl-pagar col.c-conc   { width: 66px; }
+.tbl-pagar col.c-acoes  { width: 272px; }
 .tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 .tbl-pagar td.num { white-space: nowrap; }
 .tbl-pagar td.actions { white-space: normal; }
-.tbl-pagar td.actions .btn { margin: 1px 4px 1px 0; }
 .tbl-pagar td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tbl-pagar td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tbl-pagar td.pm-cell { white-space: normal; }
+
+/* Colunas estreitas com padding lateral menor: uma data ou um simbolo nao
+   precisa de 28px de respiro, e o que sobra vai para os campos de texto. */
+.tbl-pagar .id-cell, .tbl-pagar .venc-cell, .tbl-pagar .pm-cell,
+.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(7),
+.tbl-pagar thead th:nth-child(1), .tbl-pagar thead th:nth-child(2),
+.tbl-pagar thead th:nth-child(5), .tbl-pagar thead th:nth-child(6),
+.tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8) {
+  padding-left: 8px; padding-right: 8px;
+}
+/* O badge de status nao quebra entre "Pago" e a data. */
+.tbl-pagar .badge { white-space: nowrap; }
+
+/* A coluna de acoes fica ancorada a direita: numa tela estreita a tabela rola,
+   e sem isso os botoes -- que sao o que mais se usa aqui -- saiam de vista.
+   Precisa de fundo opaco proprio, senao o conteudo que rola aparece por baixo. */
+.tbl-pagar td.actions, .tbl-pagar thead th.actions, .tbl-pagar tfoot td:last-child {
+  position: sticky; right: 0; z-index: 1;
+  padding-left: 8px; text-align: left;
+  background: var(--card);
+  box-shadow: -1px 0 0 var(--line);
+}
+.tbl-pagar thead th.actions { background: #FAFBFA; }
+.tbl-pagar tbody tr:hover td.actions { background: #FAFCFA; }
+.tbl-pagar tfoot td:last-child { background: #FAFBFA; }
+.tbl-pagar td.actions .btn { margin: 1px 4px 1px 0; }
+/* O cabecalho desta coluna e mais largo que o simbolo que ela guarda; com o
+   espacamento de letra menor "Conc." cabe sem cortar. */
+.tbl-pagar thead th:nth-child(8) { letter-spacing: .02em; }
 
 /* ===== Botão de anexos — largura fixa para não quebrar o layout da linha,
    com ou sem contagem exibida ===== */

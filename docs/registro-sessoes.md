@@ -1872,3 +1872,38 @@ Larguras: ID 3,5 · Vencimento 7 · Descrição 21 · Fornecedor 24 · Forma de 
 Valor 7 · Status 8,5 · Conc. 4 · Ações 17 = 100%.
 A coluna Valor precisou de 7% não pelos valores das linhas, mas pelo **total do rodapé**, que é
 maior que qualquer um deles e estava sendo cortado.
+principalmente os botões de ações.
+
+### O que estava acontecendo
+Reproduzi a tela inteira (sidebar + main + content) a 1280px: a página **não** alargava — o
+`.main` já tem `min-width: 0`, então isso estava certo. O problema era outro: com
+`min-width: 1600px` a tabela ficava bem mais larga que os 965px disponíveis, o `.table-wrap`
+rolava, e a **coluna de Ações saía inteira de vista**. Funcionava, mas os botões que mais se
+usam na tela só apareciam depois de rolar — foi isso que apareceu cortado no print.
+
+### A correção, em duas partes
+**1. Larguras em pixel nas colunas estreitas.** Em porcentagem elas encolhiam junto com a tela,
+e o conteúdo com `nowrap` — data, valor, badge — era cortado em silêncio. Em pixel elas nunca
+encolhem: ID 52, Vencimento 100, Forma de Pagamento 128, Valor 116, Status 140, Conc. 66,
+Ações 272. Descrição e Fornecedor ficam com `auto` e absorvem toda a variação, porque são texto
+e podem quebrar sem perder informação. Com isso a largura mínima caiu de 1600 para **1220px**,
+que é a soma das fixas mais um mínimo para as duas de texto.
+
+**2. Coluna de Ações ancorada à direita** (`position: sticky`), com fundo opaco próprio e uma
+linha de separação. Quando a tabela rola, os botões ficam parados no lugar. Sem o fundo opaco o
+conteúdo que rola apareceria por baixo; o `:hover` da linha também foi tratado, senão a célula
+ancorada ficaria com a cor errada ao passar o mouse.
+
+### Verificação
+Medido em **1908, 1366, 1280 e 1100px**, com o menu **aberto e recolhido**:
+
+| | 1908 | 1366 | 1280 | 1100 |
+|---|---|---|---|---|
+| Células cortadas | 0 | 0 | 0 | 0 |
+| Ações visíveis (antes e depois de rolar) | sim | sim | sim | sim |
+| Botões numa linha | sim | sim | sim | sim |
+| Página alarga | não | não | não | não |
+| Rolagem da tabela | não | sim | sim | sim |
+
+A 1908px a tabela ocupa 1606px sem rolagem, com a Descrição sem quebra e o Fornecedor quebrando
+nos dois nomes mais longos da base.
