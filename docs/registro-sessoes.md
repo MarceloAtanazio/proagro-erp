@@ -1986,3 +1986,55 @@ a lista de 7 títulos passou de 388 para **344px**. Abaixo de 1366px a tabela ch
 `min-width` de 1220px e rola na horizontal, com a coluna Ações fixa à direita — nada é cortado.
 
 **Fora de escopo, de propósito:** Contas a Receber e Contratos seguem com os botões de texto.
+
+---
+
+## 2026-09-04 — Tela de login: o sistema passa a se chamar só "ERP Corporativo"
+
+**Pedido:** tirar o "Módulo Financeiro" do nome, deixando só "ERP Corporativo"; aumentar o nome
+para ocupar mais o painel verde; e aumentar o logo da ProAgro.
+
+### O que mudou
+
+- `public/index.html`: `<h1>ERP Corporativo<br>Módulo Financeiro</h1>` virou `<h1>ERP
+  Corporativo</h1>`. O `<img>` do logo perdeu o `style="height:40px"` inline — quem manda no
+  tamanho agora é o CSS, senão o inline venceria o `clamp()`.
+- `public/styles.css`: logo e título passam a crescer com a tela.
+  - `.login-brand .mark img { height: clamp(48px, 4vw, 76px) }` — era fixo em 40px.
+  - `.login-brand h1 { font-size: clamp(40px, 5.2vw, 104px); line-height: 1.04 }` — era 34px.
+  - O `max-width: 420px` do `h1` **saiu**: era ele que forçava a quebra de linha.
+  - O parágrafo abaixo acompanhou: 400 → 480px de largura, 15px de corpo.
+
+### Como os números foram escolhidos
+
+O painel verde vale `1.1` de `2.1` no flex (≈52% da janela) menos 112px de padding. Medindo
+`Range.getClientRects()` do título, a razão largura-do-texto / corpo-da-fonte do "ERP
+Corporativo" em DM Sans 700 é **6,84**. Daí o `5.2vw`: é o maior fator que mantém o título
+numa linha até 1000px de janela, onde a sobra é menor.
+
+| Janela | Largura útil | Corpo | Texto | Ocupação | Linhas | Logo | Nitidez do logo |
+|---|---|---|---|---|---|---|---|
+| 2560 | 1240px | 104px | 711px | 57% | 1 | 76×206 | 3,9× |
+| 1908 | 899px | 99px | 678px | **75%** | 1 | 76×206 | 3,9× |
+| 1600 | 738px | 83px | 569px | 77% | 1 | 64×174 | 4,6× |
+| 1366 | 615px | 71px | 486px | 79% | 1 | 55×148 | 5,4× |
+| 1100 | 476px | 57px | 391px | 82% | 1 | 48×130 | 6,1× |
+| 1000 | 423px | 52px | 355px | 84% | 1 | 48×130 | 6,1× |
+
+Em nenhuma largura o título transborda o padding, e em nenhuma a página passa a rolar. Abaixo
+de 980px o painel verde já era escondido pela `@media` — conferido em 900px.
+
+### O logo
+
+O pedido veio com o logo em fundo transparente e alta resolução. O arquivo que já está no
+repositório, `public/logo-white.png`, **é exatamente esse**: PNG RGBA 796×293, com o pixel de
+canto em alfa 0 (fundo transparente de verdade). No maior tamanho que a tela agora usa ele
+renderiza a 206px de largura — **3,9× os pixels necessários**, então continua nítido inclusive
+em telas retina. Não houve o que trocar.
+
+**Duas coisas registradas, não feitas (fora do pedido):**
+- O nome do arquivo `logo-white.png` mente: o conteúdo é o logo colorido, não a versão branca
+  (o branco foi revertido em 2026-08-24 a pedido). Renomear tocaria a sidebar também.
+- "Financeiro" ainda identifica o sistema em outros lugares: o `<title>` da aba (`ProAgro ERP —
+  Financeiro`), o `brand-sub` da sidebar (`ERP · Financeiro`) e o cabeçalho de todos os PDFs
+  (`ERP Financeiro · Módulo X`). O pedido era sobre a tela inicial.

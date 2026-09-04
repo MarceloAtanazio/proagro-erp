@@ -49,8 +49,13 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
   padding: 56px;
 }
 .login-brand .mark { display: flex; align-items: center; gap: 12px; }
-.login-brand h1 { font-size: 34px; font-weight: 700; letter-spacing: -.02em; max-width: 420px; line-height: 1.2; margin-top: 24px; }
-.login-brand p { color: rgba(255,255,255,.72); max-width: 400px; margin-top: 14px; }
+/* O logo e o nome do sistema crescem com a tela. O painel verde vale 1.1 de 2.1
+   da largura da janela (≈52%) menos os 112px de padding; com estes clamps o
+   título fica sempre em UMA linha ocupando 75–84% dessa largura útil, medido de
+   1000 a 2560px. Sem `max-width` no h1 — era ele que forçava a quebra. */
+.login-brand .mark img { height: clamp(48px, 4vw, 76px); width: auto; display: block; }
+.login-brand h1 { font-size: clamp(40px, 5.2vw, 104px); font-weight: 700; letter-spacing: -.03em; line-height: 1.04; margin-top: 30px; }
+.login-brand p { color: rgba(255,255,255,.72); max-width: 480px; margin-top: 18px; font-size: 15px; }
 .login-brand .foot { font-size: 12.5px; color: rgba(255,255,255,.55); }
 .login-panel {
   flex: 1; display: flex; align-items: center; justify-content: center; background: var(--card); padding: 40px;
