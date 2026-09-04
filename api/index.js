@@ -711,7 +711,13 @@ app.delete('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req,
 app.get('/api/receivables', requireAuth, requireViewAny(['receber']), h(async (req, res) => {
   res.json(await query(`
     SELECT r.*,
-      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='receivable' AND a.entity_id=r.id) AS attachment_count
+      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='receivable' AND a.entity_id=r.id) AS attachment_count,
+      -- Conciliado = existe movimentacao bancaria conciliada apontando para este
+      -- recebivel. EXISTS e nao JOIN: hoje nenhum recebivel tem mais de uma
+      -- linha do extrato conciliada, mas nada no schema impede -- e com JOIN o
+      -- recebivel apareceria duplicado na listagem no dia em que acontecer.
+      EXISTS (SELECT 1 FROM erp_bank_transactions b
+              WHERE b.matched_type='receivable' AND b.matched_id=r.id AND b.reconciled=true) AS reconciled
     FROM erp_receivables r ORDER BY r.due_date`));
 }));
 

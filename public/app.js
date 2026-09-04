@@ -679,7 +679,7 @@ async function renderPagar() {
       <button class="btn" id="btn-export">Exportar</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
     </div>
-    <div class="table-wrap"><table id="tbl" class="tbl-pagar"></table></div>`;
+    <div class="table-wrap"><table id="tbl" class="tbl-fin"></table></div>`;
 
   // Mantém o painel de filtros fixo logo abaixo da barra superior ao rolar.
   const topbarEl = document.querySelector('.topbar');
@@ -872,12 +872,13 @@ async function renderReceber() {
   const FKEY = 'filters-receber';
   const saved = loadFilters(FKEY);
   c.innerHTML = `
-    <div class="toolbar">
+    <div class="toolbar toolbar-spaced" id="receber-toolbar">
       <input type="search" id="q" placeholder="Buscar cliente, descrição…" value="${esc(saved.q || '')}">
       <select id="f-status"><option value="">Todos os status</option>
         <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
         <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
         <option value="recebido" ${saved.status === 'recebido' ? 'selected' : ''}>Recebidos</option></select>
+      <select id="f-cat"><option value="">Todas as categorias</option>${CAT_RECEITA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
       <div class="date-range">
         <label>De <input type="date" id="f-de" value="${saved.de || ''}"></label>
         <label>Até <input type="date" id="f-ate" value="${saved.ate || ''}"></label>
@@ -887,18 +888,24 @@ async function renderReceber() {
       <button class="btn" id="btn-csv">Exportar CSV</button>
       <button class="btn primary" id="btn-new">+ Novo recebível</button>
     </div>
-    <div class="table-wrap"><table id="tbl"></table></div>`;
+    <div class="table-wrap"><table id="tbl" class="tbl-fin"></table></div>`;
+
+  // Mantém o painel de filtros fixo logo abaixo da barra superior ao rolar,
+  // como em Contas a Pagar.
+  const topbarEl = document.querySelector('.topbar');
+  if (topbarEl) $('#receber-toolbar').style.top = topbarEl.offsetHeight + 'px';
 
   let lastFiltered = rows;
   const draw = () => {
-    const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, today = todayISO();
+    const q = $('#q').value.toLowerCase(), fs = $('#f-status').value, fc = $('#f-cat').value, today = todayISO();
     const de = $('#f-de').value, ate = $('#f-ate').value;
-    saveFilters(FKEY, { q: $('#q').value, status: fs, de, ate });
+    saveFilters(FKEY, { q: $('#q').value, status: fs, cat: fc, de, ate });
     const filtered = rows.filter(r => {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
       if (fs === 'recebido' && r.status !== 'recebido') return false;
       if (fs === 'vencido' && !late) return false;
+      if (fc && r.category !== fc) return false;
       if (de && r.due_date < de) return false;
       if (ate && r.due_date > ate) return false;
       return !q || (r.description + ' ' + r.client_name + ' ' + (r.document || '')).toLowerCase().includes(q);
@@ -906,25 +913,39 @@ async function renderReceber() {
     lastFiltered = filtered;
     const total = filtered.reduce((s, r) => s + r.amount, 0);
     $('#tbl').innerHTML = `
-      <thead><tr><th>Vencimento</th><th>Cliente</th><th>Descrição</th><th>Categoria</th><th>Doc.</th>
-        <th class="num">Valor</th><th>Status</th><th class="actions">Ações</th></tr></thead>
+      <colgroup>
+        <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-cli"><col class="c-doc">
+        <col class="c-val"><col class="c-status"><col class="c-conc"><col class="c-acoes">
+      </colgroup>
+      <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Cliente</th><th>Doc.</th>
+        <th class="num">Valor</th><th>Status</th><th class="c-conc-cell" title="Conciliado com o extrato bancário?">Conc.</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
-          <td class="nowrap">${brDate(r.due_date)}</td><td>${esc(r.client_name)}</td><td>${esc(r.description)}</td>
-          <td>${esc(r.category)}</td><td>${esc(r.document || '—')}</td>
+          <td class="id-cell">${r.id}</td>
+          <td class="venc-cell">${brDate(r.due_date)}</td>
+          <td>${esc(r.description)}</td>
+          <td>${esc(r.client_name)}</td>
+          <td class="doc-cell">${esc(r.document || '—')}</td>
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'recebido'
             ? `<span class="badge ok">Recebido ${brDate(r.receipt_date)}</span>`
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
+          <td class="c-conc-cell">${r.status !== 'recebido'
+            ? '<span class="conc-na" title="Recebível ainda não baixado — não há o que conciliar">—</span>'
+            : r.reconciled
+              ? '<span class="conc-sim" title="Há uma movimentação bancária conciliada com este recebível">✔</span>'
+              : '<span class="conc-nao" title="Baixado, mas sem movimentação bancária conciliada">✘</span>'}</td>
           <td class="actions">
-            ${r.status === 'pendente' ? `<button class="btn sm primary" data-rec="${r.id}">Receber</button>` : `<button class="btn sm" data-unrec="${r.id}">Estornar</button>`}
-            <button class="btn sm att-btn" data-att="receivable:${r.id}">📎${r.attachment_count ? ' ' + r.attachment_count : ''}</button>
-            <button class="btn sm" data-edit="${r.id}">Editar</button>
-            <button class="btn sm danger-ghost" data-del="${r.id}">Excluir</button>
+            ${r.status === 'pendente'
+              ? `<button class="btn-ic ok" data-rec="${r.id}" title="Registrar o recebimento" aria-label="Registrar recebimento">✓</button>`
+              : `<button class="btn-ic" data-unrec="${r.id}" title="Estornar o recebimento" aria-label="Estornar o recebimento">↺</button>`}
+            <button class="btn-ic" data-att="receivable:${r.id}" title="Anexos deste recebível" aria-label="Anexos">📎${r.attachment_count ? `<span class="ic-cont">${r.attachment_count}</span>` : ''}</button>
+            <button class="btn-ic" data-edit="${r.id}" title="Editar" aria-label="Editar">✎</button>
+            <button class="btn-ic perigo" data-del="${r.id}" title="Excluir" aria-label="Excluir">🗑</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="7"><div class="empty">Nenhum recebível encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="2"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum recebível encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="3"></td></tr></tfoot>`;
 
     $('#tbl').querySelectorAll('[data-rec]').forEach(b => b.onclick = () => baixaReceber(rows.find(r => r.id == b.dataset.rec)));
     $('#tbl').querySelectorAll('[data-unrec]').forEach(b => b.onclick = async () => { await api(`/api/receivables/${b.dataset.unrec}/unreceive`, { method: 'POST' }); toast('Recebimento estornado.'); renderReceber(); });
@@ -932,9 +953,9 @@ async function renderReceber() {
     $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('receivable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('recebível', `/api/receivables/${b.dataset.del}`, renderReceber));
   };
-  ['q', 'f-status', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
+  ['q', 'f-status', 'f-cat', 'f-de', 'f-ate'].forEach(id => $('#' + id).oninput = draw);
   $('#btn-clear').onclick = () => {
-    $('#q').value = ''; $('#f-status').value = ''; $('#f-de').value = ''; $('#f-ate').value = '';
+    $('#q').value = ''; $('#f-status').value = ''; $('#f-cat').value = ''; $('#f-de').value = ''; $('#f-ate').value = '';
     saveFilters(FKEY, {});
     draw();
   };

@@ -659,56 +659,84 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   position: sticky; z-index: 4;
 }
 
-/* ===== Contas a Pagar — grade =====
+/* ===== Grade financeira — Contas a Pagar e Contas a Receber =====
+   As duas telas usam ESTA classe. São nove colunas na mesma ordem e nas mesmas
+   larguras, o que faz as regras por posição (nth-child) valerem para as duas:
+     1 ID · 2 Vencimento · 3 Descrição · 4 Fornecedor/Cliente ·
+     5 Forma de pagamento/Documento · 6 Valor · 7 Status · 8 Conc. · 9 Ações
+
    As colunas estreitas tem largura em PIXEL, nao em porcentagem. Com
    porcentagem elas encolhiam junto com a tela e o conteudo com nowrap -- data,
    valor, badge de status -- era cortado em silencio: a 1366px a tabela chegava
    a esconder 29 celulas. Em pixel elas nunca encolhem, e quem absorve a
-   variacao sao Descricao e Fornecedor, que sao texto e podem quebrar.
+   variacao sao Descricao e Fornecedor/Cliente, que sao texto e podem quebrar.
    A largura minima cobre as colunas fixas mais um minimo para as duas de
    texto; abaixo disso o .table-wrap rola, como nas demais tabelas do sistema. */
-.tbl-pagar { table-layout: fixed; min-width: 1220px; }
-.tbl-pagar col.c-id     { width: 52px; }
-.tbl-pagar col.c-venc   { width: 100px; }
-.tbl-pagar col.c-desc   { width: auto; }
-.tbl-pagar col.c-forn   { width: auto; }
-.tbl-pagar col.c-pm     { width: 128px; }
-.tbl-pagar col.c-val    { width: 116px; }
-.tbl-pagar col.c-status { width: 140px; }
-.tbl-pagar col.c-conc   { width: 66px; }
-.tbl-pagar col.c-acoes  { width: 172px; }
-.tbl-pagar td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
-.tbl-pagar td.num { white-space: nowrap; }
-.tbl-pagar td.actions { white-space: normal; }
-.tbl-pagar td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
-.tbl-pagar td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.tbl-pagar td.pm-cell { white-space: normal; }
+.tbl-fin { table-layout: fixed; min-width: 1236px; }
+.tbl-fin col.c-id     { width: 52px; }
+.tbl-fin col.c-venc   { width: 100px; }
+.tbl-fin col.c-desc   { width: auto; }
+/* A contraparte: fornecedor em Contas a Pagar, cliente em Contas a Receber. */
+.tbl-fin col.c-forn,
+.tbl-fin col.c-cli    { width: auto; }
+/* A coluna auxiliar estreita: forma de pagamento em Pagar, documento em Receber. */
+.tbl-fin col.c-pm,
+.tbl-fin col.c-doc    { width: 128px; }
+.tbl-fin col.c-val    { width: 116px; }
+/* 156px e ditado pelo badge mais longo das duas telas: "Recebido 01/03/2026"
+   pede 147px -- 7 mais do que os 140 que bastavam para "Pago 01/03/2026". Com
+   140 o badge de Contas a Receber saia recortado em todas as linhas baixadas. */
+.tbl-fin col.c-status { width: 156px; }
+.tbl-fin col.c-conc   { width: 66px; }
+.tbl-fin col.c-acoes  { width: 172px; }
+.tbl-fin td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
+.tbl-fin td.num { white-space: nowrap; }
+.tbl-fin td.actions { white-space: normal; }
+.tbl-fin td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tbl-fin td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Sem reticencias: "Transferencia" cabe na largura atual, e se um dia nao
+   couber e melhor quebrar que sumir. */
+.tbl-fin td.pm-cell, .tbl-fin td.doc-cell { white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* Colunas estreitas com padding lateral menor: uma data ou um simbolo nao
-   precisa de 28px de respiro, e o que sobra vai para os campos de texto. */
-.tbl-pagar .id-cell, .tbl-pagar .venc-cell, .tbl-pagar .pm-cell,
-.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(7),
-.tbl-pagar thead th:nth-child(1), .tbl-pagar thead th:nth-child(2),
-.tbl-pagar thead th:nth-child(5), .tbl-pagar thead th:nth-child(6),
-.tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8) {
+   precisa de 28px de respiro, e esses 12px por coluna somam o que falta em
+   Descricao e na contraparte, que sao os campos livres. */
+.tbl-fin .id-cell, .tbl-fin .venc-cell, .tbl-fin .pm-cell, .tbl-fin .doc-cell,
+.tbl-fin td.num, .tbl-fin .c-conc-cell, .tbl-fin tbody td:nth-child(7),
+.tbl-fin thead th:nth-child(1), .tbl-fin thead th:nth-child(2),
+.tbl-fin thead th:nth-child(5), .tbl-fin thead th:nth-child(6),
+.tbl-fin thead th:nth-child(7), .tbl-fin thead th:nth-child(8) {
   padding-left: 8px; padding-right: 8px;
 }
-/* O badge de status nao quebra entre "Pago" e a data. */
-.tbl-pagar .badge { white-space: nowrap; }
+/* O badge de status nao quebra entre "Pago"/"Recebido" e a data. */
+.tbl-fin .badge { white-space: nowrap; }
 
 /* A coluna de acoes fica ancorada a direita: numa tela estreita a tabela rola,
    e sem isso os botoes -- que sao o que mais se usa aqui -- saiam de vista.
-   Precisa de fundo opaco proprio, senao o conteudo que rola aparece por baixo. */
-.tbl-pagar td.actions, .tbl-pagar thead th.actions, .tbl-pagar tfoot td:last-child {
+   Precisa de fundo opaco proprio, senao o conteudo que rola aparece por baixo.
+   Alinhada a esquerda de proposito: a regra geral do sistema joga td.actions
+   para a direita, o que abria um vao entre o simbolo de conciliado e o primeiro
+   botao. */
+.tbl-fin td.actions, .tbl-fin thead th.actions, .tbl-fin tfoot td:last-child {
   position: sticky; right: 0; z-index: 1;
   padding-left: 8px; text-align: left;
   background: var(--card);
   box-shadow: -1px 0 0 var(--line);
 }
-.tbl-pagar thead th.actions { background: #FAFBFA; }
-.tbl-pagar tbody tr:hover td.actions { background: #FAFCFA; }
-.tbl-pagar tfoot td:last-child { background: #FAFBFA; }
-.tbl-pagar td.actions .btn-ic { margin: 0 4px 0 0; }
+.tbl-fin thead th.actions { background: #FAFBFA; }
+.tbl-fin tbody tr:hover td.actions { background: #FAFCFA; }
+.tbl-fin tfoot td:last-child { background: #FAFBFA; }
+.tbl-fin td.actions .btn-ic { margin: 0 4px 0 0; }
+
+/* ===== Coluna "Conciliado?" =====
+   A pergunta so faz sentido para titulo ja baixado: pendente ainda nao tem o
+   que conciliar, e marcar tudo de vermelho seria alarme falso na tela inteira.
+   Por isso sao tres estados, nao dois. */
+.tbl-fin .c-conc-cell { text-align: center; }
+.tbl-fin .conc-sim, .tbl-fin .conc-nao { font-size: 15px; font-weight: 700; line-height: 1; cursor: default; }
+.tbl-fin .conc-sim { color: var(--verde-700); }
+.tbl-fin .conc-nao { color: var(--danger); }
+.tbl-fin .conc-na  { color: var(--muted); cursor: default; }
 
 /* Botao de icone da grade: o rotulo vive no title e no aria-label, nao no
    proprio botao. Sao as mesmas quatro acoes de antes, num terco da largura --
@@ -731,7 +759,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .ic-cont { font-size: 10px; margin-left: 1px; vertical-align: super; color: var(--muted); }
 /* O cabecalho desta coluna e mais largo que o simbolo que ela guarda; com o
    espacamento de letra menor "Conc." cabe sem cortar. */
-.tbl-pagar thead th:nth-child(8) { letter-spacing: .02em; }
+.tbl-fin thead th:nth-child(8) { letter-spacing: .02em; }
 
 /* ===== Botão de anexos — largura fixa para não quebrar o layout da linha,
    com ou sem contagem exibida ===== */
@@ -855,49 +883,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rel-opcao strong { display: block; font-size: 14px; color: var(--verde-700); margin-bottom: 3px; }
 .rel-opcao span { display: block; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
 
-/* ===== Contas a Pagar — ajuste de densidade =====
-   A tabela tem 11 colunas e nenhuma sobra: medindo o que cada uma pede contra o
-   que recebia, Valor guardava 146px para usar 79 e Conciliado guardava 114px
-   para um simbolo de 11 -- essa era refem do proprio cabecalho, nao do
-   conteudo, por isso ele virou "Conc." com o title explicando. Duas colunas
-   estavam abaixo do necessario e ninguem tinha visto: "Transferencia" saia
-   cortada com reticencias, e o badge de status quebrava em duas linhas em todas
-   as linhas pagas.
-   As colunas estreitas usam 8px de padding lateral em vez de 14: uma data ou um
-   simbolo nao precisa de 28px de respiro, e esses 12px por coluna somam o que
-   falta em Descricao e Fornecedor, que sao os campos livres. A fonte cai para
-   12,5px pelo mesmo motivo -- e o que leva Fornecedor de cinco quebras para
-   duas. */
-/* Colunas estreitas: padding lateral menor, no corpo e no cabecalho. */
-.tbl-pagar .id-cell, .tbl-pagar .venc-cell, .tbl-pagar .pm-cell,
-.tbl-pagar td.num, .tbl-pagar .c-conc-cell, .tbl-pagar tbody td:nth-child(7),
-.tbl-pagar thead th:nth-child(1), .tbl-pagar thead th:nth-child(2),
-.tbl-pagar thead th:nth-child(5), .tbl-pagar thead th:nth-child(6),
-.tbl-pagar thead th:nth-child(7), .tbl-pagar thead th:nth-child(8) {
-  padding-left: 8px; padding-right: 8px;
-}
-/* O badge de status nao quebra mais entre "Pago" e a data. */
-.tbl-pagar .badge { white-space: nowrap; }
-/* Forma de pagamento sem reticencias: "Transferencia" cabe na largura atual, e
-   se um dia nao couber e melhor quebrar que sumir. */
-.tbl-pagar td.pm-cell { white-space: normal; overflow: visible; text-overflow: clip; }
-
-/* ===== Coluna "Conciliado?" =====
-   A pergunta so faz sentido para titulo ja baixado: pendente ainda nao tem o
-   que conciliar, e marcar tudo de vermelho seria alarme falso na tela inteira.
-   Por isso sao tres estados, nao dois. */
-.tbl-pagar .c-conc-cell { text-align: center; }
-/* O cabecalho desta coluna e mais largo que o simbolo que ela guarda, entao era
-   ele que definia a largura. Com o espacamento de letra menor "Conc." cabe em
-   4%, e Acoes comeca mais cedo -- o vao entre o simbolo e o primeiro botao caiu
-   de 72px para menos da metade. */
-.tbl-pagar thead th:nth-child(8) { letter-spacing: .02em; }
-/* A regra geral do sistema alinha td.actions a direita. Com os botoes em duas
-   linhas, a de cima ficava empurrada para a ponta e abria um vao de 68px depois
-   do simbolo de conciliado. A esquerda, os botoes comecam onde a coluna comeca
-   e o cabecalho "Acoes" cai sobre eles. */
-.tbl-pagar td.actions, .tbl-pagar thead th.actions { padding-left: 8px; text-align: left; }
-.tbl-pagar .conc-sim, .tbl-pagar .conc-nao { font-size: 15px; font-weight: 700; line-height: 1; cursor: default; }
-.tbl-pagar .conc-sim { color: var(--verde-700); }
-.tbl-pagar .conc-nao { color: var(--danger); }
-.tbl-pagar .conc-na  { color: var(--muted); cursor: default; }
+/* As regras de densidade e da coluna "Conciliado?" que existiam aqui eram uma
+   segunda copia das do bloco `.tbl-fin` acima -- sobra das sessoes em que a
+   tabela foi ajustada aos poucos. Foram unificadas la para que Contas a Pagar e
+   Contas a Receber não possam divergir. */

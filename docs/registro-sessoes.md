@@ -2038,3 +2038,89 @@ em telas retina. Não houve o que trocar.
 - "Financeiro" ainda identifica o sistema em outros lugares: o `<title>` da aba (`ProAgro ERP —
   Financeiro`), o `brand-sub` da sidebar (`ERP · Financeiro`) e o cabeçalho de todos os PDFs
   (`ERP Financeiro · Módulo X`). O pedido era sobre a tela inicial.
+
+---
+
+## 2026-09-04 — Contas a Receber entra no mesmo padrão de Contas a Pagar
+
+**Pedido:** deixar Contas a Receber no mesmo padrão estrutural e estético de Contas a Pagar —
+"na mesma estrutura inclusive os botões de ações e tudo" — e incluir a conciliação.
+
+### O CSS virou um só, compartilhado
+
+Havia **dois** blocos `.tbl-pagar` no `styles.css` (linhas 662-734 e 858-903), sobra das sessões
+em que a tabela foi ajustada aos poucos: as regras de padding das colunas estreitas, o
+`white-space` do badge e o `letter-spacing` do cabeçalho estavam declarados duas vezes. Em vez
+de copiar isso para uma terceira tela, o bloco virou **`.tbl-fin`**, usado pelas duas.
+
+As nove colunas ficam na mesma ordem nas duas telas, o que é o que faz as regras por posição
+(`nth-child`) valerem para ambas:
+
+| | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| **Pagar** | ID | Vencimento | Descrição | Fornecedor | Forma de Pagamento | Valor | Status | Conc. | Ações |
+| **Receber** | ID | Vencimento | Descrição | Cliente | Doc. | Valor | Status | Conc. | Ações |
+
+`col.c-forn`/`col.c-cli` são a mesma regra (largura automática), e `col.c-pm`/`col.c-doc`
+também (128px) — os nomes diferem só para o HTML dizer o que a coluna é.
+
+### O que mudou em Contas a Receber
+
+- **Ganhou a coluna ID** e a ordem passou a ser Descrição antes de Cliente, como em Pagar.
+- **Categoria saiu da grade e virou filtro**, como aconteceu com Categoria e Centro de Custo em
+  Pagar. É o que faz as duas telas terem as mesmas nove colunas e a mesma largura mínima.
+- **Ações: quatro ícones** no lugar dos quatro botões de texto — `✓` (registrar recebimento) ou
+  `↺` (estornar), `📎` com a contagem, `✎`, `🗑`. Mesmos `data-rec` / `data-unrec` / `data-att` /
+  `data-edit` / `data-del`: nenhum handler mudou. Coluna fixa à direita, como em Pagar.
+- **Coluna "Conc."** com os mesmos três estados: `✔` verde, `✘` vermelho, `—` para o que ainda
+  não foi baixado.
+- **Barra de filtros** virou `toolbar toolbar-spaced` com `top` calculado a partir da topbar —
+  o painel de filtros passa a ficar fixo ao rolar, igual em Pagar.
+
+### A conciliação, no back-end
+
+`GET /api/receivables` passou a devolver `reconciled`, com o mesmo `EXISTS` de `/api/payables`,
+trocando `matched_type='payable'` por `'receivable'`. `EXISTS` e não `JOIN` pelo mesmo motivo:
+nada no schema impede duas movimentações conciliadas para o mesmo recebível, e com `JOIN` a
+linha apareceria duplicada no dia em que acontecer.
+
+Conferido em produção: 50 recebíveis, **49 com `✔`** e **1 com `✘`** — o `SALDO INICIAL`
+(ID 32, R$ 4.318,21), que por natureza não tem movimentação bancária para conciliar. Nenhum
+recebível tem duas movimentações conciliadas hoje.
+
+### Uma coluna estava estreita demais e ninguém tinha visto
+
+`c-status` tinha 140px, medida por `"Pago 01/03/2026"`. Em Contas a Receber o badge é
+`"Recebido 01/03/2026"` e pede **147px**: com 140 ele saía recortado em **todas** as linhas
+baixadas. A coluna foi para **156px** e a largura mínima da tabela de 1220 para 1236px.
+Descrição e Cliente cedem 8px cada.
+
+### Verificação
+
+**Back-end** — 10 asserções contra o Express de verdade, com o `src/db.js` trocado por um stub
+que reproduz o `EXISTS`: campo presente em todo recebível, `true` para conciliado, `false` para
+baixado sem movimentação, `false` para movimentação não conciliada, uma linha só quando há duas
+movimentações, e movimentação de *pagável* não vazando para o recebível de mesmo id. Todas
+passaram.
+
+**Front-end** — as duas telas montadas lado a lado na estrutura real (sidebar + topbar +
+toolbar) com o `styles.css` de produção e os registros mais longos da base (cliente de 65
+caracteres):
+
+| | 1908 | 1366 | 1280 ab./rec. | 1100 |
+|---|---|---|---|---|
+| Larguras das 9 colunas idênticas nas duas telas | sim | sim | sim | sim |
+| Células cortadas (Pagar / Receber) | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Ícones numa linha | sim | sim | sim | sim |
+| Ações visível antes e depois de rolar | sim | sim | sim | sim |
+| Página alarga | não | não | não | não |
+
+**Não-regressão de Contas a Pagar** — a mesma tabela renderizada com o CSS antigo (`.tbl-pagar`,
+do `HEAD`) e com o novo (`.tbl-fin`), comparando **23 propriedades computadas em 74 elementos**:
+a única propriedade que mudou foi `width`, e só nos quatro valores pretendidos (416→408 nas duas
+colunas de texto, 140→156 no Status, e os dois `colspan` do rodapé acompanhando). Padding,
+`white-space`, `position: sticky`, cores, `letter-spacing` e sombras saíram idênticos — a
+unificação não perdeu nenhuma regra.
+
+**Fora de escopo, de propósito:** Contas a Receber continua com "Exportar CSV" enquanto Pagar
+tem o "Exportar" com PDF e Excel. É diferença de funcionalidade, não de estrutura.
