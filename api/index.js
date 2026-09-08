@@ -63,14 +63,20 @@ function setAuthCookie(res, user) {
 
 // Páginas cujo acesso é configurável por usuário.
 // "usuarios" não entra aqui: é exclusiva do administrador.
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos','contratos'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos','contratos','rh'];
+
+// Travas finas DENTRO de Recursos Humanos. "Pode ver a página" não basta ali:
+// um gestor precisa ver a ficha da equipe sem ver CPF, endereço, filiação nem
+// salário. São guardadas como se fossem páginas só para reusar o mesmo
+// armazenamento e o mesmo canView — não aparecem no menu.
+const PERM_EXTRAS = ['rh_sensivel', 'rh_remuneracao'];
 
 // Normaliza o objeto de permissões recebido do frontend para o formato
 // { pagina: 'view' | 'edit' }, descartando páginas desconhecidas e níveis inválidos.
 function normalizePermissions(input) {
   const out = {};
   const src = (input && typeof input === 'object') ? input : {};
-  for (const page of PERM_PAGES) {
+  for (const page of [...PERM_PAGES, ...PERM_EXTRAS]) {
     const lvl = src[page];
     if (lvl === 'view' || lvl === 'edit') out[page] = lvl;
   }
@@ -246,10 +252,18 @@ const AUDIT_MAP = {
     const onde = {
       payable: 'ao título a pagar', receivable: 'ao título a receber', viatico: 'à despesa de viático',
       colab_cnh: 'à CNH do colaborador', colab_veiculo: 'ao veículo do colaborador', colab_seguro: 'à apólice de seguro do colaborador',
-      contrato: 'ao contrato'
+      contrato: 'ao contrato', rh_doc: 'ao dossiê de RH do colaborador'
     }[req.params.type] || `ao registro (${req.params.type})`;
-    return `Anexou um documento (${req.body.file_name || ''}) ${onde} ID ${req.params.id}`;
+    const tipoRH = req.params.type === 'rh_doc' && req.body.doc_tipo ? ` [${req.body.doc_tipo}]` : '';
+    return `Anexou um documento (${req.body.file_name || ''})${tipoRH} ${onde} ID ${req.params.id}`;
   },
+  // Recursos Humanos — dados pessoais e remuneração deixam rastro nomeado.
+  'PUT /api/rh/colaboradores/:id': req => `Editou a ficha de RH do colaborador ID ${req.params.id} (${Object.keys(req.body || {}).length} campo(s))`,
+  'POST /api/rh/colaboradores/:id/vinculos': (req, body) => `Abriu vínculo (${req.body.cargo || 'sem cargo'}, admissão ${req.body.admissao}) para o colaborador ID ${req.params.id}${body && body.id ? ` — vínculo ${body.id}` : ''}`,
+  'PUT /api/rh/vinculos/:id': req => `Editou o vínculo ID ${req.params.id}${req.body.desligamento ? ` — DESLIGAMENTO em ${req.body.desligamento}` : ''}`,
+  'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
+  'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
+  'DELETE /api/rh/dependentes/:id': req => `Excluiu o dependente ID ${req.params.id}`,
   'DELETE /api/attachments/:id': req => `Excluiu o anexo ID ${req.params.id}`,
   'POST /api/settings/categories': req => `Criou a categoria "${req.body.name}" (${req.body.type})`,
   'PUT /api/settings/categories/:id': req => `Editou a categoria ID ${req.params.id}`,
@@ -791,7 +805,8 @@ app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async 
 const ATTACH_TYPES = {
   payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos',
-  contrato: 'contratos'
+  contrato: 'contratos',
+  rh_doc: 'rh'   // dossiê do colaborador; o tipo do documento vai em doc_tipo
 };
 const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)', colab_seguro: 'apólice de seguro' };
 // CNH e apólice são documentos pessoais: quem tem apenas leitura em Viáticos
@@ -876,6 +891,11 @@ app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
   if (ehAnexoColaborador(a.entity_type) && req.user.role !== 'admin' && !canEdit(req.user, page)) {
     return res.status(403).json({ error: 'Documentos pessoais de colaborador só podem ser abertos por quem administra Viáticos.' });
   }
+  // O dossiê de RH guarda RG, CPF, certidão e ASO. Ver a página não basta:
+  // exige a trava fina de dado sensível, ou ser o próprio colaborador.
+  if (a.entity_type === 'rh_doc' && !(await podeVerDossieRH(req.user, a.entity_id))) {
+    return res.status(403).json({ error: 'Este documento é dado pessoal sensível.' });
+  }
   if (a.entity_type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, a.entity_id))) {
     return res.status(403).json({ error: 'Este anexo pertence à viagem de outro colaborador.' });
   }
@@ -917,11 +937,14 @@ app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   if (ehAnexoColaborador(req.params.type) && req.user.role !== 'admin' && !canEdit(req.user, page)) {
     return res.status(403).json({ error: 'Documentos pessoais de colaborador só podem ser vistos por quem administra Viáticos.' });
   }
+  if (req.params.type === 'rh_doc' && !(await podeVerDossieRH(req.user, req.params.id))) {
+    return res.status(403).json({ error: 'O dossiê é dado pessoal sensível.' });
+  }
   if (req.params.type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, req.params.id))) {
     return res.status(403).json({ error: 'Esta despesa pertence à viagem de outro colaborador.' });
   }
   const rows = await query(
-    `SELECT id, kind, file_name, mime_type, byte_size, created_at
+    `SELECT id, kind, doc_tipo, file_name, mime_type, byte_size, created_at
        FROM erp_attachments WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC`,
     [req.params.type, Number(req.params.id)]
   );
@@ -965,15 +988,21 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const table = {
     payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas',
     colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
-    contrato: 'erp_contratos'
+    contrato: 'erp_contratos', rh_doc: 'erp_colaboradores'
   }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
-  if (!own.length) return res.status(404).json({ error: ehAnexoColaborador(req.params.type) ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : 'Título não encontrado.' });
+  if (!own.length) return res.status(404).json({ error: (ehAnexoColaborador(req.params.type) || req.params.type === 'rh_doc') ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : 'Título não encontrado.' });
+
+  // No dossiê de RH o que identifica o documento é o TIPO (rg, cpf, ctps…),
+  // não o `kind` — que é a lista fechada compartilhada com boletos e notas.
+  const docTipo = req.params.type === 'rh_doc'
+    ? (RH_DOC_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
+    : null;
 
   const ins = await query(
-    `INSERT INTO erp_attachments (entity_type, entity_id, kind, file_name, mime_type, byte_size, data, uploaded_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [req.params.type, Number(req.params.id), kind, fileName, mime, buf.length, buf, req.user.id]
+    `INSERT INTO erp_attachments (entity_type, entity_id, kind, file_name, mime_type, byte_size, data, uploaded_by, doc_tipo)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    [req.params.type, Number(req.params.id), kind, fileName, mime, buf.length, buf, req.user.id, docTipo]
   );
   res.json({ ok: true, id: ins[0].id });
 }));
@@ -1929,6 +1958,277 @@ app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(asy
   const used = (await query('SELECT COUNT(*)::int AS n FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1', [req.params.id]))[0].n;
   if (used > 0) return res.status(409).json({ error: `Este colaborador tem ${used} solicitação(ões) vinculada(s). Inative-o em vez de excluir.` });
   await query('DELETE FROM erp_colaboradores WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ============================================================
+// RECURSOS HUMANOS — fase 1: ficha, vínculo, dependentes, dossiê
+// Desenho em docs/rh-desenho.md. Migração: 2026-09-08-rh-fase1.sql
+// ============================================================
+
+// Tipos de documento do dossiê. Os 11 primeiros são os obrigatórios definidos
+// pela empresa; os demais existem para arquivar sem virar pendência.
+const RH_DOC_TIPOS = [
+  { cod: 'rg',                   nome: 'RG',                                  obrigatorio: true },
+  { cod: 'cpf',                  nome: 'CPF',                                 obrigatorio: true },
+  { cod: 'certidao',             nome: 'Certidão de Nascimento ou Casamento', obrigatorio: true },
+  { cod: 'cnh',                  nome: 'CNH',                                 obrigatorio: true },
+  { cod: 'titulo_eleitor',       nome: 'Título de Eleitor',                   obrigatorio: true },
+  { cod: 'pis',                  nome: 'PIS',                                 obrigatorio: true },
+  { cod: 'ctps',                 nome: 'Carteira de Trabalho (CTPS)',         obrigatorio: true },
+  // Só é exigido de homens. Cobrar de uma funcionária é ruído; deixar de
+  // cobrar de um funcionário é falha. A regra vem do campo sexo da ficha.
+  { cod: 'reservista',           nome: 'Certificado de Reservista',           obrigatorio: true, somenteSexo: 'M' },
+  { cod: 'comprovante_endereco', nome: 'Comprovante de Endereço',             obrigatorio: true },
+  { cod: 'diploma',              nome: 'Diploma ou certificado de conclusão', obrigatorio: true },
+  // Este não é anexo, é campo: fica cumprido quando banco, agência e conta
+  // estiverem preenchidos na ficha — exigir um PDF seria burocracia inútil.
+  { cod: 'dados_bancarios',      nome: 'Dados Bancários',                     obrigatorio: true, porCampos: ['banco_numero', 'agencia', 'conta'] },
+  { cod: 'aso',                  nome: 'ASO (saúde ocupacional)',             obrigatorio: false },
+  { cod: 'contrato_assinado',    nome: 'Contrato de trabalho assinado',       obrigatorio: false },
+  { cod: 'carta_oferta',         nome: 'Carta oferta assinada',               obrigatorio: false },
+  { cod: 'termo_equipamento',    nome: 'Termo de entrega de equipamento',     obrigatorio: false },
+  { cod: 'declaracao',           nome: 'Declaração ou termo',                 obrigatorio: false },
+  { cod: 'outro',                nome: 'Outro',                               obrigatorio: false }
+];
+
+// Campos que a LGPD trata como sensíveis e o que é remuneração. Quem não tem
+// a permissão fina recebe o campo AUSENTE da resposta — não em branco, ausente:
+// campo em branco é indistinguível de "não preenchido" e mentiria na tela.
+const RH_SENSIVEIS = ['cpf', 'rg', 'rg_orgao', 'rg_uf', 'rg_emissao', 'pis', 'titulo_eleitor',
+  'titulo_zona', 'titulo_secao', 'titulo_uf', 'reservista', 'ctps_numero', 'ctps_serie', 'ctps_uf',
+  'ctps_emissao', 'endereco', 'endereco_numero', 'endereco_complemento', 'bairro', 'municipio',
+  'uf', 'cep', 'nome_mae', 'nome_pai', 'raca_cor', 'banco_numero', 'banco_nome', 'agencia',
+  'conta', 'conta_tipo', 'pix_chave'];
+const RH_REMUNERACAO = ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia'];
+
+const rhVeSensivel = u => u.role === 'admin' || canView(u, 'rh_sensivel');
+const rhVeRemuneracao = u => u.role === 'admin' || canView(u, 'rh_remuneracao');
+
+// O colaborador sempre enxerga a própria ficha inteira — é dele o dado.
+const rhEhProprio = (u, colab) => !!colab && colab.usuario_id === u.id;
+
+function rhFiltrar(obj, user, colab) {
+  if (!obj) return obj;
+  if (rhEhProprio(user, colab || obj)) return obj;
+  const out = { ...obj };
+  if (!rhVeSensivel(user)) RH_SENSIVEIS.forEach(c => { delete out[c]; });
+  if (!rhVeRemuneracao(user)) RH_REMUNERACAO.forEach(c => { delete out[c]; });
+  return out;
+}
+
+// Quem pode abrir os arquivos do dossiê: admin, quem tem a trava fina de dados
+// sensíveis, ou o próprio colaborador. Ver a página de RH não basta.
+async function podeVerDossieRH(user, colaboradorId) {
+  if (user.role === 'admin' || canView(user, 'rh_sensivel')) return true;
+  const r = await query('SELECT usuario_id FROM erp_colaboradores WHERE id=$1', [Number(colaboradorId)]);
+  return !!r.length && r[0].usuario_id === user.id;
+}
+
+function rhChecklist(colab, anexos) {
+  const porTipo = {};
+  (anexos || []).forEach(a => { if (a.doc_tipo) porTipo[a.doc_tipo] = (porTipo[a.doc_tipo] || 0) + 1; });
+  return RH_DOC_TIPOS
+    .filter(d => d.obrigatorio)
+    .filter(d => !d.somenteSexo || d.somenteSexo === colab.sexo)
+    .map(d => {
+      const nAnexos = porTipo[d.cod] || 0;
+      const viaCampos = !!(d.porCampos && d.porCampos.every(c => String(colab[c] == null ? '' : colab[c]).trim()));
+      return { cod: d.cod, nome: d.nome, anexos: nAnexos, ok: nAnexos > 0 || viaCampos,
+               via: d.porCampos ? 'campos' : 'anexo' };
+    });
+}
+
+// Campos da ficha que o PUT aceita. Lista fechada: o corpo da requisição não
+// pode escolher que coluna gravar, senão daria para escrever em `ativo`,
+// `tier` ou `usuario_id` por aqui e escapar das travas de Viáticos.
+const RH_CAMPOS_FICHA = ['nome_social', 'data_nascimento', 'sexo', 'estado_civil', 'nacionalidade',
+  'naturalidade', 'naturalidade_uf', 'grau_instrucao', 'raca_cor', 'nome_mae', 'nome_pai',
+  'cpf', 'rg', 'rg_orgao', 'rg_uf', 'rg_emissao', 'ctps_numero', 'ctps_serie', 'ctps_uf',
+  'ctps_emissao', 'pis', 'titulo_eleitor', 'titulo_zona', 'titulo_secao', 'titulo_uf', 'reservista',
+  'endereco', 'endereco_numero', 'endereco_complemento', 'bairro', 'municipio', 'uf', 'cep',
+  'celular', 'email_pessoal', 'email_corporativo', 'emergencia_nome', 'emergencia_telefone',
+  'emergencia_parentesco', 'banco_numero', 'banco_nome', 'agencia', 'conta', 'conta_tipo', 'pix_chave'];
+const RH_CAMPOS_DATA = ['data_nascimento', 'rg_emissao', 'ctps_emissao'];
+
+const RH_CAMPOS_VINCULO = ['tipo', 'matricula', 'admissao', 'desligamento', 'desligamento_motivo',
+  'desligamento_tipo', 'cargo', 'nivel', 'departamento', 'centro_custo', 'gestor_id', 'unidade',
+  'regime', 'modelo_trabalho', 'controle_ponto', 'experiencia_fim', 'prorrogacao_fim', 'salario',
+  'periculosidade_pct', 'vr_dia', 'home_office_dia', 'vt_opcao', 'totalpass', 'clube_saude',
+  'seguro_vida', 'cct', 'sindicato', 'observacao'];
+const RH_VINC_DATA = ['admissao', 'desligamento', 'experiencia_fim', 'prorrogacao_fim'];
+const RH_VINC_NUM = ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia', 'gestor_id'];
+const RH_VINC_BOOL = ['controle_ponto', 'totalpass', 'clube_saude', 'seguro_vida'];
+
+// Monta SET/valores a partir de uma lista fechada de colunas.
+function rhMontarSet(body, permitidos, datas, numeros, booleanos) {
+  const cols = [], vals = [];
+  for (const c of permitidos) {
+    if (!Object.prototype.hasOwnProperty.call(body, c)) continue;
+    let v = sanitize(body[c]);
+    if (v === '' ) v = null;
+    if (v !== null && (datas || []).includes(c) && !isDate(v)) continue;   // data inválida: ignora
+    if (v !== null && (numeros || []).includes(c)) { v = Number(v); if (!isFinite(v)) continue; }
+    if ((booleanos || []).includes(c)) v = v === true || v === 'true' || v === 1 || v === '1';
+    cols.push(c); vals.push(v);
+  }
+  return { cols, vals };
+}
+
+// A data em que a experiência termina é derivada da admissão, não digitada:
+// 45 dias, prorrogáveis por mais 45. Errar isso efetiva o empregado sozinho.
+function rhDatasExperiencia(admissaoISO) {
+  if (!isDate(admissaoISO)) return { experiencia_fim: null, prorrogacao_fim: null };
+  const [a, m, d] = admissaoISO.split('-').map(Number);
+  const soma = n => {
+    const dt = new Date(Date.UTC(a, m - 1, d + n));
+    return dt.toISOString().slice(0, 10);
+  };
+  return { experiencia_fim: soma(45), prorrogacao_fim: soma(90) };
+}
+
+// ---- Lista de colaboradores (tela de RH) ----
+app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const rows = await query(`
+    SELECT c.id, c.name, c.nome_social, c.ativo, c.usuario_id, c.sexo, c.email_corporativo, c.celular,
+           c.cpf, c.banco_numero, c.agencia, c.conta,
+           v.id AS vinculo_id, v.tipo, v.matricula, v.admissao, v.desligamento, v.cargo, v.nivel,
+           v.departamento, v.regime, v.modelo_trabalho, v.experiencia_fim, v.prorrogacao_fim,
+           v.salario, v.periculosidade_pct, v.vr_dia, v.home_office_dia,
+           (SELECT COUNT(*)::int FROM erp_attachments a
+             WHERE a.entity_type='rh_doc' AND a.entity_id=c.id) AS docs,
+           (SELECT COALESCE(json_agg(DISTINCT a.doc_tipo), '[]'::json) FROM erp_attachments a
+             WHERE a.entity_type='rh_doc' AND a.entity_id=c.id AND a.doc_tipo IS NOT NULL) AS tipos
+      FROM erp_colaboradores c
+      LEFT JOIN LATERAL (
+        SELECT * FROM erp_rh_vinculos w WHERE w.colaborador_id = c.id
+         ORDER BY (w.desligamento IS NULL) DESC, w.admissao DESC LIMIT 1
+      ) v ON true
+     ORDER BY c.ativo DESC, c.name`);
+  const out = rows.map(r => {
+    const tipos = Array.isArray(r.tipos) ? r.tipos : [];
+    const check = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })));
+    const base = rhFiltrar(r, req.user, r);
+    delete base.tipos;
+    return { ...base, checklist_total: check.length, checklist_ok: check.filter(x => x.ok).length,
+             checklist_faltam: check.filter(x => !x.ok).map(x => x.nome) };
+  });
+  res.json(out);
+}));
+
+// ---- Ficha completa ----
+app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT * FROM erp_colaboradores WHERE id=$1', [id]);
+  if (!rows.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  const colab = rows[0];
+  const vinculos = await query('SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao DESC', [id]);
+  const dependentes = rhVeSensivel(req.user) || rhEhProprio(req.user, colab)
+    ? await query('SELECT * FROM erp_rh_dependentes WHERE colaborador_id=$1 ORDER BY data_nascimento', [id])
+    : [];
+  const podeDossie = await podeVerDossieRH(req.user, id);
+  const anexos = podeDossie
+    ? await query(`SELECT id, doc_tipo, file_name, mime_type, byte_size, created_at
+                     FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1
+                    ORDER BY created_at DESC`, [id])
+    : [];
+  res.json({
+    colaborador: rhFiltrar(colab, req.user, colab),
+    vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
+    dependentes,
+    dossie: anexos,
+    checklist: rhChecklist(colab, anexos),
+    tipos_documento: RH_DOC_TIPOS,
+    pode: {
+      sensivel: rhVeSensivel(req.user) || rhEhProprio(req.user, colab),
+      remuneracao: rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab),
+      dossie: podeDossie,
+      editar: req.user.role === 'admin' || canEdit(req.user, 'rh')
+    }
+  });
+}));
+
+// ---- Gravar a ficha ----
+app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const existe = await query('SELECT id FROM erp_colaboradores WHERE id=$1', [id]);
+  if (!existe.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+
+  // Sem a trava fina, não se grava o que não se pode ver — senão bastaria
+  // enviar o PUT para sobrescrever um CPF que a tela nem mostrou.
+  const permitidos = RH_CAMPOS_FICHA.filter(c => rhVeSensivel(req.user) || !RH_SENSIVEIS.includes(c));
+  const { cols, vals } = rhMontarSet(req.body, permitidos, RH_CAMPOS_DATA, [], []);
+  if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
+
+  if (req.body.cpf) {
+    const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1 AND id<>$2', [sanitize(req.body.cpf), id]);
+    if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name}.` });
+  }
+  const set = cols.map((c, i) => `${c}=${i + 1}`).join(', ');
+  await query(`UPDATE erp_colaboradores SET ${set} WHERE id=${cols.length + 1}`, [...vals, id]);
+  res.json({ ok: true, campos: cols.length });
+}));
+
+// ---- Vínculos ----
+app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const existe = await query('SELECT id FROM erp_colaboradores WHERE id=$1', [id]);
+  if (!existe.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  if (!isDate(req.body.admissao)) return res.status(400).json({ error: 'Data de admissão é obrigatória.' });
+
+  const aberto = await query('SELECT id FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL', [id]);
+  if (aberto.length) return res.status(409).json({ error: 'Já existe um vínculo aberto. Registre o desligamento do atual antes de abrir outro.' });
+
+  const corpo = { ...req.body, ...rhDatasExperiencia(req.body.admissao) };
+  const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
+  const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
+  cols.push('colaborador_id', 'created_by'); vals.push(id, req.user.id);
+  const ph = cols.map((_, i) => `${i + 1}`).join(',');
+  const ins = await query(`INSERT INTO erp_rh_vinculos (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = await query('SELECT * FROM erp_rh_vinculos WHERE id=$1', [id]);
+  if (!atual.length) return res.status(404).json({ error: 'Vínculo não encontrado.' });
+
+  // Mudou a admissão? As datas de experiência acompanham — são derivadas dela.
+  const corpo = { ...req.body };
+  if (isDate(corpo.admissao) && corpo.admissao !== String(atual[0].admissao).slice(0, 10)) {
+    Object.assign(corpo, rhDatasExperiencia(corpo.admissao));
+  }
+  const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
+  const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
+  if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
+  const set = cols.map((c, i) => `${c}=${i + 1}`).join(', ');
+  await query(`UPDATE erp_rh_vinculos SET ${set}, updated_at=now() WHERE id=${cols.length + 1}`, [...vals, id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  await query('DELETE FROM erp_rh_vinculos WHERE id=$1', [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+// ---- Dependentes ----
+app.post('/api/rh/colaboradores/:id/dependentes', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'Dependentes são dado pessoal sensível.' });
+  const id = Number(req.params.id);
+  const nome = sanitize(req.body.nome);
+  if (!nome) return res.status(400).json({ error: 'Nome do dependente é obrigatório.' });
+  const ins = await query(
+    `INSERT INTO erp_rh_dependentes (colaborador_id, nome, cpf, parentesco, data_nascimento, sexo, irrf, salario_familia)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [id, nome, sanitize(req.body.cpf) || null, sanitize(req.body.parentesco) || null,
+     isDate(req.body.data_nascimento) ? req.body.data_nascimento : null,
+     sanitize(req.body.sexo) || null, req.body.irrf === true, req.body.salario_familia === true]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.delete('/api/rh/dependentes/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'Dependentes são dado pessoal sensível.' });
+  await query('DELETE FROM erp_rh_dependentes WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
 }));
 

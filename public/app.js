@@ -21,12 +21,20 @@ let CURRENT_PAGE = 'dashboard';
 let FORCE_MODAL = false;   // trava o modal (troca de senha obrigatória)
 
 // Páginas com acesso configurável (espelha PERM_PAGES do backend)
-const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos','contratos'];
+const PERM_PAGES = ['dashboard','pagar','receber','fluxo','conciliacao','fornecedores','orcamento','orcadoreal','relatorios','viaticos','suprimentos','contratos','rh'];
 const PAGE_LABELS = {
   dashboard:'Dashboard', pagar:'Contas a Pagar', receber:'Contas a Receber', fluxo:'Fluxo de Caixa',
   conciliacao:'Conciliação Bancária', fornecedores:'Fornecedores', orcamento:'Orçamento Anual',
   orcadoreal:'Orçado x Realizado', relatorios:'Relatórios Gerenciais', viaticos:'Viáticos', suprimentos:'Suprimentos',
-  contratos:'Contratos'
+  contratos:'Contratos', rh:'Recursos Humanos'
+};
+// Travas finas dentro de RH (espelha PERM_EXTRAS do backend). Ver a página de
+// RH mostra nome, cargo, área e admissão; CPF, endereço, filiação, dependentes
+// e salário exigem estas duas, concedidas à parte.
+const PERM_EXTRAS = ['rh_sensivel','rh_remuneracao'];
+const PERM_EXTRA_LABELS = {
+  rh_sensivel: 'RH · dados pessoais sensíveis',
+  rh_remuneracao: 'RH · remuneração e benefícios'
 };
 
 function permLevel(page) {
@@ -252,7 +260,8 @@ const ICONS = {
   tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.6 12.6L12.7 4.7A2 2 0 0011.3 4H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9c.8.8 2 .8 2.8 0l5.3-5.3c.8-.8.8-2 0-2.8z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>',
   via: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M3 12h18"/></svg>',
   box: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>',
-  contract: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2h6l5 5v13a2 2 0 01-2 2H9a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M9 12l2 2 4-4M8 17h5"/></svg>'
+  contract: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2h6l5 5v13a2 2 0 01-2 2H9a2 2 0 01-2-2V4a2 2 0 012-2z"/><path d="M9 12l2 2 4-4M8 17h5"/></svg>',
+  rh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11a4 4 0 100-8 4 4 0 000 8z"/><path d="M2 21v-1a6 6 0 016-6h2a6 6 0 016 6v1"/><path d="M17 8h5M19.5 5.5v5"/></svg>'
 };
 
 // Agrupamento enxuto: os títulos de seção consumiam 196px dos 787px do menu
@@ -272,6 +281,7 @@ const PAGES = [
   { hash: 'relatorios', title: 'Relatórios Gerenciais', icon: 'rep' },
   { hash: 'viaticos', title: 'Viáticos', icon: 'via', section: 'Operações' },
   { hash: 'suprimentos', title: 'Suprimentos', icon: 'box' },
+  { hash: 'rh', title: 'Recursos Humanos', icon: 'rh', section: 'Pessoas' },
   { hash: 'fornecedores', title: 'Fornecedores', icon: 'sup', section: 'Administração' },
   { hash: 'contratos', title: 'Contratos', icon: 'contract' },
   { hash: 'usuarios', title: 'Usuários', icon: 'usr', super: true },
@@ -362,7 +372,7 @@ function route() {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
     orcadoreal: renderOrcadoReal, relatorios: renderRelatorios, viaticos: renderViaticos,
-    suprimentos: renderSuprimentos, contratos: renderContratos,
+    suprimentos: renderSuprimentos, contratos: renderContratos, rh: renderRH,
     usuarios: renderUsuarios, categorias: renderCategorias, config: renderConfig
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
@@ -8205,6 +8215,16 @@ function permMatrixHTML(perms) {
         <option value="view" ${cur === 'view' ? 'selected' : ''}>Ver</option>
         <option value="edit" ${cur === 'edit' ? 'selected' : ''}>Ver e editar</option>
       </select></div>`;
+  }).join('')}</div>
+  <div class="perm-sub">Dentro de Recursos Humanos</div>
+  <div class="perm-grid">${PERM_EXTRAS.map(pg => {
+    const cur = perms[pg] || 'none';
+    return `<div class="perm-row">
+      <span>${PERM_EXTRA_LABELS[pg]}</span>
+      <select data-perm="${pg}">
+        <option value="none" ${cur === 'none' ? 'selected' : ''}>Não vê</option>
+        <option value="view" ${cur === 'view' ? 'selected' : ''}>Vê</option>
+      </select></div>`;
   }).join('')}</div>`;
 }
 function readPermMatrix(scope) {
@@ -8546,6 +8566,614 @@ function confirmAction(label, fn, okMsg) {
      { label: 'Confirmar', cls: 'primary', onClick: async () => {
         try { await fn(); closeModal(); toast(okMsg || 'Concluído.'); renderUsuarios(); }
         catch (e) { modalError(e.message); }
+     }}]);
+}
+
+// ============================================================
+// RECURSOS HUMANOS — fase 1: lista, ficha, vínculo, dependentes, dossiê
+// Desenho em docs/rh-desenho.md
+// ============================================================
+
+const RH_UF = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SE','SP','TO'];
+const RH_SEXO = [{ v: '', t: '— não informado —' }, { v: 'F', t: 'Feminino' }, { v: 'M', t: 'Masculino' }, { v: 'O', t: 'Outro' }];
+const RH_ESTADO_CIVIL = ['solteiro', 'casado', 'divorciado', 'viúvo', 'união estável', 'separado'];
+const RH_INSTRUCAO = ['Fundamental incompleto', 'Fundamental completo', 'Médio incompleto', 'Médio completo',
+  'Técnico', 'Superior incompleto', 'Superior completo', 'Pós-graduação', 'Mestrado', 'Doutorado'];
+const RH_RACA = ['Branca', 'Preta', 'Parda', 'Amarela', 'Indígena', 'Não declarada'];
+const RH_PARENTESCO = ['filho(a)', 'cônjuge', 'companheiro(a)', 'enteado(a)', 'pai/mãe', 'tutelado(a)', 'outro'];
+
+// O catálogo de cargos definido pela empresa. Analistas e Técnico de Campo têm
+// níveis; os demais, não — por isso a lista de níveis depende do cargo.
+const RH_CARGOS = ['CEO', 'Gerente de Campo', 'Gerente Administrativo', 'Gerente de Subscrição',
+  'Gerente Comercial', 'Coordenador de Campo', 'Coordenador Administrativo', 'Coordenador de Subscrição',
+  'Coordenador Comercial', 'Analista Administrativo', 'Analista de Subscrição', 'Analista de Riscos',
+  'Analista de Sinistros', 'Técnico de Campo'];
+const RH_CARGOS_COM_NIVEL = ['Analista Administrativo', 'Analista de Subscrição', 'Analista de Riscos',
+  'Analista de Sinistros', 'Técnico de Campo'];
+const RH_NIVEIS = [{ v: '', t: '—' }, { v: 'junior', t: 'Júnior' }, { v: 'pleno', t: 'Pleno' }, { v: 'senior', t: 'Sênior' }];
+
+const RH_TIPO_VINCULO = [{ v: 'clt', t: 'CLT' }, { v: 'pj', t: 'PJ' }, { v: 'estagio', t: 'Estágio' },
+  { v: 'aprendiz', t: 'Jovem Aprendiz' }, { v: 'temporario', t: 'Temporário' }];
+const RH_REGIME = [{ v: 'regular', t: 'Empregado regular' }, { v: 'confianca', t: 'Cargo de confiança (art. 62, II)' }];
+const RH_MODELO_TRAB = [{ v: 'presencial', t: 'Presencial' }, { v: 'hibrido', t: 'Híbrido' },
+  { v: 'home_office', t: 'Home office' }, { v: 'externo', t: 'Jornada externa (art. 62, I)' }];
+const RH_DESLIG_TIPO = [{ v: '', t: '—' }, { v: 'sem_justa_causa', t: 'Dispensa sem justa causa' },
+  { v: 'pedido', t: 'Pedido de demissão' }, { v: 'justa_causa', t: 'Justa causa' },
+  { v: 'fim_contrato', t: 'Fim do contrato de experiência' }, { v: 'acordo', t: 'Acordo (art. 484-A)' }];
+
+// A minuta sai do par regime × modelo de trabalho — são exatamente as cinco
+// combinações que existem em "Minutas Pro Agro".
+function rhMinutaDe(regime, modelo) {
+  if (regime === 'confianca') return 'Empregado de Confiança — Sem Controle de Ponto';
+  return {
+    presencial: 'Empregado Regular — Controle de Ponto — Jornada Presencial',
+    hibrido: 'Empregado Regular — Controle de Ponto — Jornada Híbrida',
+    home_office: 'Empregado Regular — Controle de Ponto — Home Office',
+    externo: 'Empregado Regular — Sem Controle de Ponto — Jornada Externa'
+  }[modelo] || '—';
+}
+
+const rhData = d => (d ? brDate(String(d).slice(0, 10)) : '—');
+const rhTxt = v => (v == null || v === '' ? '—' : String(v));
+
+// ---------------- Lista ----------------
+async function renderRH() {
+  const rows = await api('/api/rh/colaboradores');
+  const c = $('#content');
+  const FKEY = 'filters-rh';
+  const saved = loadFilters(FKEY);
+  const deps = [...new Set(rows.map(r => r.departamento).filter(Boolean))].sort();
+  const cargos = [...new Set(rows.map(r => r.cargo).filter(Boolean))].sort();
+
+  c.innerHTML = `
+    <div class="toolbar toolbar-spaced" id="rh-toolbar">
+      <input type="search" id="q" placeholder="Buscar nome, cargo, matrícula…" value="${esc(saved.q || '')}">
+      <select id="f-sit"><option value="">Todas as situações</option>
+        <option value="ativo" ${saved.sit === 'ativo' ? 'selected' : ''}>Ativos</option>
+        <option value="desligado" ${saved.sit === 'desligado' ? 'selected' : ''}>Desligados</option>
+        <option value="sem_vinculo" ${saved.sit === 'sem_vinculo' ? 'selected' : ''}>Sem vínculo registrado</option>
+        <option value="experiencia" ${saved.sit === 'experiencia' ? 'selected' : ''}>Em experiência</option></select>
+      <select id="f-dep"><option value="">Todos os departamentos</option>${deps.map(d => `<option ${saved.dep === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
+      <select id="f-cargo"><option value="">Todos os cargos</option>${cargos.map(d => `<option ${saved.cargo === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
+      <select id="f-doc"><option value="">Documentação: todas</option>
+        <option value="pendente" ${saved.doc === 'pendente' ? 'selected' : ''}>Com pendência</option>
+        <option value="ok" ${saved.doc === 'ok' ? 'selected' : ''}>Completa</option></select>
+      <button class="btn" id="btn-clear">Limpar filtros</button>
+      <div class="spacer"></div>
+      <button class="btn primary" id="btn-novo">+ Novo colaborador</button>
+    </div>
+    <div id="rh-cards"></div>
+    <div class="table-wrap"><table id="tbl" class="tbl-rh"></table></div>`;
+
+  const topbarEl = document.querySelector('.topbar');
+  if (topbarEl) $('#rh-toolbar').style.top = topbarEl.offsetHeight + 'px';
+
+  const hoje = todayISO();
+  const emExperiencia = r => r.admissao && !r.desligamento && r.prorrogacao_fim && r.prorrogacao_fim >= hoje;
+
+  const draw = () => {
+    const q = $('#q').value.toLowerCase(), sit = $('#f-sit').value;
+    const dep = $('#f-dep').value, cargo = $('#f-cargo').value, doc = $('#f-doc').value;
+    saveFilters(FKEY, { q: $('#q').value, sit, dep, cargo, doc });
+
+    const filtered = rows.filter(r => {
+      const desligado = !!r.desligamento;
+      const semVinculo = !r.vinculo_id;
+      if (sit === 'ativo' && (desligado || semVinculo)) return false;
+      if (sit === 'desligado' && !desligado) return false;
+      if (sit === 'sem_vinculo' && !semVinculo) return false;
+      if (sit === 'experiencia' && !emExperiencia(r)) return false;
+      if (dep && r.departamento !== dep) return false;
+      if (cargo && r.cargo !== cargo) return false;
+      if (doc === 'pendente' && r.checklist_ok >= r.checklist_total) return false;
+      if (doc === 'ok' && r.checklist_ok < r.checklist_total) return false;
+      return !q || (r.name + ' ' + (r.cargo || '') + ' ' + (r.matricula || '') + ' ' + (r.departamento || '')).toLowerCase().includes(q);
+    });
+
+    // Cartões de situação — o que exige ação, antes da lista.
+    const nAtivos = rows.filter(r => r.vinculo_id && !r.desligamento).length;
+    const nSemVinculo = rows.filter(r => !r.vinculo_id).length;
+    const nPend = rows.filter(r => r.checklist_ok < r.checklist_total).length;
+    const nExp = rows.filter(emExperiencia).length;
+    $('#rh-cards').innerHTML = `<div class="rh-cards">
+      ${rhCard('Ativos', nAtivos, 'com vínculo aberto', '')}
+      ${rhCard('Em experiência', nExp, 'contrato ainda no prazo', nExp ? 'aviso' : '')}
+      ${rhCard('Sem vínculo', nSemVinculo, 'ficha sem contrato registrado', nSemVinculo ? 'aviso' : '')}
+      ${rhCard('Documentação pendente', nPend, 'falta documento obrigatório', nPend ? 'alerta' : 'ok')}
+    </div>`;
+
+    $('#tbl').innerHTML = `
+      <colgroup><col class="c-id"><col class="c-nome"><col class="c-cargo"><col class="c-dep">
+        <col class="c-adm"><col class="c-sit"><col class="c-docs"><col class="c-acoes"></colgroup>
+      <thead><tr><th>ID</th><th>Colaborador</th><th>Cargo</th><th>Departamento</th>
+        <th>Admissão</th><th>Situação</th><th title="Documentos obrigatórios entregues">Documentos</th>
+        <th class="actions">Ações</th></tr></thead>
+      <tbody>${filtered.map(r => {
+        const falta = r.checklist_total - r.checklist_ok;
+        const pct = r.checklist_total ? Math.round(100 * r.checklist_ok / r.checklist_total) : 0;
+        const sitBadge = !r.vinculo_id ? '<span class="badge pend">Sem vínculo</span>'
+          : r.desligamento ? `<span class="badge late">Desligado ${rhData(r.desligamento)}</span>`
+          : emExperiencia(r) ? `<span class="badge exp">Experiência até ${rhData(r.prorrogacao_fim)}</span>`
+          : '<span class="badge ok">Ativo</span>';
+        const nivel = r.nivel ? ' ' + ({ junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' }[r.nivel] || r.nivel) : '';
+        return `<tr>
+          <td class="id-cell">${r.id}</td>
+          <td><button class="rh-link" data-abrir="${r.id}">${esc(r.name)}</button>${r.nome_social ? `<span class="rh-sub">${esc(r.nome_social)}</span>` : ''}</td>
+          <td>${esc(rhTxt(r.cargo))}${esc(nivel)}</td>
+          <td>${esc(rhTxt(r.departamento))}</td>
+          <td class="venc-cell">${rhData(r.admissao)}</td>
+          <td>${sitBadge}</td>
+          <td class="docs-cell" title="${esc(falta ? 'Falta: ' + r.checklist_faltam.join(', ') : 'Documentação completa')}">
+            <div class="rh-barra"><i style="width:${pct}%" class="${falta ? (pct < 50 ? 'ruim' : 'meio') : 'bom'}"></i></div>
+            <span class="rh-barra-txt">${r.checklist_ok}/${r.checklist_total}</span></td>
+          <td class="actions">
+            <button class="btn-ic" data-abrir="${r.id}" title="Abrir a ficha" aria-label="Abrir a ficha">📂</button>
+          </td></tr>`;
+      }).join('') || '<tr><td colspan="8"><div class="empty">Nenhum colaborador encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="7">Exibindo ${filtered.length} de ${rows.length}</td><td></td></tr></tfoot>`;
+
+    $('#tbl').querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => abrirFichaRH(Number(b.dataset.abrir)));
+  };
+
+  ['q', 'f-sit', 'f-dep', 'f-cargo', 'f-doc'].forEach(id => $('#' + id).oninput = draw);
+  $('#btn-clear').onclick = () => {
+    ['q', 'f-sit', 'f-dep', 'f-cargo', 'f-doc'].forEach(id => { $('#' + id).value = ''; });
+    saveFilters(FKEY, {}); draw();
+  };
+  // Criar colaborador continua sendo o cadastro de Viáticos: é a MESMA pessoa,
+  // e duplicar o formulário criaria dois caminhos para o mesmo registro.
+  $('#btn-novo').onclick = () => toast('Cadastre em Viáticos → Configurações → Colaboradores. A ficha de RH abre em seguida, aqui.');
+  draw();
+}
+
+function rhCard(titulo, valor, sub, estado) {
+  return `<div class="rh-card ${estado}"><b>${valor}</b><span>${esc(titulo)}</span><i>${esc(sub)}</i></div>`;
+}
+
+// ---------------- Ficha ----------------
+async function abrirFichaRH(id, aba) {
+  const c = $('#content');
+  c.innerHTML = '<div class="empty">Carregando ficha…</div>';
+  let d;
+  try { d = await api('/api/rh/colaboradores/' + id); }
+  catch (e) { c.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+
+  const col = d.colaborador, pode = d.pode;
+  const vinculo = d.vinculos.find(v => !v.desligamento) || d.vinculos[0] || null;
+  const abas = [
+    { k: 'ident', t: 'Identificação' },
+    { k: 'docs', t: 'Documentos' },
+    { k: 'contato', t: 'Contato' },
+    { k: 'vinculo', t: 'Vínculo' },
+    { k: 'deps', t: 'Dependentes' },
+    { k: 'dossie', t: 'Dossiê' }
+  ];
+  const atual = aba && abas.some(a => a.k === aba) ? aba : 'ident';
+  const falta = d.checklist.filter(x => !x.ok);
+
+  c.innerHTML = `
+    <div class="rh-ficha">
+      <div class="rh-ficha-topo">
+        <button class="btn sm" id="rh-voltar">← Colaboradores</button>
+        <div class="rh-ficha-nome">
+          <h3>${esc(col.name)}</h3>
+          <span>${esc(rhTxt(vinculo && vinculo.cargo))}${vinculo && vinculo.nivel ? ' · ' + esc({ junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior' }[vinculo.nivel] || vinculo.nivel) : ''}
+            ${vinculo && vinculo.departamento ? ' · ' + esc(vinculo.departamento) : ''}</span>
+        </div>
+        <div class="spacer"></div>
+        ${falta.length
+          ? `<span class="rh-pend" title="${esc(falta.map(f => f.nome).join(', '))}">⚠ ${falta.length} documento(s) faltando</span>`
+          : '<span class="rh-pend ok">✔ Documentação completa</span>'}
+      </div>
+      ${!pode.sensivel ? '<div class="rh-nota">🔒 Você vê a ficha básica. CPF, RG, endereço, filiação e dependentes exigem a permissão “RH · dados pessoais sensíveis”.</div>' : ''}
+      ${!pode.remuneracao ? '<div class="rh-nota">🔒 Salário e benefícios exigem a permissão “RH · remuneração e benefícios”.</div>' : ''}
+      <div class="rh-abas">${abas.map(a => `<button class="rh-aba ${a.k === atual ? 'ativa' : ''}" data-aba="${a.k}">${a.t}</button>`).join('')}</div>
+      <div class="rh-painel" id="rh-painel"></div>
+    </div>`;
+
+  $('#rh-voltar').onclick = () => renderRH();
+  c.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => abrirFichaRH(id, b.dataset.aba));
+
+  const painel = $('#rh-painel');
+  const pintar = {
+    ident: () => rhAbaIdentificacao(painel, d, id),
+    docs: () => rhAbaDocumentos(painel, d, id),
+    contato: () => rhAbaContato(painel, d, id),
+    vinculo: () => rhAbaVinculo(painel, d, id),
+    deps: () => rhAbaDependentes(painel, d, id),
+    dossie: () => rhAbaDossie(painel, d, id)
+  };
+  pintar[atual]();
+}
+
+// Grava só os campos que a aba mostrou — nunca a ficha inteira, senão uma aba
+// sem permissão apagaria o que ela nem exibiu.
+function rhLigarSalvar(painel, id, campos, aba) {
+  const btn = painel.querySelector('[data-salvar]');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const body = {};
+    campos.forEach(c => { const el2 = painel.querySelector('#rh-' + c); if (el2) body[c] = el2.value; });
+    btn.disabled = true; const rot = btn.textContent; btn.textContent = 'Salvando…';
+    try {
+      await api('/api/rh/colaboradores/' + id, { method: 'PUT', body });
+      toast('Ficha atualizada.');
+      abrirFichaRH(id, aba);
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = rot; }
+  };
+}
+
+const rhSecao = (titulo, corpo) => `<div class="rh-sec"><h4>${titulo}</h4><div class="rh-grid">${corpo}</div></div>`;
+const rhSalvar = pode => (pode ? '<div class="rh-acoes"><button class="btn primary" data-salvar>Salvar</button></div>' : '');
+const rhSel = (id, label, opts, sel) => fldSel('rh-' + id, label, opts, sel == null ? '' : sel);
+const rhInp = (id, label, tipo, valor, attrs) => fld('rh-' + id, label, tipo || 'text', valor == null ? '' : String(valor).slice(0, tipo === 'date' ? 10 : 999), attrs || '');
+const rhOpcoes = (lista, vazio) => [{ v: '', t: vazio || '— não informado —' }, ...lista.map(x => ({ v: x, t: x }))];
+
+function rhAbaIdentificacao(painel, d, id) {
+  const c = d.colaborador, ed = d.pode.editar;
+  painel.innerHTML =
+    rhSecao('Quem é', [
+      rhInp('nome_social', 'Nome social', 'text', c.nome_social),
+      rhInp('data_nascimento', 'Data de nascimento', 'date', c.data_nascimento),
+      rhSel('sexo', 'Sexo', RH_SEXO, c.sexo),
+      rhSel('estado_civil', 'Estado civil', rhOpcoes(RH_ESTADO_CIVIL), c.estado_civil),
+      rhInp('nacionalidade', 'Nacionalidade', 'text', c.nacionalidade, 'placeholder="brasileiro"'),
+      rhSel('grau_instrucao', 'Grau de instrução', rhOpcoes(RH_INSTRUCAO), c.grau_instrucao)
+    ].join('')) +
+    rhSecao('Naturalidade', [
+      rhInp('naturalidade', 'Município de nascimento', 'text', c.naturalidade),
+      rhSel('naturalidade_uf', 'UF', rhOpcoes(RH_UF), c.naturalidade_uf)
+    ].join('')) +
+    (d.pode.sensivel
+      ? rhSecao('Filiação e censo <span class="rh-lgpd">dado sensível</span>', [
+          rhInp('nome_mae', 'Nome da mãe', 'text', c.nome_mae),
+          rhInp('nome_pai', 'Nome do pai', 'text', c.nome_pai),
+          rhSel('raca_cor', 'Raça/cor (autodeclarada)', rhOpcoes(RH_RACA, '— não declarada —'), c.raca_cor)
+        ].join(''))
+      : '') +
+    rhSalvar(ed);
+  const campos = ['nome_social', 'data_nascimento', 'sexo', 'estado_civil', 'nacionalidade', 'grau_instrucao',
+    'naturalidade', 'naturalidade_uf'].concat(d.pode.sensivel ? ['nome_mae', 'nome_pai', 'raca_cor'] : []);
+  rhLigarSalvar(painel, id, campos, 'ident');
+}
+
+function rhAbaDocumentos(painel, d, id) {
+  const c = d.colaborador, ed = d.pode.editar;
+  if (!d.pode.sensivel) {
+    painel.innerHTML = '<div class="empty">Os documentos pessoais exigem a permissão “RH · dados pessoais sensíveis”.</div>';
+    return;
+  }
+  painel.innerHTML =
+    rhSecao('CPF e RG <span class="rh-lgpd">dado sensível</span>', [
+      rhInp('cpf', 'CPF', 'text', c.cpf, 'placeholder="000.000.000-00"'),
+      rhInp('rg', 'RG', 'text', c.rg),
+      rhInp('rg_orgao', 'Órgão emissor', 'text', c.rg_orgao, 'placeholder="SSP"'),
+      rhSel('rg_uf', 'UF do RG', rhOpcoes(RH_UF), c.rg_uf),
+      rhInp('rg_emissao', 'Emissão do RG', 'date', c.rg_emissao)
+    ].join('')) +
+    rhSecao('Carteira de Trabalho e PIS', [
+      rhInp('ctps_numero', 'CTPS nº', 'text', c.ctps_numero),
+      rhInp('ctps_serie', 'Série', 'text', c.ctps_serie),
+      rhSel('ctps_uf', 'UF', rhOpcoes(RH_UF), c.ctps_uf),
+      rhInp('ctps_emissao', 'Emissão', 'date', c.ctps_emissao),
+      rhInp('pis', 'PIS/PASEP', 'text', c.pis)
+    ].join('')) +
+    rhSecao('Título de eleitor e reservista', [
+      rhInp('titulo_eleitor', 'Título de eleitor', 'text', c.titulo_eleitor),
+      rhInp('titulo_zona', 'Zona', 'text', c.titulo_zona),
+      rhInp('titulo_secao', 'Seção', 'text', c.titulo_secao),
+      rhSel('titulo_uf', 'UF', rhOpcoes(RH_UF), c.titulo_uf),
+      rhInp('reservista', 'Certificado de reservista', 'text', c.reservista,
+        c.sexo === 'M' ? '' : 'placeholder="exigido apenas de homens"')
+    ].join('')) +
+    rhSalvar(ed);
+  rhLigarSalvar(painel, id, ['cpf', 'rg', 'rg_orgao', 'rg_uf', 'rg_emissao', 'ctps_numero', 'ctps_serie',
+    'ctps_uf', 'ctps_emissao', 'pis', 'titulo_eleitor', 'titulo_zona', 'titulo_secao', 'titulo_uf', 'reservista'], 'docs');
+}
+
+function rhAbaContato(painel, d, id) {
+  const c = d.colaborador, ed = d.pode.editar, sens = d.pode.sensivel;
+  painel.innerHTML =
+    rhSecao('Contato', [
+      rhInp('celular', 'Celular', 'text', c.celular),
+      rhInp('email_pessoal', 'E-mail pessoal', 'email', c.email_pessoal),
+      rhInp('email_corporativo', 'E-mail corporativo', 'email', c.email_corporativo)
+    ].join('')) +
+    (sens
+      ? rhSecao('Endereço residencial <span class="rh-lgpd">dado sensível</span>', [
+          rhInp('endereco', 'Logradouro', 'text', c.endereco),
+          rhInp('endereco_numero', 'Número', 'text', c.endereco_numero),
+          rhInp('endereco_complemento', 'Complemento', 'text', c.endereco_complemento),
+          rhInp('bairro', 'Bairro', 'text', c.bairro),
+          rhInp('municipio', 'Município', 'text', c.municipio),
+          rhSel('uf', 'UF', rhOpcoes(RH_UF), c.uf),
+          rhInp('cep', 'CEP', 'text', c.cep)
+        ].join('')) +
+        rhSecao('Dados bancários <span class="rh-lgpd">dado sensível</span>', [
+          rhInp('banco_numero', 'Nº do banco', 'text', c.banco_numero, 'placeholder="001"'),
+          rhInp('banco_nome', 'Banco', 'text', c.banco_nome),
+          rhInp('agencia', 'Agência', 'text', c.agencia),
+          rhInp('conta', 'Conta', 'text', c.conta),
+          rhSel('conta_tipo', 'Tipo', rhOpcoes(['Corrente', 'Poupança', 'Salário']), c.conta_tipo),
+          rhInp('pix_chave', 'Chave PIX', 'text', c.pix_chave)
+        ].join('')) +
+        '<div class="rh-nota">Banco, agência e conta preenchidos já cumprem o item “Dados Bancários” do checklist — não precisa anexar comprovante.</div>'
+      : '') +
+    rhSecao('Contato de emergência', [
+      rhInp('emergencia_nome', 'Nome', 'text', c.emergencia_nome),
+      rhInp('emergencia_telefone', 'Telefone', 'text', c.emergencia_telefone),
+      rhInp('emergencia_parentesco', 'Parentesco', 'text', c.emergencia_parentesco)
+    ].join('')) +
+    rhSalvar(ed);
+  const campos = ['celular', 'email_pessoal', 'email_corporativo', 'emergencia_nome', 'emergencia_telefone', 'emergencia_parentesco']
+    .concat(sens ? ['endereco', 'endereco_numero', 'endereco_complemento', 'bairro', 'municipio', 'uf', 'cep',
+      'banco_numero', 'banco_nome', 'agencia', 'conta', 'conta_tipo', 'pix_chave'] : []);
+  rhLigarSalvar(painel, id, campos, 'contato');
+}
+
+function rhAbaVinculo(painel, d, id) {
+  const ed = d.pode.editar, rem = d.pode.remuneracao;
+  const aberto = d.vinculos.find(v => !v.desligamento);
+  const historico = d.vinculos.filter(v => v.desligamento);
+
+  if (!aberto) {
+    painel.innerHTML = `<div class="rh-vazio">
+      <p><strong>Nenhum vínculo aberto.</strong> O vínculo é o contrato de trabalho: guarda a admissão, o cargo,
+      o regime e a remuneração. É dele que saem as datas de experiência e a minuta certa na emissão.</p>
+      ${ed ? '<button class="btn primary" id="rh-novo-vinculo">Registrar admissão</button>' : ''}
+    </div>` + rhHistoricoVinculos(historico, rem);
+    const b = painel.querySelector('#rh-novo-vinculo');
+    if (b) b.onclick = () => rhFormVinculo(id, null, d);
+    return;
+  }
+
+  const v = aberto;
+  const linha = (r, val) => `<div class="rh-linha"><span>${r}</span><b>${val}</b></div>`;
+  const hoje = todayISO();
+  const alerta = v.prorrogacao_fim && v.prorrogacao_fim >= hoje
+    ? `<div class="rh-nota aviso">⏳ Contrato de experiência corre até <strong>${rhData(v.experiencia_fim)}</strong>
+       (prorrogável até <strong>${rhData(v.prorrogacao_fim)}</strong>). Passar da data efetiva o empregado automaticamente.</div>`
+    : '';
+
+  painel.innerHTML = alerta + `
+    <div class="rh-sec"><h4>Contrato em vigor ${ed ? '<button class="btn sm" id="rh-editar-vinculo">Editar</button>' : ''}</h4>
+      <div class="rh-linhas">
+        ${linha('Tipo', (RH_TIPO_VINCULO.find(t => t.v === v.tipo) || {}).t || rhTxt(v.tipo))}
+        ${linha('Matrícula', rhTxt(v.matricula))}
+        ${linha('Admissão', rhData(v.admissao))}
+        ${linha('Cargo', rhTxt(v.cargo) + (v.nivel ? ' · ' + ({ junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior' }[v.nivel] || v.nivel) : ''))}
+        ${linha('Departamento', rhTxt(v.departamento))}
+        ${linha('Centro de custo', rhTxt(v.centro_custo))}
+        ${linha('Unidade', rhTxt(v.unidade))}
+        ${linha('Regime', (RH_REGIME.find(t => t.v === v.regime) || {}).t || rhTxt(v.regime))}
+        ${linha('Modelo de trabalho', (RH_MODELO_TRAB.find(t => t.v === v.modelo_trabalho) || {}).t || rhTxt(v.modelo_trabalho))}
+        ${linha('Controle de ponto', v.controle_ponto ? 'Sim' : 'Não')}
+        ${linha('Fim da experiência', rhData(v.experiencia_fim))}
+        ${linha('Fim da prorrogação', rhData(v.prorrogacao_fim))}
+        ${linha('CCT', rhTxt(v.cct))}
+        ${linha('Sindicato', rhTxt(v.sindicato))}
+      </div>
+      <div class="rh-minuta">Minuta correspondente: <strong>${esc(rhMinutaDe(v.regime, v.modelo_trabalho))}</strong></div>
+    </div>
+    ${rem ? `<div class="rh-sec"><h4>Remuneração e benefícios <span class="rh-lgpd">restrito</span></h4>
+      <div class="rh-linhas">
+        ${linha('Salário base', v.salario != null ? brl(Number(v.salario)) : '—')}
+        ${linha('Periculosidade', v.periculosidade_pct != null ? Number(v.periculosidade_pct) + '%' : '—')}
+        ${linha('Vale-refeição/dia', v.vr_dia != null ? brl(Number(v.vr_dia)) : '—')}
+        ${linha('Home office/dia', v.home_office_dia != null ? brl(Number(v.home_office_dia)) : '—')}
+        ${linha('Vale-transporte', rhTxt(v.vt_opcao))}
+        ${linha('TotalPass', v.totalpass ? 'Sim' : 'Não')}
+        ${linha('Clube Saúde', v.clube_saude ? 'Sim' : 'Não')}
+        ${linha('Seguro de vida', v.seguro_vida ? 'Sim' : 'Não')}
+      </div></div>` : '<div class="rh-nota">🔒 Remuneração e benefícios não estão visíveis para o seu acesso.</div>'}
+    ${rhHistoricoVinculos(historico, rem)}`;
+
+  const be = painel.querySelector('#rh-editar-vinculo');
+  if (be) be.onclick = () => rhFormVinculo(id, v, d);
+}
+
+function rhHistoricoVinculos(lista, rem) {
+  if (!lista.length) return '';
+  return `<div class="rh-sec"><h4>Vínculos anteriores</h4>
+    <div class="rh-linhas">${lista.map(v => `<div class="rh-linha">
+      <span>${rhData(v.admissao)} → ${rhData(v.desligamento)}</span>
+      <b>${esc(rhTxt(v.cargo))} · ${esc((RH_TIPO_VINCULO.find(t => t.v === v.tipo) || {}).t || v.tipo)}${v.desligamento_tipo ? ' · ' + esc((RH_DESLIG_TIPO.find(t => t.v === v.desligamento_tipo) || {}).t || v.desligamento_tipo) : ''}</b>
+    </div>`).join('')}</div>
+    <div class="rh-nota">No acervo da empresa todo funcionário tem um distrato de PJ antes da admissão CLT — por isso o vínculo é histórico, não um campo da ficha.</div></div>`;
+}
+
+function rhFormVinculo(colabId, v, d) {
+  const novo = !v;
+  v = v || {};
+  const rem = d.pode.remuneracao;
+  const nivelHab = RH_CARGOS_COM_NIVEL.includes(v.cargo);
+  openModal(novo ? 'Registrar admissão' : 'Editar vínculo', `
+    <div class="form-row">
+      ${fldSel('vc-tipo', 'Tipo de vínculo', RH_TIPO_VINCULO, v.tipo || 'clt')}
+      ${fld('vc-matricula', 'Matrícula', 'text', v.matricula || '')}
+      ${fld('vc-admissao', 'Admissão *', 'date', v.admissao ? String(v.admissao).slice(0, 10) : todayISO())}
+    </div>
+    <div class="form-row">
+      ${fldSel('vc-cargo', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), v.cargo || '')}
+      ${fldSel('vc-nivel', 'Nível', RH_NIVEIS, v.nivel || '')}
+    </div>
+    <div class="form-row">
+      ${fld('vc-departamento', 'Departamento', 'text', v.departamento || '')}
+      ${fldSel('vc-centro_custo', 'Centro de custo', rhOpcoes(typeof CENTROS !== 'undefined' ? CENTROS : []), v.centro_custo || '')}
+      ${fld('vc-unidade', 'Unidade', 'text', v.unidade || '', 'placeholder="São Paulo / Brasil"')}
+    </div>
+    <div class="form-row">
+      ${fldSel('vc-regime', 'Regime', RH_REGIME, v.regime || 'regular')}
+      ${fldSel('vc-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, v.modelo_trabalho || 'presencial')}
+    </div>
+    <label class="check-chip"><input type="checkbox" id="vc-controle_ponto" ${v.controle_ponto === false ? '' : 'checked'}> Sujeito a controle de ponto</label>
+    <div class="rh-nota" id="vc-minuta"></div>
+    ${rem ? `<div class="form-row">
+      ${fld('vc-salario', 'Salário base (R$)', 'number', v.salario == null ? '' : v.salario, 'step="0.01" min="0"')}
+      ${fld('vc-periculosidade_pct', 'Periculosidade (%)', 'number', v.periculosidade_pct == null ? '' : v.periculosidade_pct, 'step="0.01" min="0" max="100"')}
+    </div>
+    <div class="form-row">
+      ${fld('vc-vr_dia', 'Vale-refeição/dia (R$)', 'number', v.vr_dia == null ? '' : v.vr_dia, 'step="0.01" min="0"')}
+      ${fld('vc-home_office_dia', 'Home office/dia (R$)', 'number', v.home_office_dia == null ? '' : v.home_office_dia, 'step="0.01" min="0"')}
+      ${fldSel('vc-vt_opcao', 'Vale-transporte', [{ v: '', t: '—' }, { v: 'nao', t: 'Não deseja' }, { v: 'sim', t: 'Deseja receber' }], v.vt_opcao || '')}
+    </div>
+    <div class="chip-row">
+      <label class="check-chip"><input type="checkbox" id="vc-totalpass" ${v.totalpass ? 'checked' : ''}> TotalPass</label>
+      <label class="check-chip"><input type="checkbox" id="vc-clube_saude" ${v.clube_saude ? 'checked' : ''}> Clube Saúde</label>
+      <label class="check-chip"><input type="checkbox" id="vc-seguro_vida" ${v.seguro_vida ? 'checked' : ''}> Seguro de vida</label>
+    </div>` : '<div class="rh-nota">🔒 Remuneração e benefícios não estão visíveis para o seu acesso e não serão alterados.</div>'}
+    <div class="form-row">
+      ${fld('vc-cct', 'CCT aplicável', 'text', v.cct || '', 'placeholder="EAA Assessoramento 2025/2026"')}
+      ${fld('vc-sindicato', 'Sindicato', 'text', v.sindicato || '')}
+    </div>
+    ${novo ? '' : `<div class="rh-sec-desl"><h4>Desligamento</h4>
+      <div class="form-row">
+        ${fld('vc-desligamento', 'Data do desligamento', 'date', v.desligamento ? String(v.desligamento).slice(0, 10) : '')}
+        ${fldSel('vc-desligamento_tipo', 'Tipo', RH_DESLIG_TIPO, v.desligamento_tipo || '')}
+      </div>
+      ${fld('vc-desligamento_motivo', 'Motivo', 'text', v.desligamento_motivo || '')}</div>`}
+    ${fld('vc-observacao', 'Observações', 'text', v.observacao || '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: novo ? 'Registrar admissão' : 'Salvar', cls: 'primary', onClick: async () => {
+        const body = {};
+        const texto = ['tipo', 'matricula', 'admissao', 'cargo', 'nivel', 'departamento', 'centro_custo',
+          'unidade', 'regime', 'modelo_trabalho', 'cct', 'sindicato', 'observacao',
+          'desligamento', 'desligamento_tipo', 'desligamento_motivo'];
+        texto.forEach(k => { const e2 = $('#vc-' + k); if (e2) body[k] = e2.value; });
+        ['controle_ponto', 'totalpass', 'clube_saude', 'seguro_vida'].forEach(k => {
+          const e2 = $('#vc-' + k); if (e2) body[k] = e2.checked;
+        });
+        if (rem) ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia', 'vt_opcao'].forEach(k => {
+          const e2 = $('#vc-' + k); if (e2) body[k] = e2.value;
+        });
+        if (!body.admissao) return modalError('A data de admissão é obrigatória.');
+        try {
+          if (novo) await api(`/api/rh/colaboradores/${colabId}/vinculos`, { method: 'POST', body });
+          else await api('/api/rh/vinculos/' + v.id, { method: 'PUT', body });
+          closeModal(); toast(novo ? 'Admissão registrada.' : 'Vínculo atualizado.');
+          abrirFichaRH(colabId, 'vinculo');
+        } catch (e) { modalError(e.message); }
+     }}], { wide: true });
+
+  // A minuta e a habilitação do nível acompanham as escolhas, ao vivo.
+  const sincronizar = () => {
+    const cargo = $('#vc-cargo').value, reg = $('#vc-regime').value, mod = $('#vc-modelo_trabalho').value;
+    const selNivel = $('#vc-nivel');
+    const temNivel = RH_CARGOS_COM_NIVEL.includes(cargo);
+    selNivel.disabled = !temNivel;
+    if (!temNivel) selNivel.value = '';
+    selNivel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
+    $('#vc-minuta').innerHTML = `Minuta que será usada na emissão: <strong>${esc(rhMinutaDe(reg, mod))}</strong>`;
+  };
+  ['vc-cargo', 'vc-regime', 'vc-modelo_trabalho'].forEach(x => { const e2 = $('#' + x); if (e2) e2.onchange = sincronizar; });
+  sincronizar();
+  if (!nivelHab) { /* estado inicial já aplicado por sincronizar() */ }
+}
+
+function rhAbaDependentes(painel, d, id) {
+  if (!d.pode.sensivel) {
+    painel.innerHTML = '<div class="empty">Dependentes exigem a permissão “RH · dados pessoais sensíveis”.</div>';
+    return;
+  }
+  const ed = d.pode.editar;
+  painel.innerHTML = `
+    <div class="rh-sec"><h4>Dependentes ${ed ? '<button class="btn sm" id="rh-add-dep">+ Adicionar</button>' : ''}</h4>
+      ${d.dependentes.length ? `<div class="table-wrap"><table class="tbl-rh-dep">
+        <thead><tr><th>Nome</th><th>Parentesco</th><th>Nascimento</th><th>CPF</th><th>IRRF</th><th>Sal.-família</th><th></th></tr></thead>
+        <tbody>${d.dependentes.map(x => `<tr>
+          <td>${esc(x.nome)}</td><td>${esc(rhTxt(x.parentesco))}</td><td class="venc-cell">${rhData(x.data_nascimento)}</td>
+          <td>${esc(rhTxt(x.cpf))}</td><td>${x.irrf ? '✔' : '—'}</td><td>${x.salario_familia ? '✔' : '—'}</td>
+          <td class="actions">${ed ? `<button class="btn-ic perigo" data-del-dep="${x.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</td>
+        </tr>`).join('')}</tbody></table></div>`
+        : '<div class="empty">Nenhum dependente cadastrado.</div>'}
+    </div>`;
+  const add = painel.querySelector('#rh-add-dep');
+  if (add) add.onclick = () => openModal('Novo dependente', `
+    ${fld('dp-nome', 'Nome completo *', 'text', '')}
+    <div class="form-row">
+      ${fldSel('dp-parentesco', 'Parentesco', rhOpcoes(RH_PARENTESCO, '— selecione —'), '')}
+      ${fld('dp-data_nascimento', 'Data de nascimento', 'date', '')}
+      ${fldSel('dp-sexo', 'Sexo', RH_SEXO, '')}
+    </div>
+    ${fld('dp-cpf', 'CPF', 'text', '')}
+    <div class="chip-row">
+      <label class="check-chip"><input type="checkbox" id="dp-irrf"> Dependente para IRRF</label>
+      <label class="check-chip"><input type="checkbox" id="dp-salario_familia"> Recebe salário-família</label>
+    </div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Adicionar', cls: 'primary', onClick: async () => {
+        const body = {
+          nome: $('#dp-nome').value, parentesco: $('#dp-parentesco').value,
+          data_nascimento: $('#dp-data_nascimento').value, sexo: $('#dp-sexo').value,
+          cpf: $('#dp-cpf').value, irrf: $('#dp-irrf').checked, salario_familia: $('#dp-salario_familia').checked
+        };
+        if (!body.nome.trim()) return modalError('O nome é obrigatório.');
+        try {
+          await api(`/api/rh/colaboradores/${id}/dependentes`, { method: 'POST', body });
+          closeModal(); toast('Dependente adicionado.'); abrirFichaRH(id, 'deps');
+        } catch (e) { modalError(e.message); }
+     }}]);
+  painel.querySelectorAll('[data-del-dep]').forEach(b => b.onclick = () =>
+    confirmDelete('dependente', '/api/rh/dependentes/' + b.dataset.delDep, () => abrirFichaRH(id, 'deps')));
+}
+
+function rhAbaDossie(painel, d, id) {
+  if (!d.pode.dossie) {
+    painel.innerHTML = '<div class="empty">O dossiê exige a permissão “RH · dados pessoais sensíveis”.</div>';
+    return;
+  }
+  const ed = d.pode.editar;
+  const porTipo = {};
+  d.dossie.forEach(a => { (porTipo[a.doc_tipo || 'outro'] = porTipo[a.doc_tipo || 'outro'] || []).push(a); });
+  const nome = cod => (d.tipos_documento.find(t => t.cod === cod) || {}).nome || cod;
+
+  painel.innerHTML = `
+    <div class="rh-sec"><h4>Checklist de admissão</h4>
+      <div class="rh-check">${d.checklist.map(x => `
+        <div class="rh-check-item ${x.ok ? 'ok' : 'falta'}">
+          <span class="mk">${x.ok ? '✔' : '✘'}</span>
+          <span class="nm">${esc(x.nome)}</span>
+          <span class="via">${x.ok ? (x.via === 'campos' ? 'preenchido na ficha' : x.anexos + ' arquivo(s)') : (x.via === 'campos' ? 'preencher na aba Contato' : 'falta anexar')}</span>
+        </div>`).join('')}</div>
+      <div class="rh-nota">O reservista só aparece para colaboradores do sexo masculino, e “Dados Bancários” é cumprido pelos campos da ficha — não por anexo.</div>
+    </div>
+    <div class="rh-sec"><h4>Arquivos ${ed ? '<button class="btn sm" id="rh-add-doc">+ Anexar documento</button>' : ''}</h4>
+      ${d.dossie.length ? `<div class="rh-docs">${Object.keys(porTipo).map(t => `
+        <div class="rh-doc-grupo"><h5>${esc(nome(t))}</h5>
+          ${porTipo[t].map(a => `<div class="rh-doc">
+            <button class="rh-link" data-ver="${a.id}">${esc(a.file_name)}</button>
+            <span>${fmtSize(a.byte_size)} · ${rhData(a.created_at)}</span>
+            ${ed ? `<button class="btn-ic perigo" data-del-doc="${a.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}
+          </div>`).join('')}
+        </div>`).join('')}</div>`
+        : '<div class="empty">Nenhum documento no dossiê.</div>'}
+    </div>`;
+
+  const add = painel.querySelector('#rh-add-doc');
+  if (add) add.onclick = () => rhAnexarDoc(id, d.tipos_documento);
+  painel.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.ver)));
+  painel.querySelectorAll('[data-del-doc]').forEach(b => b.onclick = () =>
+    confirmDelete('documento', '/api/attachments/' + b.dataset.delDoc, () => abrirFichaRH(id, 'dossie')));
+}
+
+function rhAnexarDoc(id, tipos) {
+  openModal('Anexar documento ao dossiê', `
+    ${fldSel('ad-tipo', 'Tipo de documento', tipos.map(t => ({ v: t.cod, t: t.nome + (t.obrigatorio ? ' (obrigatório)' : '') })), 'rg')}
+    <div class="field"><label for="ad-file">Arquivo</label><input type="file" id="ad-file"
+      accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx"></div>
+    <div class="rh-nota">Até 3 MB por arquivo. O tipo real é conferido pelo conteúdo, não pela extensão.</div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
+        const f = $('#ad-file').files[0];
+        if (!f) return modalError('Escolha um arquivo.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+        try {
+          const data = await readFileAsBase64(f);
+          await api(`/api/attachments/rh_doc/${id}`, { method: 'POST', body: {
+            file_name: f.name, mime_type: f.type || 'application/octet-stream',
+            kind: 'outro', doc_tipo: $('#ad-tipo').value, data } });
+          closeModal(); toast('Documento anexado.'); abrirFichaRH(id, 'dossie');
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
      }}]);
 }
 

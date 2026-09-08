@@ -2321,3 +2321,110 @@ decisão, não foi feito.
 
 **Nada foi integrado ao ERP ainda.** Este commit traz o protótipo em `tools/rh/` e o desenho
 atualizado.
+
+---
+
+## 2026-09-08 — RH fase 1 no ar: ficha, vínculo, dependentes, dossiê e checklist
+
+**Pedido:** "Seguir" — construir a fase 1 do desenho de RH.
+
+### Banco (migração aplicada em produção)
+
+`supabase/migrations/2026-09-08-rh-fase1.sql`, **inteiramente aditiva e idempotente**: só
+`ADD COLUMN IF NOT EXISTS` e `CREATE TABLE IF NOT EXISTS`. Nenhuma coluna removida, renomeada ou
+com tipo alterado; nenhuma linha existente tocada.
+
+- **45 colunas novas** em `erp_colaboradores` (26 → 71): identificação, documentos, endereço,
+  bancário, filiação. As de Viáticos ficaram intactas.
+- **`erp_rh_vinculos`** (33 colunas) e **`erp_rh_dependentes`** (10).
+- **`erp_attachments.doc_tipo`** — o dossiê usa `entity_type='rh_doc'` e o tipo do documento vai
+  nesta coluna, porque `kind` é lista fechada compartilhada com boletos e notas fiscais.
+- Índices: CPF único **parcial** (não atrapalha as 11 linhas com CPF nulo), um vínculo aberto por
+  colaborador, e busca do dossiê por tipo.
+
+Conferido depois de aplicar: 11 linhas e 171 anexos intactos, 5 índices criados.
+
+Duas decisões que ficaram no schema, não em comentário:
+- **Não existe coluna `ativo` no vínculo.** Vínculo aberto = `desligamento IS NULL`. Uma coluna
+  poderia discordar da data, e aí não se sabe qual das duas é verdade.
+- **`CREATE UNIQUE INDEX ... WHERE desligamento IS NULL`** — a regra "um vínculo aberto por vez" é
+  do banco, não só da API.
+
+### Back-end
+
+- `PERM_PAGES` ganhou `rh`. E **`PERM_EXTRAS = ['rh_sensivel','rh_remuneracao']`**: ver a página
+  mostra nome, cargo, área e admissão; CPF, RG, endereço, filiação, dependentes, dossiê e salário
+  exigem as travas finas. São guardadas como pseudo-páginas para reusar o mesmo `canView` — zero
+  máquina nova.
+- **Redação por ausência, não por vazio.** Quem não tem a trava recebe o campo *ausente* do JSON.
+  Campo em branco é indistinguível de "não preenchido" e mentiria na tela.
+- **Autosserviço de graça:** o colaborador vê a própria ficha inteira via
+  `erp_colaboradores.usuario_id`, que já existia para Viáticos.
+- **Lista fechada de campos graváveis.** O PUT não aceita coluna arbitrária: sem isso daria para
+  escrever em `ativo`, `tier` ou `usuario_id` por aqui e escapar das travas de Viáticos. E quem
+  não vê um campo sensível também não grava nele.
+- **As datas de experiência são derivadas, não digitadas** — admissão +45 e +90. Errar isso
+  efetiva o empregado sozinho.
+- 8 rotas novas em `/api/rh/*`, com entradas nomeadas no log de auditoria.
+
+### Front-end
+
+Seção **Pessoas → Recursos Humanos** no menu.
+
+- **Lista** na mesma linguagem visual das grades financeiras: `table-layout: fixed`, colunas
+  estreitas em pixel, coluna de ações fixa à direita. Quatro cartões de situação acima (ativos,
+  em experiência, sem vínculo, documentação pendente) e cinco filtros.
+- **Barra de documentação** por linha: proporção lida de relance, número confirmando, e o
+  `title` listando exatamente o que falta.
+- **Ficha com 6 abas** — Identificação, Documentos, Contato, Vínculo, Dependentes, Dossiê. Cada
+  aba grava **só os campos que mostrou**; salvar a ficha inteira apagaria o que a aba nem exibiu.
+- **Vínculo em leitura** com rótulo/valor, não campos desabilitados — que parecem editáveis e não
+  são. Mostra a **minuta correspondente** ao par regime × modelo de trabalho, e o formulário
+  atualiza isso ao vivo enquanto se escolhe.
+- **Nível Jr/Pl/Sr desabilita** para cargos que não têm nível, com o motivo no `title`.
+- **Checklist** com os 11 obrigatórios, as três regras (alternativa, condicional ao sexo, e
+  "Dados Bancários" cumprido por campo e não por anexo) e o que falta em vermelho.
+
+### Verificação
+
+**Back-end — 34 asserções** contra o Express de verdade, com `src/db.js` trocado por stub e
+quatro perfis (admin, RH, gestor, o próprio colaborador). Cobrem: checklist com 10 itens para
+mulher e 11 para homem; dados bancários contando sem anexo; gestor sem `cpf`, `conta` nem
+`salario` na resposta mas ainda vendo o checklist; a própria colaboradora vendo tudo de si e nada
+de sensível dos outros; PUT recusado para quem só lê; CPF duplicado com 409 e regravar o próprio
+CPF permitido; campos fora da lista fechada ignorados; data em formato errado descartada em vez de
+gravada como lixo; segundo vínculo aberto recusado com 409; e as datas +45/+90 conferidas nos
+parâmetros reais do INSERT.
+
+**Front-end** — a tela montada com o `styles.css` de produção e o **código de renderização real
+extraído de `public/app.js`** (609 linhas), alimentada com os 11 colaboradores reais:
+
+| | 1908 | 1366 |
+|---|---|---|
+| Células cortadas | 0 | 0 |
+| Coluna Ações visível após rolar | sim | sim |
+| Página alarga | não | não |
+| Rolagem da tabela | não | sim (mín. 1080px) |
+
+As 6 abas renderizam; o checklist da ficha de teste mostra 11 itens, 2 cumpridos, "Dados
+Bancários" por campo e CNH por arquivo. Com `sensivel:false` e `editar:false`, Documentos,
+Dependentes e Dossiê ficam bloqueados, CPF e salário não aparecem em aba nenhuma, e o botão
+Salvar some.
+
+### Sobre a separação do trabalho da outra sessão
+
+`api/index.js` e `public/app.js` têm 22 e 14 hunks intercalados de duas sessões. Filtrar por faixa
+de linhas não serviria, então escrevi um filtro por **conteúdo** (`scratchpad/filtrar-hunks.js`),
+conservador: um hunk só entra se casar com marca minha; qualquer dúvida fica de fora. Resultado:
+6 de 11 hunks meus em app.js, 7 de 15 em api/index.js. Depois de montar os blobs, conferido que
+`hashArquivo`, `loteAtual`, `import_batch` e `LOGIN_TENTATIVAS` **não entraram**, que o bloco de RH
+ficou byte a byte igual ao que foi testado, e que o blob filtrado passa nas mesmas 34 asserções.
+
+### O que ficou de fora, de propósito
+
+- **Criar colaborador** continua em Viáticos → Configurações. É a mesma pessoa; duplicar o
+  formulário criaria dois caminhos para o mesmo registro.
+- **Veículo e CNH** seguem na tela de Viáticos.
+- **Fase 2** (histórico de ocorrências, linha do tempo, alertas de experiência e ASO vencendo) e
+  **fase 4** (catálogo de cargos, integrações) não começaram.
+- A emissão de documentos (fase 3) segue como protótipo de linha de comando em `tools/rh/`.

@@ -887,3 +887,123 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    segunda copia das do bloco `.tbl-fin` acima -- sobra das sessoes em que a
    tabela foi ajustada aos poucos. Foram unificadas la para que Contas a Pagar e
    Contas a Receber não possam divergir. */
+
+/* ===== Recursos Humanos =====
+   A grade da lista segue o mesmo princípio de .tbl-fin: colunas estreitas em
+   PIXEL para nunca encolherem e cortarem conteúdo em silêncio, largura mínima
+   com rolagem abaixo dela, e a coluna de ações ancorada à direita. */
+.tbl-rh { table-layout: fixed; min-width: 1080px; }
+.tbl-rh col.c-id    { width: 52px; }
+.tbl-rh col.c-nome  { width: auto; }
+.tbl-rh col.c-cargo { width: 200px; }
+.tbl-rh col.c-dep   { width: 170px; }
+.tbl-rh col.c-adm   { width: 106px; }
+.tbl-rh col.c-sit   { width: 190px; }
+.tbl-rh col.c-docs  { width: 132px; }
+.tbl-rh col.c-acoes { width: 74px; }
+.tbl-rh td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
+.tbl-rh td.id-cell { text-align: center; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tbl-rh td.venc-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tbl-rh .badge { white-space: nowrap; }
+.tbl-rh .id-cell, .tbl-rh .venc-cell, .tbl-rh .docs-cell,
+.tbl-rh thead th:nth-child(1), .tbl-rh thead th:nth-child(5), .tbl-rh thead th:nth-child(7) {
+  padding-left: 8px; padding-right: 8px;
+}
+.tbl-rh td.actions, .tbl-rh thead th.actions, .tbl-rh tfoot td:last-child {
+  position: sticky; right: 0; z-index: 1; padding-left: 8px; text-align: left;
+  background: var(--card); box-shadow: -1px 0 0 var(--line);
+}
+.tbl-rh thead th.actions { background: #FAFBFA; }
+.tbl-rh tbody tr:hover td.actions { background: #FAFCFA; }
+.tbl-rh tfoot td:last-child { background: #FAFBFA; }
+
+/* Nome como botão-link: abrir a ficha é a ação principal da linha, então o
+   próprio nome leva até ela — o ícone da coluna Ações é só o atalho. */
+.rh-link { background: none; border: 0; padding: 0; font: inherit; color: var(--verde-700);
+  cursor: pointer; text-align: left; font-weight: 600; }
+.rh-link:hover { text-decoration: underline; }
+.rh-sub { display: block; font-size: 11.5px; color: var(--muted); }
+
+/* Barra de documentação: a proporção é lida de relance, o número confirma. */
+.rh-barra { height: 6px; background: #EAF0EC; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+.rh-barra i { display: block; height: 100%; border-radius: 3px; }
+.rh-barra i.bom  { background: var(--verde-700); }
+.rh-barra i.meio { background: #C8912B; }
+.rh-barra i.ruim { background: var(--danger); }
+.rh-barra-txt { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.badge.exp { background: #FBF2E4; color: #8A5100; border: 1px solid #E7D3AE; }
+
+/* Cartões de situação */
+.rh-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.rh-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.rh-card b { display: block; font-size: 26px; font-weight: 700; color: var(--verde-900); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.rh-card span { display: block; font-size: 13px; font-weight: 600; color: var(--ink); margin-top: 3px; }
+.rh-card i { display: block; font-style: normal; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.rh-card.alerta { border-color: #E3B4B0; background: var(--danger-050); }
+.rh-card.alerta b { color: var(--danger); }
+.rh-card.aviso { border-color: #E7D3AE; background: #FBF7EF; }
+.rh-card.aviso b { color: #8A5100; }
+.rh-card.ok b { color: var(--verde-700); }
+
+/* ---- Ficha ---- */
+.rh-ficha-topo { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+.rh-ficha-nome h3 { margin: 0; font-size: 19px; }
+.rh-ficha-nome span { font-size: 13px; color: var(--muted); }
+.rh-pend { font-size: 12.5px; font-weight: 600; color: var(--danger); background: var(--danger-050);
+  border: 1px solid #E3B4B0; border-radius: 999px; padding: 5px 12px; cursor: default; }
+.rh-pend.ok { color: var(--verde-700); background: var(--verde-050); border-color: #CDE5D6; }
+
+.rh-abas { display: flex; gap: 4px; border-bottom: 1px solid var(--line); flex-wrap: wrap; margin-bottom: 18px; }
+.rh-aba { appearance: none; background: none; border: 0; padding: 10px 16px; font: inherit; font-weight: 600;
+  color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.rh-aba:hover { color: var(--ink); }
+.rh-aba.ativa { color: var(--verde-700); border-bottom-color: var(--verde-700); }
+
+.rh-sec { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 16px; }
+.rh-sec h4 { margin: 0 0 14px; font-size: 12.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--verde-700); display: flex; align-items: center; gap: 10px; }
+.rh-sec-desl h4 { color: var(--danger); }
+.rh-lgpd { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--danger); border: 1px solid #E3B4B0; border-radius: 3px; padding: 2px 5px; }
+.rh-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 16px; }
+.rh-grid .field { margin-bottom: 12px; }
+.rh-acoes { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* Leitura do vínculo: rótulo à esquerda, valor à direita, alinhados numa grade
+   — mais legível que campos desabilitados, que parecem editáveis e não são. */
+.rh-linhas { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 28px; }
+.rh-linha { display: flex; justify-content: space-between; gap: 14px; align-items: baseline;
+  padding: 8px 0; border-bottom: 1px solid #EAF0EC; font-size: 13.5px; }
+.rh-linha span { color: var(--muted); }
+.rh-linha b { color: var(--ink); font-weight: 600; text-align: right; }
+.rh-minuta { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+
+.rh-nota { background: var(--verde-050); border: 1px solid #CDE5D6; border-radius: 8px;
+  padding: 11px 14px; font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
+.rh-nota.aviso { background: #FBF7EF; border-color: #E7D3AE; color: #6B4700; }
+.rh-vazio { background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 28px 24px; text-align: center; margin-bottom: 16px; }
+.rh-vazio p { font-size: 14px; color: var(--ink-2); max-width: 560px; margin: 0 auto 16px; line-height: 1.6; }
+
+/* Checklist: o que falta precisa saltar, o que está pronto pode recuar. */
+.rh-check { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px 20px; }
+.rh-check-item { display: grid; grid-template-columns: 20px 1fr auto; gap: 8px; align-items: baseline;
+  padding: 7px 9px; border-radius: 6px; font-size: 13.5px; }
+.rh-check-item .mk { font-weight: 700; }
+.rh-check-item .via { font-size: 11.5px; color: var(--muted); }
+.rh-check-item.ok { color: var(--ink-2); }
+.rh-check-item.ok .mk { color: var(--verde-700); }
+.rh-check-item.falta { background: var(--danger-050); color: var(--ink); }
+.rh-check-item.falta .mk { color: var(--danger); }
+.rh-check-item.falta .via { color: var(--danger); }
+
+.rh-docs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.rh-doc-grupo h5 { margin: 0 0 6px; font-size: 12px; font-weight: 700; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: .04em; }
+.rh-doc { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EAF0EC; }
+.rh-doc span { font-size: 11.5px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+.tbl-rh-dep td.actions, .tbl-rh-dep th:last-child { text-align: right; }
+
+/* Subtítulo dentro da matriz de permissões, separando as travas finas de RH */
+.perm-sub { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--verde-700); margin: 14px 0 6px; }

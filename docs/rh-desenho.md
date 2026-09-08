@@ -1,6 +1,7 @@
 # Módulo de Recursos Humanos — desenho
 
-**Estado:** desenho em revisão · o **motor de emissão** está prototipado e testado (§5); o resto é desenho
+**Estado:** **FASE 1 IMPLEMENTADA E NO AR** (ficha, vínculo, dependentes, dossiê, checklist, permissões).
+O **motor de emissão** está prototipado e testado (§5), fora do ERP. Fases 2 e 4 seguem em desenho.
 **Protótipo:** `tools/rh/docx-merge.js` — sem dependências, 28 verificações no .docx gerado
 **Data:** 2026-09-04 · revisado em 2026-09-08 com as 5 minutas reais
 **Versão navegável:** https://claude.ai/code/artifact/eebda877-877c-42cb-82d6-2e08401c0319
@@ -406,7 +407,7 @@ Ordem por dor, não por técnica.
 
 | Fase | Escopo | Entrega |
 |---|---|---|
-| **1 — a base** | campos de RH em `erp_colaboradores`, vínculos, dependentes, dossiê com categorias e checklist, tela de lista e ficha com abas | o acervo passa a viver no ERP, e o checklist mostra o que falta |
+| **1 — a base** ✅ | campos de RH em `erp_colaboradores`, vínculos, dependentes, dossiê com categorias e checklist, tela de lista e ficha com abas | o acervo passa a viver no ERP, e o checklist mostra o que falta |
 | **2 — a memória** | eventos, linha do tempo na ficha, painel com as filas de ação | a ficha vira histórico; nenhuma experiência se efetiva por esquecimento |
 | **3 — o motor** | biblioteca de minutas, detecção de campos, mesclagem, saída `.docx`+PDF, arquivamento com estado de assinatura | admissão inteira emitida da ficha |
 | **4 — o alcance** | catálogo de cargos, autosserviço, pontes com Contas a Pagar e Usuários | RH deixa de ser ilha |
