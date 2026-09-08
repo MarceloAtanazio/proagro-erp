@@ -2549,3 +2549,85 @@ nenhum `XXXX`/`DD/MM/AAAA`/`202X` remanescente.
   entrou aqui é o processo de **entrada**, não a vida inteira do funcionário.
 - Nenhuma minuta foi cadastrada: os .docx estão no OneDrive e precisam ser enviados pela aba
   **Minutas**.
+
+---
+
+## 2026-09-08 — Ficha de RH: UF antes do município, máscara de CPF/RG, CEP que busca e banco por lista
+
+**Pedido:** na Naturalidade, escolher a UF primeiro e o município numa lista suspensa daquela UF;
+em Documentos, respeitar `##.###.###-#` no RG e `###.###.###-##` no CPF com validação, seja qual
+for a forma digitada; no Endereço, o CEP primeiro, preenchendo logradouro, bairro, município e UF;
+em Dados Bancários, o banco primeiro numa lista que preenche o código — com digitação livre também.
+
+### Naturalidade
+
+A UF passou a vir primeiro e comanda a lista de municípios, vinda do `BR_LOCALIDADES` que já
+existia no projeto (usado por Viáticos). São 5.570 municípios no país, 645 só em São Paulo:
+escolher o estado antes transforma digitação livre — que gerava a mesma cidade com grafias
+diferentes — numa escolha curta.
+
+Um cuidado: se a ficha já tem um município que não está no catálogo da UF, ele **continua na
+lista**, marcado como "(fora da lista)". Sumir com o dado ao trocar a UF seria pior do que exibir
+uma opção fora do padrão.
+
+### CPF e RG
+
+Máscara enquanto se digita, e validação ao sair do campo — validar a cada tecla acusaria erro em
+CPF pela metade. O CPF passa pelos **dois dígitos verificadores** e rejeita os onze dígitos
+repetidos, que passam na conta mas não são CPF de ninguém.
+
+O RG **não tem padrão nacional**: cada estado emite do seu jeito e em São Paulo termina em "X".
+A máscara `##.###.###-#` é aplicada quando o documento tem 8 ou 9 caracteres e o valor é deixado
+como veio quando não tem — guardar o que o RG diz vale mais que forçá-lo numa máscara errada.
+
+**A mesma normalização foi para o servidor**: `PUT /api/rh/colaboradores/:id` e
+`POST /api/rh/colaboradores` validam o CPF e formatam CPF, RG, CEP e código do banco antes de
+gravar. A máscara da tela é conveniência; quem chama a API direto passaria por fora dela, e o
+banco acabaria com `41412929822` e `414.129.298-22` convivendo — dois formatos para a mesma pessoa
+quebram o índice único e a busca.
+
+### CEP
+
+O CEP é o primeiro campo do endereço e preenche logradouro, bairro, município e UF via **ViaCEP**,
+disparando ao completar os oito dígitos e ao sair do campo. Só o CEP sai daqui — nenhum dado do
+colaborador vai para o serviço. Quando o CEP não existe ou o serviço não responde, o formulário
+segue preenchível à mão: a busca é conveniência, não dependência. Número e complemento nunca são
+tocados, e o foco vai para o número assim que o resto chega.
+
+### Banco
+
+Campo de texto com `datalist` — aceita digitação livre **e** oferece a lista. Novo arquivo de
+referência `public/br-bancos.js` com 109 instituições por código COMPE, no mesmo padrão do
+`br-localidades.js`. Lista estática e não consulta ao Banco Central: a folha precisa funcionar
+offline e o código COMPE praticamente não muda.
+
+Nome e código andam nos dois sentidos: escolher o banco preenche o código, digitar o código
+preenche o nome. Banco fora da lista não quebra nada — o campo continua livre.
+
+### Dois bugs encontrados na verificação
+
+- **`const` no topo de script clássico não vira propriedade de `window`.** Eu havia escrito
+  `window.BR_LOCALIDADES && ...` e `window.BR_BANCOS`, que davam sempre `undefined`: a lista de
+  municípios vinha vazia e a de bancos também. O código que já existia no app referencia
+  `BR_LOCALIDADES` direto — passei a usar `typeof X !== 'undefined'`.
+- **Código e nome do banco ficavam inconsistentes.** Digitar "33" completava para "033" no blur,
+  mas a busca pelo nome só rodava no `input` — sobrava código do Santander com nome do Itaú. O
+  blur passou a refazer a busca depois de completar o zero.
+
+### Verificação
+
+Máscaras e validador exercitados fora do navegador (CPF em quatro grafias, CPF falso, RG com e sem
+"X", CEP), e a tela medida com o **código real extraído de `public/app.js`**:
+
+- Naturalidade: 646 opções em SP, 854 em MG, o município da ficha preservado, e o campo travado
+  enquanto não há UF.
+- Documentos: `41412929822` → `414.129.298-22`; `111.111.111-11` marcado com o aviso; RG com "X".
+- Endereço: CEP `01310-930` trouxe Avenida Paulista / Bela Vista / São Paulo / SP, com o número
+  intacto; CEP inexistente deu a mensagem certa em vez de silêncio.
+- Banco: `033 → Santander`, `1 → 001 Banco do Brasil`, `756 → Sicoob`, e nome livre sem quebrar.
+- As seis abas: zero erros no console, sem rolagem horizontal, nenhum campo cortado.
+
+**Uma expectativa minha estava errada, não o código:** escrevi um teste esperando que
+`414.129.298-22` fosse inválido. Conferindo as duas contas de dígito, ele é válido — é o CPF do
+print. E o fixture da fase 1 usava `123.456.789-01`, que **não** é válido; trocado por
+`123.456.789-09`, que é.

@@ -2007,6 +2007,44 @@ const RH_SENSIVEIS = ['cpf', 'rg', 'rg_orgao', 'rg_uf', 'rg_emissao', 'pis', 'ti
   'conta', 'conta_tipo', 'pix_chave'];
 const RH_REMUNERACAO = ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia'];
 
+// CPF e RG normalizados no SERVIDOR também: a máscara da tela é conveniência,
+// mas quem chama a API direto passaria por fora dela e o banco acabaria com
+// "41412929822" e "414.129.298-22" convivendo — dois formatos para a mesma
+// pessoa quebram o índice único e a busca.
+const rhDigitos = v => String(v == null ? '' : v).replace(/\D+/g, '');
+
+function rhCPFValido(v) {
+  const d = rhDigitos(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  for (const [ate, pos] of [[9, 10], [10, 11]]) {
+    let soma = 0;
+    for (let i = 0; i < ate; i++) soma += Number(d[i]) * (pos - i);
+    let dv = (soma * 10) % 11;
+    if (dv === 10) dv = 0;
+    if (dv !== Number(d[ate])) return false;
+  }
+  return true;
+}
+const rhFormatarCPF = v => {
+  const d = rhDigitos(v);
+  return d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : String(v || '').trim();
+};
+// RG não tem padrão nacional e em SP termina em "X": formata quando tem 8 ou 9
+// caracteres, e deixa como veio quando não tem — melhor guardar o que o
+// documento diz do que forçá-lo numa máscara errada.
+const rhFormatarRG = v => {
+  const b = String(v == null ? '' : v).toUpperCase().replace(/[^0-9X]/g, '');
+  if (b.length < 8 || b.length > 9) return String(v || '').trim();
+  const corpo = b.slice(0, b.length - 1), dv = b.slice(-1);
+  return corpo.length === 8
+    ? `${corpo.slice(0, 2)}.${corpo.slice(2, 5)}.${corpo.slice(5, 8)}-${dv}`
+    : `${corpo.slice(0, 1)}.${corpo.slice(1, 4)}.${corpo.slice(4, 7)}-${dv}`;
+};
+const rhFormatarCEP = v => {
+  const d = rhDigitos(v);
+  return d.length === 8 ? `${d.slice(0, 5)}-${d.slice(5)}` : String(v || '').trim();
+};
+
 const rhVeSensivel = u => u.role === 'admin' || canView(u, 'rh_sensivel');
 const rhVeRemuneracao = u => u.role === 'admin' || canView(u, 'rh_remuneracao');
 
@@ -2162,11 +2200,23 @@ app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (re
   // Sem a trava fina, não se grava o que não se pode ver — senão bastaria
   // enviar o PUT para sobrescrever um CPF que a tela nem mostrou.
   const permitidos = RH_CAMPOS_FICHA.filter(c => rhVeSensivel(req.user) || !RH_SENSIVEIS.includes(c));
-  const { cols, vals } = rhMontarSet(req.body, permitidos, RH_CAMPOS_DATA, [], []);
+
+  // Normaliza antes de montar o SET, para o banco receber sempre o mesmo
+  // formato venha de onde vier.
+  const corpo = { ...req.body };
+  if (corpo.cpf) {
+    if (!rhCPFValido(corpo.cpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos.' });
+    corpo.cpf = rhFormatarCPF(corpo.cpf);
+  }
+  if (corpo.rg) corpo.rg = rhFormatarRG(corpo.rg);
+  if (corpo.cep) corpo.cep = rhFormatarCEP(corpo.cep);
+  if (corpo.banco_numero) corpo.banco_numero = rhDigitos(corpo.banco_numero).slice(0, 3).padStart(3, '0');
+
+  const { cols, vals } = rhMontarSet(corpo, permitidos, RH_CAMPOS_DATA, [], []);
   if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
 
-  if (req.body.cpf) {
-    const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1 AND id<>$2', [sanitize(req.body.cpf), id]);
+  if (corpo.cpf) {
+    const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1 AND id<>$2', [corpo.cpf, id]);
     if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name}.` });
   }
   const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
@@ -2318,8 +2368,10 @@ async function rhCarregarAdmissao(id) {
 app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const nome = sanitize(req.body.name);
   if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
-  const cpf = sanitize(req.body.cpf) || null;
+  let cpf = sanitize(req.body.cpf) || null;
   if (cpf) {
+    if (!rhCPFValido(cpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos.' });
+    cpf = rhFormatarCPF(cpf);
     const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1', [cpf]);
     if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name} (ID ${dup[0].id}).` });
   }

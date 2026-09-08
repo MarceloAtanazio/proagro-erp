@@ -9322,6 +9322,116 @@ const rhSel = (id, label, opts, sel) => fldSel('rh-' + id, label, opts, sel == n
 const rhInp = (id, label, tipo, valor, attrs) => fld('rh-' + id, label, tipo || 'text', valor == null ? '' : String(valor).slice(0, tipo === 'date' ? 10 : 999), attrs || '');
 const rhOpcoes = (lista, vazio) => [{ v: '', t: vazio || '— não informado —' }, ...lista.map(x => ({ v: x, t: x }))];
 
+// ---------------- Formatação e busca dos campos da ficha ----------------
+
+// CPF: só os dígitos importam, a pontuação é reconstruída. Assim "41412929822",
+// "414.129.298-22" e "414 129 298 22" chegam ao banco iguais.
+function rhSoDigitos(v) { return String(v || '').replace(/\D+/g, ''); }
+
+function rhMascaraCPF(v) {
+  const d = rhSoDigitos(v).slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return d.slice(0, 3) + '.' + d.slice(3);
+  if (d.length <= 9) return d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6);
+  return d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9);
+}
+
+// Dígitos verificadores do CPF. Rejeita também os onze dígitos repetidos
+// (111.111.111-11 e afins passam na conta, mas não são CPF de ninguém).
+function rhCPFValido(v) {
+  const d = rhSoDigitos(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  for (const [ate, pos] of [[9, 10], [10, 11]]) {
+    let soma = 0;
+    for (let i = 0; i < ate; i++) soma += Number(d[i]) * (pos - i);
+    let dv = (soma * 10) % 11;
+    if (dv === 10) dv = 0;
+    if (dv !== Number(d[ate])) return false;
+  }
+  return true;
+}
+
+// RG não tem padrão nacional: cada estado emite do seu jeito, e em São Paulo o
+// último caractere pode ser "X". Formata no padrão pedido (##.###.###-#) quando
+// couber, e deixa como veio quando o documento não tem esse tamanho — melhor
+// guardar o que o RG realmente diz do que forçá-lo numa máscara errada.
+function rhMascaraRG(v) {
+  const bruto = String(v || '').toUpperCase().replace(/[^0-9X]/g, '');
+  if (bruto.length < 8 || bruto.length > 9) return String(v || '').trim();
+  const d = bruto.slice(0, 9);
+  const corpo = d.slice(0, d.length - 1), dv = d.slice(-1);
+  if (corpo.length === 8) return corpo.slice(0, 2) + '.' + corpo.slice(2, 5) + '.' + corpo.slice(5, 8) + '-' + dv;
+  return corpo.slice(0, 1) + '.' + corpo.slice(1, 4) + '.' + corpo.slice(4, 7) + '-' + dv;
+}
+
+function rhMascaraCEP(v) {
+  const d = rhSoDigitos(v).slice(0, 8);
+  return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
+}
+
+// Municípios de uma UF, com o valor atual preservado mesmo que não esteja na
+// lista: ficha antiga pode ter município digitado à mão, e sumir com o dado ao
+// trocar a UF seria pior do que mostrar uma opção fora do catálogo.
+function rhMunicipiosDe(uf, atual) {
+  // `const BR_LOCALIDADES` no topo de um script clássico é global, mas NÃO vira
+  // propriedade de window — checar window.BR_LOCALIDADES dava sempre undefined e
+  // a lista de municípios vinha vazia. `typeof` enxerga a binding.
+  const lista = (typeof BR_LOCALIDADES !== 'undefined' && BR_LOCALIDADES.municipios[uf]) || [];
+  const opts = [{ v: '', t: uf ? '— selecione o município —' : '— escolha a UF primeiro —' },
+                ...lista.map(m => ({ v: m, t: m }))];
+  if (atual && !lista.includes(atual)) opts.push({ v: atual, t: atual + ' (fora da lista)' });
+  return opts;
+}
+
+function rhTrocarMunicipios(selectEl, uf, atual) {
+  if (!selectEl) return;
+  const opts = rhMunicipiosDe(uf, atual);
+  selectEl.innerHTML = opts.map(o =>
+    `<option value="${esc(o.v)}" ${String(o.v) === String(atual || '') ? 'selected' : ''}>${esc(o.t)}</option>`).join('');
+  selectEl.disabled = !uf;
+}
+
+// Busca de endereço pelo CEP. O ViaCEP é público e recebe só o CEP — nenhum
+// dado do colaborador sai daqui. Quando ele não responde, o formulário continua
+// preenchível à mão; a busca é conveniência, não dependência.
+async function rhBuscarCEP(cep) {
+  const d = rhSoDigitos(cep);
+  if (d.length !== 8) return null;
+  const r = await fetch(`https://viacep.com.br/ws/${d}/json/`, { cache: 'force-cache' });
+  if (!r.ok) throw new Error('não consegui consultar o CEP agora');
+  const j = await r.json();
+  if (j.erro) return null;                       // CEP bem formado que não existe
+  return { logradouro: j.logradouro || '', bairro: j.bairro || '',
+           municipio: j.localidade || '', uf: j.uf || '' };
+}
+
+// Liga máscara e validação a um campo. O valor é formatado enquanto se digita e
+// conferido ao sair — validar a cada tecla acusaria erro em CPF pela metade.
+function rhLigarCampo(id, mascara, validar, msgErro) {
+  const el = $('#' + id);
+  if (!el) return;
+  const marcar = ok => {
+    el.classList.toggle('campo-invalido', !ok);
+    let av = el.parentElement.querySelector('.campo-aviso');
+    if (!ok && !av) {
+      av = el.parentElement.appendChild(el.ownerDocument.createElement('div'));
+      av.className = 'campo-aviso'; av.textContent = msgErro;
+    } else if (ok && av) av.remove();
+  };
+  el.oninput = () => {
+    const pos = el.selectionStart, antes = el.value.length;
+    el.value = mascara(el.value);
+    // Mantém o cursor no lugar quando a máscara insere pontuação atrás dele.
+    if (pos !== null && pos < antes) el.setSelectionRange(pos + (el.value.length - antes), pos + (el.value.length - antes));
+    if (!el.value.trim()) marcar(true);
+  };
+  el.onblur = () => {
+    el.value = mascara(el.value);
+    marcar(!el.value.trim() || !validar || validar(el.value));
+  };
+  if (el.value) { el.value = mascara(el.value); if (validar) marcar(!el.value.trim() || validar(el.value)); }
+}
+
 function rhAbaIdentificacao(painel, d, id) {
   const c = d.colaborador, ed = d.pode.editar;
   painel.innerHTML =
@@ -9333,9 +9443,13 @@ function rhAbaIdentificacao(painel, d, id) {
       rhInp('nacionalidade', 'Nacionalidade', 'text', c.nacionalidade, 'placeholder="brasileiro"'),
       rhSel('grau_instrucao', 'Grau de instrução', rhOpcoes(RH_INSTRUCAO), c.grau_instrucao)
     ].join('')) +
+    // A UF vem primeiro e comanda a lista de municípios: são 5.570 no país e
+    // 645 só em São Paulo — escolher o estado antes transforma a digitação
+    // livre (que gerava "Ferraz de Vasconcelos" com grafias diferentes) numa
+    // escolha curta e sem erro.
     rhSecao('Naturalidade', [
-      rhInp('naturalidade', 'Município de nascimento', 'text', c.naturalidade),
-      rhSel('naturalidade_uf', 'UF', rhOpcoes(RH_UF), c.naturalidade_uf)
+      rhSel('naturalidade_uf', 'UF de nascimento', rhOpcoes(RH_UF), c.naturalidade_uf),
+      rhSel('naturalidade', 'Município de nascimento', rhMunicipiosDe(c.naturalidade_uf, c.naturalidade), c.naturalidade)
     ].join('')) +
     (d.pode.sensivel
       ? rhSecao('Filiação e censo <span class="rh-lgpd">dado sensível</span>', [
@@ -9347,6 +9461,10 @@ function rhAbaIdentificacao(painel, d, id) {
     rhSalvar(ed);
   const campos = ['nome_social', 'data_nascimento', 'sexo', 'estado_civil', 'nacionalidade', 'grau_instrucao',
     'naturalidade', 'naturalidade_uf'].concat(d.pode.sensivel ? ['nome_mae', 'nome_pai', 'raca_cor'] : []);
+
+  const selUF = $('#rh-naturalidade_uf'), selMun = $('#rh-naturalidade');
+  rhTrocarMunicipios(selMun, c.naturalidade_uf, c.naturalidade);
+  selUF.onchange = () => rhTrocarMunicipios(selMun, selUF.value, '');
   rhLigarSalvar(painel, id, campos, 'ident');
 }
 
@@ -9380,6 +9498,8 @@ function rhAbaDocumentos(painel, d, id) {
         c.sexo === 'M' ? '' : 'placeholder="exigido apenas de homens"')
     ].join('')) +
     rhSalvar(ed);
+  rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
+  rhLigarCampo('rh-rg', rhMascaraRG, null, '');
   rhLigarSalvar(painel, id, ['cpf', 'rg', 'rg_orgao', 'rg_uf', 'rg_emissao', 'ctps_numero', 'ctps_serie',
     'ctps_uf', 'ctps_emissao', 'pis', 'titulo_eleitor', 'titulo_zona', 'titulo_secao', 'titulo_uf', 'reservista'], 'docs');
 }
@@ -9393,18 +9513,29 @@ function rhAbaContato(painel, d, id) {
       rhInp('email_corporativo', 'E-mail corporativo', 'email', c.email_corporativo)
     ].join('')) +
     (sens
+      // O CEP vem primeiro e preenche logradouro, bairro, município e UF: são
+      // quatro campos que o CEP já determina, e digitá-los à mão é trabalho
+      // repetido com chance de erro. Sobra o que o CEP não sabe — número e
+      // complemento.
       ? rhSecao('Endereço residencial <span class="rh-lgpd">dado sensível</span>', [
+          rhInp('cep', 'CEP', 'text', c.cep, 'placeholder="00000-000" inputmode="numeric"'),
           rhInp('endereco', 'Logradouro', 'text', c.endereco),
           rhInp('endereco_numero', 'Número', 'text', c.endereco_numero),
           rhInp('endereco_complemento', 'Complemento', 'text', c.endereco_complemento),
           rhInp('bairro', 'Bairro', 'text', c.bairro),
           rhInp('municipio', 'Município', 'text', c.municipio),
-          rhSel('uf', 'UF', rhOpcoes(RH_UF), c.uf),
-          rhInp('cep', 'CEP', 'text', c.cep)
-        ].join('')) +
+          rhSel('uf', 'UF', rhOpcoes(RH_UF), c.uf)
+        ].join('') + '<div class="campo-dica" id="cep-status">Digite o CEP e o endereço se preenche sozinho.</div>') +
+        // Banco pela lista, com o código vindo junto. O campo aceita digitação
+        // livre porque a lista não cobre toda instituição de pagamento — e
+        // quem já sabe o código pode digitá-lo e ter o nome preenchido.
         rhSecao('Dados bancários <span class="rh-lgpd">dado sensível</span>', [
-          rhInp('banco_numero', 'Nº do banco', 'text', c.banco_numero, 'placeholder="001"'),
-          rhInp('banco_nome', 'Banco', 'text', c.banco_nome),
+          `<div class="field"><label for="rh-banco_nome">Banco</label>
+             <input id="rh-banco_nome" list="lista-bancos" value="${esc(c.banco_nome || '')}"
+                    placeholder="digite ou escolha na lista" autocomplete="off">
+             <datalist id="lista-bancos">${(typeof BR_BANCOS !== 'undefined' ? BR_BANCOS : []).map(b =>
+               `<option value="${esc(b.nome)}">${b.n}</option>`).join('')}</datalist></div>`,
+          rhInp('banco_numero', 'Nº do banco', 'text', c.banco_numero, 'placeholder="001" inputmode="numeric"'),
           rhInp('agencia', 'Agência', 'text', c.agencia),
           rhInp('conta', 'Conta', 'text', c.conta),
           rhSel('conta_tipo', 'Tipo', rhOpcoes(['Corrente', 'Poupança', 'Salário']), c.conta_tipo),
@@ -9421,7 +9552,65 @@ function rhAbaContato(painel, d, id) {
   const campos = ['celular', 'email_pessoal', 'email_corporativo', 'emergencia_nome', 'emergencia_telefone', 'emergencia_parentesco']
     .concat(sens ? ['endereco', 'endereco_numero', 'endereco_complemento', 'bairro', 'municipio', 'uf', 'cep',
       'banco_numero', 'banco_nome', 'agencia', 'conta', 'conta_tipo', 'pix_chave'] : []);
+
+  if (sens) {
+    rhLigarCampo('rh-cep', rhMascaraCEP, null, '');
+    rhLigarCEP();
+    rhLigarBanco();
+  }
   rhLigarSalvar(painel, id, campos, 'contato');
+}
+
+// A busca dispara ao sair do campo e ao completar os 8 dígitos — quem cola o
+// CEP não precisa clicar fora para o endereço aparecer.
+function rhLigarCEP() {
+  const el = $('#rh-cep'), status = $('#cep-status');
+  if (!el) return;
+  let ultimo = '';
+  const buscar = async () => {
+    const d = rhSoDigitos(el.value);
+    if (d.length !== 8 || d === ultimo) return;
+    ultimo = d;
+    status.textContent = 'Consultando o CEP…'; status.className = 'campo-dica';
+    try {
+      const e = await rhBuscarCEP(d);
+      if (!e) { status.textContent = 'CEP não encontrado. Preencha o endereço à mão.'; status.className = 'campo-dica erro'; return; }
+      // Só sobrescreve o que veio do CEP; número e complemento ficam intactos.
+      if (e.logradouro) $('#rh-endereco').value = e.logradouro;
+      if (e.bairro) $('#rh-bairro').value = e.bairro;
+      if (e.municipio) $('#rh-municipio').value = e.municipio;
+      if (e.uf) $('#rh-uf').value = e.uf;
+      status.textContent = `Endereço preenchido: ${e.logradouro || '(sem logradouro)'} — ${e.municipio}/${e.uf}. Falta o número.`;
+      status.className = 'campo-dica ok';
+      const n = $('#rh-endereco_numero'); if (n && !n.value) n.focus();
+    } catch (err) {
+      status.textContent = 'Não consegui consultar o CEP agora — preencha o endereço à mão.';
+      status.className = 'campo-dica erro';
+    }
+  };
+  const anterior = el.oninput;
+  el.oninput = e => { if (anterior) anterior(e); buscar(); };
+  el.addEventListener('blur', buscar);
+}
+
+// Nome e código andam juntos nos dois sentidos: escolher o banco preenche o
+// código, digitar o código preenche o nome.
+function rhLigarBanco() {
+  const nome = $('#rh-banco_nome'), num = $('#rh-banco_numero');
+  if (!nome || !num || typeof BR_BANCOS === 'undefined') return;
+  nome.oninput = () => {
+    const b = BR_BANCOS.find(x => x.nome.toLowerCase() === nome.value.trim().toLowerCase());
+    if (b) num.value = b.n;
+  };
+  const casarPeloNumero = () => {
+    const b = BR_BANCOS.find(x => x.n === num.value);
+    if (b) nome.value = b.nome;
+  };
+  num.oninput = () => { num.value = rhSoDigitos(num.value).slice(0, 3); casarPeloNumero(); };
+  // O zero à esquerda entra só ao sair do campo — e a busca é refeita depois
+  // dele. Sem isso, digitar "33" completava para "033" mas deixava o nome do
+  // banco anterior ao lado: código Santander com nome Itaú.
+  num.onblur = () => { if (num.value) { num.value = num.value.padStart(3, '0'); casarPeloNumero(); } };
 }
 
 function rhAbaVinculo(painel, d, id) {

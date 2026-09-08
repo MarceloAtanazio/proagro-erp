@@ -1058,3 +1058,15 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 @media (max-width: 980px) {
   .rh-col { flex-basis: 208px; }
 }
+
+/* Campo com valor recusado pela validação, e a explicação logo abaixo dele —
+   a mensagem fica junto do campo, não num alerta no topo que obriga a
+   procurar qual dos dezoito campos está errado. */
+.campo-invalido { border-color: var(--danger) !important; background: var(--danger-050); }
+.campo-aviso { font-size: 11.5px; color: var(--danger); margin-top: 4px; }
+.campo-dica { font-size: 12px; color: var(--ink-2); margin-top: 2px; grid-column: 1 / -1; }
+.campo-dica.ok { color: var(--verde-700); }
+.campo-dica.erro { color: var(--danger); }
+/* O município de nascimento fica travado até a UF ser escolhida: sem o estado
+   não há lista, e um select vazio e clicável só gera dúvida. */
+.rh-grid select:disabled { background: #F3F6F4; color: var(--muted); cursor: not-allowed; }
