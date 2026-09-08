@@ -125,7 +125,14 @@ async function api(path, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !path.includes('/auth/')) { showLogin(); throw new Error('Sessão expirada'); }
-  if (!res.ok) throw new Error(data.error || 'Erro inesperado');
+  if (!res.ok) {
+    // O corpo do erro vai junto: alguns endpoints devolvem mais do que a
+    // mensagem (as pendências de uma etapa de admissão, por exemplo), e sem
+    // isto a tela só teria a frase solta.
+    const err = new Error(data.error || 'Erro inesperado');
+    err.dados = data; err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -304,6 +311,15 @@ const SIDEBAR_KEY = 'proagro_sidebar_collapsed';
   };
 })();
 
+// A seção de cada página, resolvida uma vez: em PAGES só a primeira página de
+// cada grupo declara `section`, e as seguintes herdam a anterior.
+const SECAO_DA_PAGINA = (() => {
+  const m = {}; let atual = null;
+  PAGES.forEach(p => { if (p.section) atual = p.section; m[p.hash] = atual; });
+  return m;
+})();
+const secaoDaPagina = hash => SECAO_DA_PAGINA[hash] || null;
+
 function buildNav() {
   const nav = $('#nav'); nav.innerHTML = '';
   let curSection = null, emittedSection = null, emittedSub = null;
@@ -368,6 +384,12 @@ function route() {
   READONLY = page.super ? false : !canEditPage(page.hash);
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.hash === page.hash));
   $('#page-title').textContent = page.title;
+  // A migalha era fixa em "Financeiro" no HTML, então toda página dizia
+  // Financeiro — inclusive Viáticos e Recursos Humanos. Agora vem da seção a
+  // que a página pertence em PAGES (só a primeira de cada grupo declara,
+  // as seguintes herdam, como em buildNav).
+  const crumb = $('#page-crumb');
+  if (crumb) crumb.textContent = secaoDaPagina(page.hash) || '';
   const renderers = {
     dashboard: renderDashboard, pagar: renderPagar, receber: renderReceber, fluxo: renderFluxo,
     fornecedores: renderFornecedores, conciliacao: renderConciliacao, orcamento: renderOrcamento,
@@ -8616,16 +8638,508 @@ function rhMinutaDe(regime, modelo) {
 const rhData = d => (d ? brDate(String(d).slice(0, 10)) : '—');
 const rhTxt = v => (v == null || v === '' ? '—' : String(v));
 
-// ---------------- Lista ----------------
+// ============================================================
+// RH — quadro de admissão (Kanban), minutas e emissão do contrato
+// ============================================================
+
+const RH_ETAPA_ICONE = {
+  carta_oferta: '✉', documentacao: '📄', exame_admissional: '🩺',
+  contrato: '✍', contas_acessos: '🔑', onboarding: '🎒'
+};
+// O que cada etapa pede para ser concluída — vira o formulário do card.
+const RH_ETAPA_CAMPOS = {
+  carta_oferta: [
+    { c: 'oferta_enviada_em', r: 'Carta oferta enviada em', t: 'date' },
+    { c: 'oferta_aceita_em', r: 'Aceita em', t: 'date' }
+  ],
+  documentacao: [],
+  exame_admissional: [
+    { c: 'exame_agendado_para', r: 'Exame agendado para', t: 'date' },
+    { c: 'exame_realizado_em', r: 'Realizado em', t: 'date' },
+    { c: 'exame_resultado', r: 'Resultado', t: 'sel', o: [{ v: '', t: '—' },
+        { v: 'apto', t: 'Apto' }, { v: 'apto_com_restricao', t: 'Apto com restrição' }, { v: 'inapto', t: 'Inapto' }] }
+  ],
+  contrato: [
+    { c: 'contrato_emitido_em', r: 'Contrato emitido em', t: 'date' },
+    { c: 'contrato_assinado_em', r: 'Assinado em', t: 'date' }
+  ],
+  contas_acessos: [
+    { c: 'acessos_solicitados_em', r: 'Acessos solicitados em', t: 'date' },
+    { c: 'acessos_concluidos_em', r: 'Concluídos em', t: 'date' }
+  ],
+  onboarding: [
+    { c: 'onboarding_iniciado_em', r: 'Onboarding iniciado em', t: 'date' },
+    { c: 'onboarding_concluido_em', r: 'Concluído em', t: 'date' }
+  ]
+};
+
+let RH_ABA = 'quadro';   // quadro | pessoas | minutas
+
+// ---------------- Quadro ----------------
+async function rhQuadro(c) {
+  const d = await api('/api/rh/admissoes');
+  const cards = d.cards || [];
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-kanban">${d.etapas.map(e => {
+      const meus = cards.filter(x => x.etapa === e.cod);
+      return `<div class="rh-col" data-etapa="${e.cod}">
+        <div class="rh-col-topo"><span class="ic">${RH_ETAPA_ICONE[e.cod] || ''}</span>
+          <b>${esc(e.nome)}</b><span class="n">${meus.length}</span></div>
+        <div class="rh-col-corpo">${meus.map(rhKanbanCard).join('') ||
+          '<div class="rh-col-vazia">—</div>'}</div>
+      </div>`;
+    }).join('')}</div>
+    ${cards.length ? '' : `<div class="rh-vazio">
+      <p><strong>Nenhuma admissão em andamento.</strong> O quadro acompanha a entrada de cada
+      pessoa, da carta oferta ao onboarding. Cadastrar um colaborador novo abre um card aqui.</p>
+      <button class="btn primary" id="rh-novo-colab">+ Novo colaborador</button></div>`}`;
+  rhLigarAbas();
+  const b = $('#rh-novo-colab'); if (b) b.onclick = rhFormNovoColaborador;
+  c.querySelectorAll('[data-card]').forEach(x => x.onclick = () => rhAbrirCard(Number(x.dataset.card)));
+}
+
+// Nome distinto do rhCard() dos cartões de situação da lista: os dois viviam
+// no mesmo escopo global e a última definição apagava a primeira.
+function rhKanbanCard(a) {
+  const pct = a.checklist_total ? Math.round(100 * a.checklist_ok / a.checklist_total) : 0;
+  const cargo = [a.cargo_pretendido, a.nivel_pretendido
+    ? ({ junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' }[a.nivel_pretendido] || a.nivel_pretendido) : '']
+    .filter(Boolean).join(' ');
+  return `<button class="rh-kcard ${a.liberado ? 'ok' : ''}" data-card="${a.id}">
+    <b>${esc(a.colaborador_nome)}</b>
+    ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
+    ${a.admissao_prevista ? `<span class="data">Admissão prevista ${rhData(a.admissao_prevista)}</span>` : ''}
+    <span class="docs"><i style="width:${pct}%" class="${pct === 100 ? 'bom' : pct < 50 ? 'ruim' : 'meio'}"></i></span>
+    <span class="rodape">
+      <span class="chk">${a.checklist_ok}/${a.checklist_total} docs</span>
+      ${a.liberado ? '<span class="lib">pronto para avançar</span>' : `<span class="pend">${a.pendencias.length} pendência(s)</span>`}
+    </span></button>`;
+}
+
+// ---------------- Card ----------------
+async function rhAbrirCard(id) {
+  let d;
+  try { d = await api('/api/rh/admissoes/' + id); } catch (e) { return toast(e.message); }
+  const a = d.admissao, ed = d.pode.editar;
+  const iAtual = d.etapas.findIndex(e => e.cod === a.etapa);
+  const proxima = d.etapas[iAtual + 1] || null;
+  const anterior = d.etapas[iAtual - 1] || null;
+  const campos = RH_ETAPA_CAMPOS[a.etapa] || [];
+
+  const trilha = d.etapas.map((e, i) => `<span class="rh-passo ${i < iAtual ? 'feito' : i === iAtual ? 'atual' : ''}">
+    ${RH_ETAPA_ICONE[e.cod]} ${esc(e.nome)}</span>`).join('<i class="rh-seta">→</i>');
+
+  openModal(`${a.colaborador_nome} — ${d.etapas[iAtual].nome}`, `
+    <div class="rh-trilha">${trilha}</div>
+    ${d.pendencias.length
+      ? `<div class="rh-nota aviso"><strong>Para sair desta etapa:</strong><ul>${d.pendencias.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`
+      : '<div class="rh-nota">✔ Etapa concluída — pode avançar.</div>'}
+
+    ${a.etapa === 'documentacao' ? `<div class="rh-sec"><h4>Documentos obrigatórios</h4>
+      <div class="rh-check">${d.checklist.map(x => `<div class="rh-check-item ${x.ok ? 'ok' : 'falta'}">
+        <span class="mk">${x.ok ? '✔' : '✘'}</span><span class="nm">${esc(x.nome)}</span>
+        <span class="via">${x.ok ? 'ok' : (x.via === 'campos' ? 'preencher na ficha' : 'falta anexar')}</span></div>`).join('')}</div>
+      <div class="rh-acoes"><button class="btn sm" id="rh-ir-dossie">Abrir o dossiê para anexar</button></div></div>` : ''}
+
+    ${a.etapa === 'contrato' ? `<div class="rh-sec"><h4>Contrato</h4>
+      ${d.minuta
+        ? `<p class="rh-min-nome">Minuta: <strong>${esc(d.minuta.nome)}</strong></p>`
+        : '<div class="rh-nota aviso">Não há minuta cadastrada para este regime e modelo de trabalho. Cadastre na aba <strong>Minutas</strong>.</div>'}
+      <div class="rh-acoes-linha">
+        <button class="btn" id="rh-previa" ${d.minuta ? '' : 'disabled'}>Ver o que será preenchido</button>
+        <button class="btn primary" id="rh-emitir" ${d.minuta && ed ? '' : 'disabled'}>Emitir contrato</button>
+      </div></div>` : ''}
+
+    ${campos.length ? `<div class="rh-sec"><h4>Marcos desta etapa</h4><div class="rh-grid">
+      ${campos.map(f => f.t === 'sel'
+        ? fldSel('ad-' + f.c, f.r, f.o, a[f.c] || '')
+        : fld('ad-' + f.c, f.r, 'date', a[f.c] ? String(a[f.c]).slice(0, 10) : '')).join('')}
+      </div></div>` : ''}
+
+    <div class="rh-sec"><h4>Dados do processo</h4><div class="rh-grid">
+      ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), a.cargo_pretendido || '')}
+      ${fldSel('ad-nivel_pretendido', 'Nível', RH_NIVEIS, a.nivel_pretendido || '')}
+      ${fld('ad-departamento', 'Departamento', 'text', a.departamento || '')}
+      ${fldSel('ad-regime', 'Regime', RH_REGIME, a.regime || 'regular')}
+      ${fldSel('ad-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, a.modelo_trabalho || 'presencial')}
+      ${fld('ad-admissao_prevista', 'Admissão prevista', 'date', a.admissao_prevista ? String(a.admissao_prevista).slice(0, 10) : '')}
+      ${d.pode.remuneracao ? fld('ad-salario_previsto', 'Salário previsto (R$)', 'number', a.salario_previsto == null ? '' : a.salario_previsto, 'step="0.01" min="0"') : ''}
+    </div>
+    <div class="rh-minuta" id="ad-minuta-alvo"></div></div>
+
+    ${d.historico.length ? `<div class="rh-sec"><h4>Histórico</h4><div class="rh-linhas">
+      ${d.historico.map(x => `<div class="rh-linha">
+        <span>${rhData(x.movido_em)} · ${esc(x.usuario || 'sistema')}</span>
+        <b>${esc(x.de_etapa || 'início')} → ${esc(x.para_etapa)}${x.observacao ? ' · ' + esc(x.observacao) : ''}</b>
+      </div>`).join('')}</div></div>` : ''}`,
+    [
+      { label: 'Fechar', onClick: closeModal },
+      ...(ed ? [{ label: 'Salvar', onClick: () => rhSalvarCard(id, a.etapa) }] : []),
+      ...(ed && anterior ? [{ label: '← ' + anterior.nome, onClick: () => rhMoverCard(id, a.etapa, anterior.cod, false) }] : []),
+      ...(ed && proxima ? [{ label: proxima.nome + ' →', cls: 'primary', onClick: () => rhMoverCard(id, a.etapa, proxima.cod, true) }] : []),
+      ...(ed && !proxima ? [{ label: 'Concluir admissão', cls: 'primary', onClick: () => rhConcluir(id) }] : [])
+    ], { wide: true });
+
+  const irDossie = $('#rh-ir-dossie');
+  if (irDossie) irDossie.onclick = () => { closeModal(); abrirFichaRH(a.colaborador_id, 'dossie'); };
+  const bp = $('#rh-previa'); if (bp) bp.onclick = () => rhPreviaContrato(id);
+  const be = $('#rh-emitir'); if (be) be.onclick = () => rhEmitirContrato(id, a.colaborador_nome);
+
+  const sincMinuta = () => {
+    const alvo = $('#ad-minuta-alvo'); if (!alvo) return;
+    alvo.innerHTML = 'Minuta correspondente: <strong>' +
+      esc(rhMinutaDe($('#ad-regime').value, $('#ad-modelo_trabalho').value)) + '</strong>';
+  };
+  ['ad-regime', 'ad-modelo_trabalho'].forEach(x => { const e = $('#' + x); if (e) e.onchange = sincMinuta; });
+  sincMinuta();
+}
+
+function rhCorpoCard(etapa) {
+  const body = {};
+  (RH_ETAPA_CAMPOS[etapa] || []).forEach(f => { const e = $('#ad-' + f.c); if (e) body[f.c] = e.value; });
+  ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'regime', 'modelo_trabalho',
+   'admissao_prevista', 'salario_previsto'].forEach(k => { const e = $('#ad-' + k); if (e) body[k] = e.value; });
+  return body;
+}
+
+async function rhSalvarCard(id, etapa) {
+  try {
+    await api('/api/rh/admissoes/' + id, { method: 'PUT', body: rhCorpoCard(etapa) });
+    toast('Processo atualizado.'); rhAbrirCard(id);
+  } catch (e) { modalError(e.message); }
+}
+
+// Salva antes de mover: quem preencheu "aceita em" e clicou em avançar espera
+// que a data conte — não que o sistema reclame de uma pendência que ele acabou
+// de resolver na tela.
+async function rhMoverCard(id, etapaAtual, etapa, avancando) {
+  try {
+    if ($('#ad-admissao_prevista')) {
+      await api('/api/rh/admissoes/' + id, { method: 'PUT', body: rhCorpoCard(etapaAtual) });
+    }
+  } catch (e) { return modalError(e.message); }
+  try {
+    await api(`/api/rh/admissoes/${id}/mover`, { method: 'POST', body: { etapa } });
+    closeModal(); toast(avancando ? 'Avançou de etapa.' : 'Voltou de etapa.'); renderRH();
+  } catch (e) {
+    const pend = (e.dados && e.dados.pendencias) || null;
+    if (!pend) return modalError(e.message);
+    rhConfirmarForcar(id, etapa, pend);
+  }
+}
+
+function rhConfirmarForcar(id, etapa, pendencias) {
+  openModal('Avançar mesmo com pendência?', `
+    <div class="rh-nota aviso"><strong>O que ainda falta:</strong>
+      <ul>${pendencias.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>
+    <p style="font-size:13.5px;color:var(--ink-2)">Avançar assim fica registrado no histórico do
+    processo, com o motivo. Use quando a pendência tiver uma explicação — não para contorná-la.</p>
+    ${fld('fz-obs', 'Motivo *', 'text', '')}`,
+    [{ label: 'Voltar', onClick: () => rhAbrirCard(id) },
+     { label: 'Avançar assim mesmo', cls: 'danger-ghost', onClick: async () => {
+        const obs = $('#fz-obs').value.trim();
+        if (!obs) return modalError('Explique o motivo.');
+        try {
+          await api(`/api/rh/admissoes/${id}/mover`, { method: 'POST', body: { etapa, forcar: true, observacao: obs } });
+          closeModal(); toast('Avançou com pendência registrada.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     }}], { wide: true });
+}
+
+async function rhConcluir(id) {
+  try {
+    await api(`/api/rh/admissoes/${id}/concluir`, { method: 'POST', body: {} });
+    closeModal(); toast('Admissão concluída.'); renderRH();
+  } catch (e) {
+    const pend = (e.dados && e.dados.pendencias) || null;
+    modalError(pend ? e.message + ' ' + pend.join(' ') : e.message);
+  }
+}
+
+// ---------------- Contrato ----------------
+async function rhPreviaContrato(id) {
+  let p;
+  try { p = await api(`/api/rh/admissoes/${id}/contrato/previa`); } catch (e) { return toast(e.message); }
+  openModal('O que será preenchido no contrato', `
+    ${p.compativel ? '' : `<div class="rh-nota aviso">A minuta tem <strong>${p.slots_da_minuta.length}</strong>
+      trechos em realce e o preenchimento espera <strong>${p.valores.length}</strong>. Emitir assim trocaria
+      os campos de lugar — a emissão vai recusar.</div>`}
+    ${p.vazios.length ? `<div class="rh-nota aviso"><strong>Vazios na ficha:</strong> ${esc(p.vazios.join(', '))}.
+      Vão sair em branco no contrato.</div>` : '<div class="rh-nota">✔ Todos os campos têm valor.</div>'}
+    <div class="table-wrap"><table class="tbl-rh-dep">
+      <thead><tr><th style="width:38px">#</th><th>Campo</th><th>Vai sair como</th></tr></thead>
+      <tbody>${p.valores.map(v => `<tr>
+        <td>${v.n}</td><td>${esc(v.campo)}</td>
+        <td>${v.valor ? esc(v.valor) : '<span class="conc-nao">— vazio —</span>'}</td></tr>`).join('')}</tbody>
+    </table></div>`,
+    [{ label: 'Fechar', onClick: () => rhAbrirCard(id) }], { xwide: true });
+}
+
+function rhEmitirContrato(id, nome) {
+  const hoje = todayISO();
+  openModal('Emitir contrato', `
+    <p style="font-size:13.5px;color:var(--ink-2)">Os dados vêm da ficha e do processo. Aqui só o
+    local e a data da assinatura, que vão no fecho do documento.</p>
+    <div class="form-row">
+      ${fld('em-municipio', 'Cidade da assinatura', 'text', 'São Paulo')}
+      ${fldSel('em-uf', 'UF', rhOpcoes(RH_UF), 'SP')}
+      ${fld('em-data', 'Data', 'date', hoje)}
+    </div>`,
+    [{ label: 'Cancelar', onClick: () => rhAbrirCard(id) },
+     { label: 'Gerar', cls: 'primary', onClick: async (ev) => {
+        const btn = ev && ev.target;
+        if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
+        try {
+          const r = await api(`/api/rh/admissoes/${id}/contrato`, { method: 'POST', body: {
+            municipio: $('#em-municipio').value, uf: $('#em-uf').value, data: $('#em-data').value } });
+          rhContratoPronto(id, nome, r);
+        } catch (e) {
+          modalError(e.message);
+          if (btn) { btn.disabled = false; btn.textContent = 'Gerar'; }
+        }
+     }}]);
+}
+
+function rhContratoPronto(id, nome, r) {
+  openModal('Contrato gerado', `
+    <div class="rh-nota">✔ Contrato de <strong>${esc(nome)}</strong> gerado a partir da minuta
+      <strong>${esc(r.minuta.nome)}</strong>, com ${r.valores.length} campos preenchidos.</div>
+    <p style="font-size:13.5px;color:var(--ink-2)">O <strong>PDF</strong> é o que se manda para
+    assinatura. O <strong>.docx</strong> serve para quando algo precisar ser ajustado à mão antes.</p>
+    <div class="rh-acoes-linha">
+      <button class="btn primary" id="ct-pdf">Baixar PDF</button>
+      <button class="btn" id="ct-docx">Baixar .docx</button>
+    </div>
+    <div class="rh-nota aviso" style="margin-top:14px">Depois de assinado, volte ao card e preencha
+      <strong>Assinado em</strong> — é isso que libera a próxima etapa e abre o vínculo.</div>`,
+    [{ label: 'Voltar ao card', onClick: () => rhAbrirCard(id) }]);
+  $('#ct-docx').onclick = () => rhBaixarBase64(r.docx,
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', r.file_name);
+  $('#ct-pdf').onclick = () => rhContratoPDF(r.paragrafos, r.file_name.replace(/\.docx$/, '.pdf'));
+}
+
+function rhBaixarBase64(b64, mime, nome) {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([arr], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url; a.download = nome; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// O PDF é montado no navegador a partir dos parágrafos que o servidor devolveu.
+// Converter .docx em PDF no servidor exigiria LibreOffice, que não existe na
+// função serverless — e o contrato é texto corrido, que o jsPDF compõe bem.
+function rhContratoPDF(paragrafos, nomeArquivo) {
+  if (!window.jspdf) return toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+  const M = 22, larg = pageW - M * 2;
+  let y = M;
+
+  const logoW = 32, logoH = logoW * (139 / 600);
+  doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M, y, logoW, logoH);
+  y += logoH + 10;
+
+  const novaPagina = () => { doc.addPage(); y = M; };
+  doc.setTextColor(20, 28, 22);
+
+  for (const p of paragrafos) {
+    if (!p.texto) { y += 3; continue; }
+    const centrado = p.alinhamento === 'center';
+
+    if (p.titulo) {
+      if (y + 12 > pageH - M) novaPagina(); else y += 4;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+      const linhas = doc.splitTextToSize(p.texto, larg);
+      linhas.forEach(l => {
+        if (y + 6 > pageH - M) novaPagina();
+        doc.text(l, centrado ? pageW / 2 : M, y, { align: centrado ? 'center' : 'left' });
+        y += 5.4;
+      });
+      y += 2.5;
+      continue;
+    }
+
+    // Parágrafo comum: quebra em linhas e desenha os runs em sequência, para o
+    // "CLÁUSULA 1ª:" ficar em negrito como está na minuta.
+    doc.setFontSize(10);
+    const linhasTexto = doc.splitTextToSize(p.texto, larg);
+    let restante = p.runs.map(r => ({ ...r }));
+    for (const linha of linhasTexto) {
+      if (y + 6 > pageH - M) novaPagina();
+      let x = centrado ? pageW / 2 - doc.getTextWidth(linha) / 2 : M;
+      let falta = linha;
+      while (falta.length && restante.length) {
+        const r = restante[0];
+        const pega = Math.min(r.texto.length, falta.length);
+        const pedaco = r.texto.slice(0, pega);
+        doc.setFont('helvetica', r.negrito ? 'bold' : 'normal');
+        doc.text(pedaco, x, y);
+        x += doc.getTextWidth(pedaco);
+        r.texto = r.texto.slice(pega);
+        falta = falta.slice(pega);
+        if (!r.texto.length) restante.shift();
+      }
+      // O split come o espaço entre linhas; devolve-o ao run corrente.
+      if (restante.length && restante[0].texto.startsWith(' ')) restante[0].texto = restante[0].texto.slice(1);
+      y += 5;
+    }
+    y += 2.5;
+  }
+
+  const total = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(130, 140, 133);
+    doc.text(`${i}/${total}`, pageW - M, pageH - 10, { align: 'right' });
+  }
+  doc.save(nomeArquivo);
+}
+
+// ---------------- Minutas ----------------
+async function rhMinutas(c) {
+  const lista = await api('/api/rh/minutas');
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-nota">As minutas são os modelos <strong>.docx</strong> da empresa. Os campos a
+      preencher são os trechos em <strong>realce amarelo</strong> — é o realce que marca o campo,
+      não o texto dentro dele. Uma minuta ativa por combinação de regime e modelo de trabalho.</div>
+    <div class="rh-acoes-linha" style="margin-bottom:14px">
+      <button class="btn primary" id="rh-add-minuta">+ Cadastrar minuta</button></div>
+    <div class="table-wrap"><table class="tbl-rh-dep">
+      <thead><tr><th>Minuta</th><th>Regime</th><th>Modelo de trabalho</th><th>Campos</th>
+        <th>Arquivo</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${lista.map(m => `<tr>
+        <td>${esc(m.nome)}</td>
+        <td>${esc((RH_REGIME.find(x => x.v === m.regime) || {}).t || m.regime || '—')}</td>
+        <td>${esc((RH_MODELO_TRAB.find(x => x.v === m.modelo_trabalho) || {}).t || m.modelo_trabalho || '—')}</td>
+        <td>${m.n_slots} realces</td>
+        <td>${esc(m.file_name)} <span class="rh-sub">${fmtSize(m.byte_size)}</span></td>
+        <td>${m.ativa ? '<span class="badge ok">Ativa</span>' : '<span class="badge pend">Aposentada</span>'}</td>
+        <td class="actions">${m.ativa ? `<button class="btn-ic perigo" data-del-min="${m.id}" title="Aposentar" aria-label="Aposentar">🗑</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">Nenhuma minuta cadastrada.</div></td></tr>'}</tbody>
+    </table></div>`;
+  rhLigarAbas();
+  $('#rh-add-minuta').onclick = rhFormMinuta;
+  c.querySelectorAll('[data-del-min]').forEach(b => b.onclick = () =>
+    confirmDelete('minuta', '/api/rh/minutas/' + b.dataset.delMin, renderRH));
+}
+
+function rhFormMinuta() {
+  openModal('Cadastrar minuta', `
+    ${fld('mi-nome', 'Nome da minuta *', 'text', '')}
+    <div class="form-row">
+      ${fldSel('mi-regime', 'Regime *', RH_REGIME, 'regular')}
+      ${fldSel('mi-modelo', 'Modelo de trabalho *', RH_MODELO_TRAB, 'presencial')}
+    </div>
+    <div class="field"><label for="mi-file">Arquivo .docx *</label><input type="file" id="mi-file" accept=".docx"></div>
+    <div class="rh-nota">Já existe uma minuta ativa nessa combinação? Ela é <strong>aposentada</strong>,
+      não apagada — contratos emitidos precisam continuar rastreáveis ao modelo que os gerou.</div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Cadastrar', cls: 'primary', onClick: async (ev) => {
+        const f = $('#mi-file').files[0];
+        const nome = $('#mi-nome').value.trim();
+        if (!nome) return modalError('Dê um nome à minuta.');
+        if (!f) return modalError('Escolha o arquivo .docx.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+        try {
+          const data = await readFileAsBase64(f);
+          const r = await api('/api/rh/minutas', { method: 'POST', body: {
+            nome, regime: $('#mi-regime').value, modelo_trabalho: $('#mi-modelo').value,
+            file_name: f.name, data } });
+          closeModal(); toast(`Minuta cadastrada — ${r.slots} campos em realce encontrados.`); renderRH();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Cadastrar'; } }
+     }}]);
+}
+
+// ---------------- Novo colaborador (agora nasce no RH) ----------------
+function rhFormNovoColaborador() {
+  openModal('Novo colaborador', `
+    <p style="font-size:13.5px;color:var(--ink-2)">O cadastro da pessoa começa aqui. Viáticos e as
+    demais telas passam a usar este mesmo registro — o resto da ficha se completa depois.</p>
+    ${fld('nc-name', 'Nome completo *', 'text', '')}
+    <div class="form-row">
+      ${fldSel('nc-sexo', 'Sexo', RH_SEXO, '')}
+      ${fld('nc-cpf', 'CPF', 'text', '', 'placeholder="000.000.000-00"')}
+    </div>
+    <div class="form-row">
+      ${fldSel('nc-cargo', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), '')}
+      ${fldSel('nc-nivel', 'Nível', RH_NIVEIS, '')}
+      ${fld('nc-departamento', 'Departamento', 'text', '')}
+    </div>
+    <div class="form-row">
+      ${fldSel('nc-regime', 'Regime', RH_REGIME, 'regular')}
+      ${fldSel('nc-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, 'presencial')}
+      ${fld('nc-admissao_prevista', 'Admissão prevista', 'date', '')}
+    </div>
+    <div class="form-row">
+      ${fld('nc-email_corporativo', 'E-mail corporativo', 'email', '')}
+      ${fld('nc-celular', 'Celular', 'text', '')}
+    </div>
+    <label class="check-chip"><input type="checkbox" id="nc-abrir" checked> Abrir o processo de admissão no quadro</label>
+    <div class="rh-nota" id="nc-minuta"></div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Cadastrar', cls: 'primary', onClick: async (ev) => {
+        const name = $('#nc-name').value.trim();
+        if (!name) return modalError('O nome é obrigatório.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Cadastrando…'; }
+        const body = { name, sexo: $('#nc-sexo').value, cpf: $('#nc-cpf').value,
+          cargo: $('#nc-cargo').value, nivel: $('#nc-nivel').value,
+          departamento: $('#nc-departamento').value, regime: $('#nc-regime').value,
+          modelo_trabalho: $('#nc-modelo_trabalho').value,
+          admissao_prevista: $('#nc-admissao_prevista').value,
+          email_corporativo: $('#nc-email_corporativo').value, celular: $('#nc-celular').value,
+          abrir_admissao: $('#nc-abrir').checked };
+        try {
+          const r = await api('/api/rh/colaboradores', { method: 'POST', body });
+          closeModal();
+          toast(r.admissao_id ? 'Colaborador cadastrado e processo aberto no quadro.' : 'Colaborador cadastrado.');
+          if (r.admissao_id) { RH_ABA = 'quadro'; renderRH(); } else abrirFichaRH(r.id, 'ident');
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Cadastrar'; } }
+     }}], { wide: true });
+
+  const sinc = () => {
+    $('#nc-minuta').innerHTML = 'Minuta que será usada na emissão: <strong>' +
+      esc(rhMinutaDe($('#nc-regime').value, $('#nc-modelo_trabalho').value)) + '</strong>';
+    const sel = $('#nc-nivel'), temNivel = RH_CARGOS_COM_NIVEL.includes($('#nc-cargo').value);
+    sel.disabled = !temNivel; if (!temNivel) sel.value = '';
+    sel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
+  };
+  ['nc-cargo', 'nc-regime', 'nc-modelo_trabalho'].forEach(x => { $('#' + x).onchange = sinc; });
+  sinc();
+}
+
+// ---------------- Abas da seção ----------------
+function rhAbasTopo() {
+  const abas = [{ k: 'quadro', t: 'Quadro de admissão' }, { k: 'pessoas', t: 'Colaboradores' }, { k: 'minutas', t: 'Minutas' }];
+  return `<div class="rh-abas rh-abas-topo">${abas.map(a =>
+    `<button class="rh-aba ${a.k === RH_ABA ? 'ativa' : ''}" data-secao="${a.k}">${a.t}</button>`).join('')}</div>`;
+}
+function rhLigarAbas() {
+  document.querySelectorAll('[data-secao]').forEach(b => b.onclick = () => { RH_ABA = b.dataset.secao; renderRH(); });
+}
+
+// ---------------- Despachante da seção ----------------
+// A seção tem três telas. O quadro vem primeiro porque é o que se olha todo
+// dia; a lista completa e as minutas são consulta e configuração.
 async function renderRH() {
-  const rows = await api('/api/rh/colaboradores');
   const c = $('#content');
+  if (RH_ABA === 'quadro') return rhQuadro(c);
+  if (RH_ABA === 'minutas') return rhMinutas(c);
+  return rhPessoas(c);
+}
+
+// ---------------- Lista de colaboradores ----------------
+async function rhPessoas(c) {
+  const rows = await api('/api/rh/colaboradores');
   const FKEY = 'filters-rh';
   const saved = loadFilters(FKEY);
   const deps = [...new Set(rows.map(r => r.departamento).filter(Boolean))].sort();
   const cargos = [...new Set(rows.map(r => r.cargo).filter(Boolean))].sort();
 
-  c.innerHTML = `
+  c.innerHTML = rhAbasTopo() + `
     <div class="toolbar toolbar-spaced" id="rh-toolbar">
       <input type="search" id="q" placeholder="Buscar nome, cargo, matrícula…" value="${esc(saved.q || '')}">
       <select id="f-sit"><option value="">Todas as situações</option>
@@ -8720,9 +9234,8 @@ async function renderRH() {
     ['q', 'f-sit', 'f-dep', 'f-cargo', 'f-doc'].forEach(id => { $('#' + id).value = ''; });
     saveFilters(FKEY, {}); draw();
   };
-  // Criar colaborador continua sendo o cadastro de Viáticos: é a MESMA pessoa,
-  // e duplicar o formulário criaria dois caminhos para o mesmo registro.
-  $('#btn-novo').onclick = () => toast('Cadastre em Viáticos → Configurações → Colaboradores. A ficha de RH abre em seguida, aqui.');
+  rhLigarAbas();
+  $('#btn-novo').onclick = rhFormNovoColaborador;
   draw();
 }
 

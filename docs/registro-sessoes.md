@@ -2428,3 +2428,124 @@ ficou byte a byte igual ao que foi testado, e que o blob filtrado passa nas mesm
 - **Fase 2** (histórico de ocorrências, linha do tempo, alertas de experiência e ASO vencendo) e
   **fase 4** (catálogo de cargos, integrações) não começaram.
 - A emissão de documentos (fase 3) segue como protótipo de linha de comando em `tools/rh/`.
+
+---
+
+## 2026-09-08 — RH vira o cadastro-mãe, ganha o Kanban de admissão e emite o contrato
+
+**Pedido:** que todo cadastro de funcionário parta de Recursos Humanos (Viáticos passando a
+consumir o que for registrado lá); um Kanban acompanhando a entrada da pessoa — Carta Oferta →
+Documentação → Exame admissional → Contrato → Contas e Acessos → Onboarding; e, na etapa
+Contrato, preencher os campos em amarelo da minuta e imprimir em PDF para mandar assinar.
+
+### Um bug da fase 1 que estava no ar
+
+`PUT /api/rh/colaboradores/:id`, `POST .../vinculos` e `PUT /api/rh/vinculos/:id` geravam SQL
+**inválido**: `celular=1` em vez de `celular=$1`. Escrito como `` `${c}=$${i+1}` `` dentro de
+template literal, o `$$` se perdeu na edição automatizada — sete pontos afetados. O teste da fase
+1 não pegou porque o stub aceitava qualquer SQL e o handler só devolvia `{ok:true}`; o erro só
+apareceria no Postgres. **Salvar a ficha estava quebrado desde o commit b2eadc3.**
+
+Corrigido trocando a interpolação por concatenação com uma constante:
+`const D = String.fromCharCode(36)` e `c + '=' + D + (i+1)`. Não é preciosismo — o cifrão sumiu
+duas vezes mais durante esta própria sessão, em comandos diferentes.
+
+O teste da fase 2 passou a manter estado de verdade no stub (os UPDATE mudam as linhas), que é o
+que expôs o bug: sem isso as travas de etapa seriam simuladas, não testadas.
+
+### Banco (aplicado em produção)
+
+`2026-09-08-rh-fase2-admissao.sql`, aditiva: `erp_rh_admissoes` (33 colunas),
+`erp_rh_admissao_hist` e `erp_rh_minutas`.
+
+- **As datas de cada etapa são colunas, não JSON.** "Quando a carta foi aceita" e "quando o
+  contrato foi assinado" são perguntas de relatório e de filtro; em JSON viram string sem tipo,
+  sem índice e sem checagem.
+- **Um processo aberto por colaborador** — índice único parcial em `situacao='andamento'`.
+  Recontratação é processo novo; o anterior fica no histórico.
+- **Uma minuta ativa por combinação regime × modelo de trabalho** — é assim que a emissão escolhe
+  sozinha qual usar. Cadastrar outra **aposenta** a anterior em vez de apagá-la: contratos já
+  emitidos precisam continuar rastreáveis ao modelo que os gerou.
+
+### O cadastro mudou de lugar
+
+`POST /api/rh/colaboradores` cria a pessoa a partir do RH e já abre o processo de admissão. O
+botão "+ Novo colaborador" deixou de mandar o usuário para Viáticos. `tier` e `ativo` continuam
+sendo preenchidos com o padrão de Viáticos, que ajusta depois — é a mesma linha de
+`erp_colaboradores`, não um cadastro paralelo.
+
+### As travas entre etapas
+
+Cada etapa só é deixada quando o que ela existe para produzir está resolvido: a oferta aceita, os
+documentos obrigatórios, o exame realizado e apto, o contrato emitido **e** assinado, os acessos
+concluídos, o onboarding concluído. Exame **inapto** barra por completo.
+
+Duas decisões:
+- **Voltar nunca passa por trava.** Corrigir um engano não pode depender de checklist.
+- **Avançar com pendência é possível, mas custa uma explicação** — vai para o histórico com a
+  marca `[avançou com pendência]`. Trava sem válvula de escape faz o time abandonar a ferramenta;
+  válvula sem registro faz a trava não valer nada.
+
+**O vínculo nasce ao SAIR da etapa Contrato**, com as datas de experiência derivadas da admissão.
+Antes disso não existe emprego, e criá-lo mais cedo mostraria a pessoa como ativa sem contrato.
+
+### A emissão
+
+O motor de mesclagem saiu de `tools/rh/` para **`src/docx-merge.js`** — de lá o bundler da Vercel
+o inclui na função serverless, porque `api/index.js` o requer. `tools/rh/docx-merge.js` virou uma
+ponte, com o CLI exportado como função: por ela `require.main` aponta para a ponte, e o CLI nunca
+dispararia sozinho.
+
+`GET .../contrato/previa` mostra os 18 campos com o valor que vai sair e lista o que está vazio na
+ficha, sem gerar arquivo. Ela **relê o .docx** em vez de confiar na coluna `slots` gravada no
+upload: quem manda na emissão é o arquivo, e a prévia precisa dizer a verdade sobre o que vai
+acontecer. Se o número de realces não bater com o mapa, a emissão recusa em vez de preencher os
+campos trocados de lugar.
+
+`POST .../contrato` devolve o **.docx** e os **parágrafos com formatação**. O PDF é montado no
+navegador com jsPDF: converter .docx em PDF no servidor exigiria LibreOffice, que não existe na
+função serverless.
+
+Para o PDF sair legível foi preciso ler a formatação do .docx, não adivinhar por heurística:
+- O negrito **não** pode ser lido do `<w:pPr>` — lá o Word guarda um `<w:rPr>` que formata só a
+  marca de parágrafo. Lendo de lá, a cláusula 6ª (só o prefixo em negrito) virava título inteiro.
+- Os títulos de seção desta minuta **não são negrito**: são o estilo `Título 1` com sublinhado.
+  Detectar por negrito achava 4 de 12; por `w:pStyle`, os 12.
+- Os runs vêm com a formatação individual, então `CLÁUSULA 1ª:` sai em negrito no PDF como está na
+  minuta. Runs vizinhos de mesma formatação são fundidos — o Word fatia texto sem critério, e 15
+  runs para uma frase virariam 15 chamadas de desenho.
+
+### Outras correções que apareceram no caminho
+
+- **A migalha dizia "Financeiro" em toda página**, inclusive Viáticos e RH — estava fixa no HTML.
+  Agora vem da seção da página em `PAGES`.
+- **Colisão de nomes:** `rhCard()` já existia (os cartões de situação da lista) e o card do Kanban
+  nasceu com o mesmo nome, no mesmo escopo global. A segunda definição apagava a primeira e o
+  quadro renderizava `<div class="rh-card undefined"><b>0</b>`. Renomeado para `rhKanbanCard`.
+- `api()` passou a anexar o corpo do erro (`err.dados`): as pendências de uma etapa vêm no JSON, e
+  sem isso a tela só teria a frase solta.
+- **Mutação de resultado de query:** a prévia apagava `minuta.data` do objeto devolvido. Em
+  produção cada linha vem nova, mas mexer no que a query devolveu é modificar objeto que não é
+  meu — trocado por um resumo montado à parte.
+
+### Verificação
+
+**77 asserções** ao todo contra o Express de verdade: 34 da fase 1 e **43 da fase 2**, estas
+usando a **minuta real** lida do disco. As da emissão conferem o **.docx gerado**, não o script:
+zip válido, nenhum realce sobrando, concordância de gênero ("brasileira", "solteira" a partir de
+"solteiro" guardado no masculino), endereço montado, cargo com nível em caixa alta, experiência em
+23/10 e prorrogação em 07/12 a partir da admissão em 08/09, salário formatado e por extenso, e
+nenhum `XXXX`/`DD/MM/AAAA`/`202X` remanescente.
+
+**A tela** foi montada com o `styles.css` de produção e **1.100 linhas de código real extraídas de
+`public/app.js`**: 6 colunas, 6 cards, 0 células cortadas, o quadro cabe em 1593px sem rolagem a
+1908px, e as três abas mais o card abrem sem um erro sequer no console.
+
+### Fora de escopo, de propósito
+
+- Arrastar card com o mouse: por ora move-se pelos botões do card, que também é o lugar onde a
+  pendência aparece.
+- Fase 2 do desenho original (ocorrências e linha do tempo pós-admissão) segue sem começar — o que
+  entrou aqui é o processo de **entrada**, não a vida inteira do funcionário.
+- Nenhuma minuta foi cadastrada: os .docx estão no OneDrive e precisam ser enviados pela aba
+  **Minutas**.

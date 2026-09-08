@@ -1007,3 +1007,54 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Subtítulo dentro da matriz de permissões, separando as travas finas de RH */
 .perm-sub { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
   color: var(--verde-700); margin: 14px 0 6px; }
+
+/* ===== RH — quadro de admissão =====
+   Seis colunas de largura fixa que rolam na horizontal. Não usam grid flexível
+   de propósito: coluna de Kanban que encolhe vira lista ilegível, e o que se
+   quer aqui é comparar as etapas lado a lado. */
+.rh-abas-topo { margin-bottom: 18px; }
+.rh-kanban { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
+.rh-col { flex: 0 0 236px; background: #F1F5F2; border: 1px solid var(--line); border-radius: var(--radius); }
+.rh-col-topo { display: flex; align-items: center; gap: 7px; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+.rh-col-topo .ic { font-size: 14px; }
+.rh-col-topo b { font-size: 12.5px; font-weight: 700; color: var(--ink); flex: 1; line-height: 1.25; }
+.rh-col-topo .n { font-size: 11.5px; font-weight: 700; color: var(--muted);
+  background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+.rh-col-corpo { padding: 10px; display: flex; flex-direction: column; gap: 9px; min-height: 70px; }
+.rh-col-vazia { text-align: center; color: #A9B6AE; font-size: 18px; padding: 10px 0; }
+
+.rh-kcard { display: block; width: 100%; text-align: left; background: var(--card);
+  border: 1px solid var(--line); border-left: 3px solid #C8D2CC; border-radius: 9px;
+  padding: 11px 12px; cursor: pointer; font: inherit; }
+.rh-kcard:hover { border-color: #B6C6BC; box-shadow: 0 2px 8px rgba(20,40,28,.07); }
+.rh-kcard.ok { border-left-color: var(--verde-700); }
+.rh-kcard b { display: block; font-size: 13px; font-weight: 700; color: var(--ink); line-height: 1.3; }
+.rh-kcard .cargo { display: block; font-size: 11.5px; color: var(--ink-2); margin-top: 2px; }
+.rh-kcard .data { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.rh-kcard .docs { display: block; height: 4px; background: #EAF0EC; border-radius: 2px; overflow: hidden; margin: 8px 0 6px; }
+.rh-kcard .docs i { display: block; height: 100%; }
+.rh-kcard .docs i.bom { background: var(--verde-700); }
+.rh-kcard .docs i.meio { background: #C8912B; }
+.rh-kcard .docs i.ruim { background: var(--danger); }
+.rh-kcard .rodape { display: flex; justify-content: space-between; gap: 6px; font-size: 10.5px; }
+.rh-kcard .chk { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rh-kcard .lib { color: var(--verde-700); font-weight: 600; }
+.rh-kcard .pend { color: var(--danger); font-weight: 600; }
+
+/* Trilha das etapas dentro do card aberto */
+.rh-trilha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
+  padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.rh-passo { font-size: 11.5px; color: var(--muted); background: #F1F5F2;
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+.rh-passo.feito { color: var(--verde-700); background: var(--verde-050); border-color: #CDE5D6; }
+.rh-passo.atual { color: #fff; background: var(--verde-700); border-color: var(--verde-700); font-weight: 600; }
+.rh-seta { color: #C2CEC7; font-style: normal; font-size: 11px; }
+
+.rh-nota ul { margin: 6px 0 0; padding-left: 20px; }
+.rh-nota li { margin: 2px 0; }
+.rh-acoes-linha { display: flex; gap: 8px; flex-wrap: wrap; }
+.rh-min-nome { font-size: 13.5px; color: var(--ink-2); margin: 0 0 12px; }
+
+@media (max-width: 980px) {
+  .rh-col { flex-basis: 208px; }
+}

@@ -196,6 +196,11 @@ async function loginRateLimit(req, res, next) {
   }
 }
 
+// O cifrão do placeholder do Postgres vive nesta constante. Escrito direto
+// dentro de template literal (`$` seguido de `${i+1}`) ele já se perdeu duas
+// vezes em edição automatizada, e o SQL saiu "coluna=1" em vez de "coluna=$1" —
+// erro que não aparece na revisão do código, só quando o banco recusa a query.
+const D = String.fromCharCode(36);
 const sanitize = v => (typeof v === 'string' ? v.trim() : v);
 const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
 
@@ -2164,8 +2169,8 @@ app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (re
     const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1 AND id<>$2', [sanitize(req.body.cpf), id]);
     if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name}.` });
   }
-  const set = cols.map((c, i) => `${c}=${i + 1}`).join(', ');
-  await query(`UPDATE erp_colaboradores SET ${set} WHERE id=${cols.length + 1}`, [...vals, id]);
+  const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
+  await query(`UPDATE erp_colaboradores SET ${set} WHERE id=` + D + (cols.length + 1), [...vals, id]);
   res.json({ ok: true, campos: cols.length });
 }));
 
@@ -2183,7 +2188,7 @@ app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h
   const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
   cols.push('colaborador_id', 'created_by'); vals.push(id, req.user.id);
-  const ph = cols.map((_, i) => `${i + 1}`).join(',');
+  const ph = cols.map((_, i) => D + (i + 1)).join(',');
   const ins = await query(`INSERT INTO erp_rh_vinculos (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
   res.json({ ok: true, id: ins[0].id });
 }));
@@ -2201,8 +2206,8 @@ app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, re
   const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
   if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
-  const set = cols.map((c, i) => `${c}=${i + 1}`).join(', ');
-  await query(`UPDATE erp_rh_vinculos SET ${set}, updated_at=now() WHERE id=${cols.length + 1}`, [...vals, id]);
+  const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
+  await query(`UPDATE erp_rh_vinculos SET ${set}, updated_at=now() WHERE id=` + D + (cols.length + 1), [...vals, id]);
   res.json({ ok: true });
 }));
 
@@ -2230,6 +2235,466 @@ app.delete('/api/rh/dependentes/:id', requireAuth, requireEdit('rh'), h(async (r
   if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'Dependentes são dado pessoal sensível.' });
   await query('DELETE FROM erp_rh_dependentes WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
+}));
+
+// ============================================================
+// RH — processo de admissão (Kanban), minutas e emissão de contrato
+// Migração: 2026-09-08-rh-fase2-admissao.sql
+// ============================================================
+const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, brl: docxBrl, docxParagrafos } = require('../src/docx-merge');
+
+// As seis etapas, na ordem que a empresa segue. `exige` é o que precisa estar
+// resolvido para SAIR da etapa — é isso que impede o processo de avançar com
+// buraco atrás.
+const RH_ETAPAS = [
+  { cod: 'carta_oferta',      nome: 'Carta Oferta' },
+  { cod: 'documentacao',      nome: 'Documentação' },
+  { cod: 'exame_admissional', nome: 'Exame admissional' },
+  { cod: 'contrato',          nome: 'Contrato' },
+  { cod: 'contas_acessos',    nome: 'Contas e Acessos' },
+  { cod: 'onboarding',        nome: 'Onboarding' }
+];
+const RH_ETAPA_COD = RH_ETAPAS.map(e => e.cod);
+const rhEtapaIdx = c => RH_ETAPA_COD.indexOf(c);
+
+// O que falta para sair da etapa atual. Devolve lista vazia quando está liberado.
+function rhPendencias(adm, colab, checklist) {
+  switch (adm.etapa) {
+    case 'carta_oferta':
+      return adm.oferta_aceita_em ? [] : ['A carta oferta ainda não foi registrada como aceita.'];
+    case 'documentacao': {
+      const faltam = (checklist || []).filter(x => !x.ok).map(x => x.nome);
+      return faltam.length ? ['Documentos obrigatórios pendentes: ' + faltam.join(', ')] : [];
+    }
+    case 'exame_admissional': {
+      const p = [];
+      if (!adm.exame_realizado_em) p.push('O exame admissional ainda não foi realizado.');
+      if (adm.exame_resultado === 'inapto') p.push('O resultado do exame é INAPTO — o processo não pode avançar.');
+      if (adm.exame_realizado_em && !adm.exame_resultado) p.push('Falta registrar o resultado do exame.');
+      return p;
+    }
+    case 'contrato': {
+      const p = [];
+      if (!adm.contrato_emitido_em) p.push('O contrato ainda não foi emitido.');
+      if (!adm.contrato_assinado_em) p.push('O contrato ainda não foi registrado como assinado.');
+      if (!adm.admissao_prevista) p.push('Falta a data de admissão — é ela que abre o vínculo.');
+      return p;
+    }
+    case 'contas_acessos':
+      return adm.acessos_concluidos_em ? [] : ['As contas e acessos ainda não foram concluídos.'];
+    case 'onboarding':
+      return adm.onboarding_concluido_em ? [] : ['O onboarding ainda não foi concluído.'];
+    default:
+      return [];
+  }
+}
+
+const RH_ADM_CAMPOS = ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'centro_custo',
+  'regime', 'modelo_trabalho', 'salario_previsto', 'admissao_prevista', 'gestor_id', 'responsavel_id',
+  'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para', 'exame_realizado_em', 'exame_resultado',
+  'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em', 'acessos_concluidos_em',
+  'onboarding_iniciado_em', 'onboarding_concluido_em', 'observacao'];
+const RH_ADM_DATA = ['admissao_prevista', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
+  'exame_realizado_em', 'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em',
+  'acessos_concluidos_em', 'onboarding_iniciado_em', 'onboarding_concluido_em'];
+const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id'];
+
+// Carrega a admissão com o colaborador e o checklist já resolvidos — as três
+// coisas que qualquer decisão sobre o card precisa.
+async function rhCarregarAdmissao(id) {
+  const r = await query('SELECT * FROM erp_rh_admissoes WHERE id=$1', [Number(id)]);
+  if (!r.length) return null;
+  const adm = r[0];
+  const c = await query('SELECT * FROM erp_colaboradores WHERE id=$1', [adm.colaborador_id]);
+  const colab = c[0] || {};
+  const anexos = await query(
+    `SELECT doc_tipo FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, [adm.colaborador_id]);
+  return { adm, colab, checklist: rhChecklist(colab, anexos) };
+}
+
+// ---- Criar colaborador a PARTIR DO RH ----
+// RH é o cadastro-mãe. Viáticos passa a consumir o que é registrado aqui, em
+// vez de ser a porta de entrada da pessoa.
+app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const nome = sanitize(req.body.name);
+  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  const cpf = sanitize(req.body.cpf) || null;
+  if (cpf) {
+    const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1', [cpf]);
+    if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name} (ID ${dup[0].id}).` });
+  }
+  // `tier` e `ativo` existem por causa de Viáticos e são NOT NULL na prática do
+  // sistema: quem nasce em RH entra como B e ativo, e Viáticos ajusta depois.
+  const ins = await query(
+    `INSERT INTO erp_colaboradores (name, cargo, tier, ativo, sexo, cpf, email_corporativo, celular)
+     VALUES ($1,$2,$3,true,$4,$5,$6,$7) RETURNING id`,
+    [nome, sanitize(req.body.cargo) || null, ['A', 'B'].includes(req.body.tier) ? req.body.tier : 'B',
+     ['M', 'F', 'O'].includes(req.body.sexo) ? req.body.sexo : null, cpf,
+     sanitize(req.body.email_corporativo) || null, sanitize(req.body.celular) || null]);
+  const colabId = ins[0].id;
+
+  // Abrir o processo de admissão junto é o caminho normal: quem cadastra uma
+  // pessoa nova está admitindo alguém.
+  let admissaoId = null;
+  if (req.body.abrir_admissao !== false) {
+    const a = await query(
+      `INSERT INTO erp_rh_admissoes (colaborador_id, cargo_pretendido, nivel_pretendido, departamento,
+         regime, modelo_trabalho, salario_previsto, admissao_prevista, responsavel_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`,
+      [colabId, sanitize(req.body.cargo) || null, sanitize(req.body.nivel) || null,
+       sanitize(req.body.departamento) || null, sanitize(req.body.regime) || 'regular',
+       sanitize(req.body.modelo_trabalho) || 'presencial',
+       req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
+       isDate(req.body.admissao_prevista) ? req.body.admissao_prevista : null, req.user.id]);
+    admissaoId = a[0].id;
+    await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, movido_por) VALUES ($1,NULL,$2,$3)',
+      [admissaoId, 'carta_oferta', req.user.id]);
+  }
+  res.json({ ok: true, id: colabId, admissao_id: admissaoId });
+}));
+
+// ---- O quadro ----
+app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const rows = await query(`
+    SELECT a.*, c.name AS colaborador_nome, c.sexo, g.name AS gestor_nome, u.name AS responsavel_nome,
+           (SELECT COALESCE(json_agg(DISTINCT x.doc_tipo), '[]'::json) FROM erp_attachments x
+             WHERE x.entity_type='rh_doc' AND x.entity_id=c.id AND x.doc_tipo IS NOT NULL) AS tipos
+      FROM erp_rh_admissoes a
+      JOIN erp_colaboradores c ON c.id = a.colaborador_id
+      LEFT JOIN erp_colaboradores g ON g.id = a.gestor_id
+      LEFT JOIN erp_users u ON u.id = a.responsavel_id
+     WHERE a.situacao = $1
+     ORDER BY a.admissao_prevista NULLS LAST, a.created_at`,
+    [req.query.situacao === 'todas' ? 'andamento' : (req.query.situacao || 'andamento')]);
+
+  const cards = rows.map(r => {
+    const tipos = Array.isArray(r.tipos) ? r.tipos : [];
+    const chk = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })));
+    const pend = rhPendencias(r, r, chk);
+    const base = rhFiltrar(r, req.user, r);
+    delete base.tipos;
+    return { ...base, checklist_total: chk.length, checklist_ok: chk.filter(x => x.ok).length,
+             pendencias: pend, liberado: pend.length === 0 };
+  });
+  res.json({ etapas: RH_ETAPAS, cards });
+}));
+
+// ---- Um card ----
+app.get('/api/rh/admissoes/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo de admissão não encontrado.' });
+  const { adm, colab, checklist } = dados;
+  const hist = await query(
+    `SELECT h.*, u.name AS usuario FROM erp_rh_admissao_hist h
+       LEFT JOIN erp_users u ON u.id = h.movido_por
+      WHERE h.admissao_id=$1 ORDER BY h.movido_em DESC`, [adm.id]);
+  const minuta = await query(
+    `SELECT id, nome, file_name FROM erp_rh_minutas
+      WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
+    [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']);
+  res.json({
+    admissao: rhFiltrar(adm, req.user, colab),
+    colaborador: rhFiltrar(colab, req.user, colab),
+    etapas: RH_ETAPAS,
+    checklist,
+    historico: hist,
+    minuta: minuta[0] || null,
+    pendencias: rhPendencias(adm, colab, checklist),
+    pode: {
+      editar: req.user.role === 'admin' || canEdit(req.user, 'rh'),
+      remuneracao: rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab),
+      sensivel: rhVeSensivel(req.user) || rhEhProprio(req.user, colab)
+    }
+  });
+}));
+
+app.put('/api/rh/admissoes/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  const permitidos = RH_ADM_CAMPOS.filter(c => rhVeRemuneracao(req.user) || c !== 'salario_previsto');
+  const { cols, vals } = rhMontarSet(req.body, permitidos, RH_ADM_DATA, RH_ADM_NUM, []);
+  if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
+  const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
+  await query(`UPDATE erp_rh_admissoes SET ${set}, updated_at=now() WHERE id=` + D + (cols.length + 1),
+    [...vals, Number(req.params.id)]);
+  res.json({ ok: true, campos: cols.length });
+}));
+
+// ---- Mover de etapa ----
+app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  const { adm, colab, checklist } = dados;
+  if (adm.situacao !== 'andamento') return res.status(409).json({ error: 'Este processo já foi encerrado.' });
+
+  const destino = sanitize(req.body.etapa);
+  const iAtual = rhEtapaIdx(adm.etapa), iDestino = rhEtapaIdx(destino);
+  if (iDestino < 0) return res.status(400).json({ error: 'Etapa inválida.' });
+  if (iDestino === iAtual) return res.json({ ok: true, etapa: destino });
+
+  // Voltar é sempre permitido — corrigir engano não pode depender de checklist.
+  // Avançar passa pelas exigências da etapa em que o processo está.
+  if (iDestino > iAtual) {
+    if (iDestino > iAtual + 1) return res.status(400).json({ error: 'Só é possível avançar uma etapa por vez.' });
+    const pend = rhPendencias(adm, colab, checklist);
+    if (pend.length && !req.body.forcar) {
+      return res.status(409).json({ error: 'Há pendências nesta etapa.', pendencias: pend });
+    }
+    if (pend.length && req.body.forcar && !sanitize(req.body.observacao)) {
+      return res.status(400).json({ error: 'Para avançar com pendência, explique o motivo.' });
+    }
+  }
+
+  await query('UPDATE erp_rh_admissoes SET etapa=$1, updated_at=now() WHERE id=$2', [destino, adm.id]);
+  const nota = (iDestino > iAtual && req.body.forcar ? '[avançou com pendência] ' : '') + (sanitize(req.body.observacao) || '');
+  await query(
+    'INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
+    [adm.id, adm.etapa, destino, nota || null, req.user.id]);
+
+  // Ao SAIR de "contrato", o contrato está assinado: é aí que nasce o vínculo.
+  // Antes disso não existe emprego, e criá-lo mais cedo mostraria a pessoa como
+  // ativa sem contrato.
+  let vinculoId = adm.vinculo_id;
+  if (adm.etapa === 'contrato' && iDestino > iAtual && !vinculoId) {
+    const aberto = await query('SELECT id FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL', [adm.colaborador_id]);
+    if (!aberto.length) {
+      const d = rhDatasExperiencia(String(adm.admissao_prevista).slice(0, 10));
+      const v = await query(
+        `INSERT INTO erp_rh_vinculos (colaborador_id, tipo, admissao, cargo, nivel, departamento,
+            centro_custo, gestor_id, regime, modelo_trabalho, controle_ponto, experiencia_fim,
+            prorrogacao_fim, salario, created_by)
+         VALUES ($1,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        [adm.colaborador_id, String(adm.admissao_prevista).slice(0, 10), adm.cargo_pretendido,
+         adm.nivel_pretendido, adm.departamento, adm.centro_custo, adm.gestor_id,
+         adm.regime, adm.modelo_trabalho, adm.modelo_trabalho !== 'externo' && adm.regime !== 'confianca',
+         d.experiencia_fim, d.prorrogacao_fim, adm.salario_previsto, req.user.id]);
+      vinculoId = v[0].id;
+      await query('UPDATE erp_rh_admissoes SET vinculo_id=$1 WHERE id=$2', [vinculoId, adm.id]);
+    }
+  }
+  res.json({ ok: true, etapa: destino, vinculo_id: vinculoId });
+}));
+
+app.post('/api/rh/admissoes/:id/concluir', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  const { adm, colab, checklist } = dados;
+  if (adm.etapa !== 'onboarding') return res.status(409).json({ error: 'O processo só encerra a partir do Onboarding.' });
+  const pend = rhPendencias(adm, colab, checklist);
+  if (pend.length && !req.body.forcar) return res.status(409).json({ error: 'Há pendências.', pendencias: pend });
+  await query(`UPDATE erp_rh_admissoes SET situacao='concluida', updated_at=now() WHERE id=$1`, [adm.id]);
+  await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
+    [adm.id, adm.etapa, 'concluida', sanitize(req.body.observacao) || null, req.user.id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/rh/admissoes/:id/cancelar', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const motivo = sanitize(req.body.motivo);
+  if (!motivo) return res.status(400).json({ error: 'Explique por que o processo foi cancelado.' });
+  const r = await query('SELECT etapa FROM erp_rh_admissoes WHERE id=$1', [Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Processo não encontrado.' });
+  await query(`UPDATE erp_rh_admissoes SET situacao='cancelada', cancelamento_motivo=$1, updated_at=now() WHERE id=$2`,
+    [motivo, Number(req.params.id)]);
+  await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
+    [Number(req.params.id), r[0].etapa, 'cancelada', motivo, req.user.id]);
+  res.json({ ok: true });
+}));
+
+// ---- Minutas ----
+app.get('/api/rh/minutas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  res.json(await query(
+    `SELECT id, nome, regime, modelo_trabalho, file_name, byte_size, ativa, created_at,
+            jsonb_array_length(slots) AS n_slots
+       FROM erp_rh_minutas ORDER BY ativa DESC, nome`));
+}));
+
+app.post('/api/rh/minutas', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const nome = sanitize(req.body.nome), fileName = sanitize(req.body.file_name);
+  if (!nome || !fileName) return res.status(400).json({ error: 'Nome e arquivo são obrigatórios.' });
+  let buf;
+  try { buf = Buffer.from(String(req.body.data || ''), 'base64'); } catch { buf = null; }
+  if (!buf || !buf.length) return res.status(400).json({ error: 'Arquivo vazio.' });
+  if (buf.length > MAX_ATTACH_BYTES) return res.status(413).json({ error: 'Arquivo acima do limite de 3 MB.' });
+  // .docx é um zip: os dois primeiros bytes são "PK". Vale conferir antes de
+  // tentar abrir, para o erro ser claro em vez de uma exceção de zip.
+  if (buf[0] !== 0x50 || buf[1] !== 0x4B) return res.status(415).json({ error: 'Envie a minuta em .docx (o arquivo enviado não é um .docx).' });
+
+  let slots;
+  try {
+    const entradas = zipLer(buf);
+    const doc = entradas.find(e => e.nome === 'word/document.xml');
+    if (!doc) return res.status(415).json({ error: 'O .docx não tem word/document.xml — arquivo corrompido?' });
+    slots = acharSlots(doc.dados.toString('utf8'));
+  } catch (e) {
+    return res.status(415).json({ error: 'Não consegui ler o .docx: ' + e.message });
+  }
+  if (!slots.length) return res.status(400).json({ error: 'Nenhum trecho em REALCE AMARELO nesta minuta. São os realces que marcam os campos a preencher.' });
+
+  const regime = sanitize(req.body.regime) || null;
+  const modelo = sanitize(req.body.modelo_trabalho) || null;
+  // Uma minuta ativa por combinação: a anterior é aposentada, não apagada —
+  // contratos já emitidos precisam continuar rastreáveis ao modelo que os gerou.
+  if (regime && modelo) {
+    await query('UPDATE erp_rh_minutas SET ativa=false WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2', [regime, modelo]);
+  }
+  const ins = await query(
+    `INSERT INTO erp_rh_minutas (nome, regime, modelo_trabalho, file_name, byte_size, data, slots, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [nome, regime, modelo, fileName, buf.length, buf,
+     JSON.stringify(slots.map(s => ({ n: s.n, texto: s.texto, nRuns: s.nRuns }))), req.user.id]);
+  res.json({ ok: true, id: ins[0].id, slots: slots.length });
+}));
+
+app.delete('/api/rh/minutas/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  await query('UPDATE erp_rh_minutas SET ativa=false WHERE id=$1', [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+// ---- Emissão do contrato ----
+const RH_MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+// Monta os 18 valores a partir da ficha + do processo. A ORDEM é o identificador:
+// dois slots têm o mesmo texto na minuta e só a posição os distingue.
+function rhValoresContrato(colab, adm, assinatura) {
+  const fem = colab.sexo === 'F';
+  const gen = (m, f) => (fem ? f : m);
+  const feminiza = p => String(p || '').replace(/o$/, 'a');
+  const dias = (iso, n) => {
+    const [a, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+    const dt = new Date(Date.UTC(a, m - 1, d + n));
+    return String(dt.getUTCDate()).padStart(2, '0') + '/' +
+           String(dt.getUTCMonth() + 1).padStart(2, '0') + '/' + dt.getUTCFullYear();
+  };
+  const endereco = [
+    [colab.endereco, colab.endereco_numero].filter(Boolean).join(', '),
+    colab.endereco_complemento, colab.bairro,
+    [colab.municipio, colab.uf].filter(Boolean).join('/'),
+    colab.cep ? 'CEP ' + colab.cep : null
+  ].filter(Boolean).join(', ');
+  const cargo = [adm.cargo_pretendido, adm.nivel_pretendido
+    ? ({ junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior' }[adm.nivel_pretendido] || adm.nivel_pretendido)
+    : null].filter(Boolean).join(' ').toUpperCase();
+  const sal = Number(adm.salario_previsto || 0);
+  const [aA, mA, dA] = String(assinatura.data).slice(0, 10).split('-').map(Number);
+  const estadoCivil = colab.estado_civil ? gen(colab.estado_civil, feminiza(colab.estado_civil)) : '';
+
+  return [
+    { n: 1,  campo: 'nome (qualificação)',         valor: String(colab.name || '').toUpperCase() },
+    { n: 2,  campo: 'nacionalidade',               valor: colab.nacionalidade || gen('brasileiro', 'brasileira') },
+    { n: 3,  campo: 'estado civil',                valor: estadoCivil },
+    { n: 4,  campo: 'RG',                          valor: colab.rg || '' },
+    { n: 5,  campo: 'CPF',                         valor: colab.cpf || '' },
+    { n: 6,  campo: 'endereço completo',           valor: endereco },
+    { n: 7,  campo: 'CTPS nº',                     valor: colab.ctps_numero || '' },
+    { n: 8,  campo: 'CTPS série',                  valor: colab.ctps_serie || '' },
+    { n: 9,  campo: 'cargo',                       valor: cargo },
+    { n: 10, campo: 'fim da experiência (+45d)',   valor: adm.admissao_prevista ? dias(adm.admissao_prevista, 45) : '' },
+    { n: 11, campo: 'fim da prorrogação (+90d)',   valor: adm.admissao_prevista ? dias(adm.admissao_prevista, 90) : '' },
+    { n: 12, campo: 'salário',                     valor: sal ? docxBrl(sal) : '' },
+    { n: 13, campo: 'salário por extenso',         valor: sal ? reaisEmTexto(sal) : '' },
+    { n: 14, campo: 'cidade da assinatura',        valor: assinatura.municipio },
+    { n: 15, campo: 'UF + dia da assinatura',      valor: `${assinatura.uf}, ${String(dA).padStart(2, '0')}` },
+    { n: 16, campo: 'mês da assinatura',           valor: RH_MESES[mA - 1] },
+    { n: 17, campo: 'ano da assinatura',           valor: `${aA}.` },
+    { n: 18, campo: 'nome (folha de assinaturas)', valor: String(colab.name || '').toUpperCase() }
+  ];
+}
+
+// Prévia: diz o que vai entrar em cada slot e o que está faltando na ficha,
+// SEM gerar arquivo. É o que a tela mostra antes de emitir.
+app.get('/api/rh/admissoes/:id/contrato/previa', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'A emissão usa CPF, RG e endereço — exige a permissão de dados sensíveis.' });
+  const { adm, colab } = dados;
+  // Lê o ARQUIVO, não a coluna `slots`. A coluna é metadado gravado no upload;
+  // quem manda na emissão é o .docx, e a prévia precisa dizer a verdade sobre o
+  // que vai acontecer — não sobre o que foi anotado na hora do upload.
+  const minuta = (await query(
+    `SELECT id, nome, file_name, data FROM erp_rh_minutas
+      WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
+    [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']))[0] || null;
+  let slotsReais = [];
+  if (minuta) {
+    try {
+      const ent = zipLer(minuta.data);
+      const d = ent.find(e => e.nome === 'word/document.xml');
+      slotsReais = d ? acharSlots(d.dados.toString('utf8')) : [];
+    } catch { slotsReais = []; }
+  }
+  // O binário não vai na resposta. Monta-se um resumo em vez de apagar o campo
+  // da linha: mexer no que a query devolveu é modificar um objeto que não é meu.
+  const minutaResumo = minuta ? { id: minuta.id, nome: minuta.nome, file_name: minuta.file_name } : null;
+
+  const hoje = hojeISO();
+  const valores = rhValoresContrato(colab, adm, {
+    municipio: sanitize(req.query.municipio) || 'São Paulo',
+    uf: sanitize(req.query.uf) || 'SP',
+    data: isDate(req.query.data) ? req.query.data : hoje
+  });
+  const vazios = valores.filter(v => !String(v.valor).trim());
+  res.json({
+    minuta: minutaResumo, valores, vazios: vazios.map(v => v.campo),
+    slots_da_minuta: slotsReais.map(s => ({ n: s.n, texto: s.texto })),
+    // Se a minuta tiver um número de realces diferente de 18, o mapa não serve —
+    // melhor dizer isso do que preencher os campos trocados de lugar.
+    compativel: !!minuta && slotsReais.length === valores.length,
+    hoje
+  });
+}));
+
+app.post('/api/rh/admissoes/:id/contrato', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'A emissão usa CPF, RG e endereço — exige a permissão de dados sensíveis.' });
+  const { adm, colab } = dados;
+
+  const minuta = (await query(
+    `SELECT * FROM erp_rh_minutas WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
+    [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']))[0];
+  if (!minuta) return res.status(400).json({ error: 'Não há minuta cadastrada para esta combinação de regime e modelo de trabalho. Cadastre em Recursos Humanos → Minutas.' });
+
+  const assinatura = {
+    municipio: sanitize(req.body.municipio) || 'São Paulo',
+    uf: sanitize(req.body.uf) || 'SP',
+    data: isDate(req.body.data) ? req.body.data : hojeISO()
+  };
+  const valores = rhValoresContrato(colab, adm, assinatura);
+
+  const entradas = zipLer(minuta.data);
+  const doc = entradas.find(e => e.nome === 'word/document.xml');
+  const xml = doc.dados.toString('utf8');
+  const slots = acharSlots(xml);
+  if (slots.length !== valores.length) {
+    return res.status(409).json({
+      error: `A minuta tem ${slots.length} trechos em realce, e o mapa de preenchimento tem ${valores.length}. Preencher assim trocaria os campos de lugar.`
+    });
+  }
+  const novoXml = mesclar(xml, slots, valores.map(v => v.valor));
+  doc.dados = Buffer.from(novoXml, 'utf8');
+  const docx = zipEscrever(entradas);
+
+  await query(`UPDATE erp_rh_admissoes SET contrato_emitido_em=$1, updated_at=now() WHERE id=$2`,
+    [assinatura.data, adm.id]);
+
+  // Acento vira a letra sem acento (NFD separa a marca, o replace a remove) em
+  // vez de a letra sumir junto: "Atanázio" precisa virar "Atanazio", não
+  // "Atanzio". A faixa do replace é U+0300–U+036F (marcas combinantes).
+  const base = String(colab.name || 'contrato')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9 ]/g, '').trim().replace(/\s+/g, '-');
+  res.json({
+    ok: true,
+    file_name: `Contrato de Trabalho - ${base}.docx`,
+    docx: docx.toString('base64'),
+    // Os parágrafos com formatação vão junto para o navegador montar o PDF —
+    // converter .docx em PDF no servidor exigiria LibreOffice, que não existe
+    // na função serverless.
+    paragrafos: docxParagrafos(novoXml).filter(p => p.texto),
+    valores,
+    minuta: { id: minuta.id, nome: minuta.nome }
+  });
 }));
 
 // ---- Autosserviço (colaborador solicitando por conta própria) ----
