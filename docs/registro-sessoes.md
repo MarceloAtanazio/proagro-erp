@@ -2219,3 +2219,105 @@ motor (emissão) → alcance (cargos e integrações).
    depois.
 
 **Nada foi implementado.** Este commit contém apenas documentação.
+
+---
+
+## 2026-09-08 — RH: o motor de emissão sai do desenho e passa a funcionar
+
+**Pedido:** o usuário enviou uma minuta real —
+`Contrato de Trabalho - Empregado Regular - Controle de Ponto - Jornada Presencial.docx`, com os
+campos destacados em amarelo — para fazer os testes e ajustes antes de incorporar as outras. Mais:
+verificar se os dois erros ainda constavam, e as respostas sobre documentos obrigatórios e cargos.
+
+Protótipo em [`tools/rh/`](../tools/rh/README.md); desenho atualizado em
+[`docs/rh-desenho.md`](rh-desenho.md).
+
+### A premissa do desenho estava errada, e a minuta real mostrou por quê
+
+O desenho de 04/09 supunha procurar `[CAMPO]` no texto. **Não funciona:**
+
+- Dois campos diferentes têm o **mesmo texto**: os dois `DD/MM/AAAA` (fim da experiência e da
+  prorrogação) e os dois `XXXXXXXXX` (número e série da CTPS).
+- Metade dos campos **não tem colchete**: `XX.XXX.XXX-X`, `R$ XX.XXX,XX`, `CIDADE`, `Mês`, `202X.`
+- Os colchetes que existem estão **fora** do amarelo, em runs vizinhos.
+
+O marcador certo é o **realce**, e o identificador é a **ordem** dos trechos realçados — que é
+estável porque é a ordem de leitura. O mapa de cada minuta virou uma lista posicional
+`slot → campo`, e a emissão **aborta** se a contagem de realces mudar: um realce a mais desloca
+todo o mapa e produziria um contrato silenciosamente errado.
+
+### O motor
+
+`tools/rh/docx-merge.js`, sem nenhuma dependência: leitor e escritor de zip próprios (com CRC-32),
+agrupamento de runs realçados contíguos, e escrita colapsando cada grupo num run só — o que resolve
+de graça o problema dos runs fatiados. Confirmado na minuta real: o slot `R$ XX.XXX,XX` **está
+partido em 2 runs**, e um `replace` ingênuo não o encontraria.
+
+Também implementado: número → texto em português (`R$ 8.236,53` → "oito mil duzentos e trinta e
+seis reais e cinquenta e três centavos", o valor exato de um contrato real), concordância de gênero
+a partir do sexo, e as datas +45/+90 dias da admissão.
+
+### Dois bugs meus, achados por teste e corrigidos
+
+1. **Valor por extenso quebrava acima de um milhão.** `R$ 1.026.446,01` saía como
+   " e vinte e seis mil quatrocentos e quarenta e seis reais" — a função de centena só sabia
+   0..999 e recebia 1026. E `R$ 0,17` saía "zero reais e dezessete centavos". Refeito com escalas
+   (mil/milhão/bilhão); 12 casos conferidos, incluindo `mil reais` sem o "um" indevido.
+2. **Os colchetes sobreviviam à substituição.** Como estão fora do amarelo, o primeiro contrato
+   gerado saiu com `e de outro, [ANA CAROLINA...], [brasileira], [solteira], portador(a) do RG`.
+   O motor passou a comer o `[` e o `]` dos runs vizinhos, **e só quando encostam num campo
+   preenchido** — os parênteses do valor por extenso, que pertencem ao texto, ficam. Este defeito
+   não estava previsto no desenho; foi o teste que o achou.
+
+### Verificação
+
+28 asserções sobre o **arquivo gerado**, não sobre o script: o zip abre e o CRC confere, as 23
+entradas do modelo estão preservadas, **só** `word/document.xml` mudou (estilos, numeração, tema e
+fontes saem byte a byte idênticos), nenhum realce sobrou, nenhum marcador escapou, nenhum colchete
+solto ficou, o nome aparece 2× (qualificação e folha de assinaturas), e as 16 cláusulas do texto
+fixo estão intactas. Todas passam.
+
+### São cinco variantes de contrato, não duas
+
+A pasta `Minutas Pro Agro/Minutas Pro Agro/` tem Regular × (Presencial, Híbrida, Home Office,
+Externa) + Confiança — com 18, 21, 21, 20 e 20 realces. **As cinco compartilham os mesmos 11
+primeiros e os mesmos 6 últimos realces, na mesma ordem**; só o miolo difere. Consequência para o
+modelo de dados: o vínculo precisa de **dois** campos, `regime` e `modelo_trabalho`, e é o par que
+seleciona a minuta.
+
+Detalhe capturado: na variante de Confiança o realce nº 12 já vem preenchido com o nome real da
+política de trabalho remoto — é texto destacado para atenção, não campo. O mapa precisa marcar
+slots assim, e é por isso que o mapeamento passa por confirmação humana uma vez por minuta.
+
+### Os dois erros: um sobreviveu
+
+| Minuta | `seguro de vista` | gênero fixo |
+|---|---|---|
+| Regular — Presencial / Híbrida / Home Office / Externa | corrigido | corrigido (virou campo) |
+| **Confiança — Sem Controle de Ponto** | **AINDA PRESENTE** | corrigido |
+
+Está no Parágrafo segundo da cláusula da remuneração: `… refeição, seguro de vista, assistência
+médica …`. As outras quatro já dizem "seguro de vida".
+
+### Respostas incorporadas ao desenho
+
+- **Documentos obrigatórios (11).** Três precisam de regra, não de checkbox: certidão de
+  nascimento **ou** casamento é alternativa; reservista é condicional a `sexo = M`; e dados
+  bancários são **campo**, não anexo. Já se sabe o que o checklist vai achar: 11 colaboradores e
+  só 7 anexos de CNH — pelo menos 4 pessoas sem o item, e nenhuma tela hoje diz isso.
+- **Cargos (14, com Jr/Pl/Sr para Analistas e Técnico de Campo) = 24 posições.** Propus o regime
+  de cada um (confiança de Coordenador para cima; art. 62 I para Técnico de Campo; regular para os
+  Analistas) — é proposta, precisa de confirmação. Também: 2 descrições de cargo não têm cargo
+  correspondente (Analista Comercial, Assistente Administrativo) e 6 cargos não têm descrição.
+- **Armazenamento:** usuário respondeu "ainda não tenho certeza". Segue em `bytea`, que é o que já
+  funciona; a troca é reversível e não bloqueia a fase 1.
+
+### Oferta em aberto
+
+O texto fixo usa a convenção `(a)` — `EMPREGADO(A)` 45×, `o(a)` 27×, `portador(a)`, `inscrito(a)`,
+`denominado(a)`. Como o sexo está na ficha, o motor pode emitir "a EMPREGADA, portadora, inscrita,
+doravante denominada" em vez do andaime. Melhora a leitura, mas altera texto fixo — depende de
+decisão, não foi feito.
+
+**Nada foi integrado ao ERP ainda.** Este commit traz o protótipo em `tools/rh/` e o desenho
+atualizado.
