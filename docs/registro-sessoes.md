@@ -2782,3 +2782,53 @@ mexi no que não estava quebrado.
 
 As três suítes (ficha, Kanban, cinco minutas) seguem passando após a mudança na detecção de
 títulos.
+
+---
+
+## 2026-09-08 — PDF do contrato: ajustes finos de espaçamento e cabeçalho
+
+**Pedido:** mais respiro entre o título e a cláusula seguinte; espaço entre a vírgula e a data na
+folha de assinaturas; o nome do signatário mais perto do traço; as testemunhas mais para baixo; e
+o cabeçalho com o logo à esquerda e "CONTRATO DE TRABALHO — PROAGRO BRASIL" à direita.
+
+### O espaço que parecia não existir
+
+Na folha de assinaturas a linha saía como **"São Paulo/SP,08"**. Medindo as coordenadas de cada
+`doc.text`, o vão estava lá — 1,185 mm, exatamente o mesmo entre todas as outras palavras. O
+problema não era falta de espaço, era o **tamanho** dele: o espaço da Helvetica tem 0,278 em, e
+num corpo de 12 pt isso dá 1,19 mm — estreito o bastante para, **depois de uma vírgula**, a linha
+ler como se estivesse colada.
+
+A correção foi alargar o espaço entre palavras em 25% (`espacoExtra`), o que vale para o
+documento inteiro e melhora a leitura de todo o contrato, não só daquela linha. A 250% de zoom a
+linha passou a ler "São Paulo/SP, 08".
+
+Vale registrar o caminho: na rodada anterior eu tinha olhado essa mesma linha num screenshot
+reduzido, concluído que o espaço existia e **decidido não mexer**. A medição estava certa e a
+conclusão estava errada — o vão existia, mas era pequeno demais para o olho. Um número igual ao
+dos vizinhos não prova que o resultado esteja bom.
+
+### Espaçamentos, agora todos numa constante
+
+| | antes | agora |
+|---|---|---|
+| Título → cláusula que ele abre | 8,26 mm | **11,33 mm** |
+| Entre palavras | 1,185 mm | **1,481 mm** |
+| Traço de assinatura → nome | 8,90 mm | **6,45 mm** |
+| Nome do empregado → Testemunhas | 8,90 mm | **22,41 mm** |
+
+O traço e o nome andam juntos porque um parágrafo de underscores é reconhecido como linha de
+assinatura (`ehLinhaAssinatura`) e recebe um respiro quase nulo depois de si — o nome pertence
+àquele traço, não é um parágrafo novo.
+
+### Cabeçalho
+
+Do lado direito, na base do logo, **"CONTRATO DE TRABALHO — PROAGRO BRASIL"** em 8 pt cinza:
+identifica o documento em qualquer página sem competir com o texto.
+
+### Verificação
+
+Tudo medido nas coordenadas reais dos comandos de desenho, não a olho: o vão título→cláusula é
+11,33 mm **uniforme nas 12 seções**, e os vãos entre palavras são 1,481 mm em toda a linha da
+data. O contrato segue com 8 páginas e 368 KB, e as três suítes (ficha, Kanban, cinco minutas)
+continuam passando.

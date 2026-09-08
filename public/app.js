@@ -8958,7 +8958,18 @@ const RH_PDF = {
   entrelinha: 1.45,   // múltiplo do corpo
   margem: 25,         // mm, esquerda e direita
   topo: 30,           // mm — abaixo do cabeçalho
-  base: 20            // mm — acima do rodapé
+  base: 20,           // mm — acima do rodapé
+  // O espaço da Helvetica tem 0,278 em — estreito. Num corpo de 12 pt isso dá
+  // 1,19 mm, e depois de vírgula ("SP, 08") a linha lê como se não houvesse
+  // espaço nenhum. Alargar 25% resolve sem afrouxar o texto.
+  espacoExtra: 1.25,
+  // Respiro depois do título, antes da cláusula que ele abre.
+  aposTitulo: 0.95,
+  // O nome fica logo abaixo do traço de assinatura, não a um parágrafo dele.
+  aposLinhaAssinatura: 0.05,
+  // As testemunhas descem, para não colarem na assinatura do empregado.
+  antesTestemunhas: 2.2,
+  cabecalhoDireita: 'CONTRATO DE TRABALHO — PROAGRO BRASIL'
 };
 const rhPt = pt => pt * 25.4 / 72;   // pontos → mm
 
@@ -8979,6 +8990,12 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
     // ele o PNG é reincorporado a cada chamada: num contrato de 8 páginas o
     // arquivo saía com 1,2 MB só de logo repetido.
     doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M, 13, logoW, logoH, 'logo-proagro', 'FAST');
+    // Do outro lado do cabeçalho, o que é o documento — alinhado pela base do
+    // logo, em cinza, para identificar sem competir com o texto.
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.setTextColor(122, 134, 126);
+    doc.text(RH_PDF.cabecalhoDireita, pageW - M, 13 + logoH, { align: 'right' });
+    doc.setTextColor(17, 24, 19);
     doc.setDrawColor(206, 216, 209); doc.setLineWidth(0.2);
     doc.line(M, 13 + logoH + 3.5, pageW - M, 13 + logoH + 3.5);
     y = RH_PDF.topo;
@@ -9020,7 +9037,7 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
   // Agrupa palavras em linhas que cabem na largura útil.
   const quebrar = (palavras, tamanho, larguraMax) => {
     doc.setFontSize(tamanho);
-    const espaco = doc.getTextWidth(' ');
+    const espaco = doc.getTextWidth(' ') * RH_PDF.espacoExtra;
     const linhas = []; let atual = [], usado = 0;
     palavras.forEach(p => {
       const w = largura(p, tamanho);
@@ -9065,10 +9082,15 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
   };
 
   let primeiroTitulo = true;
+  // Um traço de assinatura é uma linha só de underscores. O nome de quem assina
+  // vem logo abaixo dele, não a um parágrafo de distância.
+  const ehLinhaAssinatura = t => /^_{5,}$/.test(String(t).trim());
 
   for (const p of paragrafos) {
     if (!p.texto) { y += alturaLinha * 0.45; continue; }
     const centrado = p.alinhamento === 'center';
+    // As testemunhas descem: sem isso encostam na assinatura do empregado.
+    if (/^Testemunhas/i.test(p.texto.trim())) y += alturaLinha * RH_PDF.antesTestemunhas;
 
     // ---- título de seção (estilo Título do Word) ----
     if (p.titulo) {
@@ -9086,7 +9108,8 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
         sublinhar(x, w);                              // TODO título sublinhado
         y += h;
       });
-      y += alturaLinha * (primeiroTitulo ? 0.9 : 0.45);
+      // Respiro entre o título e a cláusula que ele abre.
+      y += alturaLinha * (primeiroTitulo ? 1.1 : RH_PDF.aposTitulo);
       primeiroTitulo = false;
       continue;
     }
@@ -9111,7 +9134,9 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
       desenharLinha(linha, x0, RH_PDF.fonte, espaco, justificavel && i < linhas.length - 1, larg);
       y += alturaLinha;
     });
-    y += alturaLinha * 0.45;
+    // Depois do traço vem o nome de quem assina: encosta nele. Nos demais
+    // casos, o respiro normal de parágrafo.
+    y += alturaLinha * (ehLinhaAssinatura(p.texto) ? RH_PDF.aposLinhaAssinatura : 0.45);
   }
 
   const total = doc.internal.getNumberOfPages();
