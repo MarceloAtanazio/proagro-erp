@@ -2147,6 +2147,10 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
         SELECT * FROM erp_rh_vinculos w WHERE w.colaborador_id = c.id
          ORDER BY (w.desligamento IS NULL) DESC, w.admissao DESC LIMIT 1
       ) v ON true
+     -- Candidato não é colaborador: quem está em admissão (ativo=false, sem
+     -- vínculo) vive no Quadro, não nesta lista. Quem já foi funcionário e foi
+     -- desativado continua aqui — tem vínculo, é histórico.
+     WHERE c.ativo = true OR v.id IS NOT NULL
      ORDER BY c.ativo DESC, c.name`);
   const out = rows.map(r => {
     const tipos = Array.isArray(r.tipos) ? r.tipos : [];
@@ -2307,14 +2311,53 @@ const RH_ETAPAS = [
 const RH_ETAPA_COD = RH_ETAPAS.map(e => e.cod);
 const rhEtapaIdx = c => RH_ETAPA_COD.indexOf(c);
 
+// O mapa da minuta ativa para a combinação regime × modelo — só o `slots`
+// gravado, sem o binário. É o que diz quais campos o contrato daquela pessoa
+// vai pedir, e por isso é o que a etapa Documentação precisa cobrar.
+async function rhMapaPara(regime, modelo) {
+  const m = (await query(
+    `SELECT id, nome, slots FROM erp_rh_minutas
+      WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
+    [regime || 'regular', modelo || 'presencial']))[0];
+  return m && Array.isArray(m.slots) && m.slots.length ? m.slots : null;
+}
+
+// Quando não há minuta cadastrada ainda, o que se cobra é o núcleo que TODA
+// minuta da empresa pede — melhor cobrar isso do que deixar a etapa passar em
+// branco e descobrir na emissão.
+const RH_NUCLEO_CONTRATO = ['cpf', 'rg', 'estado_civil', 'endereco_completo', 'ctps_numero',
+  'ctps_serie', 'cargo_maiusculo', 'salario', 'experiencia_fim'];
+
+// Campos do contrato ainda em branco. Ignora o que não vem da ficha nem do
+// processo: assinatura (preenchida na emissão), textos fixos da minuta e a razão
+// social da empresa.
+function rhDadosContratoFaltando(adm, colab, mapa) {
+  const efetivo = mapa || RH_NUCLEO_CONTRATO.map((cod, i) => ({ n: i + 1, texto: cod, campo: cod }));
+  const ass = { municipio: 'x', uf: 'XX', data: '2000-01-01', ano: 2000, mes: 1, dia: 1 };
+  const { valores } = rhResolverMapa(efetivo, colab, adm, ass);
+  const vistos = new Set();
+  return valores
+    .filter(v => v.valor === '' && v.campo && !/^assinatura_/.test(v.campo)
+      && !['fixo', 'ignorar', 'empresa'].includes(v.campo))
+    .map(v => v.rotulo || v.campo)
+    .filter(r => !vistos.has(r) && vistos.add(r));
+}
+
 // O que falta para sair da etapa atual. Devolve lista vazia quando está liberado.
-function rhPendencias(adm, colab, checklist) {
+function rhPendencias(adm, colab, checklist, mapa) {
   switch (adm.etapa) {
     case 'carta_oferta':
       return adm.oferta_aceita_em ? [] : ['A carta oferta ainda não foi registrada como aceita.'];
     case 'documentacao': {
+      // A Documentação é onde tudo o que o contrato vai pedir precisa estar
+      // pronto: os documentos anexados E os dados da ficha preenchidos. Sair
+      // daqui com CPF em branco só adiaria o erro para a emissão.
+      const p = [];
       const faltam = (checklist || []).filter(x => !x.ok).map(x => x.nome);
-      return faltam.length ? ['Documentos obrigatórios pendentes: ' + faltam.join(', ')] : [];
+      if (faltam.length) p.push('Documentos obrigatórios pendentes: ' + faltam.join(', '));
+      const dados = rhDadosContratoFaltando(adm, colab, mapa);
+      if (dados.length) p.push('Dados do contrato em branco: ' + dados.join(', '));
+      return p;
     }
     case 'exame_admissional': {
       const p = [];
@@ -2361,7 +2404,8 @@ async function rhCarregarAdmissao(id) {
   const colab = c[0] || {};
   const anexos = await query(
     `SELECT doc_tipo FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, [adm.colaborador_id]);
-  return { adm, colab, checklist: rhChecklist(colab, anexos) };
+  const mapa = await rhMapaPara(adm.regime, adm.modelo_trabalho);
+  return { adm, colab, checklist: rhChecklist(colab, anexos), mapa };
 }
 
 // ---- Criar colaborador a PARTIR DO RH ----
@@ -2377,20 +2421,27 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
     const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1', [cpf]);
     if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name} (ID ${dup[0].id}).` });
   }
-  // `tier` e `ativo` existem por causa de Viáticos e são NOT NULL na prática do
-  // sistema: quem nasce em RH entra como B e ativo, e Viáticos ajusta depois.
+  // Quem entra pelo Quadro de admissão é CANDIDATO, não colaborador: nasce com
+  // ativo=false e só vira ativo quando o contrato é assinado (ao sair da etapa
+  // "contrato"). É o mesmo flag que Viáticos, o autosserviço e Suprimentos já
+  // usam para filtrar — então o candidato fica fora dessas telas sem que
+  // nenhuma delas precise saber o que é uma admissão.
+  const abrirAdmissao = req.body.abrir_admissao !== false;
   const ins = await query(
     `INSERT INTO erp_colaboradores (name, cargo, tier, ativo, sexo, cpf, email_corporativo, celular)
-     VALUES ($1,$2,$3,true,$4,$5,$6,$7) RETURNING id`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
     [nome, sanitize(req.body.cargo) || null, ['A', 'B'].includes(req.body.tier) ? req.body.tier : 'B',
+     !abrirAdmissao,
      ['M', 'F', 'O'].includes(req.body.sexo) ? req.body.sexo : null, cpf,
      sanitize(req.body.email_corporativo) || null, sanitize(req.body.celular) || null]);
   const colabId = ins[0].id;
 
   // Abrir o processo de admissão junto é o caminho normal: quem cadastra uma
-  // pessoa nova está admitindo alguém.
+  // pessoa nova está admitindo alguém. Sem admissão, entra direto como
+  // colaborador ativo — é o caso de quem já é funcionário e está sendo
+  // cadastrado depois do fato.
   let admissaoId = null;
-  if (req.body.abrir_admissao !== false) {
+  if (abrirAdmissao) {
     const a = await query(
       `INSERT INTO erp_rh_admissoes (colaborador_id, cargo_pretendido, nivel_pretendido, departamento,
          regime, modelo_trabalho, salario_previsto, admissao_prevista, responsavel_id, created_by)
@@ -2421,10 +2472,18 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
      ORDER BY a.admissao_prevista NULLS LAST, a.created_at`,
     [req.query.situacao === 'todas' ? 'andamento' : (req.query.situacao || 'andamento')]);
 
+  // As minutas ativas de uma vez só: uma consulta para o quadro inteiro, em vez
+  // de uma por card. O mapa de cada uma é o que define quais dados a etapa
+  // Documentação cobra daquela pessoa.
+  const minutas = await query('SELECT regime, modelo_trabalho, slots FROM erp_rh_minutas WHERE ativa=true');
+  const mapaDe = (regime, modelo) => {
+    const m = minutas.find(x => x.regime === (regime || 'regular') && x.modelo_trabalho === (modelo || 'presencial'));
+    return m && Array.isArray(m.slots) && m.slots.length ? m.slots : null;
+  };
   const cards = rows.map(r => {
     const tipos = Array.isArray(r.tipos) ? r.tipos : [];
     const chk = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })));
-    const pend = rhPendencias(r, r, chk);
+    const pend = rhPendencias(r, r, chk, mapaDe(r.regime, r.modelo_trabalho));
     const base = rhFiltrar(r, req.user, r);
     delete base.tipos;
     return { ...base, checklist_total: chk.length, checklist_ok: chk.filter(x => x.ok).length,
@@ -2437,7 +2496,7 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
 app.get('/api/rh/admissoes/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const dados = await rhCarregarAdmissao(req.params.id);
   if (!dados) return res.status(404).json({ error: 'Processo de admissão não encontrado.' });
-  const { adm, colab, checklist } = dados;
+  const { adm, colab, checklist, mapa } = dados;
   const hist = await query(
     `SELECT h.*, u.name AS usuario FROM erp_rh_admissao_hist h
        LEFT JOIN erp_users u ON u.id = h.movido_por
@@ -2453,7 +2512,7 @@ app.get('/api/rh/admissoes/:id', requireAuth, requireViewAny(['rh']), h(async (r
     checklist,
     historico: hist,
     minuta: minuta[0] || null,
-    pendencias: rhPendencias(adm, colab, checklist),
+    pendencias: rhPendencias(adm, colab, checklist, mapa),
     pode: {
       editar: req.user.role === 'admin' || canEdit(req.user, 'rh'),
       remuneracao: rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab),
@@ -2478,7 +2537,7 @@ app.put('/api/rh/admissoes/:id', requireAuth, requireEdit('rh'), h(async (req, r
 app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const dados = await rhCarregarAdmissao(req.params.id);
   if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
-  const { adm, colab, checklist } = dados;
+  const { adm, colab, checklist, mapa } = dados;
   if (adm.situacao !== 'andamento') return res.status(409).json({ error: 'Este processo já foi encerrado.' });
 
   const destino = sanitize(req.body.etapa);
@@ -2490,7 +2549,7 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
   // Avançar passa pelas exigências da etapa em que o processo está.
   if (iDestino > iAtual) {
     if (iDestino > iAtual + 1) return res.status(400).json({ error: 'Só é possível avançar uma etapa por vez.' });
-    const pend = rhPendencias(adm, colab, checklist);
+    const pend = rhPendencias(adm, colab, checklist, mapa);
     if (pend.length && !req.body.forcar) {
       return res.status(409).json({ error: 'Há pendências nesta etapa.', pendencias: pend });
     }
@@ -2516,15 +2575,21 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
       const v = await query(
         `INSERT INTO erp_rh_vinculos (colaborador_id, tipo, admissao, cargo, nivel, departamento,
             centro_custo, gestor_id, regime, modelo_trabalho, controle_ponto, experiencia_fim,
-            prorrogacao_fim, salario, created_by)
-         VALUES ($1,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+            prorrogacao_fim, salario, vr_dia, home_office_dia, created_by)
+         VALUES ($1,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
         [adm.colaborador_id, String(adm.admissao_prevista).slice(0, 10), adm.cargo_pretendido,
          adm.nivel_pretendido, adm.departamento, adm.centro_custo, adm.gestor_id,
          adm.regime, adm.modelo_trabalho, adm.modelo_trabalho !== 'externo' && adm.regime !== 'confianca',
-         d.experiencia_fim, d.prorrogacao_fim, adm.salario_previsto, req.user.id]);
+         d.experiencia_fim, d.prorrogacao_fim, adm.salario_previsto, adm.vr_dia, adm.home_office_dia, req.user.id]);
       vinculoId = v[0].id;
       await query('UPDATE erp_rh_admissoes SET vinculo_id=$1 WHERE id=$2', [vinculoId, adm.id]);
     }
+    // É AQUI que o candidato vira colaborador. Até então ele estava com
+    // ativo=false — fora da lista de Colaboradores, de Viáticos e de
+    // Suprimentos. Com o contrato assinado, passa a existir para o resto do
+    // sistema. Nada é copiado: a ficha preenchida na Documentação é a mesma
+    // linha, só deixa de estar escondida.
+    await query('UPDATE erp_colaboradores SET ativo=true WHERE id=$1', [adm.colaborador_id]);
   }
   res.json({ ok: true, etapa: destino, vinculo_id: vinculoId });
 }));
@@ -2532,9 +2597,9 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
 app.post('/api/rh/admissoes/:id/concluir', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const dados = await rhCarregarAdmissao(req.params.id);
   if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
-  const { adm, colab, checklist } = dados;
+  const { adm, colab, checklist, mapa } = dados;
   if (adm.etapa !== 'onboarding') return res.status(409).json({ error: 'O processo só encerra a partir do Onboarding.' });
-  const pend = rhPendencias(adm, colab, checklist);
+  const pend = rhPendencias(adm, colab, checklist, mapa);
   if (pend.length && !req.body.forcar) return res.status(409).json({ error: 'Há pendências.', pendencias: pend });
   await query(`UPDATE erp_rh_admissoes SET situacao='concluida', updated_at=now() WHERE id=$1`, [adm.id]);
   await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',

@@ -1079,3 +1079,19 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-mapa select, .tbl-mapa input { width: 100%; }
 .tbl-mapa td { vertical-align: middle; }
 .tbl-mapa input:disabled { background: #F3F6F4; color: var(--muted); }
+
+/* Barra acima do quadro: a regra do módulo (candidato ≠ colaborador) fica dita
+   onde ela se aplica, e o botão de novo candidato mora junto dela. */
+.rh-quadro-topo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.rh-quadro-dica { font-size: 12.5px; color: var(--ink-2); max-width: 620px; line-height: 1.5; }
+
+/* Selo ao lado do nome na ficha de quem ainda está em admissão. Em âmbar e não
+   em vermelho: não é erro, é uma etapa do processo. */
+.rh-cand { display: inline-block; vertical-align: middle; margin-left: 10px;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: #8A5100; background: #FBF2E4; border: 1px solid #E7D3AE;
+  border-radius: 999px; padding: 3px 9px; cursor: default; }
+
+/* O .rh-link dentro de uma nota é um atalho de navegação, não um botão de ação:
+   herda o tamanho do texto ao redor em vez do peso de um botão. */
+.rh-nota .rh-link { font-size: inherit; font-weight: 600; }

@@ -8680,6 +8680,12 @@ async function rhQuadro(c) {
   const d = await api('/api/rh/admissoes');
   const cards = d.cards || [];
   c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-topo">
+      <span class="rh-quadro-dica">Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o
+        contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.</span>
+      <div class="spacer"></div>
+      <button class="btn primary" id="rh-novo-candidato">+ Novo candidato</button>
+    </div>
     <div class="rh-kanban">${d.etapas.map(e => {
       const meus = cards.filter(x => x.etapa === e.cod);
       return `<div class="rh-col" data-etapa="${e.cod}">
@@ -8691,10 +8697,9 @@ async function rhQuadro(c) {
     }).join('')}</div>
     ${cards.length ? '' : `<div class="rh-vazio">
       <p><strong>Nenhuma admissão em andamento.</strong> O quadro acompanha a entrada de cada
-      pessoa, da carta oferta ao onboarding. Cadastrar um colaborador novo abre um card aqui.</p>
-      <button class="btn primary" id="rh-novo-colab">+ Novo colaborador</button></div>`}`;
+      candidato, da carta oferta ao onboarding. Use <strong>+ Novo candidato</strong> para abrir um card.</p></div>`}`;
   rhLigarAbas();
-  const b = $('#rh-novo-colab'); if (b) b.onclick = rhFormNovoColaborador;
+  const b = $('#rh-novo-candidato'); if (b) b.onclick = rhFormNovoColaborador;
   c.querySelectorAll('[data-card]').forEach(x => x.onclick = () => rhAbrirCard(Number(x.dataset.card)));
 }
 
@@ -8725,6 +8730,9 @@ async function rhAbrirCard(id) {
   const proxima = d.etapas[iAtual + 1] || null;
   const anterior = d.etapas[iAtual - 1] || null;
   const campos = RH_ETAPA_CAMPOS[a.etapa] || [];
+  // A ficha do candidato: é a MESMA linha de erp_colaboradores. O que se
+  // preenche aqui na Documentação já é a ficha dele quando virar colaborador.
+  const col = d.colaborador || {};
 
   const trilha = d.etapas.map((e, i) => `<span class="rh-passo ${i < iAtual ? 'feito' : i === iAtual ? 'atual' : ''}">
     ${RH_ETAPA_ICONE[e.cod]} ${esc(e.nome)}</span>`).join('<i class="rh-seta">→</i>');
@@ -8735,10 +8743,44 @@ async function rhAbrirCard(id) {
       ? `<div class="rh-nota aviso"><strong>Para sair desta etapa:</strong><ul>${d.pendencias.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`
       : '<div class="rh-nota">✔ Etapa concluída — pode avançar.</div>'}
 
-    ${a.etapa === 'documentacao' ? `<div class="rh-sec"><h4>Documentos obrigatórios</h4>
+    ${a.etapa === 'documentacao' ? `
+      ${d.pode.sensivel ? `<div class="rh-sec"><h4>Dados para o contrato <span class="rh-lgpd">dado sensível</span></h4>
+        <p class="rh-min-nome">Tudo o que a minuta vai pedir se preenche aqui. É a ficha da pessoa — quando o
+          contrato for assinado, ela já está pronta em Colaboradores.</p>
+        <div class="rh-grid">
+          ${rhSel('sexo', 'Sexo', RH_SEXO, col.sexo)}
+          ${rhSel('estado_civil', 'Estado civil', rhOpcoes(RH_ESTADO_CIVIL), col.estado_civil)}
+          ${rhInp('nacionalidade', 'Nacionalidade', 'text', col.nacionalidade, 'placeholder="brasileiro"')}
+          ${rhInp('data_nascimento', 'Data de nascimento', 'date', col.data_nascimento)}
+        </div>
+        <div class="rh-grid">
+          ${rhInp('cpf', 'CPF', 'text', col.cpf, 'placeholder="000.000.000-00" inputmode="numeric"')}
+          ${rhInp('rg', 'RG', 'text', col.rg)}
+          ${rhInp('rg_orgao', 'Órgão emissor', 'text', col.rg_orgao, 'placeholder="SSP"')}
+          ${rhSel('rg_uf', 'UF do RG', rhOpcoes(RH_UF), col.rg_uf)}
+          ${rhInp('ctps_numero', 'CTPS nº', 'text', col.ctps_numero)}
+          ${rhInp('ctps_serie', 'CTPS série', 'text', col.ctps_serie)}
+          ${rhInp('pis', 'PIS/PASEP', 'text', col.pis)}
+        </div>
+        <div class="rh-grid">
+          ${rhInp('cep', 'CEP', 'text', col.cep, 'placeholder="00000-000" inputmode="numeric"')}
+          ${rhInp('endereco', 'Logradouro', 'text', col.endereco)}
+          ${rhInp('endereco_numero', 'Número', 'text', col.endereco_numero)}
+          ${rhInp('endereco_complemento', 'Complemento', 'text', col.endereco_complemento)}
+          ${rhInp('bairro', 'Bairro', 'text', col.bairro)}
+          ${rhInp('municipio', 'Município', 'text', col.municipio)}
+          ${rhSel('uf', 'UF', rhOpcoes(RH_UF), col.uf)}
+        </div>
+        <div class="campo-dica" id="cep-status">Digite o CEP e o endereço se preenche sozinho.</div>
+        <div class="rh-grid">
+          ${rhInp('celular', 'Celular', 'text', col.celular)}
+          ${rhInp('email_pessoal', 'E-mail pessoal (para enviar o contrato)', 'email', col.email_pessoal)}
+        </div></div>`
+        : '<div class="rh-nota">🔒 CPF, RG e endereço exigem a permissão “RH · dados pessoais sensíveis” — sem ela não dá para preparar o contrato.</div>'}
+      <div class="rh-sec"><h4>Documentos obrigatórios</h4>
       <div class="rh-check">${d.checklist.map(x => `<div class="rh-check-item ${x.ok ? 'ok' : 'falta'}">
         <span class="mk">${x.ok ? '✔' : '✘'}</span><span class="nm">${esc(x.nome)}</span>
-        <span class="via">${x.ok ? 'ok' : (x.via === 'campos' ? 'preencher na ficha' : 'falta anexar')}</span></div>`).join('')}</div>
+        <span class="via">${x.ok ? 'ok' : (x.via === 'campos' ? 'preencher acima' : 'falta anexar')}</span></div>`).join('')}</div>
       <div class="rh-acoes"><button class="btn sm" id="rh-ir-dossie">Abrir o dossiê para anexar</button></div></div>` : ''}
 
     ${a.etapa === 'contrato' ? `<div class="rh-sec"><h4>Contrato</h4>
@@ -8782,12 +8824,20 @@ async function rhAbrirCard(id) {
       </div>`).join('')}</div></div>` : ''}`,
     [
       { label: 'Fechar', onClick: closeModal },
-      ...(ed ? [{ label: 'Salvar', onClick: () => rhSalvarCard(id, a.etapa) }] : []),
-      ...(ed && anterior ? [{ label: '← ' + anterior.nome, onClick: () => rhMoverCard(id, a.etapa, anterior.cod, false) }] : []),
-      ...(ed && proxima ? [{ label: proxima.nome + ' →', cls: 'primary', onClick: () => rhMoverCard(id, a.etapa, proxima.cod, true) }] : []),
+      ...(ed ? [{ label: 'Salvar', onClick: () => rhSalvarCard(id, a.etapa, a.colaborador_id) }] : []),
+      ...(ed && anterior ? [{ label: '← ' + anterior.nome, onClick: () => rhMoverCard(id, a.etapa, anterior.cod, false, a.colaborador_id) }] : []),
+      ...(ed && proxima ? [{ label: proxima.nome + ' →', cls: 'primary', onClick: () => rhMoverCard(id, a.etapa, proxima.cod, true, a.colaborador_id) }] : []),
       ...(ed && !proxima ? [{ label: 'Concluir admissão', cls: 'primary', onClick: () => rhConcluir(id) }] : [])
     ], { wide: true });
 
+  // Na Documentação os campos da pessoa estão no card: as mesmas máscaras e a
+  // mesma busca de CEP da ficha valem aqui — os ids são os mesmos ("rh-…").
+  if ($('#rh-cpf')) {
+    rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
+    rhLigarCampo('rh-rg', rhMascaraRG, null, '');
+    rhLigarCampo('rh-cep', rhMascaraCEP, null, '');
+    rhLigarCEP();
+  }
   const irDossie = $('#rh-ir-dossie');
   if (irDossie) irDossie.onclick = () => { closeModal(); abrirFichaRH(a.colaborador_id, 'dossie'); };
   const bp = $('#rh-previa'); if (bp) bp.onclick = () => rhPreviaContrato(id);
@@ -8815,9 +8865,29 @@ function rhCorpoCard(etapa) {
   return body;
 }
 
-async function rhSalvarCard(id, etapa) {
+// Os campos da PESSOA presentes no card (só na etapa Documentação). Vão para a
+// ficha pelo mesmo PUT que a ficha usa — é a mesma linha, o mesmo endpoint.
+const RH_CAMPOS_PESSOA_CARD = ['sexo', 'estado_civil', 'nacionalidade', 'data_nascimento', 'cpf', 'rg',
+  'rg_orgao', 'rg_uf', 'ctps_numero', 'ctps_serie', 'pis', 'cep', 'endereco', 'endereco_numero',
+  'endereco_complemento', 'bairro', 'municipio', 'uf', 'celular', 'email_pessoal'];
+function rhCorpoPessoa() {
+  const body = {};
+  RH_CAMPOS_PESSOA_CARD.forEach(c => { const e = $('#rh-' + c); if (e) body[c] = e.value; });
+  return body;
+}
+
+// Grava o processo e, se o card mostrou os campos da pessoa, a ficha também.
+async function rhGravarCard(id, etapa, colabId) {
+  await api('/api/rh/admissoes/' + id, { method: 'PUT', body: rhCorpoCard(etapa) });
+  const pessoa = rhCorpoPessoa();
+  if (colabId && Object.keys(pessoa).length) {
+    await api('/api/rh/colaboradores/' + colabId, { method: 'PUT', body: pessoa });
+  }
+}
+
+async function rhSalvarCard(id, etapa, colabId) {
   try {
-    await api('/api/rh/admissoes/' + id, { method: 'PUT', body: rhCorpoCard(etapa) });
+    await rhGravarCard(id, etapa, colabId);
     toast('Processo atualizado.'); rhAbrirCard(id);
   } catch (e) { modalError(e.message); }
 }
@@ -8825,11 +8895,9 @@ async function rhSalvarCard(id, etapa) {
 // Salva antes de mover: quem preencheu "aceita em" e clicou em avançar espera
 // que a data conte — não que o sistema reclame de uma pendência que ele acabou
 // de resolver na tela.
-async function rhMoverCard(id, etapaAtual, etapa, avancando) {
+async function rhMoverCard(id, etapaAtual, etapa, avancando, colabId) {
   try {
-    if ($('#ad-admissao_prevista')) {
-      await api('/api/rh/admissoes/' + id, { method: 'PUT', body: rhCorpoCard(etapaAtual) });
-    }
+    if ($('#ad-admissao_prevista')) await rhGravarCard(id, etapaAtual, colabId);
   } catch (e) { return modalError(e.message); }
   try {
     await api(`/api/rh/admissoes/${id}/mover`, { method: 'POST', body: { etapa } });
@@ -9254,10 +9322,14 @@ function rhFormMinuta() {
 }
 
 // ---------------- Novo colaborador (agora nasce no RH) ----------------
-function rhFormNovoColaborador() {
-  openModal('Novo colaborador', `
-    <p style="font-size:13.5px;color:var(--ink-2)">O cadastro da pessoa começa aqui. Viáticos e as
-    demais telas passam a usar este mesmo registro — o resto da ficha se completa depois.</p>
+// `comAdmissao` distingue de onde se veio: pelo Quadro entra candidato (passa
+// pelas seis etapas); pela lista de Colaboradores entra quem JÁ é funcionário e
+// está sendo cadastrado depois do fato. É a mesma tela, com o padrão invertido.
+function rhFormNovoColaborador(comAdmissao = true) {
+  openModal(comAdmissao ? 'Novo candidato' : 'Novo colaborador', `
+    <p style="font-size:13.5px;color:var(--ink-2)">${comAdmissao
+      ? 'O candidato entra no <strong>Quadro de admissão</strong> e só passa a colaborador quando o contrato for assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos. Os dados do contrato são preenchidos na etapa <strong>Documentação</strong>.'
+      : 'Cadastro direto de quem <strong>já é funcionário</strong>: entra ativo, sem passar pelo Quadro de admissão. Para uma contratação nova, use <strong>+ Novo candidato</strong> no Quadro.'}</p>
     ${fld('nc-name', 'Nome completo *', 'text', '')}
     <div class="form-row">
       ${fldSel('nc-sexo', 'Sexo', RH_SEXO, '')}
@@ -9277,7 +9349,8 @@ function rhFormNovoColaborador() {
       ${fld('nc-email_corporativo', 'E-mail corporativo', 'email', '')}
       ${fld('nc-celular', 'Celular', 'text', '')}
     </div>
-    <label class="check-chip"><input type="checkbox" id="nc-abrir" checked> Abrir o processo de admissão no quadro</label>
+    <label class="check-chip"><input type="checkbox" id="nc-abrir" ${comAdmissao ? 'checked' : ''}> Passar pelo Quadro de admissão
+      <span style="color:var(--muted);font-weight:400">— desmarque só para cadastrar alguém que já é funcionário</span></label>
     <div class="rh-nota" id="nc-minuta"></div>`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Cadastrar', cls: 'primary', onClick: async (ev) => {
@@ -9294,7 +9367,7 @@ function rhFormNovoColaborador() {
         try {
           const r = await api('/api/rh/colaboradores', { method: 'POST', body });
           closeModal();
-          toast(r.admissao_id ? 'Colaborador cadastrado e processo aberto no quadro.' : 'Colaborador cadastrado.');
+          toast(r.admissao_id ? 'Candidato no quadro, na etapa Carta Oferta.' : 'Colaborador cadastrado.');
           if (r.admissao_id) { RH_ABA = 'quadro'; renderRH(); } else abrirFichaRH(r.id, 'ident');
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Cadastrar'; } }
      }}], { wide: true });
@@ -9393,7 +9466,10 @@ async function rhPessoas(c) {
       ${rhCard('Em experiência', nExp, 'contrato ainda no prazo', nExp ? 'aviso' : '')}
       ${rhCard('Sem vínculo', nSemVinculo, 'ficha sem contrato registrado', nSemVinculo ? 'aviso' : '')}
       ${rhCard('Documentação pendente', nPend, 'falta documento obrigatório', nPend ? 'alerta' : 'ok')}
-    </div>`;
+    </div>
+    <div class="rh-nota">Candidatos em admissão não aparecem nesta lista — eles vivem no
+      <button class="rh-link" data-secao="quadro">Quadro de admissão</button> até o contrato ser assinado.</div>`;
+    rhLigarAbas();   // o link acima também troca de aba
 
     $('#tbl').innerHTML = `
       <colgroup><col class="c-id"><col class="c-nome"><col class="c-cargo"><col class="c-dep">
@@ -9434,7 +9510,8 @@ async function rhPessoas(c) {
     saveFilters(FKEY, {}); draw();
   };
   rhLigarAbas();
-  $('#btn-novo').onclick = rhFormNovoColaborador;
+  // Pela lista entra quem já é funcionário; candidato entra pelo Quadro.
+  $('#btn-novo').onclick = () => rhFormNovoColaborador(false);
   draw();
 }
 
@@ -9452,6 +9529,9 @@ async function abrirFichaRH(id, aba) {
 
   const col = d.colaborador, pode = d.pode;
   const vinculo = d.vinculos.find(v => !v.desligamento) || d.vinculos[0] || null;
+  // Candidato = ainda sem vínculo e inativo. É a mesma ficha; o que muda é de
+  // onde se veio (o Quadro) e para onde o "voltar" leva.
+  const candidato = col.ativo === false && !vinculo;
   const abas = [
     { k: 'ident', t: 'Identificação' },
     { k: 'docs', t: 'Documentos' },
@@ -9466,9 +9546,9 @@ async function abrirFichaRH(id, aba) {
   c.innerHTML = `
     <div class="rh-ficha">
       <div class="rh-ficha-topo">
-        <button class="btn sm" id="rh-voltar">← Colaboradores</button>
+        <button class="btn sm" id="rh-voltar">${candidato ? '← Quadro de admissão' : '← Colaboradores'}</button>
         <div class="rh-ficha-nome">
-          <h3>${esc(col.name)}</h3>
+          <h3>${esc(col.name)}${candidato ? ' <span class="rh-cand" title="Vira colaborador quando o contrato for assinado">candidato em admissão</span>' : ''}</h3>
           <span>${esc(rhTxt(vinculo && vinculo.cargo))}${vinculo && vinculo.nivel ? ' · ' + esc({ junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior' }[vinculo.nivel] || vinculo.nivel) : ''}
             ${vinculo && vinculo.departamento ? ' · ' + esc(vinculo.departamento) : ''}</span>
         </div>
@@ -9483,7 +9563,7 @@ async function abrirFichaRH(id, aba) {
       <div class="rh-painel" id="rh-painel"></div>
     </div>`;
 
-  $('#rh-voltar').onclick = () => renderRH();
+  $('#rh-voltar').onclick = () => { RH_ABA = candidato ? 'quadro' : 'pessoas'; renderRH(); };
   c.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => abrirFichaRH(id, b.dataset.aba));
 
   const painel = $('#rh-painel');
@@ -9818,10 +9898,15 @@ function rhAbaVinculo(painel, d, id) {
   const historico = d.vinculos.filter(v => v.desligamento);
 
   if (!aberto) {
+    // Candidato não registra vínculo à mão: ele nasce sozinho quando o card sai
+    // da etapa Contrato, com a admissão prevista e o salário do processo.
+    const candidato = d.colaborador && d.colaborador.ativo === false;
     painel.innerHTML = `<div class="rh-vazio">
       <p><strong>Nenhum vínculo aberto.</strong> O vínculo é o contrato de trabalho: guarda a admissão, o cargo,
       o regime e a remuneração. É dele que saem as datas de experiência e a minuta certa na emissão.</p>
-      ${ed ? '<button class="btn primary" id="rh-novo-vinculo">Registrar admissão</button>' : ''}
+      ${candidato
+        ? '<p>Esta pessoa está em <strong>admissão</strong>: o vínculo será criado automaticamente quando o contrato for registrado como assinado no Quadro.</p>'
+        : (ed ? '<button class="btn primary" id="rh-novo-vinculo">Registrar admissão</button>' : '')}
     </div>` + rhHistoricoVinculos(historico, rem);
     const b = painel.querySelector('#rh-novo-vinculo');
     if (b) b.onclick = () => rhFormVinculo(id, null, d);

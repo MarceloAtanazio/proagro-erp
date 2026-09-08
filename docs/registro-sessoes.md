@@ -2832,3 +2832,73 @@ Tudo medido nas coordenadas reais dos comandos de desenho, não a olho: o vão t
 11,33 mm **uniforme nas 12 seções**, e os vãos entre palavras são 1,481 mm em toda a linha da
 data. O contrato segue com 8 páginas e 368 KB, e as três suítes (ficha, Kanban, cinco minutas)
 continuam passando.
+
+---
+
+## 2026-09-08 — Candidato e colaborador viram estados distintos
+
+**Pedido:** a pessoa só passa a colaborador depois da etapa Contrato; tudo o que o contrato pede
+tem de ser preenchido antes, na Documentação, e ir junto para a ficha quando a assinatura for
+registrada. E poder acrescentar mais candidatos ao processo.
+
+### O estado usa o flag que já existia
+
+Candidato entra com **`ativo = false`**. Não é coluna nova nem tabela nova: é o mesmo flag que
+Viáticos, o autosserviço e Suprimentos já consultam para montar suas listas. Com isso o candidato
+fica fora dessas telas **sem que nenhuma delas precise saber o que é uma admissão**.
+
+Ao **sair da etapa Contrato** — o momento em que o contrato está assinado e o vínculo nasce — um
+`UPDATE erp_colaboradores SET ativo=true` completa a passagem. Nada é copiado de lugar nenhum: a
+ficha preenchida na Documentação **é a mesma linha**, só deixa de estar escondida.
+
+A lista de Colaboradores ganhou `WHERE c.ativo = true OR v.id IS NOT NULL`: candidato (inativo e
+sem vínculo) não aparece; ex-funcionário desativado continua, porque tem vínculo e é histórico.
+
+### A Documentação passou a cobrar os DADOS, não só os anexos
+
+Era a lacuna que fazia o contrato sair com campo em branco: a etapa checava os 11 documentos e
+deixava passar uma ficha sem CPF. Agora ela também resolve o **mapa da minuta** daquela pessoa
+contra a ficha e lista o que está vazio, nomeando o campo — *"Dados do contrato em branco: CPF,
+CTPS — série"*.
+
+Quando ainda não há minuta cadastrada para a combinação, cobra-se um núcleo (`RH_NUCLEO_CONTRATO`)
+que toda minuta da empresa pede. Melhor cobrar isso do que deixar a etapa passar em branco e
+descobrir na emissão.
+
+O que **não** é cobrado: assinatura (preenchida na hora de emitir), textos fixos da minuta e a
+razão social da empregadora — nenhum deles vem da ficha.
+
+### Os campos entraram no card
+
+A etapa Documentação agora mostra, dentro do próprio card, os campos que o contrato vai pedir:
+identificação, CPF/RG/CTPS/PIS, endereço com busca por CEP e contato. Os ids são os mesmos da
+ficha (`rh-…`), então **as mesmas máscaras e a mesma busca de CEP** valem ali sem código novo.
+
+Salvar o card manda dois PUTs: o do processo e o da ficha — endpoints que já existiam, sobre a
+mesma linha.
+
+### Acrescentar candidatos
+
+**+ Novo candidato** ficou no topo do Quadro, junto da regra escrita onde ela se aplica. O mesmo
+formulário serve aos dois caminhos, com o padrão invertido conforme a origem:
+
+- **pelo Quadro** → passa pelas seis etapas (candidato);
+- **pela lista de Colaboradores** → entra ativo, direto, para quem **já é funcionário** e está
+  sendo cadastrado depois do fato.
+
+Na ficha de quem está em admissão há um selo *"candidato em admissão"* em âmbar — não é erro, é
+etapa — e o botão de voltar leva ao Quadro, não à lista. A aba Vínculo explica que ele nasce
+sozinho ao registrar a assinatura, em vez de oferecer o botão de criar à mão.
+
+### Verificação
+
+Duas asserções novas na suíte do Kanban, além das que já existiam:
+
+- **anexos completos mas CPF em branco ainda barra**, e o aviso **nomeia o campo** — a trava só
+  vale se disser o que falta;
+- **o candidato vira colaborador ao sair do Contrato** (`ativo` de `false` para `true`), com o
+  stub aplicando o UPDATE de verdade.
+
+Na tela, com o código real extraído de `app.js`: o card da Documentação traz os campos preenchidos,
+o CPF falso é marcado, o CEP `01310-930` preenche Avenida Paulista / São Paulo / SP, o selo aparece
+e some conforme `ativo`, e o botão de voltar troca de destino. As três suítes seguem passando.
