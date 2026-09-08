@@ -89,5 +89,5 @@ slots.forEach((s, i) => {
 const novo = mesclar(xml, slots, MAPA.map(m => m.valor));
 doc.dados = Buffer.from(novo, 'utf8');
 fs.writeFileSync(saida, zipEscrever(entradas));
-fs.writeFileSync(path.join(SP, 'mapa-slots.json'), JSON.stringify({ ficha, mapa: MAPA }, null, 2));
+// (o mapa fica no topo deste arquivo; nada de despejo em disco ao lado do codigo)
 console.log('\ngerado: ' + path.basename(saida) + '  (' + (fs.statSync(saida).size / 1024).toFixed(1) + ' KB)');
