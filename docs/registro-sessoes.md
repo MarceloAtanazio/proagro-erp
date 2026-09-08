@@ -2124,3 +2124,98 @@ unificação não perdeu nenhuma regra.
 
 **Fora de escopo, de propósito:** Contas a Receber continua com "Exportar CSV" enquanto Pagar
 tem o "Exportar" com PDF e Excel. É diferença de funcionalidade, não de estrutura.
+
+---
+
+## 2026-09-04 — Desenho da seção de Recursos Humanos (só desenho, nada implementado)
+
+**Pedido:** uma seção "Recursos Humanos" com a ficha histórica e as ocorrências dos funcionários,
+emissão de contratos de admissão a partir das minutas já existentes, e o arquivamento de toda a
+documentação do colaborador. "Me ajude a desenhar essa seção para que ela fique extremamente
+completa."
+
+O desenho completo está em [`docs/rh-desenho.md`](rh-desenho.md); versão navegável em
+https://claude.ai/code/artifact/eebda877-877c-42cb-82d6-2e08401c0319
+
+### O levantamento antes do desenho
+
+Nada foi suposto. Consultei o Postgres de produção e o acervo em
+`OneDrive/Marcelo/Recursos Humanos/CLT/`:
+
+- `erp_colaboradores` tem 11 linhas e 26 colunas — **todas de Viáticos** (cidade-base, veículo,
+  CNH, seguro). **Zero campos de RH.**
+- 5 cargos no cadastro; 9 dos 11 com `usuario_id` ligado a um usuário do ERP.
+- `erp_attachments` já é genérica e já guarda 22 anexos de colaborador (`colab_cnh`,
+  `colab_veiculo`, `colab_seguro`), 8,6 MB.
+- 142 títulos de folha em `erp_payables` — a folha já passa por Contas a Pagar.
+- O acervo tem uma pasta por funcionário, com `Documentos Assinados`, `Documentos do Veículo`, e
+  as pastas `97_Contratos`, `98_ASOS`, `99_Ex-Funcionários`.
+- 10 descrições de cargo em `.docx`.
+
+### As duas decisões de modelagem, e o que as sustenta
+
+1. **Vínculo é tabela separada da pessoa.** O acervo prova: *todo* funcionário tem um
+   "Distrato — <razão social> LTDA" na pasta. Foram todos PJ antes de virar CLT. Uma pessoa,
+   dois vínculos.
+2. **O evento é a fonte, a coluna é cache.** Se salário for coluna sobrescrita, o reajuste apaga o
+   anterior — e aí não existe "ficha histórico", existe ficha atual. `salario_atual` e
+   `cargo_atual` ficam no vínculo para a listagem ser rápida, mas quem escreve neles é o evento.
+3. **Não criar `erp_funcionarios`.** `erp_colaboradores` já é referenciada por Viáticos, pelos
+   anexos e por 9 usuários. Dois cadastros da mesma pessoa divergem.
+
+### A descoberta que decidiu o motor de emissão
+
+A `Carta_Oferta_Tecnico_Campo_Proagro.docx` **já traz os campos variáveis entre colchetes** —
+`[NOME COMPLETO DO(A) CANDIDATO(A)]`, `[VALOR DA REMUNERAÇÃO MENSAL]`,
+`[DATA DE ADMISSÃO PREVISTA]`, `[CIDADE/REGIÃO DE ATUAÇÃO]`, `[NOME DO(A) GESTOR(A) IMEDIATO(A)]`.
+As minutas já são um formulário; só não sabem. O motor lê o modelo, detecta os colchetes e mescla
+com a ficha — sem reescrever minuta nenhuma dentro do ERP.
+
+Comparando `Contrato de Trabalho - Empregado Regular` com `- Empregado de Confiança`, ficou claro
+que não são versões: o regular invoca o **art. 62, I da CLT** (jornada externa) e trata home office
+como eventual; o de confiança invoca o **art. 62, II**, impõe regime híbrido e acrescenta cláusulas
+de instrumentos de trabalho e reversibilidade. Amarrando regime ao cargo, a minuta certa vem
+pré-selecionada.
+
+### Dois defeitos achados em contratos reais já assinados
+
+Lendo as minutas para montar o mapeamento de campos:
+
+- `<NOME>, brasileira, solteiro, portador(a) do RG …` — concordância de gênero trocada num
+  contrato de empregado **homem**.
+- `… transporte, refeição, seguro de vista, assistência …` — "seguro de **vista**" no lugar de
+  "seguro de **vida**".
+
+Nenhum invalida o contrato, mas os dois são exatamente o que o preenchimento manual produz e um
+motor de mesclagem não produz. É o argumento mais forte a favor da fase 3.
+
+### O detalhe técnico que parece trivial e não é
+
+Preencher `.docx` mantendo formatação = editar `word/document.xml` dentro do zip. O Word quebra
+texto em *runs*, e `[NOME COMPLETO DO(A) CANDIDATO(A)]` pode estar fatiado em cinco pedaços no XML
+— um `replace` ingênuo não acha nada e o documento sai com o colchete intacto. Exige normalizar os
+runs de cada parágrafo antes de substituir. É por isso que a emissão é a fase 3, não a 1.
+
+### Escopo desenhado
+
+Cinco telas (Painel de RH, Colaboradores, Ficha com 7 abas, Emissão de documentos, Cargos e
+minutas), oito tabelas (uma existente + seis novas + os anexos existentes), ~80 campos de ficha
+transcritos da `Ficha de Cadastro de Funcionários.xlsx` que a empresa já usa, 15+ tipos de
+ocorrência em uma tabela só, checklist de documentos obrigatórios, alertas de vencimento no motor
+que já existe para CNH/CRLV/apólice, e seis permissões novas (`rh.ver`, `rh.sensivel`,
+`rh.remuneracao`, `rh.editar`, `rh.emitir`, `rh.desligar`) porque "pode ver a página" não basta
+para CPF, salário e ASO.
+
+Plano em 4 fases, ordenadas por dor: base (ficha+dossiê+checklist) → memória (eventos+alertas) →
+motor (emissão) → alcance (cargos e integrações).
+
+### Cinco pendências que dependem do usuário
+
+1. As minutas **em branco** dos contratos de trabalho (só tenho versões preenchidas).
+2. O que fazer com os dois erros nos contratos já assinados.
+3. Quais documentos são obrigatórios na admissão (a regra do checklist).
+4. O mapa cargo → regime (confiança ou regular) para os 10 cargos.
+5. `bytea` no Postgres ou Supabase Storage para o dossiê — 8,6 MB hoje, outra ordem de grandeza
+   depois.
+
+**Nada foi implementado.** Este commit contém apenas documentação.
