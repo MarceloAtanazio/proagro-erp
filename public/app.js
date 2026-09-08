@@ -8764,6 +8764,14 @@ async function rhAbrirCard(id) {
       ${fldSel('ad-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, a.modelo_trabalho || 'presencial')}
       ${fld('ad-admissao_prevista', 'Admissão prevista', 'date', a.admissao_prevista ? String(a.admissao_prevista).slice(0, 10) : '')}
       ${d.pode.remuneracao ? fld('ad-salario_previsto', 'Salário previsto (R$)', 'number', a.salario_previsto == null ? '' : a.salario_previsto, 'step="0.01" min="0"') : ''}
+      ${d.pode.remuneracao ? fld('ad-vr_dia', 'Vale-refeição/dia (R$)', 'number', a.vr_dia == null ? '' : a.vr_dia, 'step="0.01" min="0"') : ''}
+    </div>
+    <!-- Só a jornada híbrida e o home office pedem estes três, e as minutas
+         delas têm realce para cada um. Na presencial não há onde encaixá-los. -->
+    <div class="rh-grid" id="ad-remoto" ${['hibrido', 'home_office'].includes(a.modelo_trabalho || '') ? '' : 'hidden'}>
+      ${fld('ad-dias_presenciais', 'Dias presenciais por semana', 'number', a.dias_presenciais == null ? '' : a.dias_presenciais, 'min="0" max="7"')}
+      ${fld('ad-dias_home_office', 'Dias em home office por semana', 'number', a.dias_home_office == null ? '' : a.dias_home_office, 'min="0" max="7"')}
+      ${d.pode.remuneracao ? fld('ad-home_office_dia', 'Ajuda de custo home office/dia (R$)', 'number', a.home_office_dia == null ? '' : a.home_office_dia, 'step="0.01" min="0"') : ''}
     </div>
     <div class="rh-minuta" id="ad-minuta-alvo"></div></div>
 
@@ -8787,8 +8795,12 @@ async function rhAbrirCard(id) {
 
   const sincMinuta = () => {
     const alvo = $('#ad-minuta-alvo'); if (!alvo) return;
+    const modelo = $('#ad-modelo_trabalho').value;
     alvo.innerHTML = 'Minuta correspondente: <strong>' +
-      esc(rhMinutaDe($('#ad-regime').value, $('#ad-modelo_trabalho').value)) + '</strong>';
+      esc(rhMinutaDe($('#ad-regime').value, modelo)) + '</strong>';
+    // Dias e ajuda de custo só existem no híbrido e no home office.
+    const remoto = $('#ad-remoto');
+    if (remoto) remoto.hidden = !['hibrido', 'home_office'].includes(modelo);
   };
   ['ad-regime', 'ad-modelo_trabalho'].forEach(x => { const e = $('#' + x); if (e) e.onchange = sincMinuta; });
   sincMinuta();
@@ -8798,7 +8810,8 @@ function rhCorpoCard(etapa) {
   const body = {};
   (RH_ETAPA_CAMPOS[etapa] || []).forEach(f => { const e = $('#ad-' + f.c); if (e) body[f.c] = e.value; });
   ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'regime', 'modelo_trabalho',
-   'admissao_prevista', 'salario_previsto'].forEach(k => { const e = $('#ad-' + k); if (e) body[k] = e.value; });
+   'admissao_prevista', 'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office',
+   'home_office_dia'].forEach(k => { const e = $('#ad-' + k); if (e) body[k] = e.value; });
   return body;
 }
 
@@ -8861,15 +8874,17 @@ async function rhPreviaContrato(id) {
   let p;
   try { p = await api(`/api/rh/admissoes/${id}/contrato/previa`); } catch (e) { return toast(e.message); }
   openModal('O que será preenchido no contrato', `
-    ${p.compativel ? '' : `<div class="rh-nota aviso">A minuta tem <strong>${p.slots_da_minuta.length}</strong>
-      trechos em realce e o preenchimento espera <strong>${p.valores.length}</strong>. Emitir assim trocaria
-      os campos de lugar — a emissão vai recusar.</div>`}
+    ${!p.minuta ? '<div class="rh-nota aviso">Não há minuta cadastrada para esta combinação de regime e modelo de trabalho.</div>' : ''}
+    ${!p.minuta || p.pronta ? '' : `<div class="rh-nota aviso"><strong>${p.semCampo.length} trecho(s) em realce sem campo definido:</strong>
+      ${esc(p.semCampo.join(', '))}. Abra <strong>Minutas → Mapa</strong> e diga o que entra em cada um —
+      a emissão recusa até lá.</div>`}
     ${p.vazios.length ? `<div class="rh-nota aviso"><strong>Vazios na ficha:</strong> ${esc(p.vazios.join(', '))}.
       Vão sair em branco no contrato.</div>` : '<div class="rh-nota">✔ Todos os campos têm valor.</div>'}
     <div class="table-wrap"><table class="tbl-rh-dep">
-      <thead><tr><th style="width:38px">#</th><th>Campo</th><th>Vai sair como</th></tr></thead>
+      <thead><tr><th style="width:38px">#</th><th>Trecho na minuta</th><th>Campo</th><th>Vai sair como</th></tr></thead>
       <tbody>${p.valores.map(v => `<tr>
-        <td>${v.n}</td><td>${esc(v.campo)}</td>
+        <td>${v.n}</td><td><code>${esc(v.texto)}</code></td>
+        <td>${v.rotulo ? esc(v.rotulo) : '<span class="conc-nao">— sem campo —</span>'}</td>
         <td>${v.valor ? esc(v.valor) : '<span class="conc-nao">— vazio —</span>'}</td></tr>`).join('')}</tbody>
     </table></div>`,
     [{ label: 'Fechar', onClick: () => rhAbrirCard(id) }], { xwide: true });
@@ -9015,16 +9030,65 @@ async function rhMinutas(c) {
         <td>${esc(m.nome)}</td>
         <td>${esc((RH_REGIME.find(x => x.v === m.regime) || {}).t || m.regime || '—')}</td>
         <td>${esc((RH_MODELO_TRAB.find(x => x.v === m.modelo_trabalho) || {}).t || m.modelo_trabalho || '—')}</td>
-        <td>${m.n_slots} realces</td>
+        <td>${m.n_slots} realces${m.pendentes ? ` · <span class="conc-nao" title="trechos sem campo definido — a emissão recusa">${m.pendentes} sem campo</span>` : ''}</td>
         <td>${esc(m.file_name)} <span class="rh-sub">${fmtSize(m.byte_size)}</span></td>
         <td>${m.ativa ? '<span class="badge ok">Ativa</span>' : '<span class="badge pend">Aposentada</span>'}</td>
-        <td class="actions">${m.ativa ? `<button class="btn-ic perigo" data-del-min="${m.id}" title="Aposentar" aria-label="Aposentar">🗑</button>` : ''}</td>
+        <td class="actions"><button class="btn sm" data-mapa="${m.id}">Mapa</button>${m.ativa ? ` <button class="btn-ic perigo" data-del-min="${m.id}" title="Aposentar" aria-label="Aposentar">🗑</button>` : ''}</td>
       </tr>`).join('') || '<tr><td colspan="7"><div class="empty">Nenhuma minuta cadastrada.</div></td></tr>'}</tbody>
     </table></div>`;
   rhLigarAbas();
   $('#rh-add-minuta').onclick = rhFormMinuta;
+  c.querySelectorAll('[data-mapa]').forEach(b => b.onclick = () => rhFormMapaMinuta(Number(b.dataset.mapa)));
   c.querySelectorAll('[data-del-min]').forEach(b => b.onclick = () =>
     confirmDelete('minuta', '/api/rh/minutas/' + b.dataset.delMin, renderRH));
+}
+
+// O mapa liga cada trecho realçado da minuta a um campo. Existe porque cada
+// modelo tem uma quantidade diferente de realces — 18 na presencial, 21 na
+// híbrida — e alguns trechos são texto da empresa, não dado de pessoa.
+async function rhFormMapaMinuta(id) {
+  let d;
+  try { d = await api(`/api/rh/minutas/${id}/mapa`); } catch (e) { return toast(e.message); }
+  const opcoes = [{ v: '', t: '— escolha o campo —' }, ...d.campos.map(c => ({ v: c.cod, t: c.nome }))];
+  const linha = s => `<tr data-slot="${s.n}">
+    <td class="id-cell">${s.n}</td>
+    <td><code>${esc(s.texto)}</code></td>
+    <td>${fldSel('mp-' + s.n, '', opcoes, s.campo || '')}</td>
+    <td><input id="mf-${s.n}" value="${esc(s.valor_fixo || '')}" placeholder="texto fixo"
+         ${s.campo === 'fixo' ? '' : 'disabled'}></td></tr>`;
+  const pend = d.mapa.filter(s => !s.campo).length;
+
+  openModal(`Mapa — ${d.nome}`, `
+    ${d.desatualizado ? '<div class="rh-nota aviso">O arquivo desta minuta tem um número de realces diferente do mapa gravado. O mapa abaixo foi resugerido a partir do arquivo.</div>' : ''}
+    ${pend ? `<div class="rh-nota aviso"><strong>${pend} trecho(s) sem campo.</strong> Enquanto houver algum, a emissão recusa — preencher fora de ordem trocaria os campos de lugar.</div>`
+           : '<div class="rh-nota">✔ Todos os trechos têm campo. Esta minuta pode ser emitida.</div>'}
+    <p style="font-size:13px;color:var(--ink-2)">Escolha <strong>“texto fixo”</strong> para trechos que
+    são texto da empresa (o nome de uma política, por exemplo) e digite o valor ao lado — ele vale
+    para toda emissão desta minuta. <strong>“deixar como está”</strong> mantém o texto do modelo.</p>
+    <div class="table-wrap"><table class="tbl-rh-dep tbl-mapa">
+      <thead><tr><th style="width:40px">#</th><th>Trecho realçado</th><th>Campo</th><th>Texto fixo</th></tr></thead>
+      <tbody>${d.mapa.map(linha).join('')}</tbody></table></div>`,
+    [{ label: 'Fechar', onClick: closeModal },
+     { label: 'Salvar mapa', cls: 'primary', onClick: async (ev) => {
+        const mapa = d.mapa.map(s => ({
+          n: s.n, texto: s.texto, nRuns: s.nRuns,
+          campo: $('#mp-' + s.n).value || null,
+          valor_fixo: $('#mf-' + s.n).value
+        }));
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+        try {
+          const r = await api(`/api/rh/minutas/${id}/mapa`, { method: 'PUT', body: { mapa } });
+          closeModal();
+          toast(r.pendentes ? `Mapa salvo — ainda faltam ${r.pendentes} trecho(s).` : 'Mapa salvo. A minuta está pronta para emitir.');
+          renderRH();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Salvar mapa'; } }
+     }}], { xwide: true });
+
+  // O campo de texto fixo só faz sentido quando o slot é "fixo".
+  d.mapa.forEach(s => {
+    const sel = $('#mp-' + s.n), txt = $('#mf-' + s.n);
+    sel.onchange = () => { txt.disabled = sel.value !== 'fixo'; if (txt.disabled) txt.value = ''; };
+  });
 }
 
 function rhFormMinuta() {

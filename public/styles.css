@@ -1070,3 +1070,12 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* O município de nascimento fica travado até a UF ser escolhida: sem o estado
    não há lista, e um select vazio e clicável só gera dúvida. */
 .rh-grid select:disabled { background: #F3F6F4; color: var(--muted); cursor: not-allowed; }
+
+/* Tabela do mapa da minuta: o trecho realçado precisa ser lido literalmente,
+   por isso vai em fonte monoespaçada, e o select ocupa a coluna inteira. */
+.tbl-mapa code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px;
+  background: #F1F5F2; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.tbl-mapa .field { margin: 0; }
+.tbl-mapa select, .tbl-mapa input { width: 100%; }
+.tbl-mapa td { vertical-align: middle; }
+.tbl-mapa input:disabled { background: #F3F6F4; color: var(--muted); }

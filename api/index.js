@@ -2291,7 +2291,7 @@ app.delete('/api/rh/dependentes/:id', requireAuth, requireEdit('rh'), h(async (r
 // RH — processo de admissão (Kanban), minutas e emissão de contrato
 // Migração: 2026-09-08-rh-fase2-admissao.sql
 // ============================================================
-const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, brl: docxBrl, docxParagrafos } = require('../src/docx-merge');
+const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, inteiroEmTexto, brl: docxBrl, docxParagrafos } = require('../src/docx-merge');
 
 // As seis etapas, na ordem que a empresa segue. `exige` é o que precisa estar
 // resolvido para SAIR da etapa — é isso que impede o processo de avançar com
@@ -2340,6 +2340,7 @@ function rhPendencias(adm, colab, checklist) {
 }
 
 const RH_ADM_CAMPOS = ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'centro_custo',
+  'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia',
   'regime', 'modelo_trabalho', 'salario_previsto', 'admissao_prevista', 'gestor_id', 'responsavel_id',
   'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para', 'exame_realizado_em', 'exame_resultado',
   'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em', 'acessos_concluidos_em',
@@ -2347,7 +2348,8 @@ const RH_ADM_CAMPOS = ['cargo_pretendido', 'nivel_pretendido', 'departamento', '
 const RH_ADM_DATA = ['admissao_prevista', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
   'exame_realizado_em', 'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em',
   'acessos_concluidos_em', 'onboarding_iniciado_em', 'onboarding_concluido_em'];
-const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id'];
+const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id',
+  'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia'];
 
 // Carrega a admissão com o colaborador e o checklist já resolvidos — as três
 // coisas que qualquer decisão sobre o card precisa.
@@ -2556,7 +2558,11 @@ app.post('/api/rh/admissoes/:id/cancelar', requireAuth, requireEdit('rh'), h(asy
 app.get('/api/rh/minutas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   res.json(await query(
     `SELECT id, nome, regime, modelo_trabalho, file_name, byte_size, ativa, created_at,
-            jsonb_array_length(slots) AS n_slots
+            jsonb_array_length(slots) AS n_slots,
+            -- Trechos sem campo definido: é o que impede a minuta de emitir, e
+            -- a lista mostra isso sem obrigar a abrir o mapa de cada uma.
+            (SELECT count(*)::int FROM jsonb_array_elements(slots) s
+              WHERE s->>'campo' IS NULL) AS pendentes
        FROM erp_rh_minutas ORDER BY ativa DESC, nome`));
 }));
 
@@ -2589,12 +2595,54 @@ app.post('/api/rh/minutas', requireAuth, requireEdit('rh'), h(async (req, res) =
   if (regime && modelo) {
     await query('UPDATE erp_rh_minutas SET ativa=false WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2', [regime, modelo]);
   }
+  // O mapa nasce sugerido pelo texto de cada realce e fica gravado com a
+  // minuta. Cada modelo tem uma quantidade diferente de trechos — 18 na
+  // presencial, 21 na híbrida — então o mapa é por minuta, não global.
+  const mapa = rhSugerirMapa(slots);
   const ins = await query(
     `INSERT INTO erp_rh_minutas (nome, regime, modelo_trabalho, file_name, byte_size, data, slots, created_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [nome, regime, modelo, fileName, buf.length, buf,
-     JSON.stringify(slots.map(s => ({ n: s.n, texto: s.texto, nRuns: s.nRuns }))), req.user.id]);
-  res.json({ ok: true, id: ins[0].id, slots: slots.length });
+    [nome, regime, modelo, fileName, buf.length, buf, JSON.stringify(mapa), req.user.id]);
+  res.json({ ok: true, id: ins[0].id, slots: slots.length,
+             reconhecidos: mapa.filter(s => s.campo).length,
+             pendentes: mapa.filter(s => !s.campo).map(s => `#${s.n} “${s.texto}”`) });
+}));
+
+// O mapa da minuta: quais trechos realçados existem e a que campo cada um
+// corresponde. É aqui que se corrige o que a sugestão automática errou.
+app.get('/api/rh/minutas/:id/mapa', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const r = await query('SELECT id, nome, file_name, slots, data FROM erp_rh_minutas WHERE id=$1', [Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Minuta não encontrada.' });
+  const m = r[0];
+  // Confere o mapa contra o ARQUIVO: se a minuta foi trocada, o mapa gravado
+  // pode ter ficado com um número de slots diferente do documento.
+  let slotsReais = [];
+  try {
+    const doc = zipLer(m.data).find(e => e.nome === 'word/document.xml');
+    slotsReais = doc ? acharSlots(doc.dados.toString('utf8')) : [];
+  } catch { slotsReais = []; }
+  const mapa = Array.isArray(m.slots) ? m.slots : [];
+  res.json({
+    id: m.id, nome: m.nome, file_name: m.file_name,
+    mapa: mapa.length === slotsReais.length ? mapa : rhSugerirMapa(slotsReais),
+    campos: RH_CAMPOS_MINUTA.map(c => ({ cod: c.cod, nome: c.nome })),
+    desatualizado: mapa.length !== slotsReais.length
+  });
+}));
+
+app.put('/api/rh/minutas/:id/mapa', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const r = await query('SELECT slots FROM erp_rh_minutas WHERE id=$1', [Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Minuta não encontrada.' });
+  const entrada = Array.isArray(req.body.mapa) ? req.body.mapa : null;
+  if (!entrada) return res.status(400).json({ error: 'Mapa inválido.' });
+  // Lista fechada de campos: o corpo não escolhe função para rodar.
+  const mapa = entrada.map(s => ({
+    n: Number(s.n), texto: String(s.texto || ''), nRuns: Number(s.nRuns) || 1,
+    campo: RH_CAMPO_POR_COD[s.campo] ? s.campo : null,
+    valor_fixo: s.campo === 'fixo' ? (sanitize(s.valor_fixo) || '') : null
+  }));
+  await query('UPDATE erp_rh_minutas SET slots=$1 WHERE id=$2', [JSON.stringify(mapa), Number(req.params.id)]);
+  res.json({ ok: true, pendentes: mapa.filter(s => !s.campo).length });
 }));
 
 app.delete('/api/rh/minutas/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
@@ -2603,96 +2651,192 @@ app.delete('/api/rh/minutas/:id', requireAuth, requireEdit('rh'), h(async (req, 
 }));
 
 // ---- Emissão do contrato ----
+// ---------------- Mapa de preenchimento das minutas ----------------
+//
+// Cada minuta tem um número DIFERENTE de trechos realçados: 18 na presencial,
+// 20 na externa e na de confiança, 21 na híbrida e na de home office, 6 na
+// carta oferta. Um mapa fixo por ordem só servia para uma delas — por isso o
+// mapa vive na própria minuta, um campo por slot.
+//
+// Além dos dados do funcionário há trechos que são texto da EMPRESA ("inserir
+// nome da política expressa sobre saúde e segurança do trabalho"), que não vêm
+// de ficha nenhuma: esses recebem um valor fixo definido no cadastro da minuta.
+
 const RH_MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
                   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
-// Monta os 18 valores a partir da ficha + do processo. A ORDEM é o identificador:
-// dois slots têm o mesmo texto na minuta e só a posição os distingue.
-function rhValoresContrato(colab, adm, assinatura) {
-  const fem = colab.sexo === 'F';
-  const gen = (m, f) => (fem ? f : m);
-  const feminiza = p => String(p || '').replace(/o$/, 'a');
-  const dias = (iso, n) => {
-    const [a, m, d] = String(iso).slice(0, 10).split('-').map(Number);
-    const dt = new Date(Date.UTC(a, m - 1, d + n));
-    return String(dt.getUTCDate()).padStart(2, '0') + '/' +
-           String(dt.getUTCMonth() + 1).padStart(2, '0') + '/' + dt.getUTCFullYear();
-  };
-  const endereco = [
-    [colab.endereco, colab.endereco_numero].filter(Boolean).join(', '),
-    colab.endereco_complemento, colab.bairro,
-    [colab.municipio, colab.uf].filter(Boolean).join('/'),
-    colab.cep ? 'CEP ' + colab.cep : null
-  ].filter(Boolean).join(', ');
-  const cargo = [adm.cargo_pretendido, adm.nivel_pretendido
-    ? ({ junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior' }[adm.nivel_pretendido] || adm.nivel_pretendido)
-    : null].filter(Boolean).join(' ').toUpperCase();
-  const sal = Number(adm.salario_previsto || 0);
-  const [aA, mA, dA] = String(assinatura.data).slice(0, 10).split('-').map(Number);
-  const estadoCivil = colab.estado_civil ? gen(colab.estado_civil, feminiza(colab.estado_civil)) : '';
+const rhNumExtenso = n => (n == null || n === '' ? '' : `${n} (${inteiroEmTexto(Number(n))})`);
 
-  return [
-    { n: 1,  campo: 'nome (qualificação)',         valor: String(colab.name || '').toUpperCase() },
-    { n: 2,  campo: 'nacionalidade',               valor: colab.nacionalidade || gen('brasileiro', 'brasileira') },
-    { n: 3,  campo: 'estado civil',                valor: estadoCivil },
-    { n: 4,  campo: 'RG',                          valor: colab.rg || '' },
-    { n: 5,  campo: 'CPF',                         valor: colab.cpf || '' },
-    { n: 6,  campo: 'endereço completo',           valor: endereco },
-    { n: 7,  campo: 'CTPS nº',                     valor: colab.ctps_numero || '' },
-    { n: 8,  campo: 'CTPS série',                  valor: colab.ctps_serie || '' },
-    { n: 9,  campo: 'cargo',                       valor: cargo },
-    { n: 10, campo: 'fim da experiência (+45d)',   valor: adm.admissao_prevista ? dias(adm.admissao_prevista, 45) : '' },
-    { n: 11, campo: 'fim da prorrogação (+90d)',   valor: adm.admissao_prevista ? dias(adm.admissao_prevista, 90) : '' },
-    { n: 12, campo: 'salário',                     valor: sal ? docxBrl(sal) : '' },
-    { n: 13, campo: 'salário por extenso',         valor: sal ? reaisEmTexto(sal) : '' },
-    { n: 14, campo: 'cidade da assinatura',        valor: assinatura.municipio },
-    { n: 15, campo: 'UF + dia da assinatura',      valor: `${assinatura.uf}, ${String(dA).padStart(2, '0')}` },
-    { n: 16, campo: 'mês da assinatura',           valor: RH_MESES[mA - 1] },
-    { n: 17, campo: 'ano da assinatura',           valor: `${aA}.` },
-    { n: 18, campo: 'nome (folha de assinaturas)', valor: String(colab.name || '').toUpperCase() }
-  ];
+// Catálogo de campos que uma minuta pode pedir. `f` recebe { colab, adm, ass }.
+const RH_CAMPOS_MINUTA = [
+  { cod: 'nome_maiusculo',   nome: 'Nome do empregado (MAIÚSCULAS)', f: c => String(c.colab.name || '').toUpperCase() },
+  { cod: 'nome',             nome: 'Nome do empregado',              f: c => c.colab.name || '' },
+  { cod: 'nacionalidade',    nome: 'Nacionalidade (concordando com o sexo)',
+    f: c => c.colab.nacionalidade || (c.colab.sexo === 'F' ? 'brasileira' : 'brasileiro') },
+  { cod: 'estado_civil',     nome: 'Estado civil (concordando com o sexo)',
+    f: c => (c.colab.estado_civil ? (c.colab.sexo === 'F' ? String(c.colab.estado_civil).replace(/o$/, 'a') : c.colab.estado_civil) : '') },
+  // Formatados aqui e não só no cadastro: contrato com "41412929822" no lugar
+  // do CPF é documento com defeito, mesmo que a ficha tenha sido salva torta.
+  { cod: 'rg',               nome: 'RG',  f: c => rhFormatarRG(c.colab.rg) },
+  { cod: 'cpf',              nome: 'CPF', f: c => rhFormatarCPF(c.colab.cpf) },
+  { cod: 'endereco_completo', nome: 'Endereço completo', f: c => [
+      [c.colab.endereco, c.colab.endereco_numero].filter(Boolean).join(', '),
+      c.colab.endereco_complemento, c.colab.bairro,
+      [c.colab.municipio, c.colab.uf].filter(Boolean).join('/'),
+      c.colab.cep ? 'CEP ' + rhFormatarCEP(c.colab.cep) : null
+    ].filter(Boolean).join(', ') },
+  { cod: 'ctps_numero',      nome: 'CTPS — número', f: c => c.colab.ctps_numero || '' },
+  { cod: 'ctps_serie',       nome: 'CTPS — série',  f: c => c.colab.ctps_serie || '' },
+  { cod: 'pis',              nome: 'PIS/PASEP',     f: c => c.colab.pis || '' },
+  { cod: 'cargo_maiusculo',  nome: 'Cargo (MAIÚSCULAS)', f: c => rhCargoTexto(c.adm).toUpperCase() },
+  { cod: 'cargo',            nome: 'Cargo',              f: c => rhCargoTexto(c.adm) },
+  { cod: 'departamento',     nome: 'Departamento',       f: c => c.adm.departamento || '' },
+  { cod: 'admissao',         nome: 'Data de admissão',   f: c => rhDataBR(c.adm.admissao_prevista) },
+  { cod: 'experiencia_fim',  nome: 'Fim da experiência (admissão + 45 dias)', f: c => rhSomaDiasBR(c.adm.admissao_prevista, 45) },
+  { cod: 'prorrogacao_fim',  nome: 'Fim da prorrogação (admissão + 90 dias)', f: c => rhSomaDiasBR(c.adm.admissao_prevista, 90) },
+  { cod: 'salario',          nome: 'Salário (R$)',            f: c => (c.adm.salario_previsto ? docxBrl(Number(c.adm.salario_previsto)) : '') },
+  { cod: 'salario_extenso',  nome: 'Salário por extenso',     f: c => (c.adm.salario_previsto ? reaisEmTexto(Number(c.adm.salario_previsto)) : '') },
+  { cod: 'vr_dia',           nome: 'Vale-refeição por dia (R$)', f: c => (c.adm.vr_dia ? docxBrl(Number(c.adm.vr_dia)) : '') },
+  { cod: 'home_office_dia',  nome: 'Ajuda de custo home office por dia (R$)', f: c => (c.adm.home_office_dia ? docxBrl(Number(c.adm.home_office_dia)) : '') },
+  { cod: 'home_office_dia_extenso', nome: 'Ajuda de custo por dia, por extenso', f: c => (c.adm.home_office_dia ? reaisEmTexto(Number(c.adm.home_office_dia)) : '') },
+  { cod: 'dias_presenciais_extenso', nome: 'Dias presenciais por semana — "3 (três)"', f: c => rhNumExtenso(c.adm.dias_presenciais) },
+  { cod: 'dias_home_office_extenso', nome: 'Dias em home office por semana — "2 (dois)"', f: c => rhNumExtenso(c.adm.dias_home_office) },
+  { cod: 'assinatura_cidade', nome: 'Cidade da assinatura', f: c => c.ass.municipio },
+  { cod: 'assinatura_uf_dia', nome: 'UF + dia da assinatura — "SP, 08"', f: c => `${c.ass.uf}, ${String(c.ass.dia).padStart(2, '0')}` },
+  { cod: 'assinatura_dia',   nome: 'Dia da assinatura', f: c => String(c.ass.dia).padStart(2, '0') },
+  { cod: 'assinatura_mes',   nome: 'Mês da assinatura por extenso', f: c => RH_MESES[c.ass.mes - 1] },
+  { cod: 'assinatura_ano',   nome: 'Ano da assinatura + ponto — "2026."', f: c => `${c.ass.ano}.` },
+  { cod: 'empresa',          nome: 'Razão social da empregadora', f: () => 'PROTEÇÃO AGROPECUÁRIA SERVIÇOS TÉCNICOS E CORRETAGEM DE SEGUROS LTDA.' },
+  // Os dois de tratamento especial
+  { cod: 'fixo',             nome: '— texto fixo desta minuta —', fixo: true },
+  { cod: 'ignorar',          nome: '— deixar como está no modelo —', ignorar: true }
+];
+const RH_CAMPO_POR_COD = Object.fromEntries(RH_CAMPOS_MINUTA.map(c => [c.cod, c]));
+
+function rhCargoTexto(adm) {
+  const nivel = { junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior' }[adm.nivel_pretendido] || '';
+  return [adm.cargo_pretendido, nivel].filter(Boolean).join(' ');
+}
+function rhDataBR(iso) {
+  if (!iso) return '';
+  const [a, m, d] = String(iso).slice(0, 10).split('-');
+  return `${d}/${m}/${a}`;
+}
+function rhSomaDiasBR(iso, n) {
+  if (!iso) return '';
+  const [a, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  const dt = new Date(Date.UTC(a, m - 1, d + n));
+  return String(dt.getUTCDate()).padStart(2, '0') + '/' +
+         String(dt.getUTCMonth() + 1).padStart(2, '0') + '/' + dt.getUTCFullYear();
 }
 
-// Prévia: diz o que vai entrar em cada slot e o que está faltando na ficha,
-// SEM gerar arquivo. É o que a tela mostra antes de emitir.
+// Adivinha o campo pelo TEXTO do trecho realçado. Os modelos usam sempre os
+// mesmos marcadores, então o acerto é alto — mas é só um palpite: o cadastro da
+// minuta mostra o mapa e deixa corrigir antes de qualquer emissão.
+function rhSugerirMapa(slots) {
+  let ctps = 0, datas = 0, nomes = 0;
+  return slots.map(s => {
+    const t = String(s.texto || '').trim();
+    const baixo = t.toLowerCase();
+    let campo = null;
+    if (/^NOME DO\(A\) EMPREGADO\(A\)$/i.test(t)) campo = 'nome_maiusculo', nomes++;
+    else if (baixo === 'inserir nome') campo = 'nome';
+    else if (baixo === 'nacionalidade') campo = 'nacionalidade';
+    else if (baixo === 'estado civil') campo = 'estado_civil';
+    else if (/^XX\.XXX\.XXX-X$/i.test(t)) campo = 'rg';
+    else if (/^XXX\.XXX\.XXX-XX$/i.test(t)) campo = 'cpf';
+    else if (baixo === 'endereço completo') campo = 'endereco_completo';
+    else if (/^X{6,}$/i.test(t)) campo = (ctps++ === 0 ? 'ctps_numero' : 'ctps_serie');
+    else if (/NOME DO CARGO/i.test(t)) campo = 'cargo_maiusculo';
+    else if (/^DD\/MM\/AAAA$/i.test(t)) campo = (datas++ === 0 ? 'experiencia_fim' : 'prorrogacao_fim');
+    else if (/^XX \(por extenso\)$/i.test(t)) campo = 'dias_presenciais_extenso';
+    else if (/^YY \(por extenso\)$/i.test(t)) campo = 'dias_home_office_extenso';
+    else if (/^R\$ XX\.XXX,XX$/i.test(t)) campo = 'salario';
+    else if (/^R\$ XX,XX$/i.test(t)) campo = 'home_office_dia';
+    else if (baixo === 'valor por extenso') campo = 'salario_extenso';
+    else if (t === 'CIDADE') campo = 'assinatura_cidade';
+    else if (/^UF, ?DD$/i.test(t)) campo = 'assinatura_uf_dia';
+    else if (baixo === 'mês') campo = 'assinatura_mes';
+    else if (/^20[0-9X]{2}\.$/i.test(t)) campo = 'assinatura_ano';
+    else if (t === 'DD') campo = 'assinatura_dia';
+    else if (t === 'EMPRESA') campo = 'empresa';
+    // Trechos entre aspas curvas são texto da empresa, não dado de pessoa.
+    else if (/^[“"].*[”"]$/.test(t)) campo = 'fixo';
+    return { n: s.n, texto: t, nRuns: s.nRuns, campo, valor_fixo: null };
+  });
+}
+
+// Resolve o mapa em valores. Devolve também o que ficou sem campo e o que ficou
+// vazio — a tela precisa dos dois para avisar antes de gerar o documento.
+function rhResolverMapa(mapa, colab, adm, ass) {
+  const ctx = { colab, adm, ass };
+  const valores = mapa.map(s => {
+    const def = RH_CAMPO_POR_COD[s.campo];
+    let valor = '';
+    if (!s.campo) valor = null;                          // sem campo definido
+    else if (def && def.ignorar) valor = s.texto;        // mantém o texto do modelo
+    else if (def && def.fixo) valor = s.valor_fixo || '';
+    else if (def) { try { valor = String(def.f(ctx) == null ? '' : def.f(ctx)); } catch { valor = ''; } }
+    return { n: s.n, texto: s.texto, campo: s.campo,
+             rotulo: def ? def.nome : null, valor };
+  });
+  return {
+    valores,
+    semCampo: valores.filter(v => v.valor === null).map(v => `#${v.n} “${v.texto}”`),
+    vazios: valores.filter(v => v.valor === '').map(v => v.rotulo || `#${v.n} “${v.texto}”`)
+  };
+}
+
+// Carrega a minuta e resolve o mapa dela contra a ficha e o processo. Devolve
+// null quando não há minuta para a combinação.
+async function rhPrepararEmissao(adm, colab, ass) {
+  const minuta = (await query(
+    `SELECT id, nome, file_name, slots, data FROM erp_rh_minutas
+      WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
+    [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']))[0];
+  if (!minuta) return null;
+
+  let xml = null, slotsReais = [];
+  try {
+    const entradas = zipLer(minuta.data);
+    const doc = entradas.find(e => e.nome === 'word/document.xml');
+    xml = doc ? doc.dados.toString('utf8') : null;
+    slotsReais = xml ? acharSlots(xml) : [];
+  } catch { /* minuta ilegível: cai no descompasso abaixo */ }
+
+  // O mapa gravado precisa corresponder ao arquivo. Se não corresponder, a
+  // minuta foi trocada por fora e o mapa não vale mais — recair na sugestão é
+  // melhor do que preencher os campos deslocados.
+  const gravado = Array.isArray(minuta.slots) ? minuta.slots : [];
+  const casa = gravado.length === slotsReais.length;
+  const mapa = casa ? gravado : rhSugerirMapa(slotsReais);
+  const r = rhResolverMapa(mapa, colab, adm, ass);
+  return { minuta, xml, slotsReais, mapa, mapaDesatualizado: !casa, ...r };
+}
+
+function rhAssinaturaDe(fonte) {
+  const data = isDate(fonte.data) ? fonte.data : hojeISO();
+  const [ano, mes, dia] = data.split('-').map(Number);
+  return { municipio: sanitize(fonte.municipio) || 'São Paulo',
+           uf: sanitize(fonte.uf) || 'SP', data, ano, mes, dia };
+}
+
 app.get('/api/rh/admissoes/:id/contrato/previa', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const dados = await rhCarregarAdmissao(req.params.id);
   if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
   if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'A emissão usa CPF, RG e endereço — exige a permissão de dados sensíveis.' });
   const { adm, colab } = dados;
-  // Lê o ARQUIVO, não a coluna `slots`. A coluna é metadado gravado no upload;
-  // quem manda na emissão é o .docx, e a prévia precisa dizer a verdade sobre o
-  // que vai acontecer — não sobre o que foi anotado na hora do upload.
-  const minuta = (await query(
-    `SELECT id, nome, file_name, data FROM erp_rh_minutas
-      WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
-    [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']))[0] || null;
-  let slotsReais = [];
-  if (minuta) {
-    try {
-      const ent = zipLer(minuta.data);
-      const d = ent.find(e => e.nome === 'word/document.xml');
-      slotsReais = d ? acharSlots(d.dados.toString('utf8')) : [];
-    } catch { slotsReais = []; }
-  }
-  // O binário não vai na resposta. Monta-se um resumo em vez de apagar o campo
-  // da linha: mexer no que a query devolveu é modificar um objeto que não é meu.
-  const minutaResumo = minuta ? { id: minuta.id, nome: minuta.nome, file_name: minuta.file_name } : null;
-
-  const hoje = hojeISO();
-  const valores = rhValoresContrato(colab, adm, {
-    municipio: sanitize(req.query.municipio) || 'São Paulo',
-    uf: sanitize(req.query.uf) || 'SP',
-    data: isDate(req.query.data) ? req.query.data : hoje
-  });
-  const vazios = valores.filter(v => !String(v.valor).trim());
+  const ass = rhAssinaturaDe(req.query);
+  const p = await rhPrepararEmissao(adm, colab, ass);
+  if (!p) return res.json({ minuta: null, valores: [], vazios: [], semCampo: [], pronta: false, hoje: hojeISO() });
   res.json({
-    minuta: minutaResumo, valores, vazios: vazios.map(v => v.campo),
-    slots_da_minuta: slotsReais.map(s => ({ n: s.n, texto: s.texto })),
-    // Se a minuta tiver um número de realces diferente de 18, o mapa não serve —
-    // melhor dizer isso do que preencher os campos trocados de lugar.
-    compativel: !!minuta && slotsReais.length === valores.length,
-    hoje
+    minuta: { id: p.minuta.id, nome: p.minuta.nome, file_name: p.minuta.file_name },
+    valores: p.valores, vazios: p.vazios, semCampo: p.semCampo,
+    mapaDesatualizado: p.mapaDesatualizado,
+    // "Pronta" é o mapa completo, não a contagem de trechos: o que impede a
+    // emissão é trecho sem campo definido, e isso o cadastro da minuta resolve.
+    pronta: p.semCampo.length === 0,
+    hoje: hojeISO()
   });
 }));
 
@@ -2702,30 +2846,28 @@ app.post('/api/rh/admissoes/:id/contrato', requireAuth, requireEdit('rh'), h(asy
   if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'A emissão usa CPF, RG e endereço — exige a permissão de dados sensíveis.' });
   const { adm, colab } = dados;
 
-  const minuta = (await query(
-    `SELECT * FROM erp_rh_minutas WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
-    [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']))[0];
-  if (!minuta) return res.status(400).json({ error: 'Não há minuta cadastrada para esta combinação de regime e modelo de trabalho. Cadastre em Recursos Humanos → Minutas.' });
+  const assinatura = rhAssinaturaDe(req.body);
+  const p = await rhPrepararEmissao(adm, colab, assinatura);
+  if (!p) return res.status(400).json({ error: 'Não há minuta cadastrada para esta combinação de regime e modelo de trabalho. Cadastre em Recursos Humanos → Minutas.' });
+  if (!p.xml) return res.status(415).json({ error: 'Não consegui ler o .docx da minuta.' });
 
-  const assinatura = {
-    municipio: sanitize(req.body.municipio) || 'São Paulo',
-    uf: sanitize(req.body.uf) || 'SP',
-    data: isDate(req.body.data) ? req.body.data : hojeISO()
-  };
-  const valores = rhValoresContrato(colab, adm, assinatura);
-
-  const entradas = zipLer(minuta.data);
-  const doc = entradas.find(e => e.nome === 'word/document.xml');
-  const xml = doc.dados.toString('utf8');
-  const slots = acharSlots(xml);
-  if (slots.length !== valores.length) {
+  // O que impede a emissão é trecho SEM CAMPO definido — não a contagem. Cada
+  // minuta tem a sua (18 na presencial, 21 na híbrida), e é o mapa da minuta
+  // que diz o que vai em cada um.
+  if (p.semCampo.length) {
     return res.status(409).json({
-      error: `A minuta tem ${slots.length} trechos em realce, e o mapa de preenchimento tem ${valores.length}. Preencher assim trocaria os campos de lugar.`
+      error: `Esta minuta tem ${p.semCampo.length} trecho(s) em realce sem campo definido. Abra Recursos Humanos → Minutas → Mapa e diga o que entra em cada um.`,
+      semCampo: p.semCampo
     });
   }
-  const novoXml = mesclar(xml, slots, valores.map(v => v.valor));
+
+  const entradas = zipLer(p.minuta.data);
+  const doc = entradas.find(e => e.nome === 'word/document.xml');
+  const novoXml = mesclar(p.xml, p.slotsReais, p.valores.map(v => v.valor));
   doc.dados = Buffer.from(novoXml, 'utf8');
   const docx = zipEscrever(entradas);
+  const valores = p.valores;
+  const minuta = p.minuta;
 
   await query(`UPDATE erp_rh_admissoes SET contrato_emitido_em=$1, updated_at=now() WHERE id=$2`,
     [assinatura.data, adm.id]);

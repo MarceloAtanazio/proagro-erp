@@ -2631,3 +2631,86 @@ Máscaras e validador exercitados fora do navegador (CPF em quatro grafias, CPF 
 `414.129.298-22` fosse inválido. Conferindo as duas contas de dígito, ele é válido — é o CPF do
 print. E o fixture da fase 1 usava `123.456.789-01`, que **não** é válido; trocado por
 `123.456.789-09`, que é.
+
+---
+
+## 2026-09-08 — A emissão recusava a minuta híbrida: o mapa passa a ser por minuta
+
+**Relato:** "por que está dando erro na emissão do contrato se todas as informações estão
+preenchidas?" — a prévia dizia *"A minuta tem 21 trechos em realce e o preenchimento espera 18"*.
+
+### O diagnóstico
+
+As informações estavam preenchidas. O problema era outro: a minuta cadastrada era a **Jornada
+Híbrida**, e o preenchimento tinha um mapa **fixo de 18 campos**, tirado da minuta Presencial —
+a única que eu havia analisado.
+
+Contando os realces das cinco minutas reais:
+
+| Minuta | Realces |
+|---|---|
+| Empregado Regular — Presencial | 18 |
+| Empregado Regular — Jornada Externa | 20 |
+| Empregado de Confiança | 20 |
+| Empregado Regular — Jornada Híbrida | **21** |
+| Empregado Regular — Home Office | **21** |
+| (Modelo — Carta Oferta) | 6 |
+
+Nenhum mapa fixo serviria para todas. Pior: nem todo realce é dado de pessoa — há trechos que são
+texto da empresa (`“inserir nome da política expressa sobre saúde e segurança do trabalho”`,
+`EMPRESA`, `“inserir nome e detalhes do sistema”`).
+
+### O que mudou
+
+**O mapa virou propriedade da minuta.** Cada uma guarda, em `slots`, um registro por realce:
+`{n, texto, campo, valor_fixo}`. O que impede a emissão deixou de ser a contagem e passou a ser
+**trecho sem campo definido** — coisa que o cadastro da minuta resolve.
+
+- **Catálogo de 30 campos** (`RH_CAMPOS_MINUTA`), cada um com o seu resolvedor: nome, CPF, RG,
+  endereço montado, CTPS, cargo, datas derivadas da admissão, salário e extenso, dias presenciais
+  e em home office por extenso, ajuda de custo, cidade/UF/mês/ano da assinatura, razão social.
+- **Dois tratamentos especiais:** `fixo` (texto da empresa, digitado uma vez por minuta) e
+  `ignorar` (mantém o texto do modelo).
+- **Sugestão automática no upload** pelo texto do realce — `XXX.XXX.XXX-XX` → CPF,
+  `XX (por extenso)` → dias presenciais, trecho entre aspas curvas → texto fixo. Nas cinco minutas
+  reais ela reconheceu **todos** os realces.
+- **Editor de mapa** em Minutas → Mapa, com aviso de quantos trechos ainda estão sem campo. A
+  lista de minutas mostra isso na coluna de realces.
+- A prévia relê o arquivo e, se o mapa gravado não corresponder mais a ele, **resugere** — minuta
+  trocada por fora não pode preencher campos deslocados.
+
+**Campos novos no processo de admissão** (migração aditiva): `dias_presenciais`,
+`dias_home_office`, `vr_dia`, `home_office_dia`. Os três primeiros só aparecem no card quando o
+modelo de trabalho é híbrido ou home office — na presencial não há onde encaixá-los.
+
+**CPF, RG e CEP passam a ser formatados na emissão.** No print, o contrato sairia com
+`41412929822` e `466821499`: a normalização só acontecia ao salvar a ficha, e esse registro tinha
+sido gravado antes. Contrato com CPF sem pontuação é documento com defeito, mesmo que a ficha
+esteja torta — agora a formatação é aplicada na hora de gerar.
+
+### Verificação
+
+Um teste novo emite **as cinco minutas reais**, uma por uma — o anterior usava só a Presencial, e
+foi por isso que o descompasso só apareceu em uso. **93 asserções**, todas passando: mapa sugerido
+sem pendência nas cinco, texto fixo gravado e aplicado, e no `.docx` gerado nenhum realce
+sobrando, CPF `414.129.298-22` e RG `46.682.149-9` formatados a partir dos valores crus, CEP
+`05729-090`, experiência em 30/10 e prorrogação em 14/12 a partir da admissão em 15/09, salário
+por extenso, e — na híbrida — `3 (três) dias por semana`, `2 (dois) dias por semana` e a ajuda de
+custo de R$ 10,00.
+
+O editor de mapa foi exercitado na tela com o código real: 4 linhas, aviso de pendência, o campo
+de texto fixo habilitando e desabilitando conforme a escolha, zero erros.
+
+### Duas coisas que o teste mostrou e que dependem de você
+
+- **As minutas Híbrida, Home Office e Externa deixam `(valor por extenso)` literal** depois da
+  ajuda de custo: esse trecho **não está realçado** no modelo, então não há como preenchê-lo. O
+  campo já existe no catálogo (`home_office_dia_extenso`) — basta realçar em amarelo e recadastrar.
+- **Três minutas têm trechos de texto da empresa** que precisam de um valor: o nome da política de
+  segurança e saúde do trabalho, o nome do sistema de ponto e a política de trabalho remoto.
+
+### Uma expectativa minha estava errada
+
+Escrevi o teste esperando `treze mil, quatrocentos e sessenta e seis reais`. O gerador produz
+`treze mil quatrocentos e sessenta e seis reais`, sem a vírgula — que é a forma corrente em valor
+por extenso. A expectativa foi corrigida, não o gerador.
