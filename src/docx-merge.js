@@ -320,12 +320,20 @@ function docxParagrafos(xml) {
       else juntos.push({ ...r });
     }
     const texto = juntos.map(r => r.texto).join('');
+    const alinhamento = jc ? jc[1] : 'left';
+    const negrito = juntos.length > 0 && juntos.every(r => r.negrito);
     return {
       texto,
       runs: juntos,
-      // Título = estilo Título do Word, ou tudo em negrito e nada fora dele.
-      titulo: estiloTitulo || (juntos.length > 0 && juntos.every(r => r.negrito)),
-      alinhamento: jc ? jc[1] : 'left'
+      negrito,
+      alinhamento,
+      // As seções desta minuta vêm de duas formas: umas com o estilo Título 1
+      // do Word (sublinhadas, sem negrito) e outras em negrito centralizado.
+      // Só o negrito não basta como sinal — o bloco de assinaturas também é
+      // todo negrito, e tratá-lo como seção poria um sublinhado embaixo da
+      // linha de assinatura, que já é um traço. O que separa os dois é o
+      // CENTRALIZADO: título é centralizado, assinatura é à esquerda.
+      titulo: estiloTitulo || (negrito && alinhamento === 'center')
     };
   }).filter((x, i, a) => x.texto !== '' || (i > 0 && a[i - 1].texto !== ''));  // colapsa vazios seguidos
 }

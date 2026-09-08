@@ -2714,3 +2714,71 @@ de texto fixo habilitando e desabilitando conforme a escolha, zero erros.
 Escrevi o teste esperando `treze mil, quatrocentos e sessenta e seis reais`. O gerador produz
 `treze mil quatrocentos e sessenta e seis reais`, sem a vírgula — que é a forma corrente em valor
 por extenso. A expectativa foi corrigida, não o gerador.
+
+---
+
+## 2026-09-08 — Acabamento do PDF do contrato
+
+**Pedido:** Arial 12 em todo o contrato, texto justificado, espaçamentos padronizados, todo título
+sublinhado, o primeiro título ("CONTRATO DE TRABALHO") maior, e o logo discreto como cabeçalho.
+
+### Sobre a fonte
+
+O PDF usa **helvetica** — uma das 14 fontes padrão do formato. **Arial é o clone métrico dela**:
+mesma largura de cada caractere, e é o que todo leitor de PDF substitui no lugar. Embutir o TTF
+da Arial custaria ~700 KB no `app.js` para um resultado visualmente idêntico. Corpo em **12 pt**,
+seções em 12 pt e o primeiro título em 15 pt.
+
+### Justificação com negrito preservado
+
+O `align: 'justify'` do jsPDF não serve aqui: ele desenha a string inteira de uma vez, e isso
+perderia o **CLÁUSULA 1ª:** em negrito no meio do parágrafo. A composição passou a ser por
+palavra — quebra as linhas, mede cada palavra com a sua própria fonte e distribui a sobra entre os
+vãos. A **última linha de cada parágrafo não é justificada** (ficaria com buracos), nem os
+parágrafos centralizados, nem o bloco de assinaturas.
+
+### Um bug que a justificação expôs
+
+O Word corta o texto em runs no meio da frase — `…SEGUROS LTDA.` e `, pessoa jurídica` são dois
+runs **sem espaço entre eles**. Tratando todo limite de palavra como espaço, o contrato saía com
+`SEGUROS LTDA. , pessoa jurídica` e `GUSTAVO MACHADO , brasileiro`. Cada palavra passou a carregar
+se havia **espaço de verdade** depois dela, e só aí entra o vão.
+
+### Títulos: dois formatos na mesma minuta
+
+As seções vêm de duas formas: umas com o estilo **Título 1** do Word (sublinhadas, sem negrito) e
+outras em **negrito centralizado**. Detectar só por `pStyle` achava 8 de 12; só por negrito, 4 de
+12 — e ainda varria junto o bloco de assinaturas, que também é todo negrito.
+
+O que separa os dois é o **centralizado**: título é centralizado, assinatura é à esquerda.
+`titulo = estiloTítulo || (negrito && centralizado)` acha os 12 e deixa a folha de assinaturas de
+fora — sublinhá-la poria um traço embaixo da linha de assinatura, que já é um traço.
+
+### O resto
+
+- **Cabeçalho** em toda página: logo de 21 mm e um fio fino abaixo. Discreto, e o texto começa a
+  30 mm do topo.
+- **Espaçamentos padronizados** numa constante única (`RH_PDF`): entrelinha 1,45, respiro de meia
+  linha entre parágrafos, uma linha antes de cada seção.
+- **Bloco de testemunhas em duas colunas de verdade.** O modelo usa tabulação, e espaço em fonte
+  proporcional não alinha nada — as partes vão em posições fixas.
+- **Rodapé** "x de y" em cinza.
+
+### O logo estava inflando o arquivo
+
+`addImage` sem alias reincorpora o PNG a cada chamada: com o cabeçalho em 8 páginas, o contrato
+saía com **1,2 MB só de logo repetido**. Com o alias, **367 KB**.
+
+### Verificação
+
+O PDF foi gerado no navegador com a **mesma função do app** e a minuta real mesclada, e conferido
+por medição, não a olho: as coordenadas de cada `doc.text` mostram vão de **1,19 mm** entre todas
+as palavras — igual em `GUSTAVO MACHADO` e em `PROTEÇÃO AGROPECUÁRIA` —, e `largura(palavra) +
+largura(espaço) + largura(palavra)` bate exatamente com a largura da frase inteira.
+
+**Uma leitura minha estava errada:** achei que `GUSTAVO MACHADO` e `São Paulo/SP, 08` tinham
+perdido o espaço. Era artefato do screenshot reduzido; a medição mostrou o espaço no lugar. Não
+mexi no que não estava quebrado.
+
+As três suítes (ficha, Kanban, cinco minutas) seguem passando após a mudança na detecção de
+títulos.

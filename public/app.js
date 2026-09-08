@@ -8943,76 +8943,186 @@ function rhBaixarBase64(b64, mime, nome) {
   document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// O PDF é montado no navegador a partir dos parágrafos que o servidor devolveu.
+// Monta o PDF do contrato a partir dos parágrafos que o servidor devolveu.
 // Converter .docx em PDF no servidor exigiria LibreOffice, que não existe na
-// função serverless — e o contrato é texto corrido, que o jsPDF compõe bem.
+// função serverless — e o contrato é texto corrido, que compõe bem aqui.
+//
+// Sobre a fonte: o PDF usa "helvetica", que é uma das 14 fontes padrão do
+// formato. Arial é o clone métrico dela — mesma largura de cada caractere — e é
+// o que todo leitor de PDF substitui no lugar. Embutir o TTF da Arial custaria
+// ~700 KB no app.js para um resultado visualmente idêntico.
+const RH_PDF = {
+  fonte: 12,          // corpo, em pontos
+  fonteTitulo: 12,    // títulos de seção
+  fonteTitulo1: 15,   // "CONTRATO DE TRABALHO"
+  entrelinha: 1.45,   // múltiplo do corpo
+  margem: 25,         // mm, esquerda e direita
+  topo: 30,           // mm — abaixo do cabeçalho
+  base: 20            // mm — acima do rodapé
+};
+const rhPt = pt => pt * 25.4 / 72;   // pontos → mm
+
 function rhContratoPDF(paragrafos, nomeArquivo) {
   if (!window.jspdf) return toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.');
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
-  const M = 22, larg = pageW - M * 2;
-  let y = M;
+  const M = RH_PDF.margem, larg = pageW - M * 2;
+  const alturaLinha = rhPt(RH_PDF.fonte) * RH_PDF.entrelinha;
+  const limite = pageH - RH_PDF.base;
+  let y = 0;
 
-  const logoW = 32, logoH = logoW * (139 / 600);
-  doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M, y, logoW, logoH);
-  y += logoH + 10;
+  // Cabeçalho discreto, repetido em toda página: logo pequeno e um fio.
+  const cabecalho = () => {
+    const logoW = 21, logoH = logoW * (139 / 600);
+    // O alias faz o jsPDF reaproveitar a MESMA imagem em todas as páginas. Sem
+    // ele o PNG é reincorporado a cada chamada: num contrato de 8 páginas o
+    // arquivo saía com 1,2 MB só de logo repetido.
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M, 13, logoW, logoH, 'logo-proagro', 'FAST');
+    doc.setDrawColor(206, 216, 209); doc.setLineWidth(0.2);
+    doc.line(M, 13 + logoH + 3.5, pageW - M, 13 + logoH + 3.5);
+    y = RH_PDF.topo;
+  };
+  const novaPagina = () => { doc.addPage(); cabecalho(); };
+  const cabe = h => { if (y + h > limite) novaPagina(); };
 
-  const novaPagina = () => { doc.addPage(); y = M; };
-  doc.setTextColor(20, 28, 22);
+  cabecalho();
+  doc.setTextColor(17, 24, 19);
+
+  // Sublinhado: o jsPDF não tem, então é um fio logo abaixo da linha de base.
+  const sublinhar = (x, larguraTexto) => {
+    doc.setDrawColor(17, 24, 19); doc.setLineWidth(0.25);
+    doc.line(x, y + 1.1, x + larguraTexto, y + 1.1);
+  };
+
+  // Quebra os runs em palavras, preservando o negrito de cada uma. É o que
+  // permite justificar sem perder o "CLÁUSULA 1ª:" em negrito.
+  // `espaco` marca se havia ESPAÇO DE VERDADE depois da palavra. O Word corta o
+  // texto em runs no meio da frase — "…SEGUROS LTDA." e ", pessoa jurídica" são
+  // dois runs sem espaço entre eles —, e tratar todo limite de palavra como
+  // espaço punha um branco antes de cada vírgula.
+  const emPalavras = runs => {
+    const out = [];
+    runs.forEach(r => {
+      r.texto.split(/(\s+)/).forEach(t => {
+        if (t === '') return;
+        if (/^\s+$/.test(t)) { if (out.length) out[out.length - 1].espaco = true; }
+        else out.push({ t, negrito: r.negrito, espaco: false });
+      });
+    });
+    return out;
+  };
+  const largura = (p, tamanho) => {
+    doc.setFont('helvetica', p.negrito ? 'bold' : 'normal'); doc.setFontSize(tamanho);
+    return doc.getTextWidth(p.t);
+  };
+
+  // Agrupa palavras em linhas que cabem na largura útil.
+  const quebrar = (palavras, tamanho, larguraMax) => {
+    doc.setFontSize(tamanho);
+    const espaco = doc.getTextWidth(' ');
+    const linhas = []; let atual = [], usado = 0;
+    palavras.forEach(p => {
+      const w = largura(p, tamanho);
+      const anterior = atual[atual.length - 1];
+      const custo = w + (anterior && anterior.espaco ? espaco : 0);
+      if (atual.length && usado + custo > larguraMax) { linhas.push(atual); atual = [p]; usado = w; }
+      else { atual.push(p); usado += custo; }
+    });
+    if (atual.length) linhas.push(atual);
+    return { linhas, espaco };
+  };
+
+  // Desenha uma linha. `justificar` distribui a sobra entre os espaços — nunca
+  // na última linha do parágrafo, que ficaria com buracos.
+  const desenharLinha = (palavras, x0, tamanho, espaco, justificar, larguraMax) => {
+    doc.setFontSize(tamanho);
+    const larguras = palavras.map(p => largura(p, tamanho));
+    const soma = larguras.reduce((a, b) => a + b, 0);
+    // Vãos são só onde havia espaço de verdade, e o da última palavra não conta
+    // (a quebra de linha o consome).
+    const vaos = palavras.slice(0, -1).filter(p => p.espaco).length;
+    const gap = justificar && vaos > 0 ? (larguraMax - soma) / vaos : espaco;
+    let x = x0;
+    palavras.forEach((p, i) => {
+      doc.setFont('helvetica', p.negrito ? 'bold' : 'normal');
+      doc.text(p.t, x, y);
+      x += larguras[i];
+      if (i < palavras.length - 1 && p.espaco) x += gap;
+    });
+    return x - x0;
+  };
+  // Largura natural de uma linha (sem justificar), para centralizar.
+  const larguraNatural = (palavras, tamanho, espaco) =>
+    palavras.reduce((s, p, i) => s + largura(p, tamanho) + (i < palavras.length - 1 && p.espaco ? espaco : 0), 0);
+
+  // O bloco de testemunhas usa tabulação para virar duas colunas. Espaço em
+  // fonte proporcional não alinha nada; então as partes vão em posições fixas.
+  const desenharColunas = (texto, tamanho, negrito) => {
+    const partes = texto.split(/\t+/).map(s => s.trim()).filter(s => s !== '');
+    doc.setFont('helvetica', negrito ? 'bold' : 'normal'); doc.setFontSize(tamanho);
+    partes.slice(0, 2).forEach((p, i) => doc.text(p, M + i * (larg / 2), y));
+  };
+
+  let primeiroTitulo = true;
 
   for (const p of paragrafos) {
-    if (!p.texto) { y += 3; continue; }
+    if (!p.texto) { y += alturaLinha * 0.45; continue; }
     const centrado = p.alinhamento === 'center';
 
+    // ---- título de seção (estilo Título do Word) ----
     if (p.titulo) {
-      if (y + 12 > pageH - M) novaPagina(); else y += 4;
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+      const tamanho = primeiroTitulo ? RH_PDF.fonteTitulo1 : RH_PDF.fonteTitulo;
+      const h = rhPt(tamanho) * 1.3;
+      cabe(h + alturaLinha);
+      if (!primeiroTitulo) y += alturaLinha * 0.9;   // respiro antes da seção
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(tamanho);
       const linhas = doc.splitTextToSize(p.texto, larg);
       linhas.forEach(l => {
-        if (y + 6 > pageH - M) novaPagina();
-        doc.text(l, centrado ? pageW / 2 : M, y, { align: centrado ? 'center' : 'left' });
-        y += 5.4;
+        cabe(h);
+        const w = doc.getTextWidth(l);
+        const x = centrado || primeiroTitulo ? (pageW - w) / 2 : M;
+        doc.text(l, x, y);
+        sublinhar(x, w);                              // TODO título sublinhado
+        y += h;
       });
-      y += 2.5;
+      y += alturaLinha * (primeiroTitulo ? 0.9 : 0.45);
+      primeiroTitulo = false;
       continue;
     }
 
-    // Parágrafo comum: quebra em linhas e desenha os runs em sequência, para o
-    // "CLÁUSULA 1ª:" ficar em negrito como está na minuta.
-    doc.setFontSize(10);
-    const linhasTexto = doc.splitTextToSize(p.texto, larg);
-    let restante = p.runs.map(r => ({ ...r }));
-    for (const linha of linhasTexto) {
-      if (y + 6 > pageH - M) novaPagina();
-      let x = centrado ? pageW / 2 - doc.getTextWidth(linha) / 2 : M;
-      let falta = linha;
-      while (falta.length && restante.length) {
-        const r = restante[0];
-        const pega = Math.min(r.texto.length, falta.length);
-        const pedaco = r.texto.slice(0, pega);
-        doc.setFont('helvetica', r.negrito ? 'bold' : 'normal');
-        doc.text(pedaco, x, y);
-        x += doc.getTextWidth(pedaco);
-        r.texto = r.texto.slice(pega);
-        falta = falta.slice(pega);
-        if (!r.texto.length) restante.shift();
-      }
-      // O split come o espaço entre linhas; devolve-o ao run corrente.
-      if (restante.length && restante[0].texto.startsWith(' ')) restante[0].texto = restante[0].texto.slice(1);
-      y += 5;
+    // ---- bloco de assinaturas em duas colunas ----
+    if (p.texto.includes('\t')) {
+      cabe(alturaLinha);
+      desenharColunas(p.texto, RH_PDF.fonte, p.negrito);
+      y += alturaLinha;
+      continue;
     }
-    y += 2.5;
+
+    // ---- parágrafo comum ----
+    const palavras = emPalavras(p.runs);
+    if (!palavras.length) { y += alturaLinha * 0.45; continue; }
+    const { linhas, espaco } = quebrar(palavras, RH_PDF.fonte, larg);
+    // Centralizado ou todo em negrito (assinaturas) não se justifica.
+    const justificavel = !centrado && !p.negrito;
+    linhas.forEach((linha, i) => {
+      cabe(alturaLinha);
+      const x0 = centrado ? (pageW - larguraNatural(linha, RH_PDF.fonte, espaco)) / 2 : M;
+      desenharLinha(linha, x0, RH_PDF.fonte, espaco, justificavel && i < linhas.length - 1, larg);
+      y += alturaLinha;
+    });
+    y += alturaLinha * 0.45;
   }
 
   const total = doc.internal.getNumberOfPages();
   for (let i = 1; i <= total; i++) {
     doc.setPage(i);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(130, 140, 133);
-    doc.text(`${i}/${total}`, pageW - M, pageH - 10, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(140, 150, 143);
+    doc.text(`${i} de ${total}`, pageW - M, pageH - 11, { align: 'right' });
   }
   doc.save(nomeArquivo);
 }
+
 
 // ---------------- Minutas ----------------
 async function rhMinutas(c) {
