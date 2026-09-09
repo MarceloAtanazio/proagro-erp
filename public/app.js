@@ -4558,16 +4558,14 @@ function exportOvrExcelSimples(a, completo) {
 function ovrNotaViaticos(v, despesas) {
   if (!v || !despesas.some(r => r.cat === v.categoria)) return '';
   const pend = v.aguardando_comprovacao || {};
-  const diferenca = v.repassado - v.comprovado;
   return `<div class="rh-nota" style="margin:-6px 0 16px">
-    <strong>Viáticos</strong> não vem de Contas a Pagar: o realizado é a soma das despesas
-    <strong>comprovadas com nota</strong> na seção Viáticos, pela data de cada despesa.
-    O que sai em Contas a Pagar — o repasse à carteira Flash e os reembolsos — é dinheiro
-    <em>saindo do caixa</em>, não custo de viagem: o repasse vira saldo em cartão, e o reembolso
-    liquida uma viagem cujas despesas já estão contadas aqui.
-    ${v.repassado ? `No ano, <strong>${brl(v.repassado)}</strong> repassados contra
-      <strong>${brl(v.comprovado)}</strong> comprovados${diferenca > 0
-        ? ` — ${brl(diferenca)} ainda em cartão ou devolvidos` : ''}.` : ''}
+    <strong>Viáticos</strong> soma <strong>duas fontes</strong>: as despesas comprovadas com nota na
+    seção Viáticos (${brl(v.comprovado)}, pela data de cada despesa) e os reembolsos pagos na
+    categoria <strong>Viáticos</strong> de Contas a Pagar (${brl(v.reembolsado)}) — a viagem que o
+    colaborador pagou do bolso porque o cartão não foi aceito também é custo.
+    ${v.repassado ? `<br>Fora do realizado fica <strong>${esc(v.categoria_repasse)}</strong>
+      (${brl(v.repassado)} no ano): carregar a carteira Flash não gasta o dinheiro, muda ele de lugar.
+      Esse valor aparece no <strong>Fluxo de Caixa</strong>, onde a pergunta é quando saiu da conta.` : ''}
     ${pend.solicitacoes ? `<br><strong>${pend.solicitacoes === 1
         ? '1 viagem aguardando comprovação' : pend.solicitacoes + ' viagens aguardando comprovação'}</strong>
       (${brl(pend.valor_liberado)} liberados) ${pend.solicitacoes === 1 ? 'entra' : 'entram'} como R$ 0,00

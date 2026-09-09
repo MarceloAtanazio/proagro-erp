@@ -3217,3 +3217,82 @@ vez de digitados à mão.
 Na tela, com a função real extraída de `app.js` e os números reais da base: a nota renderiza em
 1125px nos três casos (com pendência, sem pendência, e com texto longo), zero elementos cortados e
 sem rolagem horizontal a 1440px.
+
+---
+
+## 2026-09-09 — Viáticos: o reembolso volta para o realizado, o repasse sai de vez
+
+**Pedido:** considerar como realizado o comprovado na seção Viáticos **e** o que estiver na categoria
+"Viáticos" de Contas a Pagar, porque há reembolso de viagem por cartão não aceito e afins. O envio de
+dinheiro ao Flash foi recategorizado pelo usuário como **"Repasse de Viáticos"**, que não conta em
+realizado e fica só no fluxo de caixa.
+
+Corrige, no mesmo dia, a régua da entrada anterior — que jogava fora a categoria inteira.
+
+### Onde eu tinha errado
+
+Na rodada da manhã eu verifiquei que os reembolsos citavam OT_122, OT_123, OT_125, OT_126 e OT_142, e
+que "todas essas viagens já estão na seção Viáticos". **Estava errado.** Fui conferir de novo, agora
+casando OT com OT: as solicitações registradas usam a numeração 30, 31 e 138–156. **OT_122, 123, 125
+e 126 não existem como solicitação** — são outra numeração, de viagens que nunca entraram na seção
+Viáticos. Eu tinha visto "mesmo colaborador, período próximo" e concluído identidade.
+
+Consequência: aqueles R$ 19,5 mil eram custo real sem nenhum comprovante no sistema, e a régua da
+manhã os apagava. O usuário estava certo.
+
+### A régua agora
+
+    realizado(Viáticos) = despesas comprovadas na seção Viáticos (pela data da despesa)
+                        + pagos da categoria "Viáticos" (reembolso ao colaborador)
+    "Repasse de Viáticos" -> fora do realizado, só no Fluxo de Caixa
+
+As duas categorias têm papéis opostos: **repasse** move dinheiro da conta para o cartão e continua
+sendo da empresa; **reembolso** devolve ao colaborador o que ele gastou do bolso — isso é custo.
+
+Números de 2026: comprovado R$ 78.773,42 + reembolsos R$ 20.539,90 = **R$ 99.313,32** (11,0% do
+orçado de R$ 898.973,63). Fora do realizado, R$ 140.541,99 de repasse.
+
+### Duas armadilhas que a implementação precisou tratar
+
+1. **O repasse tem de sair da resposta inteira, não só da soma.** "Repasse de Viáticos" não tem
+   orçamento próprio; se vazasse para `actuals`, a tela mostraria uma categoria **"Sem orçamento" de
+   R$ 140.541,99** — pior que o problema original.
+
+2. **Viáticos passou a chegar por duas fontes, e um consumidor usa `.find`.** O `categoriaMes` do
+   dashboard faz `realCatRows.find(r => r.category === cat)`: com duas linhas de "Viáticos" ele
+   pegaria **só a primeira** e perderia a outra fonte, silenciosamente. Por isso as linhas são
+   somadas por (mês, categoria) no servidor, em `somarPorMesCategoria`, antes de responder — em vez
+   de confiar que todo consumidor acumula.
+
+### Uma pendência de cadastro que agora pesa mais
+
+O pagamento de **R$ 1.000,00 — "Repasse para Compra de Produtos para o Escritorio"** continua na
+categoria Viáticos e é pago à Flash. Não é viático nem reembolso: com a régua nova ele **entra** no
+realizado de Viáticos e infla a linha. É recategorizar (Suprimentos/Compras) ou mover para "Repasse
+de Viáticos" — não criei exceção em código para um lançamento mal classificado.
+
+Há também um caso de possível dupla contagem: o reembolso **"OT_142 — R$ 78,00"** tem, na solicitação
+21 (que é a OT 142), um pedágio de exatamente R$ 78,00 em 06/05. Provavelmente é o mesmo pedágio,
+lançado como despesa e reembolsado por fora. São 0,08% do total; vale conferir, não vale código.
+
+### Verificação
+
+**26 asserções** contra o Express de verdade, com o stub reproduzindo a base já recategorizada:
+
+- Viáticos soma comprovado + reembolso, e nem uma fonte sozinha basta;
+- a categoria de repasse não aparece na resposta, seu valor não vai parar em outra categoria e não
+  entra no total;
+- **cada mês/categoria aparece uma vez só**, e no mês em que há comprovante *e* reembolso os dois
+  entram na mesma linha — a asserção que pega o problema do `.find`;
+- reembolso e repasse ainda não pagos ficam de fora;
+- despesa de 2025 não vaza; Aluguel e Energia intactos;
+- o dashboard soma as duas fontes, não mostra a categoria de repasse e ignora o repasse do mês.
+
+**Duas asserções minhas estavam mal escritas** (o código estava certo nas duas): comparavam o total
+contra limites numéricos que deixaram de valer quando as fixtures cresceram. Reescritas para
+expressar a intenção — "a de dezembro não aparece" e "o pendente muda o total, e o valor devolvido é
+o só-pago" — em vez de um número fixo.
+
+Na tela, com a função real de `app.js` e os números reais: nota em 1125px nos três casos, zero
+elementos cortados, sem rolagem horizontal a 1440px, e a linha lendo
+**R$ 898.973,63 orçado · R$ 99.313,32 realizado · 11,0%**.
