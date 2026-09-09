@@ -8673,7 +8673,7 @@ const RH_ETAPA_CAMPOS = {
   ]
 };
 
-let RH_ABA = 'quadro';   // quadro | pessoas | minutas
+let RH_ABA = 'painel';   // painel | pessoas | quadro | minutas
 
 // ---------------- Quadro ----------------
 async function rhQuadro(c) {
@@ -9385,7 +9385,10 @@ function rhFormNovoColaborador(comAdmissao = true) {
 
 // ---------------- Abas da seção ----------------
 function rhAbasTopo() {
-  const abas = [{ k: 'quadro', t: 'Quadro de admissão' }, { k: 'pessoas', t: 'Colaboradores' }, { k: 'minutas', t: 'Minutas' }];
+  // O painel abre a seção; Colaboradores vem antes do Quadro porque é a lista
+  // que se consulta todo dia, e o Quadro só tem movimento quando há contratação.
+  const abas = [{ k: 'painel', t: 'Painel' }, { k: 'pessoas', t: 'Colaboradores' },
+                { k: 'quadro', t: 'Quadro de admissão' }, { k: 'minutas', t: 'Minutas' }];
   return `<div class="rh-abas rh-abas-topo">${abas.map(a =>
     `<button class="rh-aba ${a.k === RH_ABA ? 'ativa' : ''}" data-secao="${a.k}">${a.t}</button>`).join('')}</div>`;
 }
@@ -9393,11 +9396,359 @@ function rhLigarAbas() {
   document.querySelectorAll('[data-secao]').forEach(b => b.onclick = () => { RH_ABA = b.dataset.secao; renderRH(); });
 }
 
+// ---------------- Arquivar, excluir e desenvolvimento ----------------
+
+// Arquivar é o caminho normal para quem saiu. O formulário pede o desligamento
+// junto porque arquivar sem fechar o vínculo deixaria a pessoa fora das listas
+// mas ainda somando na folha e no headcount.
+function rhFormArquivar(r) {
+  openModal(`Arquivar ${r.name}`, `
+    <div class="rh-nota">Arquivar <strong>preserva tudo</strong> — vínculo, dossiê, dependentes e histórico —
+    e tira a pessoa das listas, de Viáticos e de Suprimentos. É o que se faz com quem deixou a empresa.
+    Para consultá-la depois, o filtro <strong>Arquivados</strong> em Colaboradores.</div>
+    ${r.vinculo_id && !r.desligamento
+      ? '<div class="rh-nota aviso">O vínculo aberto será <strong>encerrado</strong> na data abaixo — é ela que entra no cálculo de turnover.</div>'
+      : ''}
+    <div class="form-row">
+      ${fld('ar-data', 'Data do desligamento', 'date', todayISO())}
+      ${fldSel('ar-tipo', 'Tipo', RH_DESLIG_TIPO, '')}
+    </div>
+    ${fld('ar-motivo', 'Motivo', 'text', '', 'placeholder="fica no histórico e no log de auditoria"')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Arquivar', cls: 'primary', onClick: async () => {
+        try {
+          const x = await api(`/api/rh/colaboradores/${r.id}/arquivar`, { method: 'POST', body: {
+            desligamento: $('#ar-data').value, desligamento_tipo: $('#ar-tipo').value,
+            motivo: $('#ar-motivo').value } });
+          closeModal();
+          toast(x.vinculo_fechado ? 'Arquivado e vínculo encerrado.' : 'Arquivado.');
+          renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+// Excluir apaga. O servidor recusa quando há história; aqui a tela já explica a
+// diferença antes de o usuário descobrir pelo erro.
+function rhConfirmarExcluir(r) {
+  openModal(`Excluir ${r.name}?`, `
+    <div class="rh-nota aviso"><strong>Excluir apaga o cadastro e não tem volta.</strong> Some a ficha, o
+    processo de admissão e os dependentes.</div>
+    <p style="font-size:13.5px;color:var(--ink-2)">Serve para <strong>duplicata</strong> e para
+    <strong>candidato que desistiu</strong> antes de qualquer registro. Quem já teve vínculo, viático ou
+    documento no dossiê <strong>não pode</strong> ser excluído — nesse caso o caminho é
+    <strong>arquivar</strong>, que guarda tudo e tira das listas.</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     ...(r.arquivado_em ? [] : [{ label: 'Arquivar em vez disso', onClick: () => rhFormArquivar(r) }]),
+     { label: 'Excluir', cls: 'danger-ghost', onClick: async () => {
+        try {
+          await api('/api/rh/colaboradores/' + r.id, { method: 'DELETE' });
+          closeModal(); toast('Colaborador excluído.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+const RH_TIPO_TREINO = [{ v: '', t: '— tipo —' }, { v: 'obrigatorio', t: 'Obrigatório / NR' },
+  { v: 'tecnico', t: 'Técnico' }, { v: 'comportamental', t: 'Comportamental' },
+  { v: 'idioma', t: 'Idioma' }, { v: 'pos', t: 'Pós-graduação' }, { v: 'outro', t: 'Outro' }];
+
+async function rhAbaDesenvolvimento(painel, d, id) {
+  let lista = [];
+  try { lista = await api(`/api/rh/colaboradores/${id}/treinamentos`); } catch (e) { /* lista vazia */ }
+  const ed = d.pode.editar, hoje = todayISO();
+  const horas = lista.reduce((s, t) => s + Number(t.carga_horaria || 0), 0);
+  const situacao = t => {
+    if (!t.validade) return { txt: '—', cls: '' };
+    const v = String(t.validade).slice(0, 10);
+    if (v < hoje) return { txt: 'vencido em ' + rhData(v), cls: 'conc-nao' };
+    return { txt: 'até ' + rhData(v), cls: '' };
+  };
+
+  painel.innerHTML = `
+    <div class="rh-sec"><h4>Formação e treinamentos
+      ${ed ? '<button class="btn sm" id="rh-add-treino">+ Registrar</button>' : ''}</h4>
+      <div class="rh-linhas">
+        <div class="rh-linha"><span>Registros</span><b>${lista.length}</b></div>
+        <div class="rh-linha"><span>Carga horária total</span><b>${horas} h</b></div>
+      </div>
+      ${lista.length ? `<div class="table-wrap" style="margin-top:14px"><table class="tbl-rh-dep">
+        <thead><tr><th>Treinamento</th><th>Tipo</th><th>Instituição</th><th>Carga</th>
+          <th>Concluído</th><th>Validade</th>${d.pode.remuneracao ? '<th>Custo</th>' : ''}<th></th></tr></thead>
+        <tbody>${lista.map(t => { const s = situacao(t); return `<tr>
+          <td>${esc(t.titulo)}${t.obrigatorio ? ' <span class="rh-mini">obrigatório</span>' : ''}</td>
+          <td>${esc((RH_TIPO_TREINO.find(x => x.v === t.tipo) || {}).t || t.tipo || '—')}</td>
+          <td>${esc(t.instituicao || '—')}</td>
+          <td>${t.carga_horaria ? Number(t.carga_horaria) + ' h' : '—'}</td>
+          <td class="venc-cell">${rhData(t.concluido_em)}</td>
+          <td class="${s.cls}">${s.txt}</td>
+          ${d.pode.remuneracao ? `<td>${t.custo ? brl(Number(t.custo)) : '—'}</td>` : ''}
+          <td class="actions">${ed ? `<button class="btn-ic perigo" data-del-tr="${t.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</td>
+        </tr>`; }).join('')}</tbody></table></div>`
+        : `<div class="rh-nota">Nenhum treinamento registrado. Cursos com <strong>validade</strong> — NR,
+           brigada, primeiros socorros — viram alerta no Painel quando vencem.</div>`}
+    </div>`;
+
+  const add = painel.querySelector('#rh-add-treino');
+  if (add) add.onclick = () => openModal('Registrar treinamento', `
+    ${fld('tr-titulo', 'Título *', 'text', '', 'placeholder="NR-35 Trabalho em Altura"')}
+    <div class="form-row">
+      ${fldSel('tr-tipo', 'Tipo', RH_TIPO_TREINO, '')}
+      ${fld('tr-instituicao', 'Instituição', 'text', '')}
+      ${fld('tr-carga', 'Carga horária', 'number', '', 'min="0" step="0.5"')}
+    </div>
+    <div class="form-row">
+      ${fld('tr-concluido', 'Concluído em', 'date', todayISO())}
+      ${fld('tr-validade', 'Válido até', 'date', '', 'placeholder="deixe vazio se não vence"')}
+      ${d.pode.remuneracao ? fld('tr-custo', 'Custo (R$)', 'number', '', 'min="0" step="0.01"') : ''}
+    </div>
+    <label class="check-chip"><input type="checkbox" id="tr-obrig"> Treinamento obrigatório</label>
+    ${fld('tr-obs', 'Observação', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar', cls: 'primary', onClick: async () => {
+        if (!$('#tr-titulo').value.trim()) return modalError('O título é obrigatório.');
+        try {
+          await api(`/api/rh/colaboradores/${id}/treinamentos`, { method: 'POST', body: {
+            titulo: $('#tr-titulo').value, tipo: $('#tr-tipo').value,
+            instituicao: $('#tr-instituicao').value, carga_horaria: $('#tr-carga').value,
+            concluido_em: $('#tr-concluido').value, validade: $('#tr-validade').value,
+            custo: $('#tr-custo') ? $('#tr-custo').value : null,
+            obrigatorio: $('#tr-obrig').checked, observacao: $('#tr-obs').value } });
+          closeModal(); toast('Treinamento registrado.'); abrirFichaRH(id, 'desenv');
+        } catch (e) { modalError(e.message); }
+     }}], { wide: true });
+
+  painel.querySelectorAll('[data-del-tr]').forEach(b => b.onclick = () =>
+    confirmDelete('treinamento', '/api/rh/treinamentos/' + b.dataset.delTr, () => abrirFichaRH(id, 'desenv')));
+}
+
+// ---------------- Painel de RH ----------------
+//
+// Um painel de RH mente com facilidade: soma o salário de quem tem vínculo
+// cadastrado e apresenta como "a folha". Por isso a primeira coisa da tela é a
+// COBERTURA — de quantas pessoas cada número saiu —, e todo bloco que depende
+// de dado incompleto diz de quantos.
+
+const rhPct = (a, b) => (b ? Math.round(100 * a / b) : 0);
+const rhDias = d => {
+  if (d == null) return '—';
+  if (d < 60) return `${d} dias`;
+  const meses = Math.round(d / 30.44);
+  return meses < 24 ? `${meses} meses` : `${(d / 365.25).toFixed(1)} anos`;
+};
+const rhNum = v => (v == null ? '—' : String(v));
+
+// Um indicador. `nota` é a cobertura ou a ressalva — nunca decorativa.
+const rhKpi = (rotulo, valor, nota, estado) => `
+  <div class="kpi ${estado || ''}">
+    <span class="kpi-r">${esc(rotulo)}</span>
+    <b class="kpi-v">${valor}</b>
+    ${nota ? `<i class="kpi-n">${nota}</i>` : ''}
+  </div>`;
+
+// Barra horizontal simples para distribuições. Sem biblioteca: são listas
+// curtas, e um gráfico aqui custaria mais do que informa.
+const rhBarras = (itens, total, cor) => {
+  if (!itens.length) return '<div class="rh-sem">— sem dados —</div>';
+  return `<div class="rh-barras">${itens.slice(0, 8).map(i => `
+    <div class="rh-barra-linha">
+      <span class="rot" title="${esc(i.chave)}">${esc(i.chave)}</span>
+      <span class="trilho"><i style="width:${rhPct(i.n, total)}%;background:${cor || 'var(--verde-700)'}"></i></span>
+      <span class="val">${i.n}</span>
+    </div>`).join('')}</div>`;
+};
+
+const RH_ETAPA_NOME = { carta_oferta: 'Carta Oferta', documentacao: 'Documentação',
+  exame_admissional: 'Exame admissional', contrato: 'Contrato',
+  contas_acessos: 'Contas e Acessos', onboarding: 'Onboarding' };
+const RH_MODELO_NOME = { presencial: 'Presencial', hibrido: 'Híbrido',
+  home_office: 'Home office', externo: 'Jornada externa' };
+const RH_SEXO_NOME = { M: 'Masculino', F: 'Feminino', O: 'Outro' };
+
+async function rhPainel(c) {
+  const d = await api('/api/rh/painel');
+  const co = d.cobertura, hc = d.headcount, re = d.recrutamento;
+  const tu = d.turnover, cu = d.custo, de = d.desenvolvimento, cl = d.clima, cp = d.compliance;
+
+  // Quantas pendências de compliance existem, para o bloco saber a própria cor.
+  const nCompliance = cp.dossie_incompleto + cp.sem_aso + cp.sem_contrato_assinado
+    + cp.experiencia_vencida.length + cp.sem_vinculo;
+
+  const traduzir = (itens, mapa) => itens.map(i => ({ ...i, chave: mapa[i.chave] || i.chave }));
+  const maxMov = Math.max(1, ...hc.movimentacao.map(m => Math.max(m.admissoes, m.desligamentos)));
+
+  c.innerHTML = rhAbasTopo() + `
+    ${co.sem_vinculo ? `<div class="rh-alerta">
+      <strong>${co.sem_vinculo} de ${co.ativos} colaboradores ativos não têm vínculo registrado.</strong>
+      Custo de pessoal, tempo de casa e turnover são calculados a partir do vínculo — enquanto isso não
+      for preenchido, estes números cobrem apenas ${co.com_vinculo} pessoa(s).
+      <span class="rh-alerta-nomes">${esc(co.sem_vinculo_nomes.join(' · '))}</span>
+    </div>` : ''}
+
+    <div class="rh-painel-sec"><h3>Headcount</h3>
+      <div class="kpis">
+        ${rhKpi('Colaboradores ativos', hc.ativos, `${co.com_vinculo} com vínculo`)}
+        ${rhKpi('Em admissão', hc.candidatos, 'candidatos no quadro', hc.candidatos ? 'aviso' : '')}
+        ${rhKpi('Tempo médio de casa', rhDias(hc.tempo_casa_dias), `de ${co.com_vinculo} pessoa(s)`)}
+        ${rhKpi('Idade média', hc.idade_media ? hc.idade_media + ' anos' : '—',
+          `${co.com_nascimento} de ${co.ativos} com data de nascimento`)}
+        ${rhKpi('Arquivados', hc.arquivados, 'ex-colaboradores')}
+      </div>
+      <div class="rh-cols-3">
+        <div><h5>Por departamento</h5>${rhBarras(hc.por_departamento, co.com_vinculo)}</div>
+        <div><h5>Por modelo de trabalho</h5>${rhBarras(traduzir(hc.por_modelo, RH_MODELO_NOME), co.com_vinculo)}</div>
+        <div><h5>Por sexo <span class="rh-mini">${co.com_sexo}/${co.ativos} informado</span></h5>
+          ${rhBarras(traduzir(hc.por_sexo, RH_SEXO_NOME), co.ativos, '#5B8DEF')}</div>
+      </div>
+      <h5>Admissões e desligamentos — 12 meses</h5>
+      <div class="rh-mov">${hc.movimentacao.map(m => `
+        <div class="rh-mov-mes" title="${m.mes}: ${m.admissoes} admissão(ões), ${m.desligamentos} desligamento(s)">
+          <span class="col">
+            <i class="adm" style="height:${rhPct(m.admissoes, maxMov)}%"></i>
+            <i class="des" style="height:${rhPct(m.desligamentos, maxMov)}%"></i>
+          </span>
+          <span class="mes">${m.mes.slice(5)}</span>
+        </div>`).join('')}</div>
+      <div class="rh-legenda"><span class="l adm"></span>admissões <span class="l des"></span>desligamentos</div>
+    </div>
+
+    <div class="rh-painel-sec"><h3>Recrutamento</h3>
+      <div class="kpis">
+        ${rhKpi('Processos abertos', re.em_andamento, 'no quadro de admissão')}
+        ${rhKpi('Admissões previstas', re.previstas_30d, 'nos próximos 30 dias', re.previstas_30d ? 'aviso' : '')}
+        ${rhKpi('Tempo médio de admissão', rhDias(re.tempo_medio_dias), 'abertura → contrato assinado')}
+        ${rhKpi('Taxa de conclusão', re.taxa_conclusao == null ? '—' : re.taxa_conclusao + '%',
+          `${re.concluidas_12m} concluída(s), ${re.canceladas} cancelada(s)`)}
+      </div>
+      <h5>Onde estão os processos</h5>
+      ${rhBarras(traduzir(re.por_etapa, RH_ETAPA_NOME), re.em_andamento, '#C8912B')}
+    </div>
+
+    <div class="rh-painel-sec"><h3>Turnover</h3>
+      <div class="kpis">
+        ${rhKpi('Turnover 12 meses', tu.taxa_12m == null ? '—' : tu.taxa_12m + '%',
+          `${tu.desligamentos_12m} saída(s) · headcount médio ${tu.headcount_medio}`,
+          tu.taxa_12m > 20 ? 'alerta' : '')}
+        ${rhKpi('Voluntário', tu.voluntario, 'pedidos de demissão')}
+        ${rhKpi('Involuntário', tu.involuntario, 'dispensas e fim de contrato')}
+        ${rhKpi('Permanência média', rhDias(tu.permanencia_media_dias), 'de quem saiu')}
+      </div>
+      ${tu.desligamentos_12m ? `<h5>Saídas por departamento</h5>${rhBarras(tu.por_departamento, tu.desligamentos_12m, 'var(--danger)')}`
+        : '<div class="rh-sem">Nenhum desligamento nos últimos 12 meses.</div>'}
+    </div>
+
+    ${cu ? `<div class="rh-painel-sec"><h3>Custo de pessoal</h3>
+      <div class="kpis">
+        ${rhKpi('Folha mensal', brl(cu.folha_mensal), `${co.com_salario} salário(s) cadastrado(s)`)}
+        ${rhKpi('Benefícios/mês', brl(cu.beneficios_mensais), `estimado em ${cu.base_dias_uteis} dias úteis`)}
+        ${rhKpi('Custo médio', cu.custo_medio == null ? '—' : brl(cu.custo_medio), 'por colaborador com vínculo')}
+        ${rhKpi('Custo anual', brl((cu.folha_mensal + cu.beneficios_mensais) * 12), 'sem encargos e 13º')}
+      </div>
+      <div class="rh-nota">Só salário e benefícios da ficha. <strong>Não</strong> inclui encargos (INSS, FGTS),
+        13º, férias nem provisões — para o custo cheio, o Fluxo de Caixa é a fonte.</div>
+      <h5>Folha por departamento</h5>
+      ${cu.por_departamento.length ? `<div class="rh-barras">${cu.por_departamento.map(x => `
+        <div class="rh-barra-linha">
+          <span class="rot" title="${esc(x.chave)}">${esc(x.chave)} <em>(${x.n})</em></span>
+          <span class="trilho"><i style="width:${rhPct(x.salario, cu.folha_mensal)}%"></i></span>
+          <span class="val">${brl(x.salario)}</span>
+        </div>`).join('')}</div>` : '<div class="rh-sem">— sem dados —</div>'}
+    </div>` : '<div class="rh-painel-sec"><h3>Custo de pessoal</h3><div class="rh-nota">🔒 Exige a permissão “RH · remuneração e benefícios”.</div></div>'}
+
+    <div class="rh-painel-sec"><h3>Desenvolvimento</h3>
+      <div class="kpis">
+        ${rhKpi('Horas de treinamento', de.horas_12m, 'nos últimos 12 meses')}
+        ${rhKpi('Horas por pessoa', rhNum(de.horas_per_capita), 'média sobre o headcount')}
+        ${rhKpi('Cobertura', de.cobertura_pct == null ? '—' : de.cobertura_pct + '%',
+          `${de.pessoas_treinadas_12m} de ${hc.ativos} treinado(s)`)}
+        ${rhKpi('Certificações vencidas', de.certificacoes_vencidas, `${de.certificacoes_a_vencer} vencem em 60 dias`,
+          de.certificacoes_vencidas ? 'alerta' : (de.certificacoes_a_vencer ? 'aviso' : ''))}
+        ${cu ? rhKpi('Investimento', brl(de.investimento_12m || 0), '12 meses') : ''}
+      </div>
+      ${de.registros ? '' : `<div class="rh-nota">Nenhum treinamento registrado ainda. Cada colaborador tem a aba
+        <strong>Desenvolvimento</strong> na ficha — NR, brigada e primeiros socorros com validade viram alerta
+        automático aqui quando vencem.</div>`}
+    </div>
+
+    <div class="rh-painel-sec"><h3>Clima e engajamento</h3>
+      <div class="kpis">
+        ${rhKpi('eNPS', cl.enps == null ? '—' : (cl.enps > 0 ? '+' : '') + cl.enps,
+          cl.ciclo_atual ? 'ciclo ' + esc(cl.ciclo_atual) : 'sem pesquisa',
+          cl.enps == null ? '' : (cl.enps < 0 ? 'alerta' : cl.enps >= 50 ? 'ok' : 'aviso'))}
+        ${rhKpi('Satisfação', cl.satisfacao == null ? '—' : cl.satisfacao + ' / 5', 'média das respostas')}
+        ${rhKpi('Participação', cl.participacao_pct == null ? '—' : cl.participacao_pct + '%',
+          `${cl.respostas} resposta(s) de ${hc.ativos}`)}
+      </div>
+      ${cl.ciclos.length ? `<h5>Histórico por ciclo</h5>
+        <div class="table-wrap"><table class="tbl-rh-dep">
+          <thead><tr><th>Ciclo</th><th>Respostas</th><th>Promotores</th><th>Neutros</th><th>Detratores</th><th>eNPS</th><th>Satisfação</th></tr></thead>
+          <tbody>${cl.ciclos.map(x => {
+            const e = x.respostas ? Math.round(100 * (x.promotores - x.detratores) / x.respostas) : null;
+            return `<tr><td>${esc(x.ciclo)}</td><td>${x.respostas}</td><td>${x.promotores}</td>
+              <td>${x.neutros}</td><td>${x.detratores}</td>
+              <td><strong>${e == null ? '—' : (e > 0 ? '+' : '') + e}</strong></td>
+              <td>${x.satisfacao == null ? '—' : x.satisfacao}</td></tr>`;
+          }).join('')}</tbody></table></div>`
+        : `<div class="rh-nota">Nenhuma pesquisa registrada. O eNPS pergunta de 0 a 10 o quanto a pessoa
+           recomendaria a empresa como lugar para trabalhar, e a conta é <strong>% promotores (9-10) −
+           % detratores (0-6)</strong>, de −100 a +100. A resposta pode ser anônima.</div>`}
+      <div class="rh-acoes-linha"><button class="btn" id="rh-add-clima">+ Registrar resposta</button></div>
+    </div>
+
+    <div class="rh-painel-sec ${nCompliance ? 'com-pendencia' : ''}"><h3>Compliance trabalhista</h3>
+      <div class="kpis">
+        ${rhKpi('Dossiê incompleto', cp.dossie_incompleto, 'falta documento obrigatório', cp.dossie_incompleto ? 'alerta' : 'ok')}
+        ${rhKpi('Sem ASO', cp.sem_aso, 'atestado de saúde ocupacional', cp.sem_aso ? 'alerta' : 'ok')}
+        ${rhKpi('Sem contrato no dossiê', cp.sem_contrato_assinado, 'com vínculo aberto', cp.sem_contrato_assinado ? 'alerta' : 'ok')}
+        ${rhKpi('Sem vínculo registrado', cp.sem_vinculo, 'ativos sem contrato de trabalho', cp.sem_vinculo ? 'alerta' : 'ok')}
+        ${rhKpi('Experiência vencendo', cp.experiencia_vencendo_30d.length, 'nos próximos 30 dias',
+          cp.experiencia_vencendo_30d.length ? 'aviso' : '')}
+      </div>
+      ${cp.experiencia_vencida.length ? `<div class="rh-nota aviso">
+        <strong>Contrato de experiência já vencido:</strong>
+        ${cp.experiencia_vencida.map(x => `${esc(x.nome)} (${rhData(x.ate)})`).join(' · ')}.
+        Passada a data sem rescisão, o contrato vira por prazo indeterminado.</div>` : ''}
+      ${cp.experiencia_vencendo_30d.length ? `<div class="rh-nota aviso">
+        <strong>Experiência terminando:</strong>
+        ${cp.experiencia_vencendo_30d.map(x => `${esc(x.nome)} até ${rhData(x.ate)}`).join(' · ')}.</div>` : ''}
+    </div>`;
+
+  rhLigarAbas();
+  $('#rh-add-clima').onclick = rhFormClima;
+}
+
+function rhFormClima() {
+  const ano = todayISO().slice(0, 4);
+  const semestre = Number(todayISO().slice(5, 7)) <= 6 ? 'S1' : 'S2';
+  openModal('Registrar resposta da pesquisa de clima', `
+    <p style="font-size:13.5px;color:var(--ink-2)">Uma resposta por vez. Deixe <strong>anônima</strong> sempre
+    que possível: pesquisa de clima que identifica quem respondeu mede o que a pessoa acha seguro dizer, não o
+    clima. O departamento pode ser informado sem identificar ninguém.</p>
+    <div class="form-row">
+      ${fld('cl-ciclo', 'Ciclo *', 'text', `${ano}-${semestre}`, 'placeholder="2026-S2"')}
+      ${fld('cl-departamento', 'Departamento', 'text', '')}
+    </div>
+    <div class="form-row">
+      ${fld('cl-enps', 'eNPS — recomendaria a empresa? (0 a 10)', 'number', '', 'min="0" max="10" step="1"')}
+      ${fld('cl-satisfacao', 'Satisfação geral (1 a 5)', 'number', '', 'min="1" max="5" step="1"')}
+    </div>
+    ${fld('cl-comentario', 'Comentário', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/clima', { method: 'POST', body: {
+            ciclo: $('#cl-ciclo').value, departamento: $('#cl-departamento').value,
+            enps: $('#cl-enps').value, satisfacao: $('#cl-satisfacao').value,
+            comentario: $('#cl-comentario').value } });
+          closeModal(); toast('Resposta registrada.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
 // ---------------- Despachante da seção ----------------
 // A seção tem três telas. O quadro vem primeiro porque é o que se olha todo
 // dia; a lista completa e as minutas são consulta e configuração.
 async function renderRH() {
   const c = $('#content');
+  if (RH_ABA === 'painel') return rhPainel(c);
   if (RH_ABA === 'quadro') return rhQuadro(c);
   if (RH_ABA === 'minutas') return rhMinutas(c);
   return rhPessoas(c);
@@ -9405,9 +9756,11 @@ async function renderRH() {
 
 // ---------------- Lista de colaboradores ----------------
 async function rhPessoas(c) {
-  const rows = await api('/api/rh/colaboradores');
   const FKEY = 'filters-rh';
   const saved = loadFilters(FKEY);
+  // Arquivados são outra CONSULTA, não um filtro na lista carregada: quem saiu
+  // não vem junto com a equipe atual em nenhum momento.
+  const rows = await api('/api/rh/colaboradores' + (saved.arq === '1' ? '?arquivados=1' : ''));
   const deps = [...new Set(rows.map(r => r.departamento).filter(Boolean))].sort();
   const cargos = [...new Set(rows.map(r => r.cargo).filter(Boolean))].sort();
 
@@ -9421,6 +9774,8 @@ async function rhPessoas(c) {
         <option value="experiencia" ${saved.sit === 'experiencia' ? 'selected' : ''}>Em experiência</option></select>
       <select id="f-dep"><option value="">Todos os departamentos</option>${deps.map(d => `<option ${saved.dep === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
       <select id="f-cargo"><option value="">Todos os cargos</option>${cargos.map(d => `<option ${saved.cargo === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select>
+      <select id="f-arq"><option value="">Equipe atual</option>
+        <option value="1" ${saved.arq === '1' ? 'selected' : ''}>Arquivados</option></select>
       <select id="f-doc"><option value="">Documentação: todas</option>
         <option value="pendente" ${saved.doc === 'pendente' ? 'selected' : ''}>Com pendência</option>
         <option value="ok" ${saved.doc === 'ok' ? 'selected' : ''}>Completa</option></select>
@@ -9440,7 +9795,9 @@ async function rhPessoas(c) {
   const draw = () => {
     const q = $('#q').value.toLowerCase(), sit = $('#f-sit').value;
     const dep = $('#f-dep').value, cargo = $('#f-cargo').value, doc = $('#f-doc').value;
-    saveFilters(FKEY, { q: $('#q').value, sit, dep, cargo, doc });
+    // `arq` é preservado: ele decide QUAL lista foi carregada, e sobrescrevê-lo
+    // aqui jogaria o usuário de volta para a equipe atual a cada tecla digitada.
+    saveFilters(FKEY, { q: $('#q').value, sit, dep, cargo, doc, arq: $('#f-arq').value });
 
     const filtered = rows.filter(r => {
       const desligado = !!r.desligamento;
@@ -9497,17 +9854,37 @@ async function rhPessoas(c) {
             <span class="rh-barra-txt">${r.checklist_ok}/${r.checklist_total}</span></td>
           <td class="actions">
             <button class="btn-ic" data-abrir="${r.id}" title="Abrir a ficha" aria-label="Abrir a ficha">📂</button>
+            ${r.arquivado_em
+              ? `<button class="btn-ic" data-desarq="${r.id}" title="Desarquivar" aria-label="Desarquivar">↩</button>`
+              : `<button class="btn-ic" data-arq="${r.id}" title="Arquivar — quem saiu da empresa" aria-label="Arquivar">📥</button>`}
+            <button class="btn-ic perigo" data-excluir="${r.id}" title="Excluir definitivamente" aria-label="Excluir">🗑</button>
           </td></tr>`;
       }).join('') || '<tr><td colspan="8"><div class="empty">Nenhum colaborador encontrado.</div></td></tr>'}</tbody>
       <tfoot><tr><td colspan="7">Exibindo ${filtered.length} de ${rows.length}</td><td></td></tr></tfoot>`;
 
     $('#tbl').querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => abrirFichaRH(Number(b.dataset.abrir)));
+    $('#tbl').querySelectorAll('[data-arq]').forEach(b => b.onclick = () => {
+      const r = rows.find(x => x.id === Number(b.dataset.arq));
+      rhFormArquivar(r);
+    });
+    $('#tbl').querySelectorAll('[data-desarq]').forEach(b => b.onclick = async () => {
+      try {
+        await api(`/api/rh/colaboradores/${b.dataset.desarq}/desarquivar`, { method: 'POST', body: {} });
+        toast('Desarquivado. O vínculo anterior segue encerrado no histórico.'); renderRH();
+      } catch (e) { toast(e.message); }
+    });
+    $('#tbl').querySelectorAll('[data-excluir]').forEach(b => b.onclick = () => {
+      const r = rows.find(x => x.id === Number(b.dataset.excluir));
+      rhConfirmarExcluir(r);
+    });
   };
 
   ['q', 'f-sit', 'f-dep', 'f-cargo', 'f-doc'].forEach(id => $('#' + id).oninput = draw);
+  // Trocar entre equipe atual e arquivados recarrega a tela inteira.
+  $('#f-arq').onchange = () => { saveFilters(FKEY, { ...loadFilters(FKEY), arq: $('#f-arq').value }); renderRH(); };
   $('#btn-clear').onclick = () => {
-    ['q', 'f-sit', 'f-dep', 'f-cargo', 'f-doc'].forEach(id => { $('#' + id).value = ''; });
-    saveFilters(FKEY, {}); draw();
+    ['q', 'f-sit', 'f-dep', 'f-cargo', 'f-doc', 'f-arq'].forEach(id => { $('#' + id).value = ''; });
+    saveFilters(FKEY, {}); renderRH();
   };
   rhLigarAbas();
   // Pela lista entra quem já é funcionário; candidato entra pelo Quadro.
@@ -9538,6 +9915,7 @@ async function abrirFichaRH(id, aba) {
     { k: 'contato', t: 'Contato' },
     { k: 'vinculo', t: 'Vínculo' },
     { k: 'deps', t: 'Dependentes' },
+    { k: 'desenv', t: 'Desenvolvimento' },
     { k: 'dossie', t: 'Dossiê' }
   ];
   const atual = aba && abas.some(a => a.k === aba) ? aba : 'ident';
@@ -9573,6 +9951,7 @@ async function abrirFichaRH(id, aba) {
     contato: () => rhAbaContato(painel, d, id),
     vinculo: () => rhAbaVinculo(painel, d, id),
     deps: () => rhAbaDependentes(painel, d, id),
+    desenv: () => rhAbaDesenvolvimento(painel, d, id),
     dossie: () => rhAbaDossie(painel, d, id)
   };
   pintar[atual]();

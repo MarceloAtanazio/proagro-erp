@@ -268,6 +268,13 @@ const AUDIT_MAP = {
   'PUT /api/rh/vinculos/:id': req => `Editou o vínculo ID ${req.params.id}${req.body.desligamento ? ` — DESLIGAMENTO em ${req.body.desligamento}` : ''}`,
   'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
+  // Arquivar e excluir mexem em registro trabalhista: ficam nomeados no log.
+  'POST /api/rh/colaboradores/:id/arquivar': req => `ARQUIVOU o colaborador ID ${req.params.id}${req.body.motivo ? ` — ${req.body.motivo}` : ''}`,
+  'POST /api/rh/colaboradores/:id/desarquivar': req => `Desarquivou o colaborador ID ${req.params.id}`,
+  'DELETE /api/rh/colaboradores/:id': req => `EXCLUIU o colaborador ID ${req.params.id}`,
+  'POST /api/rh/colaboradores/:id/treinamentos': req => `Registrou o treinamento "${req.body.titulo}" para o colaborador ID ${req.params.id}`,
+  'DELETE /api/rh/treinamentos/:id': req => `Excluiu o treinamento ID ${req.params.id}`,
+  'POST /api/rh/clima': req => `Registrou resposta da pesquisa de clima do ciclo ${req.body.ciclo}`,
   'DELETE /api/rh/dependentes/:id': req => `Excluiu o dependente ID ${req.params.id}`,
   'DELETE /api/attachments/:id': req => `Excluiu o anexo ID ${req.params.id}`,
   'POST /api/settings/categories': req => `Criou a categoria "${req.body.name}" (${req.body.type})`,
@@ -2134,7 +2141,7 @@ function rhDatasExperiencia(admissaoISO) {
 app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const rows = await query(`
     SELECT c.id, c.name, c.nome_social, c.ativo, c.usuario_id, c.sexo, c.email_corporativo, c.celular,
-           c.cpf, c.banco_numero, c.agencia, c.conta,
+           c.cpf, c.banco_numero, c.agencia, c.conta, c.arquivado_em, c.arquivado_motivo,
            v.id AS vinculo_id, v.tipo, v.matricula, v.admissao, v.desligamento, v.cargo, v.nivel,
            v.departamento, v.regime, v.modelo_trabalho, v.experiencia_fim, v.prorrogacao_fim,
            v.salario, v.periculosidade_pct, v.vr_dia, v.home_office_dia,
@@ -2150,7 +2157,11 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
      -- Candidato não é colaborador: quem está em admissão (ativo=false, sem
      -- vínculo) vive no Quadro, não nesta lista. Quem já foi funcionário e foi
      -- desativado continua aqui — tem vínculo, é histórico.
-     WHERE c.ativo = true OR v.id IS NOT NULL
+     -- Arquivado só aparece quando pedido: ?arquivados=1 mostra APENAS eles,
+     -- que é como se consulta um ex-funcionário — não misturado à equipe atual.
+     WHERE ${req.query.arquivados === '1'
+       ? 'c.arquivado_em IS NOT NULL'
+       : 'c.arquivado_em IS NULL AND (c.ativo = true OR v.id IS NOT NULL)'}
      ORDER BY c.ativo DESC, c.name`);
   const out = rows.map(r => {
     const tipos = Array.isArray(r.tipos) ? r.tipos : [];
@@ -2954,6 +2965,392 @@ app.post('/api/rh/admissoes/:id/contrato', requireAuth, requireEdit('rh'), h(asy
     valores,
     minuta: { id: minuta.id, nome: minuta.nome }
   });
+}));
+
+// ============================================================
+// RH — painel de indicadores
+//
+// Sete famílias: headcount, recrutamento, turnover, custo de pessoal,
+// desenvolvimento, clima e compliance trabalhista.
+//
+// Regra que atravessa o painel inteiro: TODO indicador vem acompanhado da sua
+// COBERTURA — de quantas pessoas ele foi calculado. Hoje 9 dos 11 ativos não
+// têm vínculo registrado, e sem isso a folha soma dois salários e pareceria
+// uma folha de R$ 16 mil. Número sem cobertura, aqui, mente.
+// ============================================================
+
+// Colaborador de verdade: não arquivado e não candidato em admissão.
+const RH_SQL_COLAB_ATIVO = `
+  c.arquivado_em IS NULL AND c.ativo = true`;
+
+// Vínculo vigente de uma pessoa (o aberto; na falta dele, o mais recente).
+const RH_SQL_VINCULO_ATUAL = `
+  LEFT JOIN LATERAL (
+    SELECT * FROM erp_rh_vinculos w WHERE w.colaborador_id = c.id
+     ORDER BY (w.desligamento IS NULL) DESC, w.admissao DESC LIMIT 1
+  ) v ON true`;
+
+app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const hoje = hojeISO();
+  const verCusto = rhVeRemuneracao(req.user);
+
+  // ---------- headcount ----------
+  const base = await query(`
+    SELECT c.id, c.name, c.sexo, c.data_nascimento, c.ativo, c.arquivado_em,
+           v.id AS vinculo_id, v.admissao, v.desligamento, v.departamento, v.cargo, v.nivel,
+           v.modelo_trabalho, v.regime, v.tipo, v.salario, v.vr_dia, v.home_office_dia,
+           v.experiencia_fim, v.prorrogacao_fim
+      FROM erp_colaboradores c ${RH_SQL_VINCULO_ATUAL}
+     WHERE c.arquivado_em IS NULL`);
+
+  const ativos = base.filter(r => r.ativo);
+  const comVinculo = ativos.filter(r => r.vinculo_id && !r.desligamento);
+  const semVinculo = ativos.filter(r => !r.vinculo_id);
+
+  const contarPor = (linhas, campo) => {
+    const m = {};
+    linhas.forEach(r => { const k = r[campo] || '— não informado —'; m[k] = (m[k] || 0) + 1; });
+    return Object.entries(m).map(([k, n]) => ({ chave: k, n })).sort((a, b) => b.n - a.n);
+  };
+  const mediaDias = (linhas, campo) => {
+    const ds = linhas.map(r => r[campo]).filter(Boolean)
+      .map(d => (Date.parse(hoje) - Date.parse(String(d).slice(0, 10))) / 86400000)
+      .filter(x => isFinite(x) && x >= 0);
+    return ds.length ? Math.round(ds.reduce((a, b) => a + b, 0) / ds.length) : null;
+  };
+  const idade = d => {
+    if (!d) return null;
+    const [a, m, x] = String(d).slice(0, 10).split('-').map(Number);
+    const [ha, hm, hx] = hoje.split('-').map(Number);
+    return ha - a - ((hm < m || (hm === m && hx < x)) ? 1 : 0);
+  };
+  const idades = ativos.map(r => idade(r.data_nascimento)).filter(x => x != null);
+
+  // ---------- movimentação dos últimos 12 meses ----------
+  const mov = await query(`
+    SELECT to_char(d.mes, 'YYYY-MM') AS mes,
+           (SELECT count(*) FROM erp_rh_vinculos v
+             WHERE date_trunc('month', v.admissao) = d.mes) AS admissoes,
+           (SELECT count(*) FROM erp_rh_vinculos v
+             WHERE v.desligamento IS NOT NULL AND date_trunc('month', v.desligamento) = d.mes) AS desligamentos
+      FROM generate_series(date_trunc('month', CURRENT_DATE) - interval '11 months',
+                           date_trunc('month', CURRENT_DATE), interval '1 month') AS d(mes)
+     ORDER BY d.mes`);
+
+  // ---------- turnover ----------
+  // (desligamentos no período ÷ headcount médio) — a fórmula usual. Com
+  // headcount médio zero o resultado seria divisão por zero, então vira null:
+  // "não dá para calcular" é diferente de "zero".
+  const desl12 = mov.reduce((s, m) => s + Number(m.desligamentos), 0);
+  const adm12 = mov.reduce((s, m) => s + Number(m.admissoes), 0);
+  const hcMedio = comVinculo.length + desl12 / 2;
+  const desligados = await query(`
+    SELECT v.desligamento, v.desligamento_tipo, v.departamento, v.admissao
+      FROM erp_rh_vinculos v
+     WHERE v.desligamento IS NOT NULL
+       AND v.desligamento >= (CURRENT_DATE - interval '12 months')`);
+  const voluntario = desligados.filter(d => d.desligamento_tipo === 'pedido').length;
+  const permanencia = desligados
+    .map(d => (Date.parse(String(d.desligamento).slice(0, 10)) - Date.parse(String(d.admissao).slice(0, 10))) / 86400000)
+    .filter(x => isFinite(x) && x >= 0);
+
+  // ---------- custo de pessoal ----------
+  const soma = (linhas, campo) => linhas.reduce((s, r) => s + Number(r[campo] || 0), 0);
+  const folha = soma(comVinculo, 'salario');
+  // VR e ajuda de custo são por DIA trabalhado: 22 dias úteis é a média usada
+  // em folha. É estimativa, e a tela diz isso.
+  const beneficios = comVinculo.reduce((s, r) => s + Number(r.vr_dia || 0) * 22 + Number(r.home_office_dia || 0) * 22, 0);
+  const porDepto = {};
+  comVinculo.forEach(r => {
+    const k = r.departamento || '— não informado —';
+    porDepto[k] = porDepto[k] || { chave: k, n: 0, salario: 0 };
+    porDepto[k].n++; porDepto[k].salario += Number(r.salario || 0);
+  });
+
+  // ---------- recrutamento ----------
+  const adms = await query(`
+    SELECT a.id, a.etapa, a.situacao, a.admissao_prevista, a.created_at,
+           a.oferta_enviada_em, a.contrato_assinado_em, a.onboarding_concluido_em
+      FROM erp_rh_admissoes a`);
+  const emAndamento = adms.filter(a => a.situacao === 'andamento');
+  const concluidas = adms.filter(a => a.situacao === 'concluida');
+  const canceladas = adms.filter(a => a.situacao === 'cancelada');
+  // Tempo de admissão: da abertura do processo até o contrato assinado.
+  const tempos = adms.filter(a => a.contrato_assinado_em)
+    .map(a => (Date.parse(String(a.contrato_assinado_em).slice(0, 10)) - Date.parse(a.created_at)) / 86400000)
+    .filter(x => isFinite(x) && x >= 0);
+
+  // ---------- desenvolvimento ----------
+  const trein = await query(`
+    SELECT t.colaborador_id, t.carga_horaria, t.custo, t.obrigatorio, t.validade, t.concluido_em
+      FROM erp_rh_treinamentos t
+      JOIN erp_colaboradores c ON c.id = t.colaborador_id AND c.arquivado_em IS NULL`);
+  const trein12 = trein.filter(t => t.concluido_em && String(t.concluido_em).slice(0, 10) >= mov[0].mes + '-01');
+  const horas12 = trein12.reduce((s, t) => s + Number(t.carga_horaria || 0), 0);
+  const vencidos = trein.filter(t => t.validade && String(t.validade).slice(0, 10) < hoje);
+  const aVencer = trein.filter(t => t.validade && String(t.validade).slice(0, 10) >= hoje
+    && String(t.validade).slice(0, 10) <= rhSomaDiasISO(hoje, 60));
+  const comTreino = new Set(trein12.map(t => t.colaborador_id));
+
+  // ---------- clima ----------
+  const clima = await query(`
+    SELECT ciclo, count(*)::int AS respostas,
+           count(*) FILTER (WHERE enps >= 9)::int AS promotores,
+           count(*) FILTER (WHERE enps BETWEEN 7 AND 8)::int AS neutros,
+           count(*) FILTER (WHERE enps <= 6)::int AS detratores,
+           round(avg(satisfacao)::numeric, 2) AS satisfacao,
+           max(respondido_em) AS ultima
+      FROM erp_rh_clima WHERE enps IS NOT NULL OR satisfacao IS NOT NULL
+     GROUP BY ciclo ORDER BY max(respondido_em) DESC LIMIT 6`);
+  const climaAtual = clima[0] || null;
+  // eNPS = %promotores − %detratores, numa escala de −100 a +100.
+  const enps = climaAtual && climaAtual.respostas
+    ? Math.round(100 * (climaAtual.promotores - climaAtual.detratores) / climaAtual.respostas) : null;
+
+  // ---------- compliance trabalhista ----------
+  const docs = await query(`
+    SELECT c.id, c.sexo, c.banco_numero, c.agencia, c.conta,
+           COALESCE(json_agg(DISTINCT a.doc_tipo) FILTER (WHERE a.doc_tipo IS NOT NULL), '[]'::json) AS tipos
+      FROM erp_colaboradores c
+      LEFT JOIN erp_attachments a ON a.entity_type='rh_doc' AND a.entity_id = c.id
+     WHERE ${RH_SQL_COLAB_ATIVO}
+     GROUP BY c.id`);
+  const semDocCompleto = docs.filter(d => {
+    const chk = rhChecklist(d, (Array.isArray(d.tipos) ? d.tipos : []).map(t => ({ doc_tipo: t })));
+    return chk.some(x => !x.ok);
+  }).length;
+  const expVencendo = comVinculo.filter(r => r.prorrogacao_fim
+    && String(r.prorrogacao_fim).slice(0, 10) >= hoje
+    && String(r.prorrogacao_fim).slice(0, 10) <= rhSomaDiasISO(hoje, 30));
+  const expVencida = comVinculo.filter(r => r.prorrogacao_fim && String(r.prorrogacao_fim).slice(0, 10) < hoje);
+  const aso = await query(`
+    SELECT count(DISTINCT c.id)::int AS n FROM erp_colaboradores c
+     WHERE ${RH_SQL_COLAB_ATIVO}
+       AND NOT EXISTS (SELECT 1 FROM erp_attachments a
+                        WHERE a.entity_type='rh_doc' AND a.entity_id=c.id AND a.doc_tipo='aso')`);
+  const contratoNoDossie = await query(`
+    SELECT count(DISTINCT c.id)::int AS n FROM erp_colaboradores c
+     WHERE ${RH_SQL_COLAB_ATIVO}
+       AND EXISTS (SELECT 1 FROM erp_rh_vinculos v WHERE v.colaborador_id=c.id AND v.desligamento IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM erp_attachments a
+                        WHERE a.entity_type='rh_doc' AND a.entity_id=c.id AND a.doc_tipo='contrato_assinado')`);
+
+  res.json({
+    hoje,
+    cobertura: {
+      ativos: ativos.length,
+      com_vinculo: comVinculo.length,
+      sem_vinculo: semVinculo.length,
+      sem_vinculo_nomes: semVinculo.slice(0, 12).map(r => r.name),
+      com_nascimento: ativos.filter(r => r.data_nascimento).length,
+      com_sexo: ativos.filter(r => r.sexo).length,
+      com_salario: comVinculo.filter(r => r.salario != null).length
+    },
+    headcount: {
+      ativos: ativos.length,
+      arquivados: (await query('SELECT count(*)::int AS n FROM erp_colaboradores WHERE arquivado_em IS NOT NULL'))[0].n,
+      candidatos: emAndamento.length,
+      por_departamento: contarPor(comVinculo, 'departamento'),
+      por_cargo: contarPor(comVinculo, 'cargo'),
+      por_modelo: contarPor(comVinculo, 'modelo_trabalho'),
+      por_sexo: contarPor(ativos, 'sexo'),
+      tempo_casa_dias: mediaDias(comVinculo, 'admissao'),
+      idade_media: idades.length ? Math.round(idades.reduce((a, b) => a + b, 0) / idades.length) : null,
+      movimentacao: mov.map(m => ({ mes: m.mes, admissoes: Number(m.admissoes), desligamentos: Number(m.desligamentos) }))
+    },
+    recrutamento: {
+      em_andamento: emAndamento.length,
+      por_etapa: contarPor(emAndamento, 'etapa'),
+      concluidas_12m: concluidas.length,
+      canceladas: canceladas.length,
+      taxa_conclusao: (concluidas.length + canceladas.length)
+        ? Math.round(100 * concluidas.length / (concluidas.length + canceladas.length)) : null,
+      tempo_medio_dias: tempos.length ? Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length) : null,
+      previstas_30d: adms.filter(a => a.situacao === 'andamento' && a.admissao_prevista
+        && String(a.admissao_prevista).slice(0, 10) <= rhSomaDiasISO(hoje, 30)).length
+    },
+    turnover: {
+      desligamentos_12m: desl12,
+      admissoes_12m: adm12,
+      headcount_medio: Math.round(hcMedio * 10) / 10,
+      taxa_12m: hcMedio > 0 ? Math.round(1000 * desl12 / hcMedio) / 10 : null,
+      voluntario: voluntario,
+      involuntario: desligados.length - voluntario,
+      permanencia_media_dias: permanencia.length
+        ? Math.round(permanencia.reduce((a, b) => a + b, 0) / permanencia.length) : null,
+      por_departamento: contarPor(desligados, 'departamento')
+    },
+    custo: verCusto ? {
+      folha_mensal: Math.round(folha * 100) / 100,
+      beneficios_mensais: Math.round(beneficios * 100) / 100,
+      custo_medio: comVinculo.length ? Math.round(100 * (folha + beneficios) / comVinculo.length) / 100 : null,
+      por_departamento: Object.values(porDepto).sort((a, b) => b.salario - a.salario),
+      base_dias_uteis: 22
+    } : null,
+    desenvolvimento: {
+      registros: trein.length,
+      horas_12m: Math.round(horas12 * 10) / 10,
+      horas_per_capita: ativos.length ? Math.round(10 * horas12 / ativos.length) / 10 : null,
+      pessoas_treinadas_12m: comTreino.size,
+      cobertura_pct: ativos.length ? Math.round(100 * comTreino.size / ativos.length) : null,
+      investimento_12m: verCusto ? Math.round(trein12.reduce((s, t) => s + Number(t.custo || 0), 0) * 100) / 100 : null,
+      certificacoes_vencidas: vencidos.length,
+      certificacoes_a_vencer: aVencer.length
+    },
+    clima: {
+      ciclos: clima.map(c => ({ ...c, respostas: Number(c.respostas) })),
+      ciclo_atual: climaAtual ? climaAtual.ciclo : null,
+      enps,
+      satisfacao: climaAtual ? Number(climaAtual.satisfacao) : null,
+      respostas: climaAtual ? Number(climaAtual.respostas) : 0,
+      participacao_pct: climaAtual && ativos.length
+        ? Math.round(100 * Number(climaAtual.respostas) / ativos.length) : null
+    },
+    compliance: {
+      dossie_incompleto: semDocCompleto,
+      sem_aso: aso[0].n,
+      sem_contrato_assinado: contratoNoDossie[0].n,
+      experiencia_vencendo_30d: expVencendo.map(r => ({ nome: r.name, ate: r.prorrogacao_fim })),
+      experiencia_vencida: expVencida.map(r => ({ nome: r.name, ate: r.prorrogacao_fim })),
+      sem_vinculo: semVinculo.length
+    }
+  });
+}));
+
+// Data ISO somada de N dias, no fuso do Brasil.
+function rhSomaDiasISO(iso, n) {
+  const [a, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(a, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+// ---- Arquivar e desarquivar ----
+// Arquivar é o caminho normal para quem saiu: preserva vínculo, dossiê e
+// histórico, e tira a pessoa de todas as listas. Excluir apaga tudo.
+app.post('/api/rh/colaboradores/:id/arquivar', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const r = await query('SELECT id, name, arquivado_em FROM erp_colaboradores WHERE id=$1', [id]);
+  if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  if (r[0].arquivado_em) return res.status(409).json({ error: 'Este colaborador já está arquivado.' });
+
+  const aberto = await query(
+    'SELECT id, admissao FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL', [id]);
+  const dataSaida = isDate(req.body.desligamento) ? req.body.desligamento : hojeISO();
+  // Arquivar com vínculo aberto deixaria a pessoa fora das listas mas "empregada"
+  // para o cálculo de headcount e de folha. Fecha-se o vínculo junto.
+  if (aberto.length) {
+    await query(
+      `UPDATE erp_rh_vinculos SET desligamento=$1, desligamento_tipo=$2, desligamento_motivo=$3, updated_at=now()
+        WHERE id=$4`,
+      [dataSaida, sanitize(req.body.desligamento_tipo) || null, sanitize(req.body.motivo) || null, aberto[0].id]);
+  }
+  await query(
+    `UPDATE erp_colaboradores SET arquivado_em=now(), arquivado_por=$1, arquivado_motivo=$2, ativo=false WHERE id=$3`,
+    [req.user.id, sanitize(req.body.motivo) || null, id]);
+  res.json({ ok: true, vinculo_fechado: aberto.length > 0, desligamento: dataSaida });
+}));
+
+app.post('/api/rh/colaboradores/:id/desarquivar', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  // Desarquivar NÃO reabre o vínculo: quem volta à empresa entra por uma
+  // admissão nova, e o vínculo anterior fica no histórico onde deve ficar.
+  await query(
+    `UPDATE erp_colaboradores SET arquivado_em=NULL, arquivado_por=NULL, arquivado_motivo=NULL WHERE id=$1`, [id]);
+  res.json({ ok: true });
+}));
+
+// ---- Excluir ----
+// Só quando não há história: viático, vínculo ou documento no dossiê tornam a
+// exclusão uma perda de registro trabalhista. Nesses casos o caminho é arquivar.
+app.delete('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const r = await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [id]);
+  if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+
+  const impedimentos = [];
+  const conta = async (sql, rotulo) => {
+    const n = (await query(sql, [id]))[0].n;
+    if (n > 0) impedimentos.push(`${n} ${rotulo}`);
+  };
+  await conta('SELECT count(*)::int AS n FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1', 'solicitação(ões) de viáticos');
+  await conta('SELECT count(*)::int AS n FROM erp_rh_vinculos WHERE colaborador_id=$1', 'vínculo(s) registrado(s)');
+  await conta(`SELECT count(*)::int AS n FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, 'documento(s) no dossiê');
+  await conta('SELECT count(*)::int AS n FROM erp_rh_treinamentos WHERE colaborador_id=$1', 'treinamento(s)');
+
+  if (impedimentos.length) {
+    return res.status(409).json({
+      error: `${r[0].name} tem ${impedimentos.join(', ')}. Excluir apagaria registro trabalhista — arquive em vez de excluir.`,
+      impedimentos
+    });
+  }
+  // Sem história: some o candidato desistente e a duplicata cadastrada por
+  // engano. O ON DELETE CASCADE cuida de admissões e dependentes.
+  await query('DELETE FROM erp_colaboradores WHERE id=$1', [id]);
+  res.json({ ok: true });
+}));
+
+// ---- Treinamentos ----
+app.get('/api/rh/colaboradores/:id/treinamentos', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  res.json(await query(
+    'SELECT * FROM erp_rh_treinamentos WHERE colaborador_id=$1 ORDER BY concluido_em DESC NULLS LAST, id DESC',
+    [Number(req.params.id)]));
+}));
+
+app.post('/api/rh/colaboradores/:id/treinamentos', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const titulo = sanitize(req.body.titulo);
+  if (!titulo) return res.status(400).json({ error: 'O título do treinamento é obrigatório.' });
+  const num = v => (v === '' || v == null || !isFinite(Number(v)) ? null : Number(v));
+  const ins = await query(
+    `INSERT INTO erp_rh_treinamentos (colaborador_id, titulo, tipo, instituicao, carga_horaria,
+        concluido_em, validade, custo, obrigatorio, observacao, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+    [Number(req.params.id), titulo, sanitize(req.body.tipo) || null, sanitize(req.body.instituicao) || null,
+     num(req.body.carga_horaria), isDate(req.body.concluido_em) ? req.body.concluido_em : null,
+     isDate(req.body.validade) ? req.body.validade : null,
+     rhVeRemuneracao(req.user) ? num(req.body.custo) : null,
+     req.body.obrigatorio === true, sanitize(req.body.observacao) || null, req.user.id]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.delete('/api/rh/treinamentos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  await query('DELETE FROM erp_rh_treinamentos WHERE id=$1', [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+// ---- Clima ----
+app.get('/api/rh/clima', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const ciclos = await query(`
+    SELECT ciclo, count(*)::int AS respostas,
+           count(*) FILTER (WHERE enps >= 9)::int AS promotores,
+           count(*) FILTER (WHERE enps BETWEEN 7 AND 8)::int AS neutros,
+           count(*) FILTER (WHERE enps <= 6)::int AS detratores,
+           round(avg(satisfacao)::numeric, 2) AS satisfacao,
+           min(respondido_em) AS inicio, max(respondido_em) AS fim
+      FROM erp_rh_clima GROUP BY ciclo ORDER BY max(respondido_em) DESC`);
+  // Comentários só para quem tem a trava fina: em pesquisa de clima o texto
+  // livre é o que mais identifica quem escreveu.
+  const comentarios = rhVeSensivel(req.user)
+    ? await query(`SELECT ciclo, departamento, enps, satisfacao, comentario, respondido_em
+                     FROM erp_rh_clima WHERE comentario IS NOT NULL AND comentario <> ''
+                    ORDER BY respondido_em DESC LIMIT 50`)
+    : [];
+  res.json({ ciclos, comentarios });
+}));
+
+app.post('/api/rh/clima', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const ciclo = sanitize(req.body.ciclo);
+  if (!ciclo) return res.status(400).json({ error: 'Informe o ciclo da pesquisa (ex.: 2026-S1).' });
+  const nota = (v, min, max) => {
+    const n = Number(v);
+    return (v === '' || v == null || !isFinite(n) || n < min || n > max) ? null : Math.round(n);
+  };
+  const enps = nota(req.body.enps, 0, 10), sat = nota(req.body.satisfacao, 1, 5);
+  if (enps == null && sat == null) return res.status(400).json({ error: 'Informe ao menos o eNPS ou a satisfação.' });
+  const ins = await query(
+    `INSERT INTO erp_rh_clima (ciclo, colaborador_id, departamento, enps, satisfacao, comentario, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [ciclo, req.body.anonimo === false && req.body.colaborador_id ? Number(req.body.colaborador_id) : null,
+     sanitize(req.body.departamento) || null, enps, sat, sanitize(req.body.comentario) || null, req.user.id]);
+  res.json({ ok: true, id: ins[0].id });
 }));
 
 // ---- Autosserviço (colaborador solicitando por conta própria) ----

@@ -2902,3 +2902,112 @@ Duas asserções novas na suíte do Kanban, além das que já existiam:
 Na tela, com o código real extraído de `app.js`: o card da Documentação traz os campos preenchidos,
 o CPF falso é marcado, o CEP `01310-930` preenche Avenida Paulista / São Paulo / SP, o selo aparece
 e some conforme `ativo`, e o botão de voltar troca de destino. As três suítes seguem passando.
+
+---
+
+## 2026-09-09 — Painel de indicadores de RH, arquivamento e exclusão
+
+**Pedido:** a página inicial de RH virar um painel com KPIs — headcount, recrutamento, turnover,
+custo de pessoal, clima e engajamento, desenvolvimento, compliance trabalhista; Colaboradores
+antes do Quadro de admissão; e exclusão e arquivamento de quem deixou a empresa.
+
+### O que a base dizia antes de eu desenhar qualquer número
+
+Consultei a produção primeiro: **11 colaboradores ativos e apenas 2 com vínculo registrado.** Como
+custo, tempo de casa e turnover saem todos do vínculo, um painel ingênuo mostraria "folha de
+R$ 13 mil" para uma empresa cuja folha real passa de R$ 100 mil — e ninguém desconfiaria.
+
+Por isso a regra que atravessa o painel: **todo indicador vem com a sua cobertura**, e a primeira
+coisa da tela é um aviso nomeando as 9 pessoas sem vínculo. Aqui, número sem cobertura mente.
+
+### Sete famílias, todas com fonte real
+
+| Família | De onde sai |
+|---|---|
+| **Headcount** | ativos, por departamento/cargo/modelo/sexo, tempo de casa, idade média, 12 meses de admissões × desligamentos |
+| **Recrutamento** | processos por etapa, previstas em 30 dias, tempo abertura → contrato assinado, taxa de conclusão |
+| **Turnover** | desligamentos ÷ headcount médio, voluntário × involuntário, permanência média, por departamento |
+| **Custo de pessoal** | folha, benefícios (VR e home office × 22 dias úteis), custo médio, folha por departamento |
+| **Desenvolvimento** | horas e horas per capita, cobertura, investimento, certificações vencidas — **tabela nova** |
+| **Clima** | eNPS, satisfação, participação, histórico por ciclo — **tabela nova** |
+| **Compliance** | dossiê incompleto, sem ASO, sem contrato no dossiê, sem vínculo, experiência vencendo/vencida |
+
+Clima e desenvolvimento não tinham fonte alguma. Em vez de deixar dois blocos vazios, criei
+`erp_rh_treinamentos` e `erp_rh_clima` com o registro mínimo para começarem a coletar.
+
+Três decisões que ficaram no código:
+
+- **`turnover.taxa_12m` é `null`, não `0`, quando o headcount médio é zero.** "Não dá para
+  calcular" é diferente de "zero", e um zero ali seria lido como time estável.
+- **O eNPS usa a escala de mercado** (promotor 9-10, detrator 0-6, resultado de −100 a +100) para o
+  número poder ser comparado com fora, não só consigo mesmo.
+- **`erp_rh_clima.colaborador_id` é opcional.** Pesquisa de clima que identifica quem respondeu
+  mede o que a pessoa acha seguro dizer. O departamento é guardado à parte, o que permite recortar
+  sem identificar. Comentários só aparecem para quem tem a trava de dados sensíveis — texto livre é
+  o que mais identifica autor.
+
+O bloco de custo respeita a permissão fina: sem `rh_remuneracao` o servidor devolve `custo: null` e
+a tela mostra o cadeado, em vez de mandar os salários e esconder no CSS.
+
+### Arquivar ≠ inativar ≠ excluir
+
+`ativo=false` já significava "candidato em admissão" desde o Kanban. Se arquivar reusasse esse
+flag, **um ex-funcionário arquivado apareceria como candidato no Quadro**. Por isso
+`arquivado_em`, e três estados distintos:
+
+    ativo=true                          -> colaborador
+    ativo=false + admissão em andamento -> candidato
+    arquivado_em IS NOT NULL            -> arquivado
+
+**Arquivar fecha o vínculo aberto junto.** Sem isso a pessoa sairia das listas mas continuaria
+"empregada" para o headcount e para a folha — o pior dos dois mundos. A data informada é a que
+entra no turnover.
+
+**Desarquivar não reabre o vínculo:** quem volta entra por uma admissão nova, e o vínculo anterior
+fica no histórico onde deve ficar.
+
+**Excluir é recusado quando há história** — viático, vínculo, documento no dossiê ou treinamento. A
+recusa diz *o que* impede e sugere arquivar. Excluir serve para duplicata e candidato que desistiu
+antes de qualquer registro.
+
+Arquivados são **outra consulta** (`?arquivados=1`), não um filtro na lista carregada: quem saiu não
+vem junto com a equipe atual em momento nenhum.
+
+### Abas reordenadas
+
+**Painel · Colaboradores · Quadro de admissão · Minutas.** O painel abre a seção; Colaboradores vem
+antes do Quadro porque é a lista que se consulta todo dia, e o Quadro só tem movimento quando há
+contratação.
+
+### Verificação
+
+**48 asserções novas** contra o Express de verdade, com stub que guarda estado — sem estado, nem a
+trava de exclusão nem o fechamento do vínculo seriam testados, só simulados. Cobrem:
+
+- cobertura separando com/sem vínculo e **nomeando** quem falta;
+- folha somando só vínculo aberto, benefícios em 22 dias úteis, custo médio por pessoa coberta;
+- `custo: null` para quem não vê remuneração, com headcount ainda visível;
+- horas de treinamento, per capita, investimento e certificação vencida;
+- eNPS de 4 respostas (2 promotores, 1 neutro, 1 detrator) resultando **+25**, e recusa de nota
+  fora de 0-10;
+- exclusão recusada com o motivo, e permitida para quem não tem história;
+- arquivamento **fechando o vínculo**, derrubando o headcount de 5 para 3, tirando o salário da
+  folha e fazendo o turnover passar a contar;
+- desarquivar sem reabrir o vínculo.
+
+Na tela, com o código real extraído de `app.js` e a forma real da base (11 ativos, 2 com vínculo):
+7 seções, 30 KPIs, 12 meses de movimentação, **zero elementos cortados e sem rolagem horizontal**.
+
+**Uma investigação que não era defeito:** a primeira medição acusou rolagem horizontal com a
+sidebar em 1893px. Antes de "consertar", removi 200 regras do CSS sem efeito e esvaziei o conteúdo
+— o sintoma persistia. Era layout obsoleto da pane oculta do navegador: recarregada, sidebar 236px
+e sem rolagem. Não mexi no que não estava quebrado.
+
+### O que não entrou
+
+- **Pesquisa de clima como formulário para o time responder** — hoje a resposta é registrada pelo
+  RH, uma por vez. Um link anônimo para cada colaborador responder é outra história.
+- **PDI e avaliação de desempenho** — o bloco Desenvolvimento cobre formação e certificação, não
+  ciclo de avaliação.
+- **Encargos no custo:** folha e benefícios da ficha, sem INSS, FGTS, 13º, férias nem provisões. A
+  tela diz isso e aponta o Fluxo de Caixa como fonte do custo cheio.

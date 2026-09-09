@@ -1095,3 +1095,68 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* O .rh-link dentro de uma nota é um atalho de navegação, não um botão de ação:
    herda o tamanho do texto ao redor em vez do peso de um botão. */
 .rh-nota .rh-link { font-size: inherit; font-weight: 600; }
+
+/* ===== Painel de RH =====
+   Cada família de indicador é um cartão, e dentro dele os KPIs numa grade que
+   se reorganiza sozinha. Sem gráfico de biblioteca: as distribuições são listas
+   de 3 a 8 itens, e barra horizontal lê melhor do que pizza nesse tamanho. */
+.rh-painel-sec { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 18px 20px 20px; margin-bottom: 16px; }
+.rh-painel-sec > h3 { margin: 0 0 14px; font-size: 14px; font-weight: 700; color: var(--verde-900);
+  padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.rh-painel-sec.com-pendencia { border-color: #E3B4B0; }
+.rh-painel-sec h5 { margin: 18px 0 8px; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--muted); }
+.rh-mini { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: 0;
+  background: #F1F5F2; border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; }
+
+/* KPI: rótulo pequeno, número grande, e a COBERTURA embaixo. A nota não é
+   enfeite — é ela que impede o número de ser lido como se cobrisse todo mundo. */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 10px; }
+.kpi { border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; background: #FCFDFC; }
+.kpi-r { display: block; font-size: 11.5px; color: var(--ink-2); font-weight: 600; line-height: 1.3; }
+.kpi-v { display: block; font-size: 25px; font-weight: 700; color: var(--verde-900);
+  font-variant-numeric: tabular-nums; line-height: 1.15; margin: 3px 0 2px; }
+.kpi-n { display: block; font-style: normal; font-size: 10.5px; color: var(--muted); line-height: 1.35; }
+.kpi.ok    { border-color: #CDE5D6; background: var(--verde-050); }
+.kpi.ok .kpi-v { color: var(--verde-700); }
+.kpi.aviso { border-color: #E7D3AE; background: #FBF7EF; }
+.kpi.aviso .kpi-v { color: #8A5100; }
+.kpi.alerta { border-color: #E3B4B0; background: var(--danger-050); }
+.kpi.alerta .kpi-v { color: var(--danger); }
+
+.rh-cols-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0 26px; }
+
+/* Distribuição: rótulo, trilho, valor. O trilho tem largura fixa para as barras
+   ficarem comparáveis entre si, que é o único motivo de existirem. */
+.rh-barras { display: flex; flex-direction: column; gap: 5px; }
+.rh-barra-linha { display: grid; grid-template-columns: minmax(80px, 1fr) 2.2fr auto; gap: 9px;
+  align-items: center; font-size: 12.5px; }
+.rh-barra-linha .rot { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rh-barra-linha .rot em { color: var(--muted); font-style: normal; font-size: 11px; }
+.rh-barra-linha .trilho { height: 8px; background: #EDF2EE; border-radius: 4px; overflow: hidden; }
+.rh-barra-linha .trilho i { display: block; height: 100%; background: var(--verde-700); border-radius: 4px; }
+.rh-barra-linha .val { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink);
+  font-size: 12px; text-align: right; }
+.rh-sem { font-size: 12.5px; color: var(--muted); padding: 6px 0; }
+
+/* Movimentação: 12 colunas de duas barras. Admissão sobe verde, desligamento
+   sobe vermelho, lado a lado no mesmo mês. */
+.rh-mov { display: flex; align-items: flex-end; gap: 4px; height: 88px; }
+.rh-mov-mes { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+.rh-mov-mes .col { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center;
+  gap: 2px; border-bottom: 1px solid var(--line); }
+.rh-mov-mes .col i { width: 7px; border-radius: 2px 2px 0 0; min-height: 1px; }
+.rh-mov-mes .col i.adm { background: var(--verde-700); }
+.rh-mov-mes .col i.des { background: var(--danger); }
+.rh-mov-mes .mes { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rh-legenda { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.rh-legenda .l { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.rh-legenda .l.adm { background: var(--verde-700); }
+.rh-legenda .l.des { background: var(--danger); margin-left: 10px; }
+
+/* O aviso de cobertura vem antes de tudo, porque muda a leitura de tudo. */
+.rh-alerta { background: #FBF2E4; border: 1px solid #E7D3AE; border-left: 4px solid #C8912B;
+  border-radius: 8px; padding: 13px 16px; margin-bottom: 16px; font-size: 13px;
+  color: #6B4700; line-height: 1.55; }
+.rh-alerta-nomes { display: block; margin-top: 6px; font-size: 11.5px; color: #8A5100; }
