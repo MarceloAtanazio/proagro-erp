@@ -4552,6 +4552,30 @@ function exportOvrExcelSimples(a, completo) {
   toast('Excel gerado (sem formatação).');
 }
 
+// A linha de Viáticos não sai de Contas a Pagar como as outras, e um número que
+// se comporta diferente das vizinhas sem dizer por quê vira desconfiança na
+// tela inteira. A nota explica a régua e mostra a diferença que ela faz.
+function ovrNotaViaticos(v, despesas) {
+  if (!v || !despesas.some(r => r.cat === v.categoria)) return '';
+  const pend = v.aguardando_comprovacao || {};
+  const diferenca = v.repassado - v.comprovado;
+  return `<div class="rh-nota" style="margin:-6px 0 16px">
+    <strong>Viáticos</strong> não vem de Contas a Pagar: o realizado é a soma das despesas
+    <strong>comprovadas com nota</strong> na seção Viáticos, pela data de cada despesa.
+    O que sai em Contas a Pagar — o repasse à carteira Flash e os reembolsos — é dinheiro
+    <em>saindo do caixa</em>, não custo de viagem: o repasse vira saldo em cartão, e o reembolso
+    liquida uma viagem cujas despesas já estão contadas aqui.
+    ${v.repassado ? `No ano, <strong>${brl(v.repassado)}</strong> repassados contra
+      <strong>${brl(v.comprovado)}</strong> comprovados${diferenca > 0
+        ? ` — ${brl(diferenca)} ainda em cartão ou devolvidos` : ''}.` : ''}
+    ${pend.solicitacoes ? `<br><strong>${pend.solicitacoes === 1
+        ? '1 viagem aguardando comprovação' : pend.solicitacoes + ' viagens aguardando comprovação'}</strong>
+      (${brl(pend.valor_liberado)} liberados) ${pend.solicitacoes === 1 ? 'entra' : 'entram'} como R$ 0,00
+      até os comprovantes serem lançados.` : ''}
+    ${' '}Para conferir viagem a viagem, veja a coluna <strong>Comprovado</strong> em
+    <button class="rh-link" data-ir="viaticos">Viáticos</button>.</div>`;
+}
+
 async function renderOrcadoReal() {
   const year = Number(sessionStorage.getItem('ovr-year')) || new Date().getFullYear();
   const scope = sessionStorage.getItem('ovr-scope') || 'ytd';
@@ -4652,10 +4676,12 @@ async function renderOrcadoReal() {
     <h3 style="margin:6px 0 10px; font-size:15px">Receitas</h3>
     ${tableHTML(rec, 'receita')}
     <h3 style="margin:6px 0 10px; font-size:15px">Despesas</h3>
-    ${tableHTML(desp, 'despesa')}`;
+    ${tableHTML(desp, 'despesa')}
+    ${ovrNotaViaticos(actuals.viaticos, desp)}`;
 
   $('#v-year').onchange = e => { sessionStorage.setItem('ovr-year', e.target.value); renderOrcadoReal(); };
   $('#v-scope').onchange = e => { sessionStorage.setItem('ovr-scope', e.target.value); renderOrcadoReal(); };
+  c.querySelectorAll('[data-ir]').forEach(b => b.onclick = () => { location.hash = b.dataset.ir; });
   // Exportar: mesmo fluxo das outras telas — qual relatório, depois o formato.
   // Respeita o ano e o escopo (YTD ou ano completo) escolhidos aqui em cima; é
   // o escopo que decide até que mês o confronto vai.

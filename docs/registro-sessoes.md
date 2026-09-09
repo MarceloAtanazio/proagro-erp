@@ -3126,3 +3126,94 @@ enquanto capturava 800×634. Layout obsoleto da pane, igual para código que já
 `2026-09-09-rh-encerrar-candidatura.sql` — aditiva e idempotente, aplicada em produção:
 `cancelamento_tipo`, `encerrada_em`, `encerrada_por` e um índice parcial para a consulta dos
 encerrados.
+
+---
+
+## 2026-09-09 — Viáticos no "realizado": passa a valer o comprovado, não o repassado
+
+**Pedido:** em Orçado x Realizado, a categoria Viáticos estava contando como realizado o dinheiro
+repassado à carteira Flash. O realizado tem de ser o que foi efetivamente comprovado na seção
+Viáticos.
+
+### O tamanho do erro
+
+Em 2026: **R$ 161.081,89 lançados como realizado contra R$ 78.773,42 de despesa comprovada.** Mais da
+metade do "realizado" de Viáticos era dinheiro parado em cartão ou já devolvido. Contra o orçado do
+ano (R$ 898.973,63), a linha sai de **17,9% para 8,8%**, e o total de despesas realizadas do ano cai
+de R$ 1.992.790,97 para R$ 1.910.482,50.
+
+### O que eu encontrei ao olhar a categoria (e que mudou o desenho)
+
+A primeira ideia — "a categoria Viáticos em Contas a Pagar é só repasse à Flash, então descarta
+tudo" — estava **incompleta**. Das 14 linhas pagas, só 5 são repasses à Flash (R$ 141.541,99). As
+outras 9 são **reembolsos diretos a colaboradores** (R$ 19.539,90), e essas *parecem* custo real.
+
+Fui verificar viagem por viagem: os reembolsos citam OT_122, OT_123, OT_125, OT_126, OT_142 — e
+todas essas viagens já estão na seção Viáticos, com comprovantes lançados. O reembolso é a
+**liquidação** de uma viagem cujas despesas já estão contadas, não um gasto novo. Exemplo: OT_142
+liberou R$ 3.041,98, comprovou R$ 2.364,74, e ainda há um reembolso de R$ 78,00 — acerto de conta.
+
+Então a regra vale para a categoria inteira, mas por um motivo mais forte do que o inicial:
+**em Contas a Pagar, "Viáticos" é sempre movimento de caixa (repasse ou acerto), nunca custo de
+viagem.** O custo é o comprovante.
+
+### A regra
+
+    realizado(Viáticos) = SUM(erp_viaticos_despesas.valor) por mês da DATA DA DESPESA
+    payables com category='Viáticos' saem do realizado
+
+A data é a da **despesa**, não a do repasse nem a do fim da viagem: um almoço em 05/08 é custo de
+agosto, tenha o cartão sido carregado em julho. Isso também faz maio aparecer com custo mesmo sem
+nenhum repasse no mês.
+
+### Onde mudou, e onde deliberadamente NÃO mudou
+
+- **`/api/reports/actuals/:year`** — fonte única de Orçado x Realizado e do DRE em Relatórios
+  Gerenciais. As duas telas corrigem juntas.
+- **Dashboard, "orçado x realizado do mês atual"** — mesma pergunta, então mesma régua. Deixá-lo de
+  fora faria duas telas do ERP darem números diferentes para a mesma coisa.
+- **Fluxo de Caixa: intocado, de propósito.** Ali a pergunta é quando o dinheiro saiu da conta — e
+  ele saiu no repasse. Caixa e custo são perguntas diferentes e devem dar respostas diferentes.
+- **Dashboard, "Despesas por categoria (12 meses)": intocado.** Fica ao lado do gráfico de caixa
+  Receitas x Despesas. Se for para virar visão de custo, é decisão do usuário.
+
+### A tela explica a régua
+
+Um número que se comporta diferente das linhas vizinhas sem dizer por quê vira desconfiança na tela
+inteira. Abaixo da tabela de despesas há uma nota que diz de onde vem o realizado de Viáticos, mostra
+**repassado × comprovado no ano** e avisa quantas viagens estão **aguardando comprovação** — porque a
+consequência da regra nova é que viagem sem comprovante lançado entra como R$ 0,00. Hoje é 1 viagem,
+R$ 300,00.
+
+### Uma pendência de cadastro que isso revelou
+
+Existe um pagamento de **R$ 1.000,00 — "Repasse para Compra de Produtos para o Escritorio"** —
+classificado na categoria Viáticos. Não é viático. Com a regra nova ele deixa de aparecer em qualquer
+realizado. A correção é recategorizá-lo (Suprimentos ou Compras); não criei exceção em código para
+resgatar um lançamento mal classificado.
+
+### Verificação
+
+**23 asserções** contra o Express de verdade, com o stub reproduzindo a forma real da produção
+(repasse à Flash, reembolso a colaborador, despesas com data própria, despesa de 2025 que não pode
+vazar):
+
+- Viáticos soma o comprovado e não os repasses; o reembolso direto também fica de fora;
+- o mês é o da despesa — agosto conta as despesas de agosto, não os R$ 41.963 repassados; maio
+  aparece sem nenhum repasse no mês;
+- Aluguel e Energia seguem vindo de Contas a Pagar, sem alteração;
+- a categoria não duplica: uma linha por mês;
+- o contexto da tela traz repassado, comprovado e viagens aguardando comprovação, e o repasse ainda
+  não pago fica de fora;
+- o dashboard usa o comprovado do mês e ignora o repasse do mesmo mês.
+
+**Uma correção no próprio teste:** as duas primeiras asserções do dashboard passaram enquanto a rota
+devolvia **500** — o stub não cobria agregações não relacionadas e `[0].v` quebrava. Asserção que
+passa sobre uma resposta com erro é pior que asserção que falha. O stub passou a devolver uma linha
+de zeros para agregado escalar, e o teste ganhou uma asserção que exige que o dashboard traga
+categorias antes de comparar qualquer coisa. Os esperados passaram a ser derivados das fixtures em
+vez de digitados à mão.
+
+Na tela, com a função real extraída de `app.js` e os números reais da base: a nota renderiza em
+1125px nos três casos (com pendência, sem pendência, e com texto longo), zero elementos cortados e
+sem rolagem horizontal a 1440px.

@@ -1338,20 +1338,64 @@ app.delete('/api/budgets/:year/category', requireAuth, requireEdit('orcamento'),
 // Relatórios / agregações
 // ------------------------------------------------------------
 
+// ---- Viáticos: realizado é o COMPROVADO, não o repassado ----------------
+//
+// Em Contas a Pagar, a categoria "Viáticos" registra o dinheiro SAINDO —
+// o repasse mensal à carteira Flash e os reembolsos que acertam a conta de cada
+// viagem. Nada disso é custo de viático: o repasse vira saldo em cartão, e o
+// reembolso é a liquidação de uma viagem cujas despesas já estão lançadas.
+//
+// O custo de verdade é o que foi comprovado com nota em Viáticos. Em 2026 a
+// diferença é de R$ 161 mil repassados contra R$ 79 mil efetivamente gastos:
+// pela régua antiga, metade do "realizado" era dinheiro parado no cartão.
+//
+// A data usada é a da DESPESA, não a do repasse nem a do fim da viagem: um
+// almoço em 05/08 é custo de agosto, tenha o cartão sido carregado em julho.
+//
+// Consequência que precisa estar visível na tela: viagem sem comprovante
+// lançado é R$ 0 de realizado. O número passa a depender da comprovação em dia.
+const CAT_VIATICOS = 'Viáticos';
+
+const SQL_VIATICOS_POR_MES = `
+  SELECT EXTRACT(MONTH FROM d.data)::int AS month, SUM(d.valor) AS total
+    FROM erp_viaticos_despesas d
+   WHERE EXTRACT(YEAR FROM d.data) = $1
+   GROUP BY month`;
+
 // Realizado por mês/categoria/tipo em um ano (para Orçado x Realizado e DRE)
 app.get('/api/reports/actuals/:year', requireAuth, requireViewAny(['orcadoreal','relatorios']), h(async (req, res) => {
   const y = Number(req.params.year);
   const despesas = await query(`
     SELECT EXTRACT(MONTH FROM payment_date)::int AS month, category, SUM(amount) AS total
     FROM erp_payables WHERE status='pago' AND EXTRACT(YEAR FROM payment_date) = $1
-    GROUP BY month, category`, [y]);
+      AND category IS DISTINCT FROM $2
+    GROUP BY month, category`, [y, CAT_VIATICOS]);
+  const viaticos = await query(SQL_VIATICOS_POR_MES, [y]);
   const receitas = await query(`
     SELECT EXTRACT(MONTH FROM receipt_date)::int AS month, category, SUM(amount) AS total
     FROM erp_receivables WHERE status='recebido' AND EXTRACT(YEAR FROM receipt_date) = $1
     GROUP BY month, category`, [y]);
+
+  // Contexto para a tela explicar o número em vez de só mostrá-lo: quanto saiu
+  // do caixa, quanto virou custo e quanto ainda está sem comprovante.
+  const repassado = n((await query(
+    `SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables
+      WHERE status='pago' AND category=$1 AND EXTRACT(YEAR FROM payment_date)=$2`, [CAT_VIATICOS, y]))[0].v);
+  const pend = (await query(
+    `SELECT COUNT(*)::int AS n, COALESCE(SUM(s.valor_liberado),0) AS v
+       FROM erp_viaticos_solicitacoes s
+      WHERE s.status = 'aguardando_comprovacao'`))[0];
+
   res.json({
-    despesas: despesas.map(r => ({ ...r, total: n(r.total) })),
-    receitas: receitas.map(r => ({ ...r, total: n(r.total) }))
+    despesas: despesas.map(r => ({ ...r, total: n(r.total) }))
+      .concat(viaticos.map(r => ({ month: r.month, category: CAT_VIATICOS, total: n(r.total) }))),
+    receitas: receitas.map(r => ({ ...r, total: n(r.total) })),
+    viaticos: {
+      categoria: CAT_VIATICOS,
+      comprovado: viaticos.reduce((s, r) => s + n(r.total), 0),
+      repassado,
+      aguardando_comprovacao: { solicitacoes: pend.n, valor_liberado: n(pend.v) }
+    }
   });
 }));
 
@@ -1676,8 +1720,14 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
 
   // ---- Análise por categoria: orçado x realizado do mês atual ----
   const orcadoCatRows = await query(`SELECT category, amount FROM erp_budgets WHERE year=$1 AND month=$2 AND type='despesa'`, [anoAtual, mesNum]);
-  const realCatRows = await query(`SELECT category, SUM(amount) AS total FROM erp_payables
-    WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1 GROUP BY category`, [mesAtual]);
+  // Viáticos entra pelo comprovado, igual a Orçado x Realizado — as duas telas
+  // respondem a mesma pergunta e não podem dar números diferentes.
+  const realCatRows = (await query(`SELECT category, SUM(amount) AS total FROM erp_payables
+    WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1 AND category IS DISTINCT FROM $2
+    GROUP BY category`, [mesAtual, CAT_VIATICOS]))
+    .concat(await query(`SELECT $2::text AS category, SUM(d.valor) AS total
+       FROM erp_viaticos_despesas d WHERE to_char(d.data,'YYYY-MM')=$1
+      HAVING SUM(d.valor) IS NOT NULL`, [mesAtual, CAT_VIATICOS]));
   const catSet = new Set([...orcadoCatRows.map(r => r.category), ...realCatRows.map(r => r.category)]);
   const categoriaMes = [...catSet].map(cat => {
     const orcado = n((orcadoCatRows.find(r => r.category === cat) || {}).amount);
