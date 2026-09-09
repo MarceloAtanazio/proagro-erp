@@ -3011,3 +3011,118 @@ e sem rolagem. Não mexi no que não estava quebrado.
   ciclo de avaliação.
 - **Encargos no custo:** folha e benefícios da ficha, sem INSS, FGTS, 13º, férias nem provisões. A
   tela diz isso e aponta o Fluxo de Caixa como fonte do custo cheio.
+
+---
+
+## 2026-09-09 — Encerrar e excluir candidatura no Quadro de admissão
+
+**Pedido:** poder excluir ou arquivar um candidato no Quadro de admissão, "seja por recusa da parte
+dele ou nossa".
+
+### O buraco que existia
+
+`POST /api/rh/admissoes/:id/cancelar` já estava no servidor desde o Kanban — sem nenhuma tela que o
+chamasse, e com um defeito que só apareceria em produção: ele cancelava a admissão e **não fazia mais
+nada com a pessoa**. Ela ficava `ativo=false` sem processo aberto, e nesse estado não aparece nem em
+Colaboradores (a consulta pede `ativo=true` ou vínculo) nem no Quadro (que só lista `andamento`).
+Um limbo: cadastro existente, invisível em todas as telas.
+
+Por isso encerrar agora é **uma operação só**, que resolve as duas pontas: cancela o processo e
+arquiva a pessoa.
+
+### O motivo é catálogo, não texto livre
+
+"Perdemos quatro candidatos" e "reprovamos quatro candidatos" são diagnósticos opostos — o primeiro é
+problema de proposta, o segundo é problema de triagem. Somados num "4 cancelados" não dizem nada a
+ninguém. O próprio pedido faz essa separação ("da parte dele ou nossa"), então ela virou estrutura:
+
+    por parte do candidato -> desistiu · recusou a proposta · aceitou outra proposta · não compareceu
+    por parte da empresa   -> reprovado na seleção · inapto no exame · não apresentou documentação
+                              escolhemos outro candidato · vaga cancelada
+    outros                 -> outro motivo (exige descrição)
+
+A **parte** não é coluna: sai do catálogo em código. Assim, reclassificar um motivo no futuro leva
+junto as linhas antigas, em vez de deixar duas verdades no banco. O catálogo é servido pela API e não
+duplicado no `app.js` — são dois arquivos que se editam em momentos diferentes, e um código gravado
+que a tela não sabe traduzir vira linha em branco no funil.
+
+`encerrada_em` é DATE e separada de `updated_at`: a data em que o candidato recusou é uma coisa, o dia
+em que alguém registrou isso no ERP é outra, e é a primeira que entra na métrica.
+
+### Reabrir é o inverso exato
+
+`POST /api/rh/admissoes/:id/reabrir` devolve o card ao quadro **na etapa em que parou**, com histórico
+e documentação, e **desarquiva a pessoa junto** — deixá-la arquivada com processo aberto recriaria o
+mesmo limbo, ao contrário. Recusa quando já existe outro processo em andamento para a mesma pessoa,
+com a mensagem explicando: sem isso o índice único parcial estouraria com erro de banco.
+
+(Diferente de desarquivar um ex-funcionário, que continua **não** reabrindo o vínculo. Uma candidatura
+é um processo interrompido; um vínculo é um fato que terminou.)
+
+### Excluir candidato: o dossiê deixa de ser impedimento
+
+A trava de exclusão recusava qualquer pessoa com documento no dossiê. Para candidato isso estava
+errado nos dois sentidos: **na prática**, todo candidato que chegou à Documentação tem RG e CPF
+anexados, então nenhum seria excluível — o pedido morreria aí; **e no mérito**, não houve emprego,
+logo não há registro trabalhista a preservar, e RG, CPF e comprovantes de quem *não* foi contratado
+não devem ficar guardados para sempre.
+
+Então: para **candidato** (`ativo=false`, sem vínculo algum e sem admissão concluída) o dossiê sai da
+lista de impedimentos e é apagado junto, com a resposta dizendo quantos arquivos foram. Para quem é
+ou foi funcionário, a proteção continua inteira — inclusive para os 9 ativos sem vínculo registrado,
+que são funcionários de verdade e seguem barrados.
+
+`erp_attachments` não tem FK para o colaborador (`entity_id` é genérico), então o `ON DELETE CASCADE`
+não alcançava o dossiê: sem apagar explicitamente, os arquivos ficariam órfãos apontando para um ID
+que não existe mais.
+
+### O quadro ganha uma segunda vista
+
+Sem ela, encerrar faria o card sumir e não haveria onde responder "o que aconteceu com aquele
+candidato?" nem de onde reabrir. **Em andamento (N) · Encerrados sem contratação (N)** — a contagem
+vem junto na resposta justamente para que a segunda vista se anuncie antes de ser aberta.
+
+Encerrado é **lista, não Kanban**: a etapa em que parou é só um dado, e o que interessa é motivo,
+parte e data. O motivo vem com selo *por ele* / *por nós*.
+
+No painel, o funil ganhou "Encerrados sem contratação — por parte de quem", com os motivos abaixo.
+
+### Duas correções de layout que apareceram na medição
+
+- **A coluna Ações empilhava os ícones.** 74px não cabem três botões de 30px: eles quebravam e a linha
+  inteira ia a **101px** de altura, na lista de Colaboradores que entrou ontem. Coluna a 120px e
+  `white-space: nowrap` na célula — linha volta a 53px.
+- **Na lista de encerrados o nome ficava com 799px e o motivo com 190px**, quebrando em três linhas,
+  porque a grade era emprestada da lista de colaboradores (onde quem estica é o nome). Grade própria
+  `.tbl-rh-enc`, com a sobra indo para o motivo: 699px.
+
+### Verificação
+
+**51 asserções novas** contra o Express de verdade, com stub que guarda estado — as afirmações que
+importam aqui são de efeito, não de resposta:
+
+- encerrar **arquiva o candidato junto**, e o motivo do arquivamento cita a candidatura;
+- a data informada é a gravada, não a de hoje; sem data, hoje;
+- encerrar duas vezes é recusado; motivo fora do catálogo é recusado; "Outro" exige descrição;
+- quem só tem `view` não encerra, e o processo continua em andamento;
+- reabrir volta na etapa em que parou, limpa o cancelamento e **desarquiva**;
+- reabrir o que já está aberto é recusado;
+- excluir candidato com 2 documentos é **permitido**, os anexos somem de verdade e o processo cai
+  junto pelo cascade;
+- excluir quem tem vínculo continua recusado, nomeando o impedimento, e o documento dele não é tocado;
+- quem já é funcionário **não** é arquivado ao encerrar um processo.
+
+Mais 3 no painel (a separação por parte, os motivos pelo nome e o denominador da taxa de conclusão).
+
+Na tela, com o código real extraído de `app.js`: 6 colunas e 6 cards no Kanban intactos, 7 seções e
+32 KPIs no painel, zero elementos cortados e sem rolagem horizontal em nenhuma das vistas.
+
+**Um não-defeito, de novo:** o modal novo reportava topo fora da viewport. Antes de "consertar", medi
+o modal de **Arquivar**, que já estava no ar: mesmo topo, 2662px, com a pane relatando 1908×1500
+enquanto capturava 800×634. Layout obsoleto da pane, igual para código que já funciona — não mexi.
+
+### Migração
+
+`2026-09-09-rh-encerrar-candidatura.sql` — aditiva e idempotente, aplicada em produção:
+`cancelamento_tipo`, `encerrada_em`, `encerrada_por` e um índice parcial para a consulta dos
+encerrados.

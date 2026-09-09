@@ -272,6 +272,8 @@ const AUDIT_MAP = {
   'POST /api/rh/colaboradores/:id/arquivar': req => `ARQUIVOU o colaborador ID ${req.params.id}${req.body.motivo ? ` — ${req.body.motivo}` : ''}`,
   'POST /api/rh/colaboradores/:id/desarquivar': req => `Desarquivou o colaborador ID ${req.params.id}`,
   'DELETE /api/rh/colaboradores/:id': req => `EXCLUIU o colaborador ID ${req.params.id}`,
+  'POST /api/rh/admissoes/:id/encerrar': req => `ENCERROU a candidatura do processo ID ${req.params.id} — ${req.body.tipo || 'sem motivo'}${req.body.motivo ? ` (${req.body.motivo})` : ''}`,
+  'POST /api/rh/admissoes/:id/reabrir': req => `Reabriu o processo de admissão ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/treinamentos': req => `Registrou o treinamento "${req.body.titulo}" para o colaborador ID ${req.params.id}`,
   'DELETE /api/rh/treinamentos/:id': req => `Excluiu o treinamento ID ${req.params.id}`,
   'POST /api/rh/clima': req => `Registrou resposta da pesquisa de clima do ciclo ${req.body.ciclo}`,
@@ -2480,8 +2482,9 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
       LEFT JOIN erp_colaboradores g ON g.id = a.gestor_id
       LEFT JOIN erp_users u ON u.id = a.responsavel_id
      WHERE a.situacao = $1
-     ORDER BY a.admissao_prevista NULLS LAST, a.created_at`,
-    [req.query.situacao === 'todas' ? 'andamento' : (req.query.situacao || 'andamento')]);
+     ORDER BY (a.situacao = 'andamento') DESC, a.encerrada_em DESC NULLS LAST,
+              a.admissao_prevista NULLS LAST, a.created_at`,
+    [['andamento', 'cancelada', 'concluida'].includes(req.query.situacao) ? req.query.situacao : 'andamento']);
 
   // As minutas ativas de uma vez só: uma consulta para o quadro inteiro, em vez
   // de uma por card. O mapa de cada uma é o que define quais dados a etapa
@@ -2497,10 +2500,17 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
     const pend = rhPendencias(r, r, chk, mapaDe(r.regime, r.modelo_trabalho));
     const base = rhFiltrar(r, req.user, r);
     delete base.tipos;
+    const mot = rhMotivoEncerrar(r.cancelamento_tipo);
     return { ...base, checklist_total: chk.length, checklist_ok: chk.filter(x => x.ok).length,
-             pendencias: pend, liberado: pend.length === 0 };
+             pendencias: pend, liberado: pend.length === 0,
+             motivo_nome: mot ? mot.nome : null, parte: mot ? mot.parte : null };
   });
-  res.json({ etapas: RH_ETAPAS, cards });
+  // As três contagens vão sempre juntas: a aba "Encerrados" precisa mostrar
+  // quantos são ANTES de ser aberta, senão ninguém descobre que existe.
+  const cont = await query(`SELECT situacao, count(*)::int AS n FROM erp_rh_admissoes GROUP BY situacao`);
+  const contagem = { andamento: 0, cancelada: 0, concluida: 0 };
+  cont.forEach(x => { if (x.situacao in contagem) contagem[x.situacao] = x.n; });
+  res.json({ etapas: RH_ETAPAS, cards, contagem, motivos: RH_MOTIVO_ENCERRAR });
 }));
 
 // ---- Um card ----
@@ -2520,6 +2530,10 @@ app.get('/api/rh/admissoes/:id', requireAuth, requireViewAny(['rh']), h(async (r
     admissao: rhFiltrar(adm, req.user, colab),
     colaborador: rhFiltrar(colab, req.user, colab),
     etapas: RH_ETAPAS,
+    // O catálogo de motivos vem do servidor, e não de uma cópia no app.js: são
+    // dois arquivos que se editam em momentos diferentes, e um código gravado
+    // que a tela não sabe traduzir vira linha em branco no funil.
+    motivos: RH_MOTIVO_ENCERRAR,
     checklist,
     historico: hist,
     minuta: minuta[0] || null,
@@ -2618,16 +2632,100 @@ app.post('/api/rh/admissoes/:id/concluir', requireAuth, requireEdit('rh'), h(asy
   res.json({ ok: true });
 }));
 
-app.post('/api/rh/admissoes/:id/cancelar', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const motivo = sanitize(req.body.motivo);
-  if (!motivo) return res.status(400).json({ error: 'Explique por que o processo foi cancelado.' });
-  const r = await query('SELECT etapa FROM erp_rh_admissoes WHERE id=$1', [Number(req.params.id)]);
+// ---- Encerrar a candidatura ----
+// Uma admissão que não vira contratação termina por parte do CANDIDATO ou por
+// parte da EMPRESA, e essa é a distinção que o funil precisa: "perdemos quatro"
+// é problema de proposta, "reprovamos quatro" é problema de triagem. Por isso o
+// motivo é catálogo, e não texto livre — a parte sai daqui, não de uma coluna,
+// para que reclassificar um motivo leve junto as linhas antigas.
+const RH_MOTIVO_ENCERRAR = [
+  { cod: 'desistiu',          nome: 'Desistiu do processo',              parte: 'candidato' },
+  { cod: 'recusou_oferta',    nome: 'Recusou a proposta',                parte: 'candidato' },
+  { cod: 'outra_proposta',    nome: 'Aceitou outra proposta',            parte: 'candidato' },
+  { cod: 'nao_compareceu',    nome: 'Não compareceu / parou de responder', parte: 'candidato' },
+  { cod: 'reprovado_selecao', nome: 'Reprovado na seleção',              parte: 'empresa' },
+  { cod: 'reprovado_exame',   nome: 'Inapto no exame admissional',       parte: 'empresa' },
+  { cod: 'sem_documentacao',  nome: 'Não apresentou a documentação',     parte: 'empresa' },
+  { cod: 'outro_candidato',   nome: 'Escolhemos outro candidato',        parte: 'empresa' },
+  { cod: 'vaga_cancelada',    nome: 'Vaga cancelada pela empresa',       parte: 'empresa' },
+  { cod: 'outro',             nome: 'Outro motivo',                      parte: 'nenhuma' }
+];
+const rhMotivoEncerrar = cod => RH_MOTIVO_ENCERRAR.find(m => m.cod === cod) || null;
+
+// A pessoa por trás do card nunca foi funcionária: ativo=false, sem vínculo e
+// sem admissão concluída. É o que separa "encerrar candidatura" de "demitir" —
+// e o que autoriza arquivar (ou excluir) sem tocar em registro trabalhista.
+async function rhEhCandidato(colabId) {
+  const c = (await query('SELECT ativo FROM erp_colaboradores WHERE id=$1', [colabId]))[0];
+  if (!c || c.ativo) return false;
+  const v = await query('SELECT 1 FROM erp_rh_vinculos WHERE colaborador_id=$1 LIMIT 1', [colabId]);
+  if (v.length) return false;
+  const a = await query(`SELECT 1 FROM erp_rh_admissoes WHERE colaborador_id=$1 AND situacao='concluida' LIMIT 1`, [colabId]);
+  return !a.length;
+}
+
+app.post('/api/rh/admissoes/:id/encerrar', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const motivo = rhMotivoEncerrar(sanitize(req.body.tipo));
+  if (!motivo) return res.status(400).json({ error: 'Escolha o motivo do encerramento.' });
+  const obs = sanitize(req.body.motivo) || null;
+  if (motivo.cod === 'outro' && !obs) return res.status(400).json({ error: 'Em "Outro motivo", descreva o que houve.' });
+  const r = await query('SELECT etapa, situacao, colaborador_id FROM erp_rh_admissoes WHERE id=$1', [id]);
   if (!r.length) return res.status(404).json({ error: 'Processo não encontrado.' });
-  await query(`UPDATE erp_rh_admissoes SET situacao='cancelada', cancelamento_motivo=$1, updated_at=now() WHERE id=$2`,
-    [motivo, Number(req.params.id)]);
+  if (r[0].situacao !== 'andamento') {
+    return res.status(409).json({ error: 'Este processo já está encerrado.' });
+  }
+  const data = isDate(req.body.data) ? req.body.data : hojeISO();
+  const texto = motivo.nome + (obs ? ' — ' + obs : '');
+
+  await query(
+    `UPDATE erp_rh_admissoes SET situacao='cancelada', cancelamento_tipo=$1, cancelamento_motivo=$2,
+        encerrada_em=$3, encerrada_por=$4, updated_at=now() WHERE id=$5`,
+    [motivo.cod, obs, data, req.user.id, id]);
   await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
-    [Number(req.params.id), r[0].etapa, 'cancelada', motivo, req.user.id]);
-  res.json({ ok: true });
+    [id, r[0].etapa, 'encerrada', texto, req.user.id]);
+
+  // Só cancelar a admissão deixaria a pessoa em lugar nenhum: ativo=false sem
+  // processo aberto não aparece nem em Colaboradores nem no Quadro. Arquivar
+  // junto é o que dá a ela um lugar — o filtro Arquivados — e o que permite
+  // reencontrá-la numa vaga futura.
+  let arquivado = false;
+  if (req.body.arquivar !== false && await rhEhCandidato(r[0].colaborador_id)) {
+    await query(
+      `UPDATE erp_colaboradores SET arquivado_em=now(), arquivado_por=$1, arquivado_motivo=$2
+        WHERE id=$3 AND arquivado_em IS NULL`,
+      [req.user.id, 'Candidatura encerrada: ' + texto, r[0].colaborador_id]);
+    arquivado = true;
+  }
+  res.json({ ok: true, arquivado, parte: motivo.parte });
+}));
+
+// Reabrir devolve o card ao quadro na etapa em que parou. É o inverso exato do
+// encerramento — inclusive desarquivando quem foi arquivado por ele, porque
+// deixar a pessoa arquivada com processo aberto recria o mesmo limbo.
+app.post('/api/rh/admissoes/:id/reabrir', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const r = await query('SELECT etapa, situacao, colaborador_id FROM erp_rh_admissoes WHERE id=$1', [id]);
+  if (!r.length) return res.status(404).json({ error: 'Processo não encontrado.' });
+  if (r[0].situacao !== 'cancelada') {
+    return res.status(409).json({ error: 'Só um processo encerrado pode ser reaberto.' });
+  }
+  // O índice único deixa um só processo aberto por pessoa: sem esta checagem o
+  // reabrir estouraria com erro de banco em vez de explicar o que houve.
+  const outro = await query(
+    `SELECT id FROM erp_rh_admissoes WHERE colaborador_id=$1 AND situacao='andamento' LIMIT 1`, [r[0].colaborador_id]);
+  if (outro.length) {
+    return res.status(409).json({ error: `Esta pessoa já tem um processo em andamento (ID ${outro[0].id}).` });
+  }
+  await query(
+    `UPDATE erp_rh_admissoes SET situacao='andamento', cancelamento_tipo=NULL, cancelamento_motivo=NULL,
+        encerrada_em=NULL, encerrada_por=NULL, updated_at=now() WHERE id=$1`, [id]);
+  await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
+    [id, 'encerrada', r[0].etapa, sanitize(req.body.motivo) || 'Processo reaberto', req.user.id]);
+  await query(
+    `UPDATE erp_colaboradores SET arquivado_em=NULL, arquivado_por=NULL, arquivado_motivo=NULL
+      WHERE id=$1 AND ativo=false`, [r[0].colaborador_id]);
+  res.json({ ok: true, etapa: r[0].etapa });
 }));
 
 // ---- Minutas ----
@@ -3070,11 +3168,23 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   // ---------- recrutamento ----------
   const adms = await query(`
     SELECT a.id, a.etapa, a.situacao, a.admissao_prevista, a.created_at,
-           a.oferta_enviada_em, a.contrato_assinado_em, a.onboarding_concluido_em
+           a.oferta_enviada_em, a.contrato_assinado_em, a.onboarding_concluido_em,
+           a.cancelamento_tipo, a.encerrada_em
       FROM erp_rh_admissoes a`);
   const emAndamento = adms.filter(a => a.situacao === 'andamento');
   const concluidas = adms.filter(a => a.situacao === 'concluida');
   const canceladas = adms.filter(a => a.situacao === 'cancelada');
+  // Quem encerrou muda o diagnóstico: perder candidatos é problema de proposta,
+  // reprovar candidatos é problema de triagem. Somar os dois num "canceladas: 4"
+  // apaga justamente a informação que faria alguém agir.
+  const encPorParte = { candidato: 0, empresa: 0, nenhuma: 0 };
+  const encPorMotivo = {};
+  canceladas.forEach(a => {
+    const m = rhMotivoEncerrar(a.cancelamento_tipo);
+    encPorParte[m ? m.parte : 'nenhuma']++;
+    const k = m ? m.nome : '— não classificado —';
+    encPorMotivo[k] = (encPorMotivo[k] || 0) + 1;
+  });
   // Tempo de admissão: da abertura do processo até o contrato assinado.
   const tempos = adms.filter(a => a.contrato_assinado_em)
     .map(a => (Date.parse(String(a.contrato_assinado_em).slice(0, 10)) - Date.parse(a.created_at)) / 86400000)
@@ -3163,6 +3273,9 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
       por_etapa: contarPor(emAndamento, 'etapa'),
       concluidas_12m: concluidas.length,
       canceladas: canceladas.length,
+      encerradas_por_parte: encPorParte,
+      encerradas_por_motivo: Object.entries(encPorMotivo)
+        .map(([chave, n]) => ({ chave, n })).sort((a, b) => b.n - a.n),
       taxa_conclusao: (concluidas.length + canceladas.length)
         ? Math.round(100 * concluidas.length / (concluidas.length + canceladas.length)) : null,
       tempo_medio_dias: tempos.length ? Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length) : null,
@@ -3266,6 +3379,13 @@ app.delete('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async 
   const r = await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [id]);
   if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
 
+  // Candidato não contratado: nunca houve emprego, então não há registro
+  // trabalhista a preservar. O dossiê dele deixa de ser impedimento e passa a
+  // ser motivo A MAIS para excluir — RG, CPF e comprovante de quem não foi
+  // contratado não devem ficar guardados para sempre. Para quem é (ou foi)
+  // funcionário, a proteção continua inteira.
+  const candidato = await rhEhCandidato(id);
+
   const impedimentos = [];
   const conta = async (sql, rotulo) => {
     const n = (await query(sql, [id]))[0].n;
@@ -3273,7 +3393,9 @@ app.delete('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async 
   };
   await conta('SELECT count(*)::int AS n FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1', 'solicitação(ões) de viáticos');
   await conta('SELECT count(*)::int AS n FROM erp_rh_vinculos WHERE colaborador_id=$1', 'vínculo(s) registrado(s)');
-  await conta(`SELECT count(*)::int AS n FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, 'documento(s) no dossiê');
+  if (!candidato) {
+    await conta(`SELECT count(*)::int AS n FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, 'documento(s) no dossiê');
+  }
   await conta('SELECT count(*)::int AS n FROM erp_rh_treinamentos WHERE colaborador_id=$1', 'treinamento(s)');
 
   if (impedimentos.length) {
@@ -3282,10 +3404,14 @@ app.delete('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async 
       impedimentos
     });
   }
-  // Sem história: some o candidato desistente e a duplicata cadastrada por
-  // engano. O ON DELETE CASCADE cuida de admissões e dependentes.
+  // erp_attachments não tem FK para o colaborador (entity_id é genérico), então
+  // o CASCADE não alcança o dossiê: sem apagar aqui, os arquivos ficariam órfãos
+  // no banco, apontando para um ID que não existe mais.
+  const docs = await query(
+    `DELETE FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1 RETURNING id`, [id]);
+  // O ON DELETE CASCADE cuida de admissões, histórico e dependentes.
   await query('DELETE FROM erp_colaboradores WHERE id=$1', [id]);
-  res.json({ ok: true });
+  res.json({ ok: true, candidato, documentos_apagados: docs.length });
 }));
 
 // ---- Treinamentos ----
@@ -3742,7 +3868,12 @@ app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(
 // TUD. Aprovar = Diretoria autorizou o gasto a mais, resolvendo também a
 // pendência de estouro da viagem. Reprovar = mantém a pendência (o valor
 // segue precisando ser descontado/cobrado do colaborador).
-app.post('/api/viaticos/solicitacoes/:id/excesso-status', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+// Restrito a administradores: aprovar um excesso é autorizar gasto acima da TUD
+// e, junto com isso, perdoar a pendência que o colaborador teria de devolver.
+// Com `requireEdit('viaticos')` apenas, quem lança a despesa aprovava o próprio
+// estouro — não havia segundo par de olhos em nenhum ponto do fluxo
+// (auditoria 2026-09-01, P0-3(c)). Mesma trava que `reabrir` já usava.
+app.post('/api/viaticos/solicitacoes/:id/excesso-status', requireAuth, requireAdmin, h(async (req, res) => {
   const chave = String(req.body.chave || '').trim();
   const status = req.body.status;
   if (!chave || !['aprovado', 'reprovado'].includes(status)) return res.status(400).json({ error: 'Dados inválidos.' });

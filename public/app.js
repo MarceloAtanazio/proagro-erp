@@ -8676,16 +8676,30 @@ const RH_ETAPA_CAMPOS = {
 let RH_ABA = 'painel';   // painel | pessoas | quadro | minutas
 
 // ---------------- Quadro ----------------
+// O quadro tem duas vistas. Sem a segunda, encerrar uma candidatura faria o
+// card simplesmente sumir, e não haveria onde responder "o que aconteceu com
+// aquele candidato?" — nem de onde reabrir o processo.
+let RH_QUADRO_VISTA = 'andamento';   // andamento | cancelada
+
 async function rhQuadro(c) {
-  const d = await api('/api/rh/admissoes');
+  const d = await api('/api/rh/admissoes?situacao=' + RH_QUADRO_VISTA);
   const cards = d.cards || [];
+  const n = d.contagem || { andamento: 0, cancelada: 0 };
+  const encerrados = RH_QUADRO_VISTA === 'cancelada';
+
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-quadro-topo">
-      <span class="rh-quadro-dica">Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o
-        contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.</span>
+      <span class="rh-quadro-dica">${encerrados
+        ? 'Processos que <strong>não viraram contratação</strong>. A pessoa fica arquivada — pode ser reaberta numa vaga futura ou excluída de vez.'
+        : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'}</span>
       <div class="spacer"></div>
+      <select id="rh-vista">
+        <option value="andamento" ${encerrados ? '' : 'selected'}>Em andamento (${n.andamento || 0})</option>
+        <option value="cancelada" ${encerrados ? 'selected' : ''}>Encerrados sem contratação (${n.cancelada || 0})</option>
+      </select>
       <button class="btn primary" id="rh-novo-candidato">+ Novo candidato</button>
     </div>
+    ${encerrados ? rhTabelaEncerrados(cards) : `
     <div class="rh-kanban">${d.etapas.map(e => {
       const meus = cards.filter(x => x.etapa === e.cod);
       return `<div class="rh-col" data-etapa="${e.cod}">
@@ -8697,10 +8711,52 @@ async function rhQuadro(c) {
     }).join('')}</div>
     ${cards.length ? '' : `<div class="rh-vazio">
       <p><strong>Nenhuma admissão em andamento.</strong> O quadro acompanha a entrada de cada
-      candidato, da carta oferta ao onboarding. Use <strong>+ Novo candidato</strong> para abrir um card.</p></div>`}`;
+      candidato, da carta oferta ao onboarding. Use <strong>+ Novo candidato</strong> para abrir um card.</p></div>`}`}`;
   rhLigarAbas();
   const b = $('#rh-novo-candidato'); if (b) b.onclick = rhFormNovoColaborador;
+  $('#rh-vista').onchange = e => { RH_QUADRO_VISTA = e.target.value; renderRH(); };
   c.querySelectorAll('[data-card]').forEach(x => x.onclick = () => rhAbrirCard(Number(x.dataset.card)));
+  c.querySelectorAll('[data-reabrir]').forEach(x => x.onclick = () => rhReabrirProcesso(Number(x.dataset.reabrir), x.dataset.nome));
+  c.querySelectorAll('[data-excluir-cand]').forEach(x => x.onclick = () =>
+    rhConfirmarExcluir({ id: Number(x.dataset.excluirCand), name: x.dataset.nome, arquivado_em: true, candidato: true }));
+}
+
+// Encerrado não tem etapa que signifique alguma coisa — o card parou onde
+// parou. Lista, e não Kanban: o que interessa aqui é motivo, parte e data.
+function rhTabelaEncerrados(cards) {
+  if (!cards.length) {
+    return `<div class="rh-vazio"><p><strong>Nenhum processo encerrado.</strong> Quando uma candidatura
+      terminar sem contratação — por recusa do candidato ou da empresa — ela aparece aqui com o motivo.</p></div>`;
+  }
+  // Colunas próprias: aqui o conteúdo da tela é o MOTIVO, então é ele que
+  // recebe a largura sobrando — na grade da lista de colaboradores quem
+  // esticava era o nome, e o motivo ficava espremido em três linhas.
+  return `<div class="table-wrap"><table class="tbl-rh tbl-rh-enc">
+    <colgroup><col class="c-id"><col class="c-nome"><col class="c-cargo"><col class="c-etapa">
+      <col class="c-data"><col class="c-motivo"><col class="c-acoes"></colgroup>
+    <thead><tr><th>ID</th><th>Candidato</th><th>Cargo</th><th>Parou em</th>
+      <th>Encerrado em</th><th>Motivo</th><th class="actions">Ações</th></tr></thead>
+    <tbody>${cards.map(a => {
+      const etapa = RH_ETAPA_NOME[a.etapa] || a.etapa || '—';
+      const parte = a.parte === 'candidato' ? '<span class="badge pend">por ele</span>'
+        : a.parte === 'empresa' ? '<span class="badge late">por nós</span>' : '';
+      return `<tr>
+        <td class="id-cell">${a.id}</td>
+        <td>${esc(a.colaborador_nome)}</td>
+        <td>${esc(rhTxt(a.cargo_pretendido))}</td>
+        <td>${esc(etapa)}</td>
+        <td class="venc-cell">${rhData(a.encerrada_em)}</td>
+        <td>${parte} ${esc(a.motivo_nome || '— não classificado —')}${
+          a.cancelamento_motivo ? `<span class="rh-sub">${esc(a.cancelamento_motivo)}</span>` : ''}</td>
+        <td class="actions">
+          <button class="btn-ic" data-reabrir="${a.id}" data-nome="${esc(a.colaborador_nome)}"
+            title="Reabrir o processo no quadro" aria-label="Reabrir">↩</button>
+          <button class="btn-ic perigo" data-excluir-cand="${a.colaborador_id}" data-nome="${esc(a.colaborador_nome)}"
+            title="Excluir o candidato e seus documentos" aria-label="Excluir">🗑</button>
+        </td></tr>`;
+    }).join('')}</tbody>
+    <tfoot><tr><td colspan="6">${cards.length} processo(s) encerrado(s)</td><td></td></tr></tfoot>
+  </table></div>`;
 }
 
 // Nome distinto do rhCard() dos cartões de situação da lista: os dois viviam
@@ -8824,6 +8880,9 @@ async function rhAbrirCard(id) {
       </div>`).join('')}</div></div>` : ''}`,
     [
       { label: 'Fechar', onClick: closeModal },
+      // Encerrar fica longe dos botões de avançar, e em ghost: é a saída do
+      // processo, não mais um passo dele.
+      ...(ed ? [{ label: 'Encerrar processo', cls: 'danger-ghost', onClick: () => rhFormEncerrar(a, d.motivos) }] : []),
       ...(ed ? [{ label: 'Salvar', onClick: () => rhSalvarCard(id, a.etapa, a.colaborador_id) }] : []),
       ...(ed && anterior ? [{ label: '← ' + anterior.nome, onClick: () => rhMoverCard(id, a.etapa, anterior.cod, false, a.colaborador_id) }] : []),
       ...(ed && proxima ? [{ label: proxima.nome + ' →', cls: 'primary', onClick: () => rhMoverCard(id, a.etapa, proxima.cod, true, a.colaborador_id) }] : []),
@@ -9396,6 +9455,65 @@ function rhLigarAbas() {
   document.querySelectorAll('[data-secao]').forEach(b => b.onclick = () => { RH_ABA = b.dataset.secao; renderRH(); });
 }
 
+// ---------------- Encerrar e reabrir candidatura ----------------
+
+// O motivo é agrupado por QUEM encerrou porque é assim que se pensa na hora:
+// "ele desistiu" ou "nós não seguimos". O agrupamento também é o que alimenta o
+// funil — somar as duas coisas num "4 cancelados" não diz nada a ninguém.
+const RH_PARTE_ROTULO = { candidato: 'Por parte do candidato', empresa: 'Por parte da empresa', nenhuma: 'Outros' };
+
+function rhFormEncerrar(a, motivos) {
+  const lista = motivos || [];
+  const grupos = ['candidato', 'empresa', 'nenhuma'].map(p => {
+    const itens = lista.filter(m => m.parte === p);
+    return itens.length ? `<optgroup label="${RH_PARTE_ROTULO[p]}">${itens.map(m =>
+      `<option value="${esc(m.cod)}">${esc(m.nome)}</option>`).join('')}</optgroup>` : '';
+  }).join('');
+
+  openModal(`Encerrar a candidatura de ${a.colaborador_nome}`, `
+    <div class="rh-nota">O processo sai do quadro e a pessoa vai para <strong>Arquivados</strong>, com o
+      motivo registrado. Nada é apagado: se ela voltar a ser candidata numa vaga futura, o processo pode
+      ser <strong>reaberto</strong> na etapa em que parou.</div>
+    <div class="field"><label for="en-tipo">Motivo do encerramento *</label>
+      <select id="en-tipo"><option value="">— selecione —</option>${grupos}</select></div>
+    <div class="form-row">
+      ${fld('en-data', 'Data do encerramento', 'date', todayISO())}
+    </div>
+    ${fld('en-motivo', 'Detalhe (opcional)', 'text', '', 'placeholder="fica no histórico do processo e no log de auditoria"')}
+    <label class="check-chip"><input type="checkbox" id="en-arquivar" checked> Arquivar o candidato
+      <span style="color:var(--muted);font-weight:400">— desmarque só se ele já for funcionário da casa</span></label>`,
+    [{ label: 'Voltar', onClick: () => rhAbrirCard(a.id) },
+     { label: 'Encerrar', cls: 'danger-ghost', onClick: async () => {
+        const tipo = $('#en-tipo').value;
+        if (!tipo) return modalError('Escolha o motivo do encerramento.');
+        const detalhe = $('#en-motivo').value.trim();
+        if (tipo === 'outro' && !detalhe) return modalError('Em "Outro motivo", descreva o que houve.');
+        try {
+          const x = await api(`/api/rh/admissoes/${a.id}/encerrar`, { method: 'POST', body: {
+            tipo, motivo: detalhe, data: $('#en-data').value, arquivar: $('#en-arquivar').checked } });
+          closeModal();
+          toast(x.arquivado ? 'Candidatura encerrada e candidato arquivado.' : 'Candidatura encerrada.');
+          RH_QUADRO_VISTA = 'andamento'; renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+async function rhReabrirProcesso(id, nome) {
+  openModal(`Reabrir o processo de ${nome}?`, `
+    <div class="rh-nota">O card volta ao quadro <strong>na etapa em que parou</strong>, com todo o
+      histórico e a documentação já entregue. Se a pessoa estiver arquivada, ela é desarquivada junto —
+      candidato arquivado com processo aberto não apareceria em lugar nenhum.</div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Reabrir', cls: 'primary', onClick: async () => {
+        try {
+          const x = await api(`/api/rh/admissoes/${id}/reabrir`, { method: 'POST', body: {} });
+          closeModal();
+          toast('Processo reaberto em ' + (RH_ETAPA_NOME[x.etapa] || x.etapa) + '.');
+          RH_QUADRO_VISTA = 'andamento'; renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
 // ---------------- Arquivar, excluir e desenvolvimento ----------------
 
 // Arquivar é o caminho normal para quem saiu. O formulário pede o desligamento
@@ -9430,19 +9548,26 @@ function rhFormArquivar(r) {
 // Excluir apaga. O servidor recusa quando há história; aqui a tela já explica a
 // diferença antes de o usuário descobrir pelo erro.
 function rhConfirmarExcluir(r) {
+  // Candidato não contratado é outro caso: nunca houve emprego, então o dossiê
+  // dele não é registro trabalhista a preservar — é dado pessoal de quem não
+  // entrou, e apagar junto é o certo, não um efeito colateral.
+  const cand = !!r.candidato;
   openModal(`Excluir ${r.name}?`, `
     <div class="rh-nota aviso"><strong>Excluir apaga o cadastro e não tem volta.</strong> Some a ficha, o
-    processo de admissão e os dependentes.</div>
-    <p style="font-size:13.5px;color:var(--ink-2)">Serve para <strong>duplicata</strong> e para
-    <strong>candidato que desistiu</strong> antes de qualquer registro. Quem já teve vínculo, viático ou
-    documento no dossiê <strong>não pode</strong> ser excluído — nesse caso o caminho é
-    <strong>arquivar</strong>, que guarda tudo e tira das listas.</p>`,
+    processo de admissão${cand ? ', os documentos que ele entregou' : ''} e os dependentes.</div>
+    <p style="font-size:13.5px;color:var(--ink-2)">${cand
+      ? 'Como <strong>não houve contratação</strong>, não há registro trabalhista a guardar — e RG, CPF e comprovantes de quem não foi contratado não devem ficar no sistema para sempre. Se a intenção é apenas tirar da frente, <strong>arquivar</strong> mantém tudo e permite reabrir o processo depois.'
+      : 'Serve para <strong>duplicata</strong> e para <strong>candidato que desistiu</strong> antes de qualquer registro. Quem já teve vínculo, viático ou documento no dossiê <strong>não pode</strong> ser excluído — nesse caso o caminho é <strong>arquivar</strong>, que guarda tudo e tira das listas.'}</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
      ...(r.arquivado_em ? [] : [{ label: 'Arquivar em vez disso', onClick: () => rhFormArquivar(r) }]),
      { label: 'Excluir', cls: 'danger-ghost', onClick: async () => {
         try {
-          await api('/api/rh/colaboradores/' + r.id, { method: 'DELETE' });
-          closeModal(); toast('Colaborador excluído.'); renderRH();
+          const x = await api('/api/rh/colaboradores/' + r.id, { method: 'DELETE' });
+          closeModal();
+          toast(x.documentos_apagados
+            ? `Excluído — ${x.documentos_apagados} documento(s) apagado(s) junto.`
+            : 'Excluído.');
+          renderRH();
         } catch (e) { modalError(e.message); }
      }}]);
 }
@@ -9620,6 +9745,12 @@ async function rhPainel(c) {
       </div>
       <h5>Onde estão os processos</h5>
       ${rhBarras(traduzir(re.por_etapa, RH_ETAPA_NOME), re.em_andamento, '#C8912B')}
+      ${re.canceladas ? `<h5>Encerrados sem contratação — por parte de quem</h5>
+        <div class="kpis">
+          ${rhKpi('Recusa do candidato', (re.encerradas_por_parte || {}).candidato || 0, 'desistência, recusa da proposta, outra oferta')}
+          ${rhKpi('Decisão da empresa', (re.encerradas_por_parte || {}).empresa || 0, 'reprovação, documentação, vaga cancelada')}
+        </div>
+        ${rhBarras(re.encerradas_por_motivo || [], re.canceladas, 'var(--danger)')}` : ''}
     </div>
 
     <div class="rh-painel-sec"><h3>Turnover</h3>
