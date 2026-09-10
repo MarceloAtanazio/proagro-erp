@@ -4159,14 +4159,16 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
   const filtroColab = escopo ? ' AND colaborador_id = ANY($1)' : '';
   const paramsColab = escopo ? [escopo] : [];
 
-  // Carteira Flash = total já repassado (Contas a Pagar, categoria "Viáticos", pago)
-  // menos o que está de fato alocado em solicitações (liberado - devolvido).
+  // Carteira Flash = total já repassado menos o que está alocado em solicitações
+  // (liberado - devolvido). O repasse vive na categoria "Repasse de Viáticos":
+  // ler "Viáticos" aqui traria os REEMBOLSOS ao colaborador, que não passam pela
+  // carteira — e o saldo apareceria negativo, como se a empresa devesse à Flash.
   // São números globais da empresa — usuários restritos (só leitura, vendo
   // apenas as próprias solicitações) não recebem esses valores.
   let saldoCarteira = null, transferido = null, transferidoMes = null;
   if (!escopo) {
-    transferido = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos'`))[0].v);
-    transferidoMes = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category='Viáticos' AND to_char(payment_date,'YYYY-MM')=$1`, [mesAtual]))[0].v);
+    transferido = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category=$1`, [CAT_REPASSE_VIATICOS]))[0].v);
+    transferidoMes = n((await query(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago' AND category=$1 AND to_char(payment_date,'YYYY-MM')=$2`, [CAT_REPASSE_VIATICOS, mesAtual]))[0].v);
     const alocado = n((await query(`SELECT COALESCE(SUM(valor_liberado - valor_devolvido),0) AS v FROM erp_viaticos_solicitacoes WHERE status NOT IN ('arquivado','em_approvals')`))[0].v);
     saldoCarteira = transferido - alocado;
   }

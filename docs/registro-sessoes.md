@@ -3296,3 +3296,59 @@ o só-pago" — em vez de um número fixo.
 Na tela, com a função real de `app.js` e os números reais: nota em 1125px nos três casos, zero
 elementos cortados, sem rolagem horizontal a 1440px, e a linha lendo
 **R$ 898.973,63 orçado · R$ 99.313,32 realizado · 11,0%**.
+
+---
+
+## 2026-09-10 — Saldo da carteira Flash estava negativo (efeito colateral da recategorização)
+
+**Achado meu, não pedido.** Ao revisar onde mais o sistema soma despesa, encontrei um estrago que a
+mudança de ontem causou e que eu deveria ter varrido na hora.
+
+### O que estava errado
+
+O dashboard de Viáticos calcula a carteira assim:
+
+    saldoCarteira = transferido - alocado
+    transferido   = SUM(erp_payables pago WHERE category = 'Viáticos')
+
+Isso valia enquanto os repasses à Flash viviam na categoria "Viáticos". Depois que o usuário criou
+**"Repasse de Viáticos"** e moveu os seis lançamentos para lá, a consulta passou a somar os
+**reembolsos ao colaborador** — dinheiro que nunca passou pela carteira.
+
+Resultado na tela:
+
+    mostrava:  R$ 19.539,90 (reembolsos) - R$ 76.366,19 (alocado) = -R$ 56.826,29
+    correto:   R$ 140.541,99 (repasses)  - R$ 76.366,19 (alocado) =  R$ 64.175,80
+
+Um saldo negativo de carteira pré-paga não é um número impreciso, é um número impossível — leria como
+se a empresa devesse à Flash.
+
+**A lição:** ao mudar o que uma categoria significa, varrer TODOS os leitores dela, não só o que o
+pedido citou. Eu tratei "Orçado x Realizado" e o dashboard financeiro e parei aí; o leitor que
+quebrou estava na própria seção de Viáticos, a três mil linhas de distância.
+
+### A correção
+
+`transferido` e `transferidoMes` passam a ler `CAT_REPASSE_VIATICOS` — que é exatamente a semântica
+do campo: carga da carteira. Varri o restante do código: não há outro leitor com a categoria
+escrita à mão (`grep` por `'Viáticos'` só devolve rótulo de página e nome de aba de planilha).
+
+### Verificação
+
+**5 asserções novas** (31 no total na suíte de viáticos), entre elas uma que documenta o próprio bug:
+
+- `transferido` lê o repasse, não o reembolso;
+- o saldo é positivo e bate com repasse − alocado;
+- **"lendo a categoria errada, o saldo daria negativo"** — a asserção existe para que, se alguém
+  reverter a consulta, o teste diga *por que* aquilo importa.
+
+A fixture precisou ser corrigida junto: com valores pequenos, alocado ficava menor que os reembolsos
+e o teste do saldo passaria sem nunca reproduzir a desproporção que gera o bug (em produção são
+R$ 76 mil alocados contra R$ 19,5 mil de reembolso). Fixture pequena demais é teste que passa por
+sorte.
+
+### De quebra
+
+O usuário moveu o lançamento de **R$ 1.000,00 ("Repasse para Compra de Produtos para o Escritorio")**
+para *Compras / Fornecedores*. Com isso o realizado de Viáticos 2026 fica em **R$ 98.313,32**
+(R$ 78.773,42 comprovados + R$ 19.539,90 de reembolso), ou 10,9% do orçado.
