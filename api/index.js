@@ -4333,9 +4333,18 @@ app.get('/api/viaticos/km', requireAuth, requireViewAny(['viaticos']), h(async (
       JOIN erp_colaboradores c ON c.id = s.colaborador_id
      ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''}
      ORDER BY (k.status = 'enviado') DESC, k.enviado_em DESC NULLS LAST, k.id DESC`, params);
+  // Quem pode o quê vem do SERVIDOR, não da permissão da página. Comprovar a
+  // própria quilometragem é do colaborador de campo, que tem só LEITURA em
+  // Viáticos — a tela não tem como deduzir isso de `READONLY` sem repetir aqui
+  // a regra que já existe no `kmPodeMexer`, e repetir é o que sai do lugar.
+  const pode = {
+    informar: req.query.solicitacao_id ? await kmPodeMexer(req.user, req.query.solicitacao_id) : false,
+    aprovar: req.user.role === 'admin' || canEdit(req.user, 'viaticos')
+  };
   res.json({
     taxa_vigente: await kmTaxaVigente(),
     tolerancia_pct: KM_TOLERANCIA_PCT,
+    pode,
     registros: rows.map(r => kmSerializar(r, Array.isArray(r.anexos) ? r.anexos : []))
   });
 }));

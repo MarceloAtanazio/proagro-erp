@@ -3456,3 +3456,55 @@ CSS — o teste é que estava errado.
 `2026-09-11-viaticos-km.sql`, aditiva e idempotente, aplicada em produção: `km_taxa_reembolso` em
 `erp_viaticos_config` e a tabela `erp_viaticos_km` (linha por veículo, porque uma viagem pode ter
 próprio e alugado), com índice parcial para a fila de aprovação e outro para a trava do odômetro.
+
+---
+
+## 2026-09-11 — O colaborador não via o botão de comprovar km (correção)
+
+**Reportado pelo usuário:** na página da colaboradora (Leticia) a comprovação de quilometragem não
+aparecia; na do admin, sim. "Ou eu não entendi o fluxo que desenhamos ou algo não está correto."
+
+Estava incorreto, e o erro era meu.
+
+### O que acontecia
+
+No servidor eu tratei o caso direito: `kmPodeMexer` libera o **dono da viagem**, mesmo com só leitura
+em Viáticos, e o upload de anexo ganhou a exceção equivalente. Na tela, não. Eu passei
+`!somenteLeitura` como permissão, e `somenteLeitura` é o `READONLY` da **página**:
+
+    READONLY = !canEditPage('viaticos')     // técnico de campo -> true
+    viaKmSecao(s, km, !somenteLeitura)       // -> podeEditar = false, botão some
+
+Ou seja: o backend deixava comprovar e a tela escondia o botão justamente de quem comprova. Tela e
+servidor discordando sobre a mesma regra — e quem estava certo era o servidor.
+
+### A correção
+
+Quem pode o quê passou a vir **do servidor**, em `GET /api/viaticos/km`:
+
+    pode: { informar: <é dono da viagem ou edita Viáticos>, aprovar: <admin ou edita Viáticos> }
+
+`viaKmSecao` lê `dados.pode` e não recebe mais o terceiro argumento. Não é só conserto de sintoma: a
+regra "quem pode comprovar" existe uma vez só, no `kmPodeMexer`, e a tela consulta em vez de deduzir.
+Repetir a regra no cliente é o que fez ela sair do lugar.
+
+De quebra, o botão de aprovar estava preso a `USER.role === 'admin'`, mais restrito que o endpoint
+(`requireEdit('viaticos')`): quem edita Viáticos sem ser admin via a fila e não conseguia decidir.
+Agora os dois usam a mesma resposta.
+
+### Verificação
+
+**5 asserções novas** (51 na suíte), nomeando o caso que quebrou:
+
+- o dono da viagem **com só leitura** tem `informar: true` — e `aprovar: false`;
+- na viagem de outro colaborador, `informar: false`;
+- o admin tem os dois;
+- sem `solicitacao_id` na consulta, `informar` é falso.
+
+Na tela, com a função real e o caso da Leticia reproduzido (colaboradora só-leitura, dona da viagem,
+nada informado ainda): ela vê **"+ Informar km do carro próprio"**, igual ao admin; um terceiro sem
+permissão não vê botão nenhum; e no registro já enviado ela não vê "Aprovar".
+
+**A lição:** quando a regra de permissão é mais fina que a da página, o cliente não pode inferi-la do
+`READONLY`. Ou o servidor diz, ou as duas pontas divergem — e a divergência aparece como um botão que
+falta para exatamente a pessoa que precisa dele.

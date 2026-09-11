@@ -5382,7 +5382,7 @@ async function viewSolicitacao(id) {
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
     </div>
     ${memoriaHtml}
-    ${viaKmSecao(s, km, !somenteLeitura)}
+    ${viaKmSecao(s, km)}
     ${!finalizada && !somenteLeitura ? `
     <div class="field-row" style="align-items:flex-end; margin-bottom:14px">
       ${fldSel('vs-status-sel', 'Status da viagem', Object.entries(STATUS_ATIVO_LABEL).map(([v, t]) => ({ v, t })), s.status)}
@@ -10800,11 +10800,18 @@ const KM_MODELO_LABEL = { proprio: 'Carro próprio', alugado: 'Carro alugado' };
 const kmNum = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
 
 // Bloco inteiro da seção, montado a partir do que a API devolveu.
-function viaKmSecao(s, dados, podeEditar) {
+//
+// Quem pode informar e quem pode aprovar vem do SERVIDOR (`dados.pode`), não da
+// permissão da página: quem comprova a própria quilometragem é o colaborador de
+// campo, que tem só LEITURA em Viáticos. Amarrar isso ao READONLY da página
+// escondia o botão justamente de quem precisa dele.
+function viaKmSecao(s, dados) {
   const t = (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {};
   if (!t.carro_proprio && !t.aluguel_carro) return '';
   const regs = dados.registros || [];
   const taxa = dados.taxa_vigente || 0.70;
+  const podeEditar = !!(dados.pode && dados.pode.informar);
+  const podeAprovar = !!(dados.pode && dados.pode.aprovar);
   const hoje = todayISO();
   const terminou = hoje >= String(s.data_fim).slice(0, 10);
 
@@ -10848,7 +10855,7 @@ function viaKmSecao(s, dados, podeEditar) {
         <button class="btn sm danger-ghost" data-kmdel="${k.id}">Excluir</button>
         <button class="btn sm primary" data-kmenviar="${k.id}">Enviar para aprovação</button>
       </div>` : ''}
-      ${k.status === 'enviado' && USER.role === 'admin' ? `<div class="via-km-acoes">
+      ${k.status === 'enviado' && podeAprovar ? `<div class="via-km-acoes">
         <button class="btn sm primary" data-kmaprovar="${k.id}">Aprovar${k.modelo === 'proprio' ? ' e gerar o pagamento' : ''}</button>
         <button class="btn sm danger-ghost" data-kmrejeitar="${k.id}">Devolver para correção</button>
       </div>` : ''}
