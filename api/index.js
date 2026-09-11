@@ -322,6 +322,10 @@ const AUDIT_MAP = {
     (req.body.valor_liberado ? ` e registrou o valor liberado de R$ ${Number(req.body.valor_liberado).toFixed(2)}` : ''),
   'POST /api/viaticos/solicitacoes/:id/fechar': (req, body) => `Fechou/conferiu a solicitação de viático ID ${req.params.id} — resultado: ${body && body.status}` +
     (body && body.status === 'divergente' ? ` (pendência de ${fmtBRL(body.valor_pendencia)})` : body && body.status === 'devolvido' ? ` (${fmtBRL(body.valor_devolvido)} devolvido à carteira)` : ''),
+  'POST /api/viaticos/solicitacoes/:id/km': (req, body) => `Registrou quilometragem na viagem ID ${req.params.id} (${req.body.km_inicial} → ${req.body.km_final} km${body && body.valor_reembolso ? `, R$ ${body.valor_reembolso}` : ''})`,
+  'POST /api/viaticos/km/:id/enviar': req => `Enviou a comprovação de quilometragem ID ${req.params.id} para aprovação`,
+  'POST /api/viaticos/km/:id/decidir': (req, body) => `${req.body.aprovar ? 'APROVOU' : 'Rejeitou'} a comprovação de quilometragem ID ${req.params.id}${body && body.payable_id ? ` — gerou a conta a pagar ${body.payable_id} (R$ ${body.valor})` : ''}${req.body.motivo ? ` — ${req.body.motivo}` : ''}`,
+  'DELETE /api/viaticos/km/:id': req => `Excluiu a comprovação de quilometragem ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/arquivar': req => `Arquivou a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/reabrir': req => `Reabriu (admin) a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/excesso-status': req => `${req.body.status === 'aprovado' ? 'Aprovou' : 'Reprovou'} o excesso da TUD ("${req.body.chave}") na solicitação de viático ID ${req.params.id}`,
@@ -819,6 +823,7 @@ app.delete('/api/receivables/:id', requireAuth, requireEdit('receber'), h(async 
 const ATTACH_TYPES = {
   payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos',
+  viatico_km: 'viaticos',   // fotos do odômetro; qual é qual vai em doc_tipo
   contrato: 'contratos',
   rh_doc: 'rh'   // dossiê do colaborador; o tipo do documento vai em doc_tipo
 };
@@ -888,6 +893,19 @@ async function anexoViaticoNoEscopo(user, despesaId) {
   return r.length > 0;
 }
 
+// Mesma trava, para a foto do odômetro: ela pende do registro de km, que pende
+// da solicitação. Sem isso bastaria trocar o id na URL para ver a viagem de um
+// colega — o mesmo buraco que a auditoria apontou nos comprovantes de despesa.
+async function anexoKmNoEscopo(user, kmId) {
+  const escopo = await viaticosEscopo(user);
+  if (!escopo) return true;
+  const r = await query(
+    `SELECT 1 FROM erp_viaticos_km k
+       JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
+      WHERE k.id = $1 AND s.colaborador_id = ANY($2)`, [Number(kmId), escopo]);
+  return r.length > 0;
+}
+
 // IMPORTANTE: rotas com segmento literal ("file", "count") precisam vir ANTES
 // da rota genérica "/:type/:id" — senão o Express casa "file"/"count" como se
 // fossem o próprio :type, e a rota certa nunca é alcançada.
@@ -912,6 +930,9 @@ app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
   }
   if (a.entity_type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, a.entity_id))) {
     return res.status(403).json({ error: 'Este anexo pertence à viagem de outro colaborador.' });
+  }
+  if (a.entity_type === 'viatico_km' && !(await anexoKmNoEscopo(req.user, a.entity_id))) {
+    return res.status(403).json({ error: 'Esta foto pertence à viagem de outro colaborador.' });
   }
   res.json({ file_name: a.file_name, mime_type: a.mime_type || 'application/octet-stream', data: a.data.toString('base64') });
 }));
@@ -969,10 +990,28 @@ app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
 app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const page = pageForType(req.params.type);
   if (!page) return res.status(400).json({ error: 'Tipo inválido.' });
-  if (req.user.role !== 'admin' && !canEdit(req.user, page)) return res.status(403).json({ error: 'Sem permissão para anexar nesta seção.' });
+  // A foto do odômetro é a exceção à regra de edição: quem comprova a própria
+  // quilometragem é o colaborador de campo, que tem só LEITURA em Viáticos.
+  // Exigir permissão de edição dele tornaria a comprovação impossível — a
+  // trava aqui é ser dono da viagem, conferida logo abaixo.
+  const ehFotoKmPropria = req.params.type === 'viatico_km' && await anexoKmNoEscopo(req.user, req.params.id);
+  if (req.user.role !== 'admin' && !canEdit(req.user, page) && !ehFotoKmPropria) {
+    return res.status(403).json({ error: 'Sem permissão para anexar nesta seção.' });
+  }
 
   if (req.params.type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, req.params.id))) {
     return res.status(403).json({ error: 'Esta despesa pertence à viagem de outro colaborador.' });
+  }
+  if (req.params.type === 'viatico_km') {
+    if (!(await anexoKmNoEscopo(req.user, req.params.id))) {
+      return res.status(403).json({ error: 'Esta viagem é de outro colaborador.' });
+    }
+    // Foto anexada depois do envio não seria olhada por ninguém: a aprovação
+    // já está na fila com o que existia no momento do envio.
+    const st = (await query('SELECT status FROM erp_viaticos_km WHERE id=$1', [Number(req.params.id)]))[0];
+    if (st && !['rascunho', 'rejeitado'].includes(st.status)) {
+      return res.status(409).json({ error: 'Este registro já foi enviado — não dá para trocar as fotos agora.' });
+    }
   }
 
   const fileName = sanitize(req.body.file_name);
@@ -1002,6 +1041,7 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const table = {
     payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas',
     colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
+    viatico_km: 'erp_viaticos_km',
     contrato: 'erp_contratos', rh_doc: 'erp_colaboradores'
   }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
@@ -1011,6 +1051,8 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   // não o `kind` — que é a lista fechada compartilhada com boletos e notas.
   const docTipo = req.params.type === 'rh_doc'
     ? (RH_DOC_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
+    : req.params.type === 'viatico_km'
+    ? (['odometro_inicial', 'odometro_final'].includes(req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
     : null;
 
   const ins = await query(
@@ -1027,9 +1069,23 @@ app.delete('/api/attachments/:id', requireAuth, h(async (req, res) => {
   const a = rows[0];
   if (!a) return res.status(404).json({ error: 'Anexo não encontrado.' });
   const page = pageForType(a.entity_type);
-  if (req.user.role !== 'admin' && !canEdit(req.user, page)) return res.status(403).json({ error: 'Sem permissão para excluir.' });
+  // Mesma exceção do upload: o colaborador troca a própria foto do odômetro
+  // enquanto o registro é rascunho, mesmo tendo só leitura em Viáticos.
+  const kmPropria = a.entity_type === 'viatico_km' && await anexoKmNoEscopo(req.user, a.entity_id);
+  if (req.user.role !== 'admin' && !canEdit(req.user, page) && !kmPropria) {
+    return res.status(403).json({ error: 'Sem permissão para excluir.' });
+  }
   if (a.entity_type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, a.entity_id))) {
     return res.status(403).json({ error: 'Este anexo pertence à viagem de outro colaborador.' });
+  }
+  if (a.entity_type === 'viatico_km') {
+    if (!(await anexoKmNoEscopo(req.user, a.entity_id))) {
+      return res.status(403).json({ error: 'Esta foto pertence à viagem de outro colaborador.' });
+    }
+    const st = (await query('SELECT status FROM erp_viaticos_km WHERE id=$1', [a.entity_id]))[0];
+    if (st && !['rascunho', 'rejeitado'].includes(st.status)) {
+      return res.status(409).json({ error: 'Este registro já foi enviado — a foto faz parte da comprovação.' });
+    }
   }
   await query('DELETE FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
@@ -3827,6 +3883,9 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
     SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
       c.cidade_base_uf AS colaborador_cidade_base_uf, c.cidade_base_municipio AS colaborador_cidade_base_municipio,
       c.veiculo_consumo_kml AS colaborador_veiculo_consumo_kml,
+      -- Placa e modelo já cadastrados: o formulário de quilometragem chega
+      -- preenchido, e ninguém digita a própria placa errado.
+      c.veiculo_placa AS colaborador_veiculo_placa, c.veiculo_modelo AS colaborador_veiculo_modelo,
       COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id), 0) AS valor_comprovado,
       (SELECT COUNT(*)::int FROM erp_attachments a JOIN erp_viaticos_despesas d ON d.id=a.entity_id AND a.entity_type='viatico' WHERE d.solicitacao_id=s.id) AS anexos_count
     FROM erp_viaticos_solicitacoes s JOIN erp_colaboradores c ON c.id=s.colaborador_id
@@ -4116,7 +4175,8 @@ app.get('/api/viaticos/config', requireAuth, requireViewAny(['viaticos']), h(asy
     combustivel_margem_pct: cfg.combustivel_margem_pct != null ? n(cfg.combustivel_margem_pct) : 10,
     combustivel_anp_semana_fim: cfg.combustivel_anp_semana_fim || null,
     combustivel_anp_atualizado_em: cfg.combustivel_anp_atualizado_em || null,
-    combustivel_anp_erro: cfg.combustivel_anp_erro || null
+    combustivel_anp_erro: cfg.combustivel_anp_erro || null,
+    km_taxa_reembolso: cfg.km_taxa_reembolso != null ? n(cfg.km_taxa_reembolso) : KM_TAXA_PADRAO
   });
 }));
 
@@ -4146,9 +4206,298 @@ app.put('/api/viaticos/config', requireAuth, requireEdit('viaticos'), h(async (r
   const cfg = (await query('SELECT * FROM erp_viaticos_config WHERE id=1'))[0];
   const anpValor = cfg && cfg.combustivel_anp_valor != null ? n(cfg.combustivel_anp_valor) : null;
   const final = anpValor != null ? Number((anpValor * (1 + margem / 100)).toFixed(2)) : (cfg ? n(cfg.preco_combustivel_litro) : null);
-  await query(`INSERT INTO erp_viaticos_config (id, combustivel_margem_pct, preco_combustivel_litro, updated_at) VALUES (1,$1,$2,now())
-    ON CONFLICT (id) DO UPDATE SET combustivel_margem_pct=excluded.combustivel_margem_pct, preco_combustivel_litro=excluded.preco_combustivel_litro, updated_at=now()`,
-    [margem, final]);
+  // A taxa por km é opcional no corpo: a tela de configurações manda as duas
+  // juntas, mas quem só mexe na margem não pode zerar a taxa sem querer.
+  let taxa = cfg && cfg.km_taxa_reembolso != null ? n(cfg.km_taxa_reembolso) : KM_TAXA_PADRAO;
+  if (req.body.km_taxa_reembolso !== undefined && req.body.km_taxa_reembolso !== '') {
+    const t = Number(req.body.km_taxa_reembolso);
+    if (!isFinite(t) || t < 0 || t > 20) return res.status(400).json({ error: 'Taxa por km inválida (use um valor entre 0 e 20).' });
+    taxa = Number(t.toFixed(2));
+  }
+  await query(`INSERT INTO erp_viaticos_config (id, combustivel_margem_pct, preco_combustivel_litro, km_taxa_reembolso, updated_at) VALUES (1,$1,$2,$3,now())
+    ON CONFLICT (id) DO UPDATE SET combustivel_margem_pct=excluded.combustivel_margem_pct, preco_combustivel_litro=excluded.preco_combustivel_litro, km_taxa_reembolso=excluded.km_taxa_reembolso, updated_at=now()`,
+    [margem, final, taxa]);
+  res.json({ ok: true });
+}));
+
+// ============================================================
+// VIÁTICOS — comprovação de quilometragem
+//
+// O ressarcimento por km NÃO é combustível: a empresa custeia o combustível de
+// qualquer forma, e ele já entra na previsão da viagem. Os R$ 0,70/km ressarcem
+// o USO do carro próprio — seguro, manutenção, depreciação, pneus. Daí a taxa
+// valer só para 'proprio'.
+//
+// No ALUGADO o registro existe igual, com valor zero: o desgaste é da locadora.
+// Serve de base de dados e de comparativo com o km previsto — e é o que permite
+// conferir franquia e km excedente na fatura.
+// ============================================================
+const KM_TAXA_PADRAO = 0.70;
+// Acima disso o número é erro de digitação, não viagem: 1.200 virando 12.000 é
+// o engano típico do odômetro. Recusar é melhor que mandar para aprovação um
+// reembolso de cinco dígitos que alguém pode aprovar no automático.
+const KM_TETO_ABSOLUTO = 20000;
+const KM_FATOR_TETO = 3;        // ou 3x o previsto, o que for menor
+const KM_TOLERANCIA_PCT = 20;   // acima disso, justificativa obrigatória
+
+async function kmTaxaVigente() {
+  const c = (await query('SELECT km_taxa_reembolso FROM erp_viaticos_config WHERE id=1'))[0];
+  return c && c.km_taxa_reembolso != null ? n(c.km_taxa_reembolso) : KM_TAXA_PADRAO;
+}
+
+// O km previsto na solicitação vive em transporte_detalhes, em lugares
+// diferentes conforme o modelo: o carro próprio tem uma rota só; o aluguel é
+// uma lista, e a distância prevista é a soma dela.
+function kmPrevistoDe(sol, modelo) {
+  const t = (sol && sol.transporte_detalhes && typeof sol.transporte_detalhes === 'object') ? sol.transporte_detalhes : {};
+  if (modelo === 'proprio') {
+    const r = t.carro_proprio_rota || {};
+    const v = Number(r.distancia_km);
+    return isFinite(v) && v > 0 ? v : null;
+  }
+  const soma = (Array.isArray(t.alugueis) ? t.alugueis : [])
+    .reduce((s, a) => s + (Number(a && a.distancia_km) || 0), 0);
+  return soma > 0 ? soma : null;
+}
+
+// Quem pode mexer na comprovação daquela viagem: o próprio colaborador (mesmo
+// que só tenha leitura em Viáticos — é a viagem dele) ou quem edita a seção.
+async function kmPodeMexer(user, solicitacaoId) {
+  if (user.role === 'admin' || canEdit(user, 'viaticos')) return true;
+  const escopo = await viaticosEscopo(user);
+  if (!escopo) return true;
+  const r = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)',
+    [Number(solicitacaoId), escopo]);
+  return r.length > 0;
+}
+
+// Trava do odômetro: ele não anda para trás. O km inicial informado precisa ser
+// pelo menos o km final da última leitura daquela placa. Pega dígito trocado e
+// tira o espaço para número inventado — quem informa um km inicial menor que o
+// último conhecido está contradizendo o próprio histórico.
+async function kmUltimaLeitura(placa, ignorarId) {
+  if (!placa) return null;
+  const r = await query(
+    `SELECT k.id, k.km_final, k.solicitacao_id, s.data_fim
+       FROM erp_viaticos_km k JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
+      WHERE k.veiculo_placa = $1 AND k.status <> 'rejeitado' AND ($2::int IS NULL OR k.id <> $2)
+      ORDER BY k.km_final DESC LIMIT 1`, [placa, ignorarId || null]);
+  return r[0] || null;
+}
+
+function kmFotos(anexos) {
+  const tem = t => anexos.some(a => a.doc_tipo === t);
+  return { inicial: tem('odometro_inicial'), final: tem('odometro_final') };
+}
+
+async function kmCarregar(id) {
+  const r = await query('SELECT * FROM erp_viaticos_km WHERE id=$1', [Number(id)]);
+  if (!r.length) return null;
+  const km = r[0];
+  const anexos = await query(
+    `SELECT id, doc_tipo, file_name, mime_type, byte_size, created_at
+       FROM erp_attachments WHERE entity_type='viatico_km' AND entity_id=$1 ORDER BY id`, [km.id]);
+  const sol = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [km.solicitacao_id]))[0] || null;
+  return { km, anexos, sol, fotos: kmFotos(anexos) };
+}
+
+function kmSerializar(km, anexos) {
+  return {
+    ...km,
+    km_inicial: n(km.km_inicial), km_final: n(km.km_final), km_rodado: n(km.km_rodado),
+    km_previsto: km.km_previsto != null ? n(km.km_previsto) : null,
+    taxa_km: km.taxa_km != null ? n(km.taxa_km) : null,
+    valor_reembolso: n(km.valor_reembolso),
+    fotos: kmFotos(anexos || []),
+    anexos: anexos || []
+  };
+}
+
+// ---- Listar / fila de aprovação ----
+app.get('/api/viaticos/km', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const escopo = await viaticosEscopo(req.user);
+  const cond = [], params = [];
+  if (escopo) { params.push(escopo); cond.push(`s.colaborador_id = ANY($${params.length})`); }
+  if (req.query.solicitacao_id) { params.push(Number(req.query.solicitacao_id)); cond.push(`k.solicitacao_id = $${params.length}`); }
+  if (['rascunho', 'enviado', 'aprovado', 'rejeitado'].includes(req.query.status)) {
+    params.push(req.query.status); cond.push(`k.status = $${params.length}`);
+  }
+  const rows = await query(`
+    SELECT k.*, s.ordem_trabalho, s.destino, s.data_inicio, s.data_fim, c.name AS colaborador_nome,
+           (SELECT COALESCE(json_agg(json_build_object('id', a.id, 'doc_tipo', a.doc_tipo,
+                     'file_name', a.file_name, 'mime_type', a.mime_type, 'byte_size', a.byte_size)
+                     ORDER BY a.id), '[]'::json)
+              FROM erp_attachments a WHERE a.entity_type='viatico_km' AND a.entity_id=k.id) AS anexos
+      FROM erp_viaticos_km k
+      JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
+      JOIN erp_colaboradores c ON c.id = s.colaborador_id
+     ${cond.length ? 'WHERE ' + cond.join(' AND ') : ''}
+     ORDER BY (k.status = 'enviado') DESC, k.enviado_em DESC NULLS LAST, k.id DESC`, params);
+  res.json({
+    taxa_vigente: await kmTaxaVigente(),
+    tolerancia_pct: KM_TOLERANCIA_PCT,
+    registros: rows.map(r => kmSerializar(r, Array.isArray(r.anexos) ? r.anexos : []))
+  });
+}));
+
+// ---- Criar/editar o rascunho ----
+// Nasce como RASCUNHO de propósito: as fotos só podem ser anexadas depois que a
+// linha existe (o anexo precisa de um id), e enviar sem foto não pode passar.
+app.post('/api/viaticos/solicitacoes/:id/km', requireAuth, h(async (req, res) => {
+  const solId = Number(req.params.id);
+  if (!(await kmPodeMexer(req.user, solId))) return res.status(403).json({ error: 'Esta viagem é de outro colaborador.' });
+  const sol = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [solId]))[0];
+  if (!sol) return res.status(404).json({ error: 'Viagem não encontrada.' });
+
+  const modelo = req.body.modelo === 'alugado' ? 'alugado' : 'proprio';
+  const t = (sol.transporte_detalhes && typeof sol.transporte_detalhes === 'object') ? sol.transporte_detalhes : {};
+  if (modelo === 'proprio' && !t.carro_proprio) {
+    return res.status(409).json({ error: 'Esta viagem não foi solicitada com carro próprio.' });
+  }
+  if (modelo === 'alugado' && !t.aluguel_carro) {
+    return res.status(409).json({ error: 'Esta viagem não foi solicitada com carro alugado.' });
+  }
+  // Comprovar quilometragem antes do fim da viagem não faz sentido: o odômetro
+  // final ainda vai mudar.
+  if (hojeISO() < String(sol.data_fim).slice(0, 10)) {
+    return res.status(409).json({ error: `A viagem termina em ${brDateBR(sol.data_fim)}. A quilometragem se comprova depois do retorno.` });
+  }
+
+  const ini = Number(req.body.km_inicial), fim = Number(req.body.km_final);
+  if (!isFinite(ini) || ini < 0) return res.status(400).json({ error: 'Informe o odômetro inicial.' });
+  if (!isFinite(fim) || fim < 0) return res.status(400).json({ error: 'Informe o odômetro final.' });
+  if (fim <= ini) return res.status(400).json({ error: 'O odômetro final tem de ser maior que o inicial.' });
+  const rodado = Number((fim - ini).toFixed(1));
+
+  const previsto = kmPrevistoDe(sol, modelo);
+  const teto = Math.min(KM_TETO_ABSOLUTO, previsto ? previsto * KM_FATOR_TETO : KM_TETO_ABSOLUTO);
+  if (rodado > teto) {
+    return res.status(400).json({
+      error: `${rodado} km é muito acima do previsto para esta viagem (${previsto ? previsto + ' km previstos' : 'sem previsão'}). Confira os números do odômetro — o limite aceito aqui é ${Math.round(teto)} km.`
+    });
+  }
+
+  const placa = sanitize(req.body.veiculo_placa) || null;
+  const ultima = await kmUltimaLeitura(placa, req.body.id ? Number(req.body.id) : null);
+  if (ultima && ini < n(ultima.km_final)) {
+    return res.status(409).json({
+      error: `O odômetro deste veículo já marcava ${n(ultima.km_final)} km na viagem ${ultima.solicitacao_id}. Um odômetro não anda para trás — confira a leitura inicial.`
+    });
+  }
+
+  const taxa = modelo === 'proprio' ? await kmTaxaVigente() : null;
+  const valor = modelo === 'proprio' ? Number((rodado * taxa).toFixed(2)) : 0;
+  const just = sanitize(req.body.justificativa) || null;
+
+  // Edição de um rascunho já existente (ou de um rejeitado, que volta a ser
+  // editável para o colaborador corrigir e reenviar).
+  if (req.body.id) {
+    const atual = (await query('SELECT * FROM erp_viaticos_km WHERE id=$1 AND solicitacao_id=$2', [Number(req.body.id), solId]))[0];
+    if (!atual) return res.status(404).json({ error: 'Registro de quilometragem não encontrado.' });
+    if (!['rascunho', 'rejeitado'].includes(atual.status)) {
+      return res.status(409).json({ error: 'Só um rascunho ou um registro rejeitado pode ser editado.' });
+    }
+    await query(
+      `UPDATE erp_viaticos_km SET modelo=$1, veiculo_placa=$2, veiculo_modelo=$3, km_inicial=$4, km_final=$5,
+          km_rodado=$6, km_previsto=$7, taxa_km=$8, valor_reembolso=$9, justificativa=$10,
+          status='rascunho', decisao_motivo=NULL, updated_at=now() WHERE id=$11`,
+      [modelo, placa, sanitize(req.body.veiculo_modelo) || null, ini, fim, rodado, previsto, taxa, valor, just, atual.id]);
+    return res.json({ ok: true, id: atual.id, km_rodado: rodado, valor_reembolso: valor });
+  }
+
+  const ins = await query(
+    `INSERT INTO erp_viaticos_km (solicitacao_id, modelo, veiculo_placa, veiculo_modelo, km_inicial, km_final,
+        km_rodado, km_previsto, taxa_km, valor_reembolso, justificativa, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+    [solId, modelo, placa, sanitize(req.body.veiculo_modelo) || null, ini, fim, rodado, previsto, taxa, valor, just, req.user.id]);
+  res.json({ ok: true, id: ins[0].id, km_rodado: rodado, valor_reembolso: valor });
+}));
+
+// ---- Enviar para aprovação ----
+app.post('/api/viaticos/km/:id/enviar', requireAuth, h(async (req, res) => {
+  const dados = await kmCarregar(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Registro não encontrado.' });
+  if (!(await kmPodeMexer(req.user, dados.km.solicitacao_id))) return res.status(403).json({ error: 'Esta viagem é de outro colaborador.' });
+  if (!['rascunho', 'rejeitado'].includes(dados.km.status)) {
+    return res.status(409).json({ error: 'Este registro já foi enviado.' });
+  }
+  // As fotos são a prova. Sem elas o número é só uma afirmação.
+  const faltam = [];
+  if (!dados.fotos.inicial) faltam.push('foto do odômetro no início');
+  if (!dados.fotos.final) faltam.push('foto do odômetro no fim');
+  if (faltam.length) return res.status(409).json({ error: `Falta anexar: ${faltam.join(' e ')}.`, faltam });
+
+  // Justificativa é cobrada só quando o rodado estoura o previsto — pedir
+  // sempre transforma o campo em formalidade preenchida no automático.
+  const prev = dados.km.km_previsto != null ? n(dados.km.km_previsto) : null;
+  const rodado = n(dados.km.km_rodado);
+  const excedeu = prev != null && rodado > prev * (1 + KM_TOLERANCIA_PCT / 100);
+  if (excedeu && !sanitize(dados.km.justificativa)) {
+    return res.status(409).json({
+      error: `Rodou ${rodado} km contra ${prev} km previstos (${Math.round(100 * (rodado / prev - 1))}% a mais). Explique o que aconteceu antes de enviar.`
+    });
+  }
+
+  await query(`UPDATE erp_viaticos_km SET status='enviado', enviado_por=$1, enviado_em=now(), updated_at=now() WHERE id=$2`,
+    [req.user.id, dados.km.id]);
+  res.json({ ok: true, excedeu });
+}));
+
+// ---- Aprovar / rejeitar ----
+// Aprovar um reembolso de carro próprio GERA a conta a pagar: é isso que
+// "aprovado" significa para quem recebe. A categoria é "Viáticos" — a mesma dos
+// demais reembolsos, que contam no realizado (o repasse à Flash é que não conta).
+app.post('/api/viaticos/km/:id/decidir', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const dados = await kmCarregar(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Registro não encontrado.' });
+  if (dados.km.status !== 'enviado') return res.status(409).json({ error: 'Só um registro enviado pode ser aprovado ou rejeitado.' });
+  const aprovar = req.body.aprovar === true;
+  const motivo = sanitize(req.body.motivo) || null;
+  if (!aprovar && !motivo) return res.status(400).json({ error: 'Diga o que precisa ser corrigido — o colaborador vai reenviar.' });
+
+  if (!aprovar) {
+    await query(`UPDATE erp_viaticos_km SET status='rejeitado', decisao_motivo=$1, decidido_por=$2, decidido_em=now(), updated_at=now() WHERE id=$3`,
+      [motivo, req.user.id, dados.km.id]);
+    return res.json({ ok: true, status: 'rejeitado' });
+  }
+
+  let payableId = null;
+  const valor = n(dados.km.valor_reembolso);
+  if (dados.km.modelo === 'proprio' && valor > 0) {
+    const colab = (await query('SELECT name FROM erp_colaboradores WHERE id=$1', [dados.sol.colaborador_id]))[0];
+    const nome = (colab && colab.name) || 'Colaborador';
+    // O reembolso é pago À PESSOA, então o fornecedor é ela. Os reembolsos que
+    // já existem em Contas a Pagar seguem esse mesmo padrão.
+    let forn = (await query('SELECT id FROM erp_suppliers WHERE lower(name)=lower($1) LIMIT 1', [nome]))[0];
+    if (!forn) {
+      forn = (await query(
+        `INSERT INTO erp_suppliers (name, category, status) VALUES ($1,'Viáticos','ativo') RETURNING id`, [nome]))[0];
+    }
+    const ot = dados.sol.ordem_trabalho ? ` - OT ${dados.sol.ordem_trabalho}` : '';
+    const p = await query(
+      `INSERT INTO erp_payables (supplier_id, description, category, amount, due_date, status, notes, created_by)
+       VALUES ($1,$2,'Viáticos',$3,$4,'pendente',$5,$6) RETURNING id`,
+      [forn.id, `Reembolso km - ${nome}${ot}`, valor, hojeISO(),
+       `${n(dados.km.km_rodado)} km x R$ ${n(dados.km.taxa_km).toFixed(2)}/km — viagem ${dados.km.solicitacao_id}`,
+       req.user.id]);
+    payableId = p[0].id;
+  }
+
+  await query(`UPDATE erp_viaticos_km SET status='aprovado', decisao_motivo=$1, decidido_por=$2, decidido_em=now(), payable_id=$3, updated_at=now() WHERE id=$4`,
+    [motivo, req.user.id, payableId, dados.km.id]);
+  res.json({ ok: true, status: 'aprovado', payable_id: payableId, valor });
+}));
+
+// ---- Excluir (só rascunho) ----
+app.delete('/api/viaticos/km/:id', requireAuth, h(async (req, res) => {
+  const dados = await kmCarregar(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Registro não encontrado.' });
+  if (!(await kmPodeMexer(req.user, dados.km.solicitacao_id))) return res.status(403).json({ error: 'Esta viagem é de outro colaborador.' });
+  if (dados.km.status === 'aprovado') return res.status(409).json({ error: 'Um registro aprovado não pode ser excluído — ele já gerou reembolso.' });
+  // entity_id de erp_attachments não é FK: sem apagar aqui, as fotos ficariam
+  // órfãs apontando para um registro que não existe mais.
+  await query(`DELETE FROM erp_attachments WHERE entity_type='viatico_km' AND entity_id=$1`, [dados.km.id]);
+  await query('DELETE FROM erp_viaticos_km WHERE id=$1', [dados.km.id]);
   res.json({ ok: true });
 }));
 

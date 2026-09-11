@@ -3352,3 +3352,107 @@ sorte.
 O usuário moveu o lançamento de **R$ 1.000,00 ("Repasse para Compra de Produtos para o Escritorio")**
 para *Compras / Fornecedores*. Com isso o realizado de Viáticos 2026 fica em **R$ 98.313,32**
 (R$ 78.773,42 comprovados + R$ 19.539,90 de reembolso), ou 10,9% do orçado.
+
+---
+
+## 2026-09-11 — Comprovação de quilometragem em Viáticos (R$ 0,70/km)
+
+**Pedido:** na tela de "Comprovar viagem", o solicitante informa km inicial e final, fotos do odômetro
+e demais comprovações nos modelos **Carro Próprio** e **Carro Alugado**, a R$ 0,70/km, com resumo do
+valor indo para aprovação do administrador.
+
+### A pergunta que precisou ser feita antes de codar
+
+A solicitação de carro próprio **já orça combustível** (distância ÷ km/L do veículo × preço ANP +
+margem) e libera esse valor no cartão Flash antes da viagem. Somar R$ 0,70/km por cima pagaria duas
+vezes o mesmo deslocamento — ou não, dependendo do que a taxa representa. Como isso muda dinheiro e é
+decisão de política, perguntei em vez de assumir.
+
+**Resposta do usuário:** a empresa custeia o combustível de qualquer forma; os R$ 0,70/km ressarcem o
+**uso do carro** — seguro, manutenção, depreciação, pneus. E no **alugado não há reembolso**, mas ele
+quer o registro do km do mesmo jeito, como base de dados e comparativo com o previsto.
+
+É uma política mais generosa que a mistura de mercado (0,70–1,20 já *incluindo* combustível), e está
+registrada assim de propósito: a taxa é de uso, não de rodagem. Ela vive em `erp_viaticos_config` e é
+editável.
+
+### Parâmetros da comprovação
+
+| Campo | Decisão |
+|---|---|
+| Odômetro inicial e final | os únicos números digitados |
+| Km rodado | **calculado**, nunca digitado — digitar o total abriria espaço para não bater com as fotos |
+| Foto de cada odômetro | obrigatória; sem as duas o envio é bloqueado |
+| Placa e modelo | vêm preenchidos do cadastro do colaborador |
+| `taxa_km` e `km_previsto` | **gravados na linha**, não lidos da config na exibição |
+| Justificativa | cobrada só acima de 20% do previsto |
+
+`taxa_km` gravada é o ponto menos óbvio e o mais importante: mudar a taxa amanhã não pode reescrever
+o valor de um reembolso já aprovado. O que foi aprovado tem de contar a mesma história daqui a um ano.
+
+Justificativa só no excesso é deliberado: pedir sempre transforma o campo em formalidade preenchida
+no automático, e aí ele deixa de sinalizar qualquer coisa.
+
+### Três travas
+
+- **Odômetro não retrocede.** O km inicial precisa ser ≥ o km final da última leitura daquela placa.
+  Pega dígito trocado e tira o espaço para número inventado — quem informa menos está contradizendo o
+  próprio histórico.
+- **Teto de sanidade:** acima de 3× o previsto (ou 20.000 km) é recusado como erro de digitação —
+  1.200 virando 12.000 é o engano típico. Melhor recusar que mandar para aprovação um valor de cinco
+  dígitos que alguém aprova no automático.
+- **Só depois do fim da viagem**, e só pelo dono da viagem ou por quem edita Viáticos.
+
+### A exceção de permissão que o fluxo exigiu
+
+Quem comprova é o **técnico de campo, que tem só LEITURA em Viáticos**. O upload de anexo exigia
+permissão de edição — o que tornaria a comprovação impossível. Para `viatico_km` a trava passou a ser
+**ser dono da viagem**, não editar a seção. E `anexoKmNoEscopo` fecha o outro lado: sem ela bastaria
+trocar o id na URL para ver a foto da viagem de um colega, o mesmo buraco que a auditoria de
+2026-07-29 apontou nos comprovantes de despesa.
+
+Fotos só entram e saem enquanto o registro é rascunho ou foi devolvido: trocar a foto depois do envio
+mudaria a prova debaixo de quem está aprovando.
+
+### Aprovar gera o pagamento
+
+Aprovar um km de carro próprio **cria a conta a pagar** em nome do colaborador, categoria "Viáticos",
+com a memória do cálculo nas observações (`320.5 km x R$ 0.70/km — viagem 1`). É o que "aprovado"
+significa para quem recebe, e cai na categoria que **conta no realizado** — coerente com a régua
+ajustada anteontem. O diálogo mostra o resumo (odômetro, rodado, previsto, cálculo, valor) antes de
+confirmar: uma conta a pagar que nasce sem o número na frente transforma aprovar em clicar.
+
+No alugado, aprovar apenas confirma o registro. Nada de pagamento.
+
+Devolver para correção exige dizer o quê, e o registro volta a ser editável para o colaborador
+reenviar.
+
+### Verificação
+
+**46 asserções** contra o Express de verdade, com stub que guarda estado. As que valem citar:
+
+- o técnico **só-leitura** registra a própria quilometragem, mas o colega não anexa na viagem dele;
+- sem foto nenhuma o envio é recusado listando as duas que faltam; com uma só, ainda é recusado;
+- depois de enviado não dá para trocar foto nem reenviar;
+- a aprovação **gera a conta a pagar** no valor certo, na categoria certa, em nome da pessoa certa,
+  com a memória do cálculo — e o alugado **não** gera nenhuma;
+- odômetro abaixo da última leitura da placa é recusado; continuando de onde parou, é aceito;
+- excesso sem justificativa é recusado, com justificativa passa;
+- **mudar a taxa não reescreve o que já foi aprovado**;
+- mexer só na margem do combustível não zera a taxa por km.
+
+Na tela, com a função real extraída de `app.js` e os cinco estados (vazio, rascunho sem foto,
+aguardando aprovação com excesso, aprovado + alugado + devolvido, viagem em curso): **zero elementos
+cortados e sem rolagem horizontal a 1280px e a 375px**. No celular — que é onde o técnico vai
+fotografar o odômetro — a grade dos números reflui para 2 colunas e os botões empilham.
+
+**Dois artefatos de medição, não defeitos:** a primeira leitura acusou 45 elementos cortados com
+`innerWidth: 0` (pane sem layout); e a emulação de celular reportou 981px porque **a minha página de
+teste não tinha `<meta viewport>`**, que o `index.html` real tem. Corrigi o harness em vez de mexer no
+CSS — o teste é que estava errado.
+
+### Migração
+
+`2026-09-11-viaticos-km.sql`, aditiva e idempotente, aplicada em produção: `km_taxa_reembolso` em
+`erp_viaticos_config` e a tabela `erp_viaticos_km` (linha por veículo, porque uma viagem pode ter
+próprio e alugado), com índice parcial para a fila de aprovação e outro para a trava do odômetro.

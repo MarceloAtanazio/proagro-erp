@@ -5273,9 +5273,12 @@ async function formSolicitacao(existing) {
 }
 
 async function viewSolicitacao(id) {
-  const [s, despesas, tud] = await Promise.all([
+  const [s, despesas, tud, km] = await Promise.all([
     api('/api/viaticos/solicitacoes').then(all => all.find(x => x.id === id)),
-    api(`/api/viaticos/solicitacoes/${id}/despesas`), api('/api/viaticos/tud')
+    api(`/api/viaticos/solicitacoes/${id}/despesas`), api('/api/viaticos/tud'),
+    // A quilometragem não pode derrubar o modal inteiro se falhar: ela é uma
+    // seção a mais numa tela que já funcionava sem ela.
+    api(`/api/viaticos/km?solicitacao_id=${id}`).catch(() => ({ registros: [], taxa_vigente: 0.70 }))
   ]);
   const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
   // Usuário só-leitura abre o mesmo modal em modo consulta: vê os dados
@@ -5379,6 +5382,7 @@ async function viewSolicitacao(id) {
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div></div>
     </div>
     ${memoriaHtml}
+    ${viaKmSecao(s, km, !somenteLeitura)}
     ${!finalizada && !somenteLeitura ? `
     <div class="field-row" style="align-items:flex-end; margin-bottom:14px">
       ${fldSel('vs-status-sel', 'Status da viagem', Object.entries(STATUS_ATIVO_LABEL).map(([v, t]) => ({ v, t })), s.status)}
@@ -5436,6 +5440,83 @@ async function viewSolicitacao(id) {
 
   openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(s.data_inicio)}–${brDate(s.data_fim)})`,
     body, botoes, { wide: true });
+
+  // ---- quilometragem ----
+  const voltar = () => viewSolicitacao(id);
+  const taxaKm = km.taxa_vigente || 0.70;
+  const acharKm = i => (km.registros || []).find(x => x.id === Number(i));
+  document.querySelectorAll('[data-kmnovo]').forEach(b => b.onclick = () => viaKmForm(s, b.dataset.kmnovo, null, taxaKm, voltar));
+  document.querySelectorAll('[data-kmedit]').forEach(b => b.onclick = () => {
+    const k = acharKm(b.dataset.kmedit); if (k) viaKmForm(s, k.modelo, k, taxaKm, voltar);
+  });
+  document.querySelectorAll('[data-kmfoto]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.kmfoto)));
+  document.querySelectorAll('[data-kmup]').forEach(inp => inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    try {
+      const data = await readFileAsBase64(f);
+      await api(`/api/attachments/viatico_km/${inp.dataset.kmup}`, { method: 'POST', body: {
+        file_name: f.name, mime_type: f.type, kind: 'comprovante', doc_tipo: inp.dataset.kmtipo, data } });
+      toast('Foto anexada.'); voltar();
+    } catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll('[data-kmfotodel]').forEach(b => b.onclick = async () => {
+    try { await api('/api/attachments/' + b.dataset.kmfotodel, { method: 'DELETE' }); toast('Foto removida.'); voltar(); }
+    catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll('[data-kmenviar]').forEach(b => b.onclick = async () => {
+    try {
+      await api(`/api/viaticos/km/${b.dataset.kmenviar}/enviar`, { method: 'POST', body: {} });
+      toast('Enviado para aprovação.'); voltar();
+    } catch (e) { toast(e.message); }
+  });
+  document.querySelectorAll('[data-kmdel]').forEach(b => b.onclick = async () => {
+    try { await api('/api/viaticos/km/' + b.dataset.kmdel, { method: 'DELETE' }); toast('Registro excluído.'); voltar(); }
+    catch (e) { toast(e.message); }
+  });
+  // A aprovação mostra o resumo do que vai ser pago ANTES de confirmar: é o
+  // momento em que nasce uma conta a pagar, e nascer sem o número na frente
+  // transforma aprovar em clicar.
+  document.querySelectorAll('[data-kmaprovar]').forEach(b => b.onclick = () => {
+    const k = acharKm(b.dataset.kmaprovar); if (!k) return;
+    openModal('Aprovar a quilometragem', `
+      <div class="via-km-resumo">
+        <div><small>Colaborador</small><b>${esc(s.colaborador_name)}</b></div>
+        <div><small>Viagem</small><b>${s.ordem_trabalho ? 'OT ' + esc(s.ordem_trabalho) : '#' + s.id} · ${brDate(s.data_inicio)}–${brDate(s.data_fim)}</b></div>
+        <div><small>Veículo</small><b>${KM_MODELO_LABEL[k.modelo]}${k.veiculo_placa ? ' · ' + esc(k.veiculo_placa) : ''}</b></div>
+        <div><small>Odômetro</small><b>${kmNum(k.km_inicial)} → ${kmNum(k.km_final)}</b></div>
+        <div><small>Rodado</small><b>${kmNum(k.km_rodado)} km${k.km_previsto ? ` (previsto ${kmNum(k.km_previsto)})` : ''}</b></div>
+        ${k.modelo === 'proprio' ? `<div><small>Cálculo</small><b>${kmNum(k.km_rodado)} × ${brl(k.taxa_km)}</b></div>` : ''}
+      </div>
+      ${k.modelo === 'proprio'
+        ? `<div class="rh-nota"><strong>A ressarcir: ${brl(k.valor_reembolso)}.</strong> Aprovar gera uma <strong>conta a pagar</strong> em nome de ${esc(s.colaborador_name)}, na categoria Viáticos, com vencimento hoje. Ela entra no realizado de Viáticos.</div>`
+        : '<div class="rh-nota">Carro alugado: aprovar apenas <strong>confirma o registro</strong>. Não gera pagamento.</div>'}
+      ${k.justificativa ? `<p style="font-size:13px;color:var(--ink-2)"><strong>Justificativa:</strong> ${esc(k.justificativa)}</p>` : ''}
+      ${fld('km-obs', 'Observação (opcional)', 'text', '')}`,
+      [{ label: 'Cancelar', onClick: voltar },
+       { label: k.modelo === 'proprio' ? `Aprovar ${brl(k.valor_reembolso)}` : 'Aprovar', cls: 'primary', onClick: async () => {
+          try {
+            const r = await api(`/api/viaticos/km/${k.id}/decidir`, { method: 'POST', body: { aprovar: true, motivo: $('#km-obs').value } });
+            closeModal();
+            toast(r.payable_id ? `Aprovado — conta a pagar #${r.payable_id} criada (${brl(r.valor)}).` : 'Registro aprovado.');
+            renderViaticos();
+          } catch (e) { modalError(e.message); }
+       }}]);
+  });
+  document.querySelectorAll('[data-kmrejeitar]').forEach(b => b.onclick = () => {
+    const k = acharKm(b.dataset.kmrejeitar); if (!k) return;
+    openModal('Devolver para correção', `
+      <p style="font-size:13.5px">O registro volta a ficar editável para ${esc(s.colaborador_name)}, que corrige e reenvia.</p>
+      ${fld('km-motivo', 'O que precisa ser corrigido? *', 'text', '', 'placeholder="ex.: a foto do odômetro final está ilegível"')}`,
+      [{ label: 'Cancelar', onClick: voltar },
+       { label: 'Devolver', cls: 'danger-ghost', onClick: async () => {
+          const m = $('#km-motivo').value.trim();
+          if (!m) return modalError('Diga o que precisa ser corrigido.');
+          try {
+            await api(`/api/viaticos/km/${k.id}/decidir`, { method: 'POST', body: { aprovar: false, motivo: m } });
+            closeModal(); toast('Devolvido para correção.'); renderViaticos();
+          } catch (e) { modalError(e.message); }
+       }}]);
+  });
 
   if (!finalizada && !somenteLeitura) {
     $('#btn-import-flash').onclick = () => importarFlashModal(s);
@@ -10705,6 +10786,146 @@ const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', con
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos' }[t] || 'receber');
+
+// ================= Comprovação de quilometragem =================
+//
+// O ressarcimento por km não é combustível — a empresa custeia o combustível de
+// qualquer forma. Os R$ 0,70/km ressarcem o USO do carro próprio: seguro,
+// manutenção, depreciação, pneus. No alugado o registro existe do mesmo jeito,
+// sem valor: o desgaste é da locadora, e o que interessa ali é ter o histórico
+// e o comparativo com o km previsto.
+const KM_STATUS_LABEL = { rascunho: 'Rascunho', enviado: 'Aguardando aprovação', aprovado: 'Aprovado', rejeitado: 'Devolvido para correção' };
+const KM_STATUS_BADGE = { rascunho: 'pend', enviado: 'exp', aprovado: 'ok', rejeitado: 'late' };
+const KM_MODELO_LABEL = { proprio: 'Carro próprio', alugado: 'Carro alugado' };
+const kmNum = v => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+
+// Bloco inteiro da seção, montado a partir do que a API devolveu.
+function viaKmSecao(s, dados, podeEditar) {
+  const t = (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {};
+  if (!t.carro_proprio && !t.aluguel_carro) return '';
+  const regs = dados.registros || [];
+  const taxa = dados.taxa_vigente || 0.70;
+  const hoje = todayISO();
+  const terminou = hoje >= String(s.data_fim).slice(0, 10);
+
+  const linhas = regs.map(k => {
+    const excedeu = k.km_previsto && k.km_rodado > k.km_previsto * (1 + (dados.tolerancia_pct || 20) / 100);
+    const podeMexer = podeEditar && ['rascunho', 'rejeitado'].includes(k.status);
+    return `<div class="via-km-card ${k.status}">
+      <div class="via-km-topo">
+        <strong>${KM_MODELO_LABEL[k.modelo]}</strong>
+        ${k.veiculo_placa ? `<span class="via-km-placa">${esc(k.veiculo_placa)}</span>` : ''}
+        <span class="badge ${KM_STATUS_BADGE[k.status]}">${KM_STATUS_LABEL[k.status]}</span>
+        <div class="spacer"></div>
+        ${k.modelo === 'proprio'
+          ? `<strong class="via-km-valor">${brl(k.valor_reembolso)}</strong>`
+          : '<span class="via-km-semvalor">sem reembolso — só registro</span>'}
+      </div>
+      <div class="via-km-nums">
+        <div><small>Odômetro inicial</small><b>${kmNum(k.km_inicial)}</b></div>
+        <div><small>Odômetro final</small><b>${kmNum(k.km_final)}</b></div>
+        <div><small>Rodado</small><b>${kmNum(k.km_rodado)} km</b></div>
+        <div><small>Previsto</small><b>${k.km_previsto ? kmNum(k.km_previsto) + ' km' : '—'}</b></div>
+        ${k.modelo === 'proprio' ? `<div><small>Taxa aplicada</small><b>${brl(k.taxa_km)}/km</b></div>` : ''}
+      </div>
+      ${excedeu ? `<div class="alert-item late">⚠️ Rodou ${Math.round(100 * (k.km_rodado / k.km_previsto - 1))}% acima do previsto.${k.justificativa ? ` <em>${esc(k.justificativa)}</em>` : ''}</div>` : ''}
+      ${!excedeu && k.justificativa ? `<div class="via-km-just">${esc(k.justificativa)}</div>` : ''}
+      ${k.decisao_motivo ? `<div class="alert-item ${k.status === 'rejeitado' ? 'late' : 'ok'}">${k.status === 'rejeitado' ? '❌' : '✅'} ${esc(k.decisao_motivo)}</div>` : ''}
+      <div class="via-km-fotos">
+        ${['odometro_inicial', 'odometro_final'].map(tp => {
+          const a = (k.anexos || []).find(x => x.doc_tipo === tp);
+          const rot = tp === 'odometro_inicial' ? 'Odômetro inicial' : 'Odômetro final';
+          if (a) return `<button class="btn sm" data-kmfoto="${a.id}" title="${esc(a.file_name)}">🖼 ${rot}</button>
+            ${podeMexer ? `<button class="btn sm danger-ghost" data-kmfotodel="${a.id}" data-km="${k.id}" title="Trocar a foto">✕</button>` : ''}`;
+          return podeMexer
+            ? `<label class="btn sm" style="cursor:pointer">📷 Anexar ${rot.toLowerCase()}
+                 <input type="file" accept="image/*,application/pdf" hidden data-kmup="${k.id}" data-kmtipo="${tp}"></label>`
+            : `<span class="via-km-semfoto">sem ${rot.toLowerCase()}</span>`;
+        }).join('')}
+      </div>
+      ${podeMexer ? `<div class="via-km-acoes">
+        <button class="btn sm" data-kmedit="${k.id}">Editar</button>
+        <button class="btn sm danger-ghost" data-kmdel="${k.id}">Excluir</button>
+        <button class="btn sm primary" data-kmenviar="${k.id}">Enviar para aprovação</button>
+      </div>` : ''}
+      ${k.status === 'enviado' && USER.role === 'admin' ? `<div class="via-km-acoes">
+        <button class="btn sm primary" data-kmaprovar="${k.id}">Aprovar${k.modelo === 'proprio' ? ' e gerar o pagamento' : ''}</button>
+        <button class="btn sm danger-ghost" data-kmrejeitar="${k.id}">Devolver para correção</button>
+      </div>` : ''}
+      ${k.payable_id ? `<div class="via-km-just">Conta a pagar gerada: <strong>#${k.payable_id}</strong> em Contas a Pagar.</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const jaTem = m => regs.some(k => k.modelo === m && k.status !== 'rejeitado');
+  const novos = [];
+  if (t.carro_proprio && !jaTem('proprio')) novos.push('proprio');
+  if (t.aluguel_carro && !jaTem('alugado')) novos.push('alugado');
+
+  return `<div class="via-km-sec">
+    <div class="via-km-cab">
+      <h4>Quilometragem rodada</h4>
+      <span class="via-km-taxa">Carro próprio: <strong>${brl(taxa)}/km</strong> pelo uso do veículo — seguro, manutenção, depreciação e pneus. O combustível é custeado à parte pela empresa.</span>
+    </div>
+    ${linhas || '<div class="via-km-vazio">Nenhuma quilometragem informada nesta viagem.</div>'}
+    ${!terminou ? `<div class="via-km-vazio">A viagem termina em ${brDate(s.data_fim)}. A quilometragem se comprova depois do retorno.</div>`
+      : podeEditar && novos.length ? `<div class="via-km-acoes">${novos.map(m =>
+        `<button class="btn sm primary" data-kmnovo="${m}">+ Informar km do ${KM_MODELO_LABEL[m].toLowerCase()}</button>`).join('')}</div>` : ''}
+  </div>`;
+}
+
+// Formulário do registro. Os campos são poucos de propósito: odômetro inicial,
+// final e placa. O km rodado e o valor são CALCULADOS — digitar o total abriria
+// espaço para o número não bater com as fotos.
+function viaKmForm(s, modelo, existente, taxa, voltar) {
+  const k = existente || {};
+  const t = (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {};
+  const prevista = modelo === 'proprio'
+    ? Number((t.carro_proprio_rota || {}).distancia_km) || null
+    : (Array.isArray(t.alugueis) ? t.alugueis : []).reduce((a, x) => a + (Number(x && x.distancia_km) || 0), 0) || null;
+
+  openModal(`${existente ? 'Editar' : 'Informar'} quilometragem — ${KM_MODELO_LABEL[modelo]}`, `
+    <div class="rh-nota">${modelo === 'proprio'
+      ? `O ressarcimento é de <strong>${brl(taxa)} por km</strong> pelo <strong>uso do seu carro</strong> — seguro, manutenção, depreciação e pneus. O combustível continua custeado pela empresa à parte.`
+      : 'No carro alugado o registro é só de <strong>controle</strong>: não gera reembolso, porque o desgaste é da locadora e a empresa já paga diária e combustível. Serve para conferir a franquia de km da fatura.'}</div>
+    ${prevista ? `<p style="font-size:13px;color:var(--ink-2)">Previsto nesta viagem: <strong>${kmNum(prevista)} km</strong>.</p>` : ''}
+    <div class="form-row">
+      ${fld('km-placa', 'Placa do veículo', 'text', k.veiculo_placa || (modelo === 'proprio' ? (s.colaborador_veiculo_placa || '') : ''), 'placeholder="ABC1D23"')}
+      ${fld('km-modelo', 'Modelo do veículo', 'text', k.veiculo_modelo || (modelo === 'proprio' ? (s.colaborador_veiculo_modelo || '') : ''))}
+    </div>
+    <div class="form-row">
+      ${fld('km-ini', 'Odômetro na saída (km)', 'number', k.km_inicial == null ? '' : k.km_inicial, 'step="0.1" min="0"')}
+      ${fld('km-fim', 'Odômetro na chegada (km)', 'number', k.km_final == null ? '' : k.km_final, 'step="0.1" min="0"')}
+    </div>
+    <div class="via-km-previa" id="km-previa"></div>
+    ${fldArea('km-just', 'Justificativa (obrigatória se rodar bem acima do previsto)', k.justificativa || '')}
+    <p style="font-size:12.5px;color:var(--muted);margin-top:10px">Depois de salvar, anexe a <strong>foto do odômetro na saída e na chegada</strong>. Sem as duas fotos o envio para aprovação é bloqueado.</p>`,
+    [{ label: 'Cancelar', onClick: voltar },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        const body = { modelo, id: k.id, veiculo_placa: $('#km-placa').value, veiculo_modelo: $('#km-modelo').value,
+          km_inicial: $('#km-ini').value, km_final: $('#km-fim').value, justificativa: $('#km-just').value };
+        try {
+          await api(`/api/viaticos/solicitacoes/${s.id}/km`, { method: 'POST', body });
+          toast('Quilometragem salva. Agora anexe as fotos do odômetro.');
+          voltar();
+        } catch (e) { modalError(e.message); }
+     }}]);
+
+  // A prévia recalcula a cada tecla: a pessoa vê o valor nascer do próprio
+  // número que digitou, em vez de descobrir o total só depois de salvar.
+  const previa = () => {
+    const ini = Number($('#km-ini').value), fim = Number($('#km-fim').value);
+    const el = $('#km-previa');
+    if (!isFinite(ini) || !isFinite(fim) || !$('#km-ini').value || !$('#km-fim').value) { el.innerHTML = ''; return; }
+    if (fim <= ini) { el.innerHTML = '<span class="via-km-erro">O odômetro final tem de ser maior que o inicial.</span>'; return; }
+    const rodado = Number((fim - ini).toFixed(1));
+    const acima = prevista && rodado > prevista * 1.2;
+    el.innerHTML = `<strong>${kmNum(rodado)} km</strong> rodados` +
+      (modelo === 'proprio' ? ` × ${brl(taxa)} = <strong class="via-km-valor">${brl(rodado * taxa)}</strong> a ressarcir` : ' (sem reembolso)') +
+      (acima ? `<span class="via-km-erro"> — ${Math.round(100 * (rodado / prevista - 1))}% acima do previsto; explique abaixo.</span>` : '');
+  };
+  ['km-ini', 'km-fim'].forEach(x => { $('#' + x).oninput = previa; });
+  previa();
+}
 
 function readFileAsBase64(file) {
   return new Promise((res, rej) => {

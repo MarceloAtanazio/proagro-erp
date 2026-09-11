@@ -1182,3 +1182,37 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-rh-enc col.c-data   { width: 120px; }
 .tbl-rh-enc col.c-motivo { width: auto; }
 .tbl-rh-enc td .badge    { margin-right: 6px; }
+
+/* ---- Comprovação de quilometragem (Viáticos) ---- */
+.via-km-sec { margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line);
+  border-radius: 10px; background: #FBFCFB; }
+.via-km-cab { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 10px; }
+.via-km-cab h4 { margin: 0; font-size: 14px; }
+.via-km-taxa { font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1 1 320px; }
+.via-km-card { border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  padding: 12px 14px; margin-bottom: 10px; }
+/* A borda esquerda dá o estado sem depender só do badge: aprovado e devolvido
+   precisam se distinguir de relance numa tela com várias seções. */
+.via-km-card.aprovado  { border-left: 3px solid var(--verde-600, #2E7D4F); }
+.via-km-card.rejeitado { border-left: 3px solid var(--danger, #C0392B); }
+.via-km-card.enviado   { border-left: 3px solid #C8912B; }
+.via-km-topo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.via-km-topo .spacer { flex: 1; }
+.via-km-placa { font-family: ui-monospace, monospace; font-size: 12px; letter-spacing: .06em;
+  background: #F1F4F2; border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px; }
+.via-km-valor { color: var(--verde-600, #2E7D4F); font-size: 15px; }
+.via-km-semvalor { font-size: 12px; color: var(--muted); font-style: italic; }
+.via-km-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 8px 16px; margin-bottom: 10px; }
+.via-km-nums small { display: block; font-size: 11px; color: var(--muted); }
+.via-km-nums b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.via-km-fotos, .via-km-acoes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.via-km-semfoto { font-size: 12px; color: var(--danger, #C0392B); }
+.via-km-just { font-size: 12.5px; color: var(--ink-2); margin-top: 8px; line-height: 1.5; }
+.via-km-vazio { font-size: 12.5px; color: var(--muted); padding: 6px 0; }
+.via-km-previa { min-height: 22px; margin: 6px 0 4px; font-size: 13.5px; }
+.via-km-erro { color: var(--danger, #C0392B); }
+.via-km-resumo { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px; margin-bottom: 12px; }
+.via-km-resumo small { display: block; font-size: 11px; color: var(--muted); }
+.via-km-resumo b { font-size: 13.5px; }
