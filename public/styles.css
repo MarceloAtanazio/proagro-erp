@@ -1238,3 +1238,20 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .via-km-foto-txt small { font-size: 11px; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .via-km-foto-bts { flex: 0 0 auto; display: flex; gap: 4px; }
+
+/* Barra da fila de aprovação de quilometragem. Só existe quando há fila — um
+   aviso permanente vira papel de parede e deixa de ser lido. */
+.via-fila { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px; padding: 11px 14px; border-radius: 10px;
+  background: #FBF2E4; border: 1px solid #E7D3AE; }
+/* Perto de virar o mês a urgência é real: aprovar depois empurra o pagamento
+   em trinta dias. Só aí a barra muda de cor. */
+.via-fila.urgente { background: #FDECEA; border-color: #F0C2BB; }
+.via-fila-ic { font-size: 18px; line-height: 1; flex: 0 0 auto; }
+.via-fila-txt { flex: 1 1 300px; font-size: 12.5px; line-height: 1.55; color: #6B4A12; }
+.via-fila.urgente .via-fila-txt { color: #8A2A1E; }
+.via-fila-txt b { display: block; font-size: 13.5px; margin-bottom: 1px; }
+/* O cartão da fila abre a mesma lista: precisa parecer clicável. */
+.card-acionavel { cursor: pointer; transition: box-shadow .12s, transform .12s; }
+.card-acionavel:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); transform: translateY(-1px); }
+.card-acionavel:focus-visible { outline: 2px solid var(--verde-600, #2E7D4F); outline-offset: 2px; }

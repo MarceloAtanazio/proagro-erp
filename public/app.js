@@ -4956,6 +4956,7 @@ async function renderViaticos() {
 
   c.innerHTML = `
     ${escopoProprio ? '<div class="ro-banner" style="margin-bottom:12px">👤 Você está vendo apenas as suas solicitações de viáticos.</div>' : ''}
+    ${viaBarraKmPendentes(dash.kmPendentes)}
     ${barraDoc}
     <div class="grid kpis" style="margin-bottom:16px">
       ${escopoProprio ? '' : `<div class="card kpi ${dash.saldoCarteira < 0 ? 'red' : ''}"><div class="label">Saldo da Carteira Flash</div>
@@ -4963,6 +4964,10 @@ async function renderViaticos() {
         <div class="detail">Transferido (total): ${brl(dash.transferido)}</div></div>
       <div class="card kpi blue"><div class="label">Transferido no mês</div><div class="value">${brl(dash.transferidoMes)}</div>
         <div class="detail">Contas a Pagar, categoria "Viáticos"</div></div>`}
+      ${dash.kmPendentes ? `<div class="card kpi ${dash.kmPendentes.n ? 'warn' : ''} ${dash.kmPendentes.n ? 'card-acionavel' : ''}" ${dash.kmPendentes.n ? 'id="via-km-fila-card" role="button" tabindex="0"' : ''}>
+        <div class="label">Reembolsos de km a aprovar</div>
+        <div class="value">${dash.kmPendentes.n}</div>
+        <div class="detail">${dash.kmPendentes.n ? brl(dash.kmPendentes.valor) + ' · clique para revisar' : 'nada na fila'}</div></div>` : ''}
       <div class="card kpi warn"><div class="label">Aguardando comprovação</div><div class="value">${dash.aguardandoComprovacao.n}</div>
         <div class="detail">${brl(dash.aguardandoComprovacao.v)}</div></div>
       <div class="card kpi ${dash.vencidas.n ? 'red' : ''}"><div class="label">Vencidas (Flash expirado)</div>
@@ -4987,6 +4992,9 @@ async function renderViaticos() {
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
   if ($('#btn-solicitar-viagem')) $('#btn-solicitar-viagem').onclick = () => renderSolicitacaoAutosservico();
+
+  // A barra e o cartao levam ao mesmo lugar: a fila de aprovacao.
+  ['via-km-fila', 'via-km-fila-card'].forEach(id => { const el = $('#' + id); if (el) el.onclick = viaFilaKm; });
 
   // Barra de documentação: começa fechada e lembra a escolha durante a sessão,
   // pra quem está trabalhando nas pendências não ter que reabrir a cada volta.
@@ -10807,6 +10815,74 @@ const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', con
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos' }[t] || 'receber');
+
+// ---- Fila de aprovação de quilometragem ----
+//
+// O aviso aparece SÓ quando há fila. Alerta que fica ligado o tempo todo vira
+// parte do papel de parede e deixa de ser lido — por isso a barra some quando
+// não há nada a aprovar, em vez de anunciar "0 pendências".
+//
+// A urgência sobe perto do fim do mês porque o vencimento do reembolso é o dia 5
+// do mês SEGUINTE ao da aprovação: deixar virar o mês empurra o pagamento em
+// trinta dias, e é exatamente esse o risco que se quer evitar.
+const KM_DIAS_URGENTE = 7;
+
+function viaBarraKmPendentes(p) {
+  if (!p || !p.n) return '';
+  const urgente = p.dias_para_virar_o_mes <= KM_DIAS_URGENTE;
+  const quantos = p.n === 1 ? '1 reembolso de quilometragem' : `${p.n} reembolsos de quilometragem`;
+  // "Aprovando até lá" não serve quando o prazo é hoje — vira "aprovando hoje".
+  const quando = p.dias_para_virar_o_mes === 0
+    ? '<strong>Hoje é o último dia do mês.</strong>'
+    : p.dias_para_virar_o_mes === 1
+    ? '<strong>Falta 1 dia para virar o mês.</strong>'
+    : `Faltam <strong>${p.dias_para_virar_o_mes} dias</strong> para virar o mês.`;
+  const prazo = p.dias_para_virar_o_mes === 0 ? 'Aprovando hoje' : 'Aprovando até lá';
+  return `<div class="via-fila ${urgente ? 'urgente' : ''}">
+    <span class="via-fila-ic">${urgente ? '⏰' : '🧾'}</span>
+    <span class="via-fila-txt">
+      <b>${quantos} ${p.n === 1 ? 'aguarda' : 'aguardam'} sua aprovação — ${brl(p.valor)}.</b>
+      ${quando} ${prazo}, tudo entra na conta de <strong>${brDate(p.vencimento_se_aprovar_hoje)}</strong>;
+      depois disso o pagamento vai para o mês seguinte.
+    </span>
+    <button class="btn sm primary" id="via-km-fila">Revisar agora</button>
+  </div>`;
+}
+
+// A fila em si: lista o que espera decisão, com o essencial para decidir sem
+// abrir nada — quem, qual viagem, quanto rodou contra o previsto e quanto custa.
+async function viaFilaKm() {
+  let d;
+  try { d = await api('/api/viaticos/km?status=enviado'); } catch (e) { return toast(e.message); }
+  const regs = d.registros || [];
+  if (!regs.length) { toast('Nenhuma aprovação pendente.'); return renderViaticos(); }
+  const total = regs.reduce((s, k) => s + (k.valor_reembolso || 0), 0);
+
+  openModal('Reembolsos de quilometragem a aprovar', `
+    <div class="rh-nota">São <strong>${regs.length}</strong> registro(s), somando <strong>${brl(total)}</strong>.
+      Aprovando hoje, as contas a pagar vencem em <strong>${brDate(d.vencimento_reembolso)}</strong>.</div>
+    <div class="table-wrap"><table class="tbl-rh">
+      <colgroup><col class="c-nome"><col class="c-cargo"><col class="c-etapa"><col class="c-data"><col class="c-acoes"></colgroup>
+      <thead><tr><th>Colaborador</th><th>Viagem</th><th>Rodado</th><th class="num">A ressarcir</th>
+        <th class="actions">Ações</th></tr></thead>
+      <tbody>${regs.map(k => {
+        const excedeu = k.km_previsto && k.km_rodado > k.km_previsto * 1.2;
+        const fotos = (k.anexos || []).length;
+        return `<tr>
+          <td>${esc(k.colaborador_nome)}<span class="rh-sub">${KM_MODELO_LABEL[k.modelo]}${k.veiculo_placa ? ' · ' + esc(k.veiculo_placa) : ''}</span></td>
+          <td>${k.ordem_trabalho ? 'OT ' + esc(k.ordem_trabalho) : '#' + k.solicitacao_id}
+            <span class="rh-sub">${rhData(k.data_inicio)} – ${rhData(k.data_fim)}</span></td>
+          <td>${kmNum(k.km_rodado)} km${k.km_previsto ? `<span class="rh-sub">previsto ${kmNum(k.km_previsto)} km${excedeu ? ' ⚠️' : ''}</span>` : ''}</td>
+          <td class="num">${k.modelo === 'proprio' ? `<strong>${brl(k.valor_reembolso)}</strong>` : '<span class="via-km-semvalor">só registro</span>'}
+            <span class="rh-sub">${fotos}/2 foto(s)</span></td>
+          <td class="actions"><button class="btn sm primary" data-filaabrir="${k.solicitacao_id}">Abrir viagem</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`,
+    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+
+  document.querySelectorAll('[data-filaabrir]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.filaabrir)));
+}
 
 // ================= Comprovação de quilometragem =================
 //

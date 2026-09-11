@@ -4556,8 +4556,31 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
   const vencidas = aguardando.filter(r => r.data_expiracao_flash && r.data_expiracao_flash < today);
   const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false${filtroColab}`, paramsColab);
 
+  // Fila de aprovação de quilometragem. Só para quem aprova (mesma regra do
+  // saldo da carteira): para o colaborador, "3 a aprovar" seria ruído sobre uma
+  // ação que não é dele.
+  //
+  // `dias_no_mes_restantes` existe porque o vencimento do reembolso é o dia 5 do
+  // mês SEGUINTE ao da aprovação: deixar virar o mês empurra o pagamento em
+  // trinta dias. O número só vira aviso perto do fim do mês, senão o alerta
+  // ficaria permanentemente ligado e deixaria de significar alguma coisa.
+  let kmPendentes = null;
+  if (!escopo) {
+    const r = (await query(`
+      SELECT COUNT(*)::int AS n, COALESCE(SUM(k.valor_reembolso),0) AS v,
+             MIN(k.enviado_em) AS mais_antigo
+        FROM erp_viaticos_km k WHERE k.status = 'enviado'`))[0];
+    const [ano, mes] = today.split('-').map(Number);
+    const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+    kmPendentes = {
+      n: r.n, valor: n(r.v), mais_antigo: r.mais_antigo || null,
+      dias_para_virar_o_mes: ultimoDia - Number(today.slice(8, 10)),
+      vencimento_se_aprovar_hoje: kmVencimentoReembolso(today)
+    };
+  }
+
   res.json({
-    saldoCarteira, transferido, transferidoMes,
+    saldoCarteira, transferido, transferidoMes, kmPendentes,
     aguardandoComprovacao: { n: aguardando.length, v: aguardando.reduce((s, r) => s + n(r.valor_liberado), 0) },
     vencidas: { n: vencidas.length, v: vencidas.reduce((s, r) => s + n(r.valor_liberado), 0) },
     divergentes: { n: divergentes[0].n, v: n(divergentes[0].v) }

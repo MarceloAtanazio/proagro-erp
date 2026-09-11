@@ -3681,3 +3681,48 @@ perceber. **13 asserções:**
 Mais 3 na suíte de quilometragem, contra o Express de verdade: a conta a pagar nasce com o dia 5 do
 mês seguinte e **não** com hoje, a resposta devolve a data, e a listagem já a anuncia antes de
 aprovar.
+
+---
+
+## 2026-09-11 — Aviso de reembolsos de km aguardando aprovação
+
+**Pedido:** um alerta no painel do admin informando que há X aprovações de reembolso pendentes,
+claro o bastante para "não deixar passar o mês sem apurar".
+
+O prazo é real e vem da regra de ontem: o reembolso vence no dia 5 do mês **seguinte ao da
+aprovação**. Aprovar em 30/09 põe o pagamento em 05/10; aprovar em 01/10 empurra para 05/11. Deixar
+o mês virar custa trinta dias de atraso ao colaborador — é isso que o aviso protege.
+
+### Três superfícies, uma fila
+
+- **Barra no topo**, com quantos, quanto somam, quantos dias faltam para virar o mês e para que data
+  vai a conta se aprovar agora;
+- **cartão nos KPIs** ("Reembolsos de km a aprovar"), clicável;
+- **lista** com o essencial para decidir sem abrir nada: quem, qual OT, rodado contra previsto,
+  quanto custa e quantas fotos tem — com atalho para abrir cada viagem.
+
+### Decisões que valem registrar
+
+**A barra só existe quando há fila.** Alerta que fica ligado o tempo todo vira papel de parede e
+deixa de ser lido; por isso ela some quando não há nada, em vez de anunciar "0 pendências". O cartão
+continua, porque ele é um indicador, não um aviso.
+
+**A urgência sobe nos últimos 7 dias do mês** — âmbar vira vermelho e o ícone muda. Sem esse recorte
+o alerta seria sempre vermelho e a cor não significaria nada.
+
+**A fila só aparece para quem aprova** (mesma regra do saldo da carteira). Para o colaborador,
+"3 a aprovar" seria ruído sobre uma ação que não é dele.
+
+**Concordância e prazo escritos à mão**, porque a frase é lida todo dia: *1 reembolso aguarda* ×
+*2 reembolsos aguardam*; *Falta 1 dia* × *Faltam 3 dias* × *Hoje é o último dia do mês* — e nesse
+último caso "Aprovando até lá" vira **"Aprovando hoje"**, que era o texto errado na primeira versão.
+
+### Verificação
+
+**6 asserções** no painel, contra o Express de verdade: quantos são, quanto somam, o vencimento de
+quem for aprovado hoje, o contador de dias até virar o mês (conferido contra o último dia real do
+mês, incluindo fevereiro bissexto), que ele nunca é negativo, e que **quem não aprova recebe `null`**.
+
+Na tela, com a função real e sete estados: os dois casos sem fila **não renderizam nada**; os cinco
+com fila mostram o texto certo, o urgente só nos ≤ 7 dias, zero elementos cortados e sem rolagem
+horizontal a 1280px. A 375px a barra empilha o botão abaixo do texto e continua sem cortes.
