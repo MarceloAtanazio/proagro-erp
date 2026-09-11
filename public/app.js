@@ -5457,6 +5457,20 @@ async function viewSolicitacao(id) {
     const k = acharKm(b.dataset.kmedit); if (k) viaKmForm(s, k.modelo, k, taxaKm, voltar);
   });
   document.querySelectorAll('[data-kmfoto]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.kmfoto)));
+  // Miniaturas: carregadas DEPOIS do modal abrir, uma a uma. Se a foto falhar
+  // (ou for PDF), fica o ícone — a linha continua dizendo que o anexo existe.
+  document.querySelectorAll('[data-kmthumb]').forEach(async el => {
+    try {
+      const r = await api('/api/attachments/file/' + el.dataset.kmthumb);
+      if (!/^image\//.test(r.mime_type || '')) return;
+      const img = new Image();
+      img.src = 'data:' + r.mime_type + ';base64,' + r.data;
+      img.alt = '';
+      el.innerHTML = ''; el.appendChild(img);
+      el.onclick = () => colabVerAnexo(Number(el.dataset.kmthumb));
+      el.style.cursor = 'zoom-in';
+    } catch { /* fica o ícone */ }
+  });
   document.querySelectorAll('[data-kmup]').forEach(inp => inp.onchange = async () => {
     const f = inp.files && inp.files[0]; if (!f) return;
     try {
@@ -10848,13 +10862,25 @@ function viaKmSecao(s, dados) {
       <div class="via-km-fotos">
         ${['odometro_inicial', 'odometro_final'].map(tp => {
           const a = (k.anexos || []).find(x => x.doc_tipo === tp);
-          const rot = tp === 'odometro_inicial' ? 'Odômetro inicial' : 'Odômetro final';
-          if (a) return `<button class="btn sm" data-kmfoto="${a.id}" title="${esc(a.file_name)}">🖼 ${rot}</button>
-            ${podeMexer ? `<button class="btn sm danger-ghost" data-kmfotodel="${a.id}" data-km="${k.id}" title="Trocar a foto">✕</button>` : ''}`;
+          const rot = tp === 'odometro_inicial' ? 'Odômetro na saída' : 'Odômetro na chegada';
+          // Com anexo: miniatura da própria foto. Num comprovante de odômetro a
+          // imagem É a informação — ver o número sem abrir nada é o que faz a
+          // conferência acontecer de verdade.
+          if (a) return `<div class="via-km-foto ok">
+            <span class="via-km-thumb" data-kmthumb="${a.id}"><i>🖼</i></span>
+            <span class="via-km-foto-txt"><b>✓ ${rot}</b><small>${esc(a.file_name)}</small></span>
+            <span class="via-km-foto-bts">
+              <button class="btn sm" data-kmfoto="${a.id}">Ver</button>
+              ${podeMexer ? `<button class="btn sm danger-ghost" data-kmfotodel="${a.id}" data-km="${k.id}">Trocar</button>` : ''}
+            </span></div>`;
           return podeMexer
-            ? `<label class="btn sm" style="cursor:pointer">📷 Anexar ${rot.toLowerCase()}
+            ? `<label class="via-km-foto falta anexar">
+                 <span class="via-km-thumb vazia">📷</span>
+                 <span class="via-km-foto-txt"><b>${rot}</b><small>toque para anexar a foto</small></span>
                  <input type="file" accept="image/*,application/pdf" hidden data-kmup="${k.id}" data-kmtipo="${tp}"></label>`
-            : `<span class="via-km-semfoto">sem ${rot.toLowerCase()}</span>`;
+            : `<div class="via-km-foto falta">
+                 <span class="via-km-thumb vazia">—</span>
+                 <span class="via-km-foto-txt"><b>${rot}</b><small>não anexado</small></span></div>`;
         }).join('')}
       </div>
       ${podeMexer ? `<div class="via-km-acoes">

@@ -3563,3 +3563,71 @@ Uma permissão mais fina que a da página precisa ser respeitada em **três** lu
 cada vez: o endpoint (feito na primeira versão), **qual controle a tela mostra** (corrigido em
 `0079b87`) e **se a tela deixa o clique sair** (este). Quando descobrir uma dessas divergências, vale
 varrer as outras duas antes de publicar — foram dois relatos do usuário para o mesmo desalinhamento.
+
+---
+
+## 2026-09-11 — "Erro interno" ao anexar: o CHECK da tabela de anexos estava desatualizado (e o dossiê de RH estava quebrado há 3 dias)
+
+**Reportado pelo usuário:** anexar a foto do odômetro dava "erro interno". Pedido junto: mostrar
+visualmente que existe anexo e um botão para vê-lo.
+
+### O diagnóstico
+
+A tabela de anexos não tinha nenhuma linha de `viatico_km`, o que descartava "falhou depois de
+gravar". O erro vinha antes, e o `h()` traduz qualquer exceção do handler para *"Erro interno. Tente
+novamente."* — mensagem que não diz nada a ninguém.
+
+A causa estava no banco, não no código:
+
+    CHECK (entity_type = ANY (ARRAY['payable','receivable','viatico',
+                                    'colab_cnh','colab_veiculo','colab_seguro','contrato']))
+
+Sete tipos. O código usa **nove**. O INSERT violava a restrição, o Postgres lançava, e o wrapper
+transformava isso em "erro interno".
+
+### O achado maior
+
+O tipo que faltava não era só o `viatico_km` de hoje: **`rh_doc` também nunca esteve na lista**. Ou
+seja, desde a fase 1 do RH (2026-09-08), **nenhum documento de dossiê jamais pôde ser anexado** — RG,
+CPF, CTPS, ASO, contrato assinado. Toda tentativa dava "erro interno".
+
+E o pior: eu mesmo olhei para a evidência e li errado. O painel de RH reportava **"0 documentos no
+dossiê"** e **"dossiê incompleto: 11"**, e eu registrei isso como *"ninguém anexou ainda"*. Era
+*"ninguém consegue anexar"*. Um zero pode significar ausência de uso ou ausência de funcionamento, e
+eu assumi o primeiro sem testar o segundo.
+
+Contagem na produção, que torna isso inequívoco:
+
+    payable 144 · colab_veiculo 8 · colab_seguro 7 · viatico 7 · colab_cnh 7 · contrato 1
+    rh_doc 0 · viatico_km 0
+
+Os tipos que funcionam têm anexos; os dois que o CHECK barrava têm exatamente zero.
+
+### A correção
+
+`2026-09-11-attachments-tipos.sql` recria a restrição com os nove tipos, conferindo no fim que
+`rh_doc` e `viatico_km` entraram. Testei em produção inserindo uma linha de cada e apagando: passam.
+
+**Para a classe do bug não voltar**, `verifica-attach-tipos.js` lê `ATTACH_TYPES` de `api/index.js` e
+o `CHECK` da migração e falha se um tipo existir só de um lado. São duas declarações da mesma lista em
+arquivos diferentes — e foi a divergência silenciosa entre elas que custou três dias de dossiê
+quebrado. 5 asserções.
+
+### As fotos agora aparecem
+
+Cada odômetro virou uma linha que diz sozinha em que estado está:
+
+- **sem anexo:** borda tracejada, ícone de câmera, *"toque para anexar a foto"* — a linha inteira é o
+  alvo do clique;
+- **com anexo:** fundo verde, ✓ no rótulo, nome do arquivo e botão **Ver** (mais **Trocar**, enquanto
+  o registro for rascunho).
+
+A miniatura é a **própria foto**, carregada depois que o modal abre. Num comprovante de odômetro a
+imagem *é* a informação — ver o número sem abrir nada é o que faz a conferência acontecer. Se a foto
+falhar ou for PDF, fica o ícone e a linha continua dizendo que o anexo existe.
+
+### Verificação
+
+Na tela, com a função real: 12 linhas de foto nos cinco estados, zero elementos cortados e sem
+rolagem horizontal a 1280px; a 375px vira uma coluna, 64px por linha, com o texto "toque para anexar"
+legível. Todas as demais suítes seguem passando.

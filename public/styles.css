@@ -1216,3 +1216,25 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   gap: 10px 16px; margin-bottom: 12px; }
 .via-km-resumo small { display: block; font-size: 11px; color: var(--muted); }
 .via-km-resumo b { font-size: 13.5px; }
+
+/* Fotos do odômetro: cada uma é uma linha que diz, sozinha, se existe ou não.
+   A miniatura da própria foto é o ponto — num comprovante de odômetro a imagem
+   É a informação, e ver o número sem abrir nada é o que faz conferir acontecer. */
+.via-km-fotos { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 8px; }
+.via-km-foto { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; min-width: 0; }
+.via-km-foto.ok { border-color: #BFE0CB; background: #F6FBF8; }
+.via-km-foto.falta { border-style: dashed; }
+.via-km-foto.anexar { cursor: pointer; }
+.via-km-foto.anexar:hover { border-color: var(--verde-600, #2E7D4F); background: #F6FBF8; }
+.via-km-thumb { flex: 0 0 auto; width: 46px; height: 46px; border-radius: 6px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+  background: #EEF2EF; border: 1px solid var(--line); }
+.via-km-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.via-km-thumb.vazia { background: transparent; border-style: dashed; color: var(--muted); }
+.via-km-foto-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.via-km-foto-txt b { font-size: 12.5px; }
+.via-km-foto.ok .via-km-foto-txt b { color: var(--verde-600, #2E7D4F); }
+.via-km-foto-txt small { font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.via-km-foto-bts { flex: 0 0 auto; display: flex; gap: 4px; }
