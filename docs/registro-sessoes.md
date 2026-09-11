@@ -3508,3 +3508,58 @@ permissão não vê botão nenhum; e no registro já enviado ela não vê "Aprov
 **A lição:** quando a regra de permissão é mais fina que a da página, o cliente não pode inferi-la do
 `READONLY`. Ou o servidor diz, ou as duas pontas divergem — e a divergência aparece como um botão que
 falta para exatamente a pessoa que precisa dele.
+
+---
+
+## 2026-09-11 — A guarda de UX do cliente barrava a comprovação de km (correção)
+
+**Reportado pelo usuário**, testando com o login da Leticia: o formulário abria, o valor calculava
+certo (460 km × R$ 0,70 = R$ 322,00), e ao salvar vinha *"Acesso somente leitura nesta seção."*
+
+Mesma raiz da correção anterior, uma camada acima. Eu tinha consertado **qual botão aparece**; faltou
+**o que acontece ao clicar**.
+
+### Onde estava
+
+O `api()` do cliente tem uma guarda de UX que bloqueia escrita quando a página é somente-leitura — a
+trava real é do backend, essa só evita clique inútil. Ela abria exceção para um caminho só:
+
+    const ehAutosservico = path.includes('/autosservico');
+
+As rotas de quilometragem não passam por `/autosservico`, então o POST era barrado **no navegador**,
+antes de chegar ao backend que autorizava. O servidor dizia sim e o cliente dizia não.
+
+### A correção
+
+A exceção deixou de ser adivinhada pelo caminho e passou a ser **declarada por quem chama**:
+
+    const { autosservico, ...init } = opts;
+    const ehAutosservico = path.includes('/autosservico') || autosservico === true;
+
+Cinco chamadas marcadas: salvar o rascunho, anexar foto, trocar foto, enviar para aprovação e excluir
+o próprio rascunho. **`/decidir` não foi marcada** — aprovar exige editar Viáticos de verdade.
+
+Adivinhar pelo caminho não daria: trocar a foto é `DELETE /api/attachments/:id`, idêntico a apagar
+qualquer outro anexo. A marca é explícita justamente porque a intenção não está na URL.
+
+`autosservico` é desestruturado para fora de `init`, senão iria junto no `fetch`.
+
+### Verificação
+
+A guarda vive no cliente, então **nenhum harness de servidor a alcança** — foi por isso que as 51
+asserções do backend passaram com o fluxo quebrado na tela. Escrevi
+`verifica-guarda-readonly.js`, que extrai a função `api()` real de `public/app.js` e a exercita com
+`READONLY=true` e usuário não-admin. **12 asserções:**
+
+- editar solicitação de terceiro, aprovar quilometragem e criar conta a pagar **continuam barrados**;
+- salvar km, anexar foto, trocar foto, enviar e excluir rascunho **passam**;
+- a exceção antiga do `/autosservico` segue valendo;
+- a marca não vaza para o `fetch`;
+- admin e página editável não mudam de comportamento.
+
+### A lição, agora com nome
+
+Uma permissão mais fina que a da página precisa ser respeitada em **três** lugares, e eu tratei um de
+cada vez: o endpoint (feito na primeira versão), **qual controle a tela mostra** (corrigido em
+`0079b87`) e **se a tela deixa o clique sair** (este). Quando descobrir uma dessas divergências, vale
+varrer as outras duas antes de publicar — foram dois relatos do usuário para o mesmo desalinhamento.

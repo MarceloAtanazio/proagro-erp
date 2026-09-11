@@ -111,7 +111,14 @@ async function api(path, opts = {}) {
   // colaborador de campo tem justamente esse perfil — lê a lista e envia a
   // solicitação dele. O backend valida do mesmo jeito e só aceita a solicitação
   // vinculada ao colaborador do próprio usuário logado.
-  const ehAutosservico = path.includes('/autosservico');
+  // A comprovação de quilometragem é do mesmo tipo: quem informa o odômetro da
+  // própria viagem é o colaborador de campo, que tem exatamente esse perfil.
+  // Como nem toda rota dessas dá para reconhecer pelo caminho (apagar a foto é
+  // /api/attachments/:id, igual a qualquer outro anexo), quem chama marca com
+  // `autosservico: true`. Continua sendo o backend quem decide — aqui só se
+  // evita bloquear o clique de quem tem direito.
+  const { autosservico, ...init } = opts;
+  const ehAutosservico = path.includes('/autosservico') || autosservico === true;
   if (method !== 'GET' && USER && USER.role !== 'admin' && READONLY && !ehAutosservico
       && !path.includes('/auth/') && !path.startsWith('/api/users')) {
     toast('Você tem acesso somente leitura nesta seção.');
@@ -120,7 +127,7 @@ async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    ...opts,
+    ...init,
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
   const data = await res.json().catch(() => ({}));
@@ -5454,23 +5461,23 @@ async function viewSolicitacao(id) {
     const f = inp.files && inp.files[0]; if (!f) return;
     try {
       const data = await readFileAsBase64(f);
-      await api(`/api/attachments/viatico_km/${inp.dataset.kmup}`, { method: 'POST', body: {
+      await api(`/api/attachments/viatico_km/${inp.dataset.kmup}`, { method: 'POST', autosservico: true, body: {
         file_name: f.name, mime_type: f.type, kind: 'comprovante', doc_tipo: inp.dataset.kmtipo, data } });
       toast('Foto anexada.'); voltar();
     } catch (e) { toast(e.message); }
   });
   document.querySelectorAll('[data-kmfotodel]').forEach(b => b.onclick = async () => {
-    try { await api('/api/attachments/' + b.dataset.kmfotodel, { method: 'DELETE' }); toast('Foto removida.'); voltar(); }
+    try { await api('/api/attachments/' + b.dataset.kmfotodel, { method: 'DELETE', autosservico: true }); toast('Foto removida.'); voltar(); }
     catch (e) { toast(e.message); }
   });
   document.querySelectorAll('[data-kmenviar]').forEach(b => b.onclick = async () => {
     try {
-      await api(`/api/viaticos/km/${b.dataset.kmenviar}/enviar`, { method: 'POST', body: {} });
+      await api(`/api/viaticos/km/${b.dataset.kmenviar}/enviar`, { method: 'POST', body: {}, autosservico: true });
       toast('Enviado para aprovação.'); voltar();
     } catch (e) { toast(e.message); }
   });
   document.querySelectorAll('[data-kmdel]').forEach(b => b.onclick = async () => {
-    try { await api('/api/viaticos/km/' + b.dataset.kmdel, { method: 'DELETE' }); toast('Registro excluído.'); voltar(); }
+    try { await api('/api/viaticos/km/' + b.dataset.kmdel, { method: 'DELETE', autosservico: true }); toast('Registro excluído.'); voltar(); }
     catch (e) { toast(e.message); }
   });
   // A aprovação mostra o resumo do que vai ser pago ANTES de confirmar: é o
@@ -10911,7 +10918,7 @@ function viaKmForm(s, modelo, existente, taxa, voltar) {
         const body = { modelo, id: k.id, veiculo_placa: $('#km-placa').value, veiculo_modelo: $('#km-modelo').value,
           km_inicial: $('#km-ini').value, km_final: $('#km-fim').value, justificativa: $('#km-just').value };
         try {
-          await api(`/api/viaticos/solicitacoes/${s.id}/km`, { method: 'POST', body });
+          await api(`/api/viaticos/solicitacoes/${s.id}/km`, { method: 'POST', body, autosservico: true });
           toast('Quilometragem salva. Agora anexe as fotos do odômetro.');
           voltar();
         } catch (e) { modalError(e.message); }
