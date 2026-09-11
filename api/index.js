@@ -4240,6 +4240,21 @@ const KM_TETO_ABSOLUTO = 20000;
 const KM_FATOR_TETO = 3;        // ou 3x o previsto, o que for menor
 const KM_TOLERANCIA_PCT = 20;   // acima disso, justificativa obrigatória
 
+// Vencimento do reembolso: SEMPRE dia 5 do mês seguinte ao da aprovação. Assim
+// tudo que foi aprovado no mês é apurado junto e pago de uma vez, em vez de
+// pingar um reembolso por viagem ao longo do mês.
+//
+// Aritmética em string, não em Date: `new Date('2026-01-31')` mais um mês
+// escorrega para março, e qualquer conversão de fuso muda o dia. Aqui o dia é
+// fixo (5), então só o par ano/mês precisa avançar.
+const KM_DIA_VENCIMENTO = 5;
+function kmVencimentoReembolso(hoje) {
+  const [a, m] = String(hoje).slice(0, 10).split('-').map(Number);
+  const ano = m === 12 ? a + 1 : a;
+  const mes = m === 12 ? 1 : m + 1;
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(KM_DIA_VENCIMENTO).padStart(2, '0')}`;
+}
+
 async function kmTaxaVigente() {
   const c = (await query('SELECT km_taxa_reembolso FROM erp_viaticos_config WHERE id=1'))[0];
   return c && c.km_taxa_reembolso != null ? n(c.km_taxa_reembolso) : KM_TAXA_PADRAO;
@@ -4344,6 +4359,9 @@ app.get('/api/viaticos/km', requireAuth, requireViewAny(['viaticos']), h(async (
   res.json({
     taxa_vigente: await kmTaxaVigente(),
     tolerancia_pct: KM_TOLERANCIA_PCT,
+    // O vencimento do reembolso vem junto para a tela dizer a data ao aprovar,
+    // em vez de prometer "hoje" e gravar outra coisa.
+    vencimento_reembolso: kmVencimentoReembolso(hojeISO()),
     pode,
     registros: rows.map(r => kmSerializar(r, Array.isArray(r.anexos) ? r.anexos : []))
   });
@@ -4470,7 +4488,7 @@ app.post('/api/viaticos/km/:id/decidir', requireAuth, requireEdit('viaticos'), h
     return res.json({ ok: true, status: 'rejeitado' });
   }
 
-  let payableId = null;
+  let payableId = null, vencimentoPag = null;
   const valor = n(dados.km.valor_reembolso);
   if (dados.km.modelo === 'proprio' && valor > 0) {
     const colab = (await query('SELECT name FROM erp_colaboradores WHERE id=$1', [dados.sol.colaborador_id]))[0];
@@ -4483,18 +4501,20 @@ app.post('/api/viaticos/km/:id/decidir', requireAuth, requireEdit('viaticos'), h
         `INSERT INTO erp_suppliers (name, category, status) VALUES ($1,'Viáticos','ativo') RETURNING id`, [nome]))[0];
     }
     const ot = dados.sol.ordem_trabalho ? ` - OT ${dados.sol.ordem_trabalho}` : '';
+    const vencimento = kmVencimentoReembolso(hojeISO());
     const p = await query(
       `INSERT INTO erp_payables (supplier_id, description, category, amount, due_date, status, notes, created_by)
        VALUES ($1,$2,'Viáticos',$3,$4,'pendente',$5,$6) RETURNING id`,
-      [forn.id, `Reembolso km - ${nome}${ot}`, valor, hojeISO(),
+      [forn.id, `Reembolso km - ${nome}${ot}`, valor, vencimento,
        `${n(dados.km.km_rodado)} km x R$ ${n(dados.km.taxa_km).toFixed(2)}/km — viagem ${dados.km.solicitacao_id}`,
        req.user.id]);
     payableId = p[0].id;
+    vencimentoPag = vencimento;
   }
 
   await query(`UPDATE erp_viaticos_km SET status='aprovado', decisao_motivo=$1, decidido_por=$2, decidido_em=now(), payable_id=$3, updated_at=now() WHERE id=$4`,
     [motivo, req.user.id, payableId, dados.km.id]);
-  res.json({ ok: true, status: 'aprovado', payable_id: payableId, valor });
+  res.json({ ok: true, status: 'aprovado', payable_id: payableId, valor, vencimento: vencimentoPag });
 }));
 
 // ---- Excluir (só rascunho) ----

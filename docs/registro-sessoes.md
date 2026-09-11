@@ -3631,3 +3631,53 @@ falhar ou for PDF, fica o ícone e a linha continua dizendo que o anexo existe.
 Na tela, com a função real: 12 linhas de foto nos cinco estados, zero elementos cortados e sem
 rolagem horizontal a 1280px; a 375px vira uma coluna, 64px por linha, com o texto "toque para anexar"
 legível. Todas as demais suítes seguem passando.
+
+---
+
+## 2026-09-11 — Reembolso de km vence no dia 5 do mês seguinte
+
+**Pedido:** a conta a pagar gerada na aprovação da quilometragem nascia com vencimento **hoje**; passa
+a nascer para o **dia 5 do mês seguinte** — "dá tempo de fazer a apuração do mês todo e pagar tudo de
+uma vez e não picado".
+
+A regra é da aprovação, não da viagem: tudo que for aprovado dentro de um mês cai no mesmo
+vencimento, e é isso que junta os pagamentos num lote só.
+
+### A implementação
+
+    const KM_DIA_VENCIMENTO = 5;
+    function kmVencimentoReembolso(hoje) {
+      const [a, m] = String(hoje).slice(0, 10).split('-').map(Number);
+      const ano = m === 12 ? a + 1 : a;
+      const mes = m === 12 ? 1 : m + 1;
+      return `${ano}-${String(mes).padStart(2,'0')}-${String(KM_DIA_VENCIMENTO).padStart(2,'0')}`;
+    }
+
+**Aritmética de string, não `Date`**, e de propósito: `new Date('2026-01-31')` somado de um mês
+escorrega para março, e qualquer conversão de fuso muda o dia. Como o dia é fixo (5), só o par
+ano/mês precisa avançar — e aí não há como escorregar.
+
+### A tela deixou de mentir
+
+O diálogo dizia *"com vencimento hoje"* enquanto o registro ia gravar outra coisa. Agora o servidor
+manda a data junto (`vencimento_reembolso` na listagem, `vencimento` na resposta da aprovação) e a
+tela mostra **a data real** antes de confirmar — e o aviso depois diz para quando a conta ficou.
+
+Uma data prometida na tela e outra gravada no banco é pior que não dizer nada: quem aprova passa a
+não confiar no que lê.
+
+### Verificação
+
+`verifica-vencimento-km.js` exercita a função **ano afora**, porque data é onde mais se erra sem
+perceber. **13 asserções:**
+
+- 11/09 → 05/10; primeiro e último dia do mês → 05 do seguinte;
+- o **dia 5 do próprio mês** ainda vai para o mês seguinte (não paga no mesmo dia);
+- **dezembro vira janeiro do ano seguinte**, inclusive 31/12;
+- 31/01 → 05/02 (o mês curto não escorrega), e 29/02 de ano bissexto;
+- os **12 meses** de uma vez: mês avança exatamente um, dia é sempre 05, ano só muda em dezembro;
+- o formato é sempre ISO, e nunca devolve a data de hoje.
+
+Mais 3 na suíte de quilometragem, contra o Express de verdade: a conta a pagar nasce com o dia 5 do
+mês seguinte e **não** com hoje, a resposta devolve a data, e a listagem já a anuncia antes de
+aprovar.

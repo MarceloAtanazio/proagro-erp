@@ -5509,7 +5509,7 @@ async function viewSolicitacao(id) {
         ${k.modelo === 'proprio' ? `<div><small>Cálculo</small><b>${kmNum(k.km_rodado)} × ${brl(k.taxa_km)}</b></div>` : ''}
       </div>
       ${k.modelo === 'proprio'
-        ? `<div class="rh-nota"><strong>A ressarcir: ${brl(k.valor_reembolso)}.</strong> Aprovar gera uma <strong>conta a pagar</strong> em nome de ${esc(s.colaborador_name)}, na categoria Viáticos, com vencimento hoje. Ela entra no realizado de Viáticos.</div>`
+        ? `<div class="rh-nota"><strong>A ressarcir: ${brl(k.valor_reembolso)}.</strong> Aprovar gera uma <strong>conta a pagar</strong> em nome de ${esc(s.colaborador_name)}, na categoria Viáticos, com vencimento em <strong>${km.vencimento_reembolso ? brDate(km.vencimento_reembolso) : 'dia 5 do mês seguinte'}</strong> — os reembolsos do mês são apurados e pagos juntos. Ela entra no realizado de Viáticos.</div>`
         : '<div class="rh-nota">Carro alugado: aprovar apenas <strong>confirma o registro</strong>. Não gera pagamento.</div>'}
       ${k.justificativa ? `<p style="font-size:13px;color:var(--ink-2)"><strong>Justificativa:</strong> ${esc(k.justificativa)}</p>` : ''}
       ${fld('km-obs', 'Observação (opcional)', 'text', '')}`,
@@ -5518,7 +5518,7 @@ async function viewSolicitacao(id) {
           try {
             const r = await api(`/api/viaticos/km/${k.id}/decidir`, { method: 'POST', body: { aprovar: true, motivo: $('#km-obs').value } });
             closeModal();
-            toast(r.payable_id ? `Aprovado — conta a pagar #${r.payable_id} criada (${brl(r.valor)}).` : 'Registro aprovado.');
+            toast(r.payable_id ? `Aprovado — conta a pagar #${r.payable_id} de ${brl(r.valor)}, vencendo em ${brDate(r.vencimento)}.` : 'Registro aprovado.');
             renderViaticos();
           } catch (e) { modalError(e.message); }
        }}]);
