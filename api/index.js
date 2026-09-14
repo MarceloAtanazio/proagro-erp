@@ -3490,6 +3490,118 @@ function rhSomaDiasISO(iso, n) {
   return new Date(Date.UTC(a, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+// ---- Ficha completa para impressão ----
+//
+// Endpoint próprio, e não um "?completo=1" no GET da ficha: a tela carrega
+// aquele a cada troca de aba, e pendurar nele viáticos, quilometragem e
+// treinamentos pagaria seis consultas a mais em toda navegação.
+//
+// A redação por permissão é a MESMA da tela (rhFiltrar, rhVeSensivel,
+// rhVeRemuneracao). Aqui ela importa mais: o PDF é um arquivo que sai do
+// sistema e circula — o que a tela esconde não pode reaparecer impresso.
+app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query('SELECT * FROM erp_colaboradores WHERE id=$1', [id]);
+  if (!rows.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  const colab = rows[0];
+  const hoje = hojeISO();
+  const verRemun = rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab);
+  const verSens = rhVeSensivel(req.user) || rhEhProprio(req.user, colab);
+  const podeDossie = await podeVerDossieRH(req.user, id);
+
+  const vinculos = await query('SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao DESC', [id]);
+  const dependentes = verSens
+    ? await query('SELECT * FROM erp_rh_dependentes WHERE colaborador_id=$1 ORDER BY data_nascimento', [id]) : [];
+  const anexos = podeDossie
+    ? await query(`SELECT id, doc_tipo, file_name, byte_size, created_at FROM erp_attachments
+                    WHERE entity_type='rh_doc' AND entity_id=$1 ORDER BY created_at DESC`, [id]) : [];
+  const treinos = await query(
+    'SELECT * FROM erp_rh_treinamentos WHERE colaborador_id=$1 ORDER BY concluido_em DESC NULLS LAST', [id]);
+  const viagens = await query(`
+    SELECT s.id, s.ordem_trabalho, s.destino, s.data_inicio, s.data_fim, s.status,
+           s.valor_solicitado, s.valor_liberado, s.valor_devolvido, s.valor_pendencia,
+           COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id),0) AS comprovado
+      FROM erp_viaticos_solicitacoes s WHERE s.colaborador_id=$1 ORDER BY s.data_inicio DESC`, [id]);
+  const kms = await query(`
+    SELECT k.km_rodado, k.valor_reembolso, k.modelo, k.status
+      FROM erp_viaticos_km k JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
+     WHERE s.colaborador_id=$1`, [id]);
+
+  // ---------- métricas ----------
+  const vinculoAtual = vinculos.find(v => !v.desligamento) || vinculos[0] || null;
+  const diasEntre = (a, b) => (!a || !b ? null :
+    Math.round((Date.parse(String(b).slice(0, 10)) - Date.parse(String(a).slice(0, 10))) / 86400000));
+  const idade = (() => {
+    if (!colab.data_nascimento) return null;
+    const [a, m, d] = String(colab.data_nascimento).slice(0, 10).split('-').map(Number);
+    const [ha, hm, hd] = hoje.split('-').map(Number);
+    return ha - a - ((hm < m || (hm === m && hd < d)) ? 1 : 0);
+  })();
+  // Tempo de casa soma TODAS as passagens, não só a atual: quem saiu e voltou
+  // tem duas linhas, e contar só a última esconderia metade da história.
+  const tempoCasaDias = vinculos.reduce((s, v) =>
+    s + (diasEntre(v.admissao, v.desligamento || hoje) || 0), 0);
+
+  const checklist = rhChecklist(colab, anexos);
+  const somaViagens = campo => viagens.reduce((s, v) => s + n(v[campo]), 0);
+  const solicitado = somaViagens('valor_solicitado'), comprovado = somaViagens('comprovado');
+  const kmAprovado = kms.filter(k => k.status === 'aprovado');
+
+  const metricas = {
+    idade,
+    tempo_casa_dias: vinculos.length ? tempoCasaDias : null,
+    passagens: vinculos.length,
+    experiencia_fim: vinculoAtual && vinculoAtual.prorrogacao_fim ? vinculoAtual.prorrogacao_fim : null,
+    experiencia_dias_restantes: vinculoAtual && vinculoAtual.prorrogacao_fim
+      ? diasEntre(hoje, vinculoAtual.prorrogacao_fim) : null,
+    documentacao: {
+      entregues: checklist.filter(x => x.ok).length, total: checklist.length,
+      faltantes: checklist.filter(x => !x.ok).map(x => x.nome)
+    },
+    dependentes: dependentes.length,
+    viaticos: {
+      viagens: viagens.length,
+      solicitado, comprovado,
+      devolvido: somaViagens('valor_devolvido'),
+      pendencia: somaViagens('valor_pendencia'),
+      // Só faz sentido com liberado > 0: dividir por zero daria Infinity, e
+      // "0% comprovado" numa viagem sem dinheiro liberado seria acusação falsa.
+      taxa_comprovacao: somaViagens('valor_liberado') > 0
+        ? Math.round(100 * comprovado / somaViagens('valor_liberado')) : null
+    },
+    quilometragem: {
+      registros: kms.length,
+      km_rodados: Math.round(kms.reduce((s, k) => s + n(k.km_rodado), 0) * 10) / 10,
+      ressarcido: Math.round(kmAprovado.reduce((s, k) => s + n(k.valor_reembolso), 0) * 100) / 100
+    },
+    desenvolvimento: {
+      registros: treinos.length,
+      horas: Math.round(treinos.reduce((s, t) => s + n(t.carga_horaria), 0) * 10) / 10,
+      investimento: verRemun ? Math.round(treinos.reduce((s, t) => s + n(t.custo), 0) * 100) / 100 : null,
+      certificacoes_vencidas: treinos.filter(t => t.validade && String(t.validade).slice(0, 10) < hoje).length
+    },
+    custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento ? {
+      salario: n(vinculoAtual.salario),
+      // Mesma base de 22 dias úteis do painel, para os dois números conversarem.
+      beneficios: Math.round((n(vinculoAtual.vr_dia) + n(vinculoAtual.home_office_dia)) * 22 * 100) / 100,
+      base_dias_uteis: 22
+    } : null
+  };
+
+  res.json({
+    gerado_em: hoje,
+    colaborador: rhFiltrar(colab, req.user, colab),
+    vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
+    dependentes, dossie: anexos, checklist,
+    treinamentos: treinos.map(t => (verRemun ? t : { ...t, custo: null })),
+    viagens: viagens.map(v => ({ ...v, valor_solicitado: n(v.valor_solicitado),
+      valor_liberado: n(v.valor_liberado), valor_devolvido: n(v.valor_devolvido),
+      valor_pendencia: n(v.valor_pendencia), comprovado: n(v.comprovado) })),
+    metricas,
+    pode: { sensivel: verSens, remuneracao: verRemun, dossie: podeDossie }
+  });
+}));
+
 // ---- Arquivar e desarquivar ----
 // Arquivar é o caminho normal para quem saiu: preserva vínculo, dossiê e
 // histórico, e tira a pessoa de todas as listas. Excluir apaga tudo.

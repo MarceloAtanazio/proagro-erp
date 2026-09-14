@@ -9589,6 +9589,216 @@ function rhLigarAbas() {
   document.querySelectorAll('[data-secao]').forEach(b => b.onclick = () => { RH_ABA = b.dataset.secao; renderRH(); });
 }
 
+// ---------------- Ficha completa em PDF ----------------
+//
+// Usa relatorioPDF(), o mesmo padrão dos relatórios financeiros — faixa verde,
+// logo, título à direita, rodapé com razão social e página. O contrato tem um
+// padrão próprio (Arial 12 justificado) porque é prosa; a ficha é dado, e dado
+// se lê em tabela.
+//
+// Tudo o que entra aqui vem do servidor JÁ redigido pela permissão de quem
+// pediu. Nada é recalculado na tela: o PDF sai do sistema e circula, então não
+// pode mostrar o que a tela esconde.
+const rhPdfTxt = v => (v == null || v === '' ? '—' : String(v));
+const rhPdfData = v => (v ? brDate(String(v).slice(0, 10)) : '—');
+const rhPdfRotulo = (lista, v) => {
+  if (v == null || v === '') return '—';
+  const achado = (lista || []).find(x => (x.v !== undefined ? x.v : x) === v);
+  return achado ? (achado.t !== undefined ? achado.t : achado) : String(v);
+};
+// "1 ano e 3 meses" lê melhor que "458 dias" para tempo de casa.
+function rhPdfDuracao(dias) {
+  if (dias == null) return '—';
+  const anos = Math.floor(dias / 365), meses = Math.floor((dias % 365) / 30);
+  if (!anos && !meses) return `${dias} dia(s)`;
+  const p = [];
+  if (anos) p.push(anos === 1 ? '1 ano' : `${anos} anos`);
+  if (meses) p.push(meses === 1 ? '1 mês' : `${meses} meses`);
+  return p.join(' e ');
+}
+
+async function rhFichaPDF(id) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  let d;
+  try { d = await api(`/api/rh/colaboradores/${id}/ficha`); } catch (e) { return toast(e.message); }
+  const c = d.colaborador, m = d.metricas, pode = d.pode || {};
+  const v = (d.vinculos || []).find(x => !x.desligamento) || (d.vinculos || [])[0] || null;
+
+  const { doc, pageW, MARGIN, rodape } = relatorioPDF('Ficha do Colaborador', {
+    orientation: 'portrait', modulo: 'Recursos Humanos',
+    subtitulo: `${c.name}${c.cargo ? ' · ' + c.cargo : ''}`
+  });
+  const larg = pageW - MARGIN * 2;
+  let y = 30;
+
+  // Faixa de resumo: o que alguém quer saber de relance sobre a pessoa.
+  const resumo = [
+    m.tempo_casa_dias != null ? `Casa: ${rhPdfDuracao(m.tempo_casa_dias)}` : 'Sem vínculo registrado',
+    m.idade != null ? `${m.idade} anos` : null,
+    `Documentos: ${m.documentacao.entregues}/${m.documentacao.total}`,
+    m.viaticos.viagens ? `${m.viaticos.viagens} viagem(ns)` : null
+  ].filter(Boolean).join('   ·   ');
+  y = relatorioFaixa(doc, pageW, y, resumo) + 6;
+
+  // Tabela de duas colunas de pares rótulo/valor — a forma de ficha.
+  const grade = (titulo, pares) => {
+    const linhas = pares.filter(p => p);
+    if (!linhas.length) return;
+    y = relatorioSecao(doc, y, titulo) + 1;
+    const corpo = [];
+    for (let i = 0; i < linhas.length; i += 2) {
+      const a = linhas[i], b = linhas[i + 1] || ['', ''];
+      corpo.push([a[0], rhPdfTxt(a[1]), b[0], rhPdfTxt(b[1])]);
+    }
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: y, body: corpo, tableWidth: larg,
+      styles: { font: 'helvetica', fontSize: 7.8, cellPadding: 1.9, textColor: [40, 46, 42],
+                lineColor: [230, 236, 232], lineWidth: 0.1 },
+      alternateRowStyles: {},
+      columnStyles: {
+        0: { cellWidth: larg * 0.17, textColor: [110, 120, 114] },
+        1: { cellWidth: larg * 0.33, fontStyle: 'bold' },
+        2: { cellWidth: larg * 0.17, textColor: [110, 120, 114] },
+        3: { cellWidth: larg * 0.33, fontStyle: 'bold' }
+      }
+    }));
+    y = doc.lastAutoTable.finalY + 7;
+  };
+
+  const tabela = (titulo, cabecas, linhas, extra = {}) => {
+    y = relatorioSecao(doc, y, titulo) + 1;
+    if (!linhas.length) {
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110, 120, 114);
+      doc.text('Nenhum registro.', MARGIN, y + 3); y += 9; return;
+    }
+    doc.autoTable(relatorioTabelaEstilo(rodape, Object.assign({
+      startY: y, head: [cabecas], body: linhas, tableWidth: larg
+    }, extra)));
+    y = doc.lastAutoTable.finalY + 7;
+  };
+
+  grade('Identificação', [
+    ['Nome', c.name], ['Nome social', c.nome_social],
+    ['Nascimento', rhPdfData(c.data_nascimento)], ['Idade', m.idade != null ? m.idade + ' anos' : '—'],
+    ['Sexo', rhPdfRotulo(RH_SEXO, c.sexo)], ['Estado civil', c.estado_civil],
+    ['Nacionalidade', c.nacionalidade], ['Grau de instrução', c.grau_instrucao],
+    ['Naturalidade', [c.naturalidade_municipio, c.naturalidade_uf].filter(Boolean).join('/')],
+    ['Raça/cor', c.raca_cor],
+    ...(pode.sensivel ? [['Nome da mãe', c.nome_mae], ['Nome do pai', c.nome_pai]] : [])
+  ]);
+
+  if (pode.sensivel) {
+    grade('Documentos', [
+      ['CPF', c.cpf], ['RG', [c.rg, c.rg_orgao, c.rg_uf].filter(Boolean).join(' ')],
+      ['CTPS', [c.ctps_numero, c.ctps_serie].filter(Boolean).join(' / ')], ['PIS/PASEP', c.pis],
+      ['Título de eleitor', c.titulo_eleitor], ['CNH', c.cnh],
+      ['Reservista', c.reservista], ['Banco', [c.banco_numero, c.banco].filter(Boolean).join(' - ')],
+      ['Agência', c.agencia], ['Conta', c.conta]
+    ]);
+    grade('Contato e endereço', [
+      ['Celular', c.celular], ['E-mail pessoal', c.email_pessoal],
+      ['E-mail corporativo', c.email_corporativo], ['CEP', c.cep],
+      ['Endereço', [c.endereco, c.endereco_numero, c.endereco_complemento].filter(Boolean).join(', ')],
+      ['Bairro', c.bairro],
+      ['Município', [c.municipio, c.uf].filter(Boolean).join('/')],
+      ['Contato de emergência', [c.contato_emergencia, c.contato_emergencia_fone].filter(Boolean).join(' - ')]
+    ]);
+  }
+
+  grade('Vínculo atual', v ? [
+    ['Cargo', [v.cargo, v.nivel].filter(Boolean).join(' ')], ['Departamento', v.departamento],
+    ['Tipo', rhPdfRotulo(RH_TIPO_VINCULO, v.tipo)], ['Regime', rhPdfRotulo(RH_REGIME, v.regime)],
+    ['Modelo', rhPdfRotulo(RH_MODELO_TRAB, v.modelo_trabalho)], ['Matrícula', v.matricula],
+    ['Admissão', rhPdfData(v.admissao)],
+    ['Desligamento', v.desligamento ? rhPdfData(v.desligamento) : 'em aberto'],
+    ['Tempo de casa', rhPdfDuracao(m.tempo_casa_dias)],
+    ['Experiência até', rhPdfData(m.experiencia_fim)],
+    ...(pode.remuneracao ? [['Salário', v.salario != null ? brl(v.salario) : '—'],
+                           ['Benefícios/dia', brl(Number(v.vr_dia || 0) + Number(v.home_office_dia || 0))]] : [])
+  ] : [['Situação', 'Nenhum vínculo registrado']]);
+
+  if ((d.vinculos || []).length > 1) {
+    tabela('Histórico de vínculos', ['Admissão', 'Desligamento', 'Cargo', 'Tipo', 'Motivo da saída'],
+      d.vinculos.map(x => [rhPdfData(x.admissao), x.desligamento ? rhPdfData(x.desligamento) : 'em aberto',
+        rhPdfTxt(x.cargo), rhPdfRotulo(RH_TIPO_VINCULO, x.tipo),
+        rhPdfRotulo(RH_DESLIG_TIPO, x.desligamento_tipo)]));
+  }
+
+  // ---- o raio-x ----
+  y = relatorioSecao(doc, y, 'Indicadores do colaborador') + 1;
+  const ind = [
+    ['Tempo de casa', rhPdfDuracao(m.tempo_casa_dias) + (m.passagens > 1 ? ` (${m.passagens} passagens)` : '')],
+    ['Documentação obrigatória', `${m.documentacao.entregues} de ${m.documentacao.total} entregues`],
+    ['Dependentes', String(m.dependentes)],
+    ['Viagens a serviço', `${m.viaticos.viagens} · comprovado ${brl(m.viaticos.comprovado)}` +
+      (m.viaticos.taxa_comprovacao != null ? ` (${m.viaticos.taxa_comprovacao}% do liberado)` : '')],
+    ['Quilometragem', m.quilometragem.registros
+      ? `${m.quilometragem.km_rodados.toLocaleString('pt-BR')} km · ressarcido ${brl(m.quilometragem.ressarcido)}`
+      : 'sem registro'],
+    ['Treinamentos', `${m.desenvolvimento.registros} · ${m.desenvolvimento.horas}h` +
+      (m.desenvolvimento.investimento != null ? ` · ${brl(m.desenvolvimento.investimento)}` : '') +
+      (m.desenvolvimento.certificacoes_vencidas ? ` · ${m.desenvolvimento.certificacoes_vencidas} vencida(s)` : '')],
+    ...(m.custo_mensal ? [['Custo mensal',
+      `${brl(m.custo_mensal.salario + m.custo_mensal.beneficios)} (salário ${brl(m.custo_mensal.salario)} + benefícios ${brl(m.custo_mensal.beneficios)})`]] : [])
+  ];
+  doc.autoTable(relatorioTabelaEstilo(rodape, {
+    startY: y, body: ind, tableWidth: larg,
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42],
+              lineColor: [225, 231, 227], lineWidth: 0.15 },
+    alternateRowStyles: { fillColor: [246, 251, 248] },
+    columnStyles: { 0: { cellWidth: larg * 0.32, textColor: [110, 120, 114] }, 1: { fontStyle: 'bold' } }
+  }));
+  y = doc.lastAutoTable.finalY + 7;
+
+  if (m.documentacao.faltantes.length) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(178, 58, 47);
+    const txt = doc.splitTextToSize('Documentos faltando: ' + m.documentacao.faltantes.join(', '), larg);
+    txt.forEach((l, i) => doc.text(l, MARGIN, y + i * 4));
+    y += txt.length * 4 + 5;
+  }
+
+  if (pode.sensivel) {
+    tabela('Dependentes', ['Nome', 'Parentesco', 'Nascimento', 'IR', 'Salário-família'],
+      (d.dependentes || []).map(x => [rhPdfTxt(x.nome), rhPdfTxt(x.parentesco), rhPdfData(x.data_nascimento),
+        x.dependente_ir ? 'sim' : 'não', x.salario_familia ? 'sim' : 'não']));
+  }
+
+  tabela('Desenvolvimento', ['Título', 'Tipo', 'Instituição', 'Horas', 'Concluído', 'Validade'],
+    (d.treinamentos || []).map(t => [rhPdfTxt(t.titulo), rhPdfTxt(t.tipo), rhPdfTxt(t.instituicao),
+      rhPdfTxt(t.carga_horaria), rhPdfData(t.concluido_em), rhPdfData(t.validade)]));
+
+  tabela('Viagens a serviço', ['OT', 'Destino', 'Período', 'Liberado', 'Comprovado', 'Situação'],
+    (d.viagens || []).slice(0, 25).map(x => [
+      x.ordem_trabalho ? 'OT ' + x.ordem_trabalho : '#' + x.id, rhPdfTxt(x.destino),
+      `${rhPdfData(x.data_inicio)} a ${rhPdfData(x.data_fim)}`,
+      brl(x.valor_liberado), brl(x.comprovado), rhPdfTxt(VIA_STATUS_LABEL[x.status] || x.status)]),
+    { columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } } });
+  if ((d.viagens || []).length > 25) {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(110, 120, 114);
+    doc.text(`(mostrando as 25 mais recentes de ${d.viagens.length})`, MARGIN, y); y += 6;
+  }
+
+  if (pode.dossie) {
+    tabela('Dossiê', ['Documento', 'Arquivo', 'Anexado em'],
+      (d.dossie || []).map(a => [rhPdfTxt(a.doc_tipo), rhPdfTxt(a.file_name), rhPdfData(a.created_at)]));
+  }
+
+  // Sem permissão fina, o PDF DIZ que omitiu — um documento que cala sobre o
+  // que faltou parece completo, e quem o receber não tem como saber.
+  const omitido = [!pode.sensivel ? 'dados pessoais sensíveis' : null,
+                   !pode.remuneracao ? 'remuneração' : null,
+                   !pode.dossie ? 'dossiê' : null].filter(Boolean);
+  if (omitido.length) {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(110, 120, 114);
+    doc.text(`Esta ficha foi gerada sem ${omitido.join(', ')} — seu usuário não tem essa permissão.`, MARGIN, y);
+  }
+
+  rodape();
+  const nomeArq = 'Ficha - ' + c.name.replace(/[^\wÀ-ÿ ]/g, '').trim() + '.pdf';
+  doc.save(nomeArq);
+  toast('Ficha gerada.');
+}
+
 // ---------------- Encerrar e reabrir candidatura ----------------
 
 // O motivo é agrupado por QUEM encerrou porque é assim que se pensa na hora:
@@ -10196,6 +10406,7 @@ async function abrirFichaRH(id, aba) {
             ${vinculo && vinculo.departamento ? ' · ' + esc(vinculo.departamento) : ''}</span>
         </div>
         <div class="spacer"></div>
+        <button class="btn sm" id="rh-ficha-pdf" title="Ficha completa com todos os dados e os indicadores do colaborador">⬇ Ficha em PDF</button>
         ${falta.length
           ? `<span class="rh-pend" title="${esc(falta.map(f => f.nome).join(', '))}">⚠ ${falta.length} documento(s) faltando</span>`
           : '<span class="rh-pend ok">✔ Documentação completa</span>'}
@@ -10207,6 +10418,7 @@ async function abrirFichaRH(id, aba) {
     </div>`;
 
   $('#rh-voltar').onclick = () => { RH_ABA = candidato ? 'quadro' : 'pessoas'; renderRH(); };
+  $('#rh-ficha-pdf').onclick = () => rhFichaPDF(id);
   c.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => abrirFichaRH(id, b.dataset.aba));
 
   const painel = $('#rh-painel');

@@ -3790,3 +3790,76 @@ mais correto. O stub devolvia a **referência viva** da linha de admissão, ent�
 mudava o objeto já lido — coisa que o Postgres nunca faz, porque ele devolve um snapshot. O stub
 passou a copiar as linhas (`.map(a => ({ ...a }))`). Sem isso eu teria "consertado" um código que
 estava certo.
+
+---
+
+## 2026-09-14 — Ficha do colaborador em PDF, com indicadores
+
+**Pedido:** dentro do perfil de cada funcionário, extrair em PDF (no padrão da casa) uma ficha
+completa com todos os dados e, se possível, alguma métrica sobre o colaborador.
+
+### Qual "padrão da casa"
+
+Existem dois. O **contrato** é Arial 12 justificado, títulos sublinhados — padrão de prosa. Os
+**relatórios financeiros** têm faixa verde, logo à esquerda, título à direita, "gerado em … por …" e
+rodapé com razão social e página — e já vivem numa função compartilhada, `relatorioPDF()`.
+
+A ficha é **dado**, não prosa, então usa o segundo. E usa a função, não uma cópia dela: o comentário
+que está lá desde a terceira exportação diz por quê — três cópias divergem com o tempo.
+
+### O que entra
+
+Dez seções: identificação, documentos, contato e endereço, vínculo atual, histórico de vínculos,
+**indicadores**, dependentes, desenvolvimento, viagens a serviço e dossiê. Os pares rótulo/valor vão
+em grade de duas colunas; as listas, em tabela.
+
+### Os indicadores
+
+O "raio-x" que o pedido pedia, calculado no servidor:
+
+| Indicador | Detalhe |
+|---|---|
+| Tempo de casa | **soma todas as passagens**, não só a atual — quem saiu e voltou tem duas linhas |
+| Documentação | entregues/total, com os faltantes **nomeados** |
+| Viagens a serviço | quantas, comprovado, e % sobre o **liberado** |
+| Quilometragem | km rodados e o ressarcido — só o **aprovado** conta como ressarcimento |
+| Desenvolvimento | horas, investimento, certificações vencidas |
+| Custo mensal | salário + benefícios em 22 dias úteis, a **mesma base do painel** |
+
+Duas decisões de aritmética: a taxa de comprovação é `null` quando nada foi liberado — dividir por
+zero daria infinito, e "0% comprovado" numa viagem sem dinheiro liberado seria acusação falsa. E o km
+ressarcido conta só o aprovado, enquanto os km rodados contam tudo: são perguntas diferentes.
+
+### A redação é o ponto sensível
+
+Um PDF **sai do sistema e circula**. O que a tela esconde não pode reaparecer impresso, então tudo
+vem do servidor já redigido (`rhFiltrar`, `rhVeSensivel`, `rhVeRemuneracao`) — nada é recalculado na
+tela.
+
+E quando algo é omitido, **o PDF diz**: *"Esta ficha foi gerada sem dados pessoais sensíveis,
+remuneração, dossiê — seu usuário não tem essa permissão."* Um documento que cala sobre o que faltou
+parece completo, e quem o recebe não tem como saber.
+
+Endpoint próprio (`/ficha`) e não um parâmetro no GET da ficha: aquele é recarregado a cada troca de
+aba, e pendurar nele viáticos, quilometragem e treinamentos custaria seis consultas a mais em toda
+navegação.
+
+### Verificação
+
+**27 asserções no endpoint**, metade delas sobre redação: sem as travas finas, CPF, nome da mãe,
+salário, dependentes e custo somem, e o custo de cada treinamento é apagado um a um — mas o nome, o
+tempo de casa e as **horas** de treinamento continuam, porque não são remuneração. Com `rh_sensivel`
+e sem `rh_remuneracao`, o CPF aparece e o salário não.
+
+**27 asserções no PDF gerado**, lendo **o texto do próprio arquivo** em vez de renderizar. Isso é
+mais forte que uma captura de tela: uma foto da página 1 não prova nada sobre a página 2, e o que
+mais importa aqui é o que **não** pode estar no arquivo. A versão restrita foi conferida item a item
+— CPF, RG, nome da mãe, endereço, salário, custo, dependentes, dossiê e investimento, todos ausentes
+— e o aviso de omissão, presente.
+
+**Duas dificuldades de ferramenta, resolvidas em vez de contornadas:** `doc.save()` não está no
+protótipo deste build do jsPDF, então interceptei o construtor para capturar a instância; e a pane do
+navegador trata PDF como download e bloqueia o worker do pdf.js, o que inviabilizou renderizar — daí
+a leitura do content stream, que acabou sendo a verificação melhor.
+
+O roteiro ficou guardado em `conferir-ficha-pdf.txt`, para rodar de novo quando a ficha mudar.
