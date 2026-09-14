@@ -2808,13 +2808,29 @@ app.post('/api/rh/admissoes/:id/encerrar', requireAuth, requireEdit('rh'), h(asy
   if (!motivo) return res.status(400).json({ error: 'Escolha o motivo do encerramento.' });
   const obs = sanitize(req.body.motivo) || null;
   if (motivo.cod === 'outro' && !obs) return res.status(400).json({ error: 'Em "Outro motivo", descreva o que houve.' });
-  const r = await query('SELECT etapa, situacao, colaborador_id FROM erp_rh_admissoes WHERE id=$1', [id]);
+  const r = await query('SELECT etapa, situacao, colaborador_id, vinculo_id FROM erp_rh_admissoes WHERE id=$1', [id]);
   if (!r.length) return res.status(404).json({ error: 'Processo não encontrado.' });
   if (r[0].situacao !== 'andamento') {
     return res.status(409).json({ error: 'Este processo já está encerrado.' });
   }
   const data = isDate(req.body.data) ? req.body.data : hojeISO();
   const texto = motivo.nome + (obs ? ' — ' + obs : '');
+
+  // Se a admissão já tinha CRIADO um vínculo (a pessoa passou pela etapa
+  // Contrato antes de o processo ser encerrado), esse vínculo tem de ir junto:
+  // o emprego que ele representa nunca aconteceu. Sem isso a pessoa fica ATIVA,
+  // com vínculo aberto e salário entrando na folha — um candidato de teste
+  // encerrado chegou a responder por metade da folha do painel de RH.
+  //
+  // Apagar, e não fechar com desligamento: fechar inventaria um emprego de zero
+  // dia, que sujaria turnover e permanência média com uma admissão que não foi.
+  // O id é lido ANTES do DELETE: apagar o vínculo zera `vinculo_id` na admissão
+  // (ON DELETE SET NULL), e ler depois devolveria nulo.
+  const vinculoRemovido = r[0].vinculo_id || null;
+  if (vinculoRemovido) {
+    await query('DELETE FROM erp_rh_vinculos WHERE id=$1', [vinculoRemovido]);
+    await query('UPDATE erp_colaboradores SET ativo=false WHERE id=$1', [r[0].colaborador_id]);
+  }
 
   await query(
     `UPDATE erp_rh_admissoes SET situacao='cancelada', cancelamento_tipo=$1, cancelamento_motivo=$2,
@@ -2835,7 +2851,7 @@ app.post('/api/rh/admissoes/:id/encerrar', requireAuth, requireEdit('rh'), h(asy
       [req.user.id, 'Candidatura encerrada: ' + texto, r[0].colaborador_id]);
     arquivado = true;
   }
-  res.json({ ok: true, arquivado, parte: motivo.parte });
+  res.json({ ok: true, arquivado, parte: motivo.parte, vinculo_removido: vinculoRemovido });
 }));
 
 // Reabrir devolve o card ao quadro na etapa em que parou. É o inverso exato do
@@ -3530,7 +3546,15 @@ app.delete('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async 
     if (n > 0) impedimentos.push(`${n} ${rotulo}`);
   };
   await conta('SELECT count(*)::int AS n FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1', 'solicitação(ões) de viáticos');
-  await conta('SELECT count(*)::int AS n FROM erp_rh_vinculos WHERE colaborador_id=$1', 'vínculo(s) registrado(s)');
+  // Vínculo que nasceu de uma admissão CANCELADA não é registro trabalhista: é
+  // resíduo de um processo que foi desfeito. Ele existe porque a pessoa passou
+  // pela etapa Contrato antes de a candidatura ser encerrada, e travava a
+  // exclusão de um cadastro que nunca chegou a ser funcionário.
+  await conta(`SELECT count(*)::int AS n FROM erp_rh_vinculos v
+                WHERE v.colaborador_id=$1
+                  AND NOT EXISTS (SELECT 1 FROM erp_rh_admissoes a
+                                   WHERE a.vinculo_id = v.id AND a.situacao = 'cancelada')`,
+              'vínculo(s) registrado(s)');
   if (!candidato) {
     await conta(`SELECT count(*)::int AS n FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, 'documento(s) no dossiê');
   }

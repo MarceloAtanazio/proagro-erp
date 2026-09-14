@@ -3726,3 +3726,67 @@ mês, incluindo fevereiro bissexto), que ele nunca é negativo, e que **quem nã
 Na tela, com a função real e sete estados: os dois casos sem fila **não renderizam nada**; os cinco
 com fila mostram o texto certo, o urgente só nos ≤ 7 dias, zero elementos cortados e sem rolagem
 horizontal a 1280px. A 375px a barra empilha o botão abaixo do texto e continua sem cortes.
+
+---
+
+## 2026-09-14 — Candidatura encerrada deixava vínculo aberto (e metade da folha era um teste)
+
+**Reportado pelo usuário:** "Ao que está atrelado o Gustavo Machado? Ele é um teste que fiz mas
+queria excluí-lo e dá esse erro."
+
+### O que ele estava atrelado
+
+    colaborador 12  Gustavo Machado      ativo=true, não arquivado
+    VÍNCULO 2       Coordenador Comercial · CLT
+                    admissão 15/09/2026 · EM ABERTO · salário R$ 13.466,10
+    admissão 1      etapa documentacao · situação CANCELADA · vinculo_id = 2
+
+O vínculo nasceu quando o candidato **saiu da etapa Contrato** no Kanban — é lá que o vínculo é
+criado. Depois ele voltou para Documentação e a candidatura foi encerrada. E aí o buraco: **encerrar
+não desfez o vínculo**.
+
+`rhEhCandidato()` devolve falso para quem tem qualquer vínculo, então o encerramento também não
+arquivou a pessoa. Resultado: um candidato de teste ficou **ativo, com vínculo aberto e salário
+entrando na folha**.
+
+### O tamanho do estrago
+
+    pessoas com vínculo aberto: 2
+    folha no painel de RH:      R$ 26.932,20
+    sem o Gustavo:              R$ 13.466,10
+
+**Metade da folha do painel de RH era o cadastro de teste.** O painel dizia a verdade sobre os dados;
+os dados é que tinham um emprego que nunca existiu.
+
+### Duas correções
+
+**1. Impedir o estado.** Ao encerrar uma candidatura, se a própria admissão tinha criado um vínculo
+(`adm.vinculo_id`), esse vínculo é **apagado** e a pessoa volta a `ativo=false` — aí `rhEhCandidato`
+passa a valer e o arquivamento acontece normalmente.
+
+Apagar, e não fechar com desligamento: fechar inventaria um emprego de zero dia, que sujaria turnover
+e permanência média com uma admissão que não foi.
+
+O id é lido **antes** do `DELETE`, porque apagar o vínculo zera `vinculo_id` na admissão
+(`ON DELETE SET NULL`) e ler depois devolveria nulo.
+
+**2. Liberar o que já está preso.** A trava de exclusão deixou de contar vínculo cuja admissão está
+`cancelada`: ele não é registro trabalhista, é resíduo de um processo desfeito. Sem isso, o Gustavo
+continuaria intransferível — a correção 1 só vale daqui para frente.
+
+### Verificação
+
+**8 asserções novas** (59 na suíte), reproduzindo o caso real: candidato que passou pelo Contrato,
+com vínculo aberto de R$ 13.466,10, tem a candidatura encerrada →
+
+- o vínculo criado pela admissão é removido, e a resposta diz qual;
+- a pessoa deixa de ser ativa e **é arquivada**;
+- **a folha volta a zero** (a asserção olha a soma dos vínculos abertos, não só a existência da linha);
+- vínculo órfão de admissão cancelada **não impede** a exclusão;
+- vínculo de admissão **concluída continua impedindo**, e a pessoa continua lá.
+
+**Um falso defeito do stub, que valeu a lição:** o teste acusou `vinculo_removido: null` com tudo o
+mais correto. O stub devolvia a **referência viva** da linha de admissão, então apagar o vínculo
+mudava o objeto já lido — coisa que o Postgres nunca faz, porque ele devolve um snapshot. O stub
+passou a copiar as linhas (`.map(a => ({ ...a }))`). Sem isso eu teria "consertado" um código que
+estava certo.
