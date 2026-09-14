@@ -2315,6 +2315,34 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
   res.json(out);
 }));
 
+// Simulação de rescisão. Fica em rota própria, e não junto da ficha, porque os
+// parâmetros mudam na tela (data da saída, férias vencidas, saldo do FGTS) e o
+// cálculo tem de vir sempre do servidor -- a aba Vínculo e qualquer outro lugar
+// que mostre rescisão precisam ler o MESMO número.
+app.get('/api/rh/colaboradores/:id/rescisao', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const colab = (await query('SELECT * FROM erp_colaboradores WHERE id=$1', [id]))[0];
+  if (!colab) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  // A rescisão expõe salário: mesma trava da remuneração.
+  if (!(rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab)))
+    return res.status(403).json({ error: 'Sem acesso à remuneração deste colaborador.' });
+
+  const vinculo = (await query(
+    'SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL ORDER BY admissao DESC LIMIT 1',
+    [id]))[0];
+  if (!vinculo) return res.status(404).json({ error: 'Sem vínculo em vigor para simular.' });
+
+  const dep = ((await query(
+    'SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND irrf=true', [id]))[0] || {}).n || 0;
+
+  const sim = rhRescisaoDoVinculo(vinculo, await rhEncargos(), {
+    saida: req.query.saida, ferias_vencidas: req.query.ferias_vencidas,
+    fgts_saldo: req.query.fgts_saldo, dependentes: dep
+  });
+  if (!sim) return res.status(400).json({ error: 'Data de saída anterior à admissão.' });
+  res.json(sim);
+}));
+
 // ---- Ficha completa ----
 app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const id = Number(req.params.id);
@@ -3607,6 +3635,228 @@ function rhCustoDoVinculo(v, cfg, nDependentes) {
     rat_pct: n(cfg.rat_pct), terceiros_pct: n(cfg.terceiros_pct),
     beneficios, beneficios_base_dias: 22,
     custo_mensal: custoMensal, custo_anual: r2(custoMensal * 12)
+  };
+}
+
+// ------------------------------------------------------------
+// Simulação de rescisão
+// ------------------------------------------------------------
+//
+// Para que serve: decidir. A pergunta real não é "quanto ele recebe", é
+// "quanto CUSTA cada saída possível" — por isso o resultado sai com todas as
+// modalidades juntas, para comparar de um olhar.
+//
+// O que muda de uma modalidade para outra não é percentual, é DIREITO: justa
+// causa tira o 13º e as férias proporcionais (Súmula 171 do TST), pedido de
+// demissão mantém as duas mas ainda deve o aviso à empresa, e a multa do FGTS
+// existe só na dispensa (40%) e no acordo do art. 484-A (20%).
+//
+// Simulação, não rescisão: nada aqui grava, e o número final depende de
+// convenção coletiva, verbas variáveis e horas extras, que o sistema não tem.
+
+const DIA_MS = 86400000;
+const emDias = iso => { const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number); return Date.UTC(y, m - 1, d); };
+const emISO = ms => new Date(ms).toISOString().slice(0, 10);
+
+// Ano completo de casa: o aniversário da admissão precisa ter PASSADO.
+function rhAnosDeCasa(admissao, ate) {
+  const [ay, am, ad] = String(admissao).slice(0, 10).split('-').map(Number);
+  const [sy, sm, sd] = String(ate).slice(0, 10).split('-').map(Number);
+  let anos = sy - ay;
+  if (sm < am || (sm === am && sd < ad)) anos--;
+  return Math.max(0, anos);
+}
+
+// Aviso prévio proporcional (Lei 12.506/2011): 30 dias, mais 3 por ano completo
+// de serviço, travado em 90. A proporcionalidade é direito DO EMPREGADO — na
+// demissão pedida a empresa só pode cobrar os 30 dias base.
+function rhAvisoDias(admissao, ate) {
+  return Math.min(30 + 3 * rhAnosDeCasa(admissao, ate), 90);
+}
+
+// Avos contados pela regra dos 15 dias: mês em que se trabalhou 15 dias ou mais
+// conta inteiro; abaixo disso não conta.
+function rhAvosNoAno(inicio, fim) {
+  const ano = Number(String(fim).slice(0, 4));
+  let avos = 0;
+  for (let m = 1; m <= 12; m++) {
+    const de = Math.max(Date.UTC(ano, m - 1, 1), emDias(inicio));
+    const ate = Math.min(Date.UTC(ano, m, 0), emDias(fim));
+    if (ate >= de && (ate - de) / DIA_MS + 1 >= 15) avos++;
+  }
+  return avos;
+}
+
+// Avos de férias do período aquisitivo EM CURSO — o que já venceu e não foi
+// gozado é outro número, e o sistema não controla gozo: entra como parâmetro.
+function rhAvosFerias(admissao, ate) {
+  const [ay, am, ad] = String(admissao).slice(0, 10).split('-').map(Number);
+  const anos = rhAnosDeCasa(admissao, ate);
+  let avos = 0;
+  for (let i = 0; i < 12; i++) {
+    const de = Date.UTC(ay + anos, am - 1 + i, ad);
+    const ate2 = Math.min(Date.UTC(ay + anos, am - 1 + i + 1, ad) - DIA_MS, emDias(ate));
+    if (ate2 < de) break;
+    if ((ate2 - de) / DIA_MS + 1 >= 15) avos++;
+  }
+  return Math.min(12, avos);
+}
+
+// As modalidades, e o que cada uma dá ou tira. `aviso` é a fração do aviso
+// prévio devida PELA EMPRESA (negativa quando é o empregado que deve).
+const RH_RESCISAO_MOTIVOS = [
+  { cod: 'sem_justa_causa', nome: 'Dispensa sem justa causa', curto: 'Sem justa causa',
+    aviso: 1, decimo: true, ferias_prop: true, multa_fgts: 40, saque_fgts: 100, projeta: true,
+    nota: 'Aviso prévio proporcional indenizado, multa de 40% e saque integral do FGTS.' },
+  { cod: 'pedido', nome: 'Pedido de demissão', curto: 'Pedido do colaborador',
+    aviso: -1, decimo: true, ferias_prop: true, multa_fgts: 0, saque_fgts: 0, projeta: false,
+    nota: 'O aviso é devido À empresa: se não for cumprido, desconta-se 30 dias. Sem multa e sem saque.' },
+  { cod: 'justa_causa', nome: 'Dispensa por justa causa', curto: 'Justa causa',
+    aviso: 0, decimo: false, ferias_prop: false, multa_fgts: 0, saque_fgts: 0, projeta: false,
+    nota: 'Perde 13º e férias proporcionais (Súmula 171 do TST). Férias já VENCIDAS continuam devidas.' },
+  { cod: 'acordo', nome: 'Acordo entre as partes (art. 484-A)', curto: 'Acordo',
+    aviso: 0.5, decimo: true, ferias_prop: true, multa_fgts: 20, saque_fgts: 80, projeta: true,
+    nota: 'Metade do aviso, multa de 20% e saque de 80%. Não dá direito ao seguro-desemprego.' },
+  { cod: 'experiencia_fim', nome: 'Término normal da experiência', curto: 'Fim da experiência',
+    aviso: 0, decimo: true, ferias_prop: true, multa_fgts: 0, saque_fgts: 100, projeta: false,
+    so_experiencia: true,
+    nota: 'Contrato chega ao termo: sem aviso e sem multa, mas com saque do FGTS.' },
+  { cod: 'experiencia_antes', nome: 'Rescisão antecipada da experiência', curto: 'Antecipar experiência',
+    aviso: 0, decimo: true, ferias_prop: true, multa_fgts: 40, saque_fgts: 100, projeta: false,
+    so_experiencia: true, art479: true,
+    nota: 'A empresa rompe antes do termo: deve metade dos salários do período que faltava (art. 479 da CLT).' }
+];
+
+// Uma modalidade. `base` traz o que não muda entre elas (bruto, datas, avos).
+function rhRescisaoDe(mot, base, cfg, nDependentes) {
+  const { bruto, admissao, saida, avisoDias, feriasVencidas, diaDoMes, diasRestantesExp } = base;
+  const diario = bruto / 30;
+
+  const saldoSalario = r2(diario * diaDoMes);
+
+  // Aviso indenizado projeta o contrato para frente: os avos de 13º e de férias
+  // são contados até o fim do aviso, não até o último dia trabalhado.
+  const diasAviso = mot.aviso > 0 ? Math.round(avisoDias * mot.aviso) : 0;
+  const avisoValor = mot.aviso > 0 ? r2(diario * diasAviso)
+    : mot.aviso < 0 ? -r2(diario * 30) : 0;
+  const dataBase = mot.projeta && diasAviso ? emISO(emDias(saida) + diasAviso * DIA_MS) : saida;
+
+  const avosDecimo = mot.decimo ? rhAvosNoAno(admissao, dataBase) : 0;
+  const decimo = r2(bruto / 12 * avosDecimo);
+
+  const avosFerias = mot.ferias_prop ? rhAvosFerias(admissao, dataBase) : 0;
+  const feriasProp = r2(bruto / 12 * avosFerias);
+  const tercoProp = r2(feriasProp / 3);
+
+  // Férias vencidas são devidas SEMPRE, justa causa inclusive.
+  const feriasVenc = r2(bruto * feriasVencidas);
+  const tercoVenc = r2(feriasVenc / 3);
+
+  // Art. 479: metade do que o empregado receberia até o fim do contrato a termo.
+  const indenizacao479 = mot.art479 ? r2(diario * diasRestantesExp / 2) : 0;
+
+  // FGTS do mês incide sobre salário, 13º e aviso indenizado (Súmula 305 do
+  // TST). Férias indenizadas e o terço são indenizatórios: não têm FGTS nem
+  // contribuição previdenciária.
+  const baseFgts = r2(saldoSalario + decimo + Math.max(0, avisoValor));
+  const fgtsMes = r2(baseFgts * n(cfg.fgts_pct) / 100);
+  const fgtsSaldo = r2(base.fgtsSaldo + fgtsMes);
+  const multaFgts = r2(fgtsSaldo * mot.multa_fgts / 100);
+
+  // Patronal e RAT só sobre o que é salário: saldo e 13º.
+  const basePatronal = r2(saldoSalario + decimo);
+  const inssPatronal = r2(basePatronal * n(cfg.inss_patronal_pct) / 100);
+  const rat = r2(basePatronal * n(cfg.rat_pct) / 100);
+  const terceiros = r2(basePatronal * n(cfg.terceiros_pct) / 100);
+
+  // Descontos do colaborador. O 13º tem tributação própria, separada do salário
+  // do mês — por isso as duas bases não se somam.
+  const faixas = Array.isArray(cfg.inss_faixas) ? cfg.inss_faixas : [];
+  const inssSalario = rhINSS(saldoSalario, faixas);
+  const inssDecimo = rhINSS(decimo, faixas);
+  const irrfSalario = rhIRRF(saldoSalario, inssSalario, nDependentes, cfg).imposto;
+  const irrfDecimo = decimo ? rhIRRF(decimo, inssDecimo, nDependentes, cfg).imposto : 0;
+
+  const bruta = r2(saldoSalario + Math.max(0, avisoValor) + decimo
+    + feriasProp + tercoProp + feriasVenc + tercoVenc + indenizacao479);
+  const legais = r2(inssSalario + inssDecimo + irrfSalario + irrfDecimo);
+
+  // O aviso não cumprido desconta ATÉ ZERAR o que há a receber, e não além.
+  // Sem essa trava, quem sai com pouco tempo de casa produz um "custo negativo"
+  // -- e a tela sugeriria que a empresa GANHA com o pedido de demissão, quando
+  // na verdade o que sobra vira cobrança à parte, que quase nunca se faz.
+  const avisoDevido = Math.max(0, -avisoValor);
+  const avisoDescontado = r2(Math.min(avisoDevido, Math.max(0, bruta - legais)));
+  const avisoNaoAbsorvido = r2(avisoDevido - avisoDescontado);
+
+  const descontos = r2(legais + avisoDescontado);
+  const liquido = r2(bruta - descontos);
+
+  // Custo da empresa: o que sai do caixa. O saque do FGTS não entra — já foi
+  // depositado mês a mês; a multa sim, é dinheiro novo.
+  const custo = r2(bruta + fgtsMes + multaFgts + inssPatronal + rat + terceiros - avisoDescontado);
+
+  return {
+    cod: mot.cod, nome: mot.nome, curto: mot.curto, nota: mot.nota,
+    saldo_salario: saldoSalario, saldo_dias: diaDoMes,
+    aviso: avisoValor, aviso_dias: mot.aviso < 0 ? 30 : diasAviso, aviso_projetado: !!(mot.projeta && diasAviso),
+    aviso_descontado: avisoDescontado, aviso_nao_absorvido: avisoNaoAbsorvido,
+    decimo, decimo_avos: avosDecimo,
+    ferias_prop: feriasProp, terco_prop: tercoProp, ferias_avos: avosFerias,
+    ferias_vencidas: feriasVenc, terco_vencidas: tercoVenc,
+    indenizacao_479: indenizacao479,
+    bruta, inss: r2(inssSalario + inssDecimo), irrf: r2(irrfSalario + irrfDecimo),
+    descontos, liquido,
+    fgts_mes: fgtsMes, fgts_saldo: fgtsSaldo, multa_fgts: multaFgts, multa_fgts_pct: mot.multa_fgts,
+    fgts_a_sacar: r2(fgtsSaldo * mot.saque_fgts / 100 + multaFgts), saque_fgts_pct: mot.saque_fgts,
+    inss_patronal: inssPatronal, rat, terceiros,
+    custo_empresa: custo
+  };
+}
+
+// A simulação inteira: todas as modalidades cabíveis na data pedida.
+function rhRescisaoDoVinculo(v, cfg, opcoes) {
+  if (!v || !cfg || !v.admissao) return null;
+  const o = opcoes || {};
+  const saida = String(o.saida || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  if (saida < String(v.admissao).slice(0, 10)) return null;
+
+  const bruto = r2(n(v.salario) * (1 + n(v.periculosidade_pct) / 100));
+  const anos = rhAnosDeCasa(v.admissao, saida);
+  const meses = Math.max(1, Math.round((emDias(saida) - emDias(v.admissao)) / DIA_MS / 30.44));
+
+  // Saldo do FGTS: o sistema não guarda o extrato da Caixa. Na falta dele,
+  // estima 8% do bruto ATUAL por mês de contrato — serve para ordem de
+  // grandeza, e é por isso que o campo é editável na tela.
+  const fgtsSaldo = o.fgts_saldo != null && o.fgts_saldo !== ''
+    ? r2(Number(o.fgts_saldo))
+    : r2(bruto * n(cfg.fgts_pct) / 100 * meses);
+
+  // Termo do contrato de experiência: a prorrogação, quando houver.
+  const termo = v.prorrogacao_fim || v.experiencia_fim || null;
+  const emExperiencia = !!(termo && saida < String(termo).slice(0, 10));
+
+  const base = {
+    bruto, admissao: String(v.admissao).slice(0, 10), saida,
+    avisoDias: rhAvisoDias(v.admissao, saida),
+    feriasVencidas: Math.max(0, Number(o.ferias_vencidas) || 0),
+    diaDoMes: Math.min(30, Number(saida.slice(8, 10))),
+    diasRestantesExp: emExperiencia ? (emDias(termo) - emDias(saida)) / DIA_MS : 0,
+    fgtsSaldo
+  };
+
+  const nDep = Number(o.dependentes) || 0;
+  const motivos = RH_RESCISAO_MOTIVOS.filter(m => !m.so_experiencia || emExperiencia);
+
+  return {
+    saida, admissao: base.admissao, bruto,
+    anos_de_casa: anos, meses_de_casa: meses,
+    aviso_dias: base.avisoDias, ferias_vencidas_periodos: base.feriasVencidas,
+    fgts_saldo_base: fgtsSaldo, fgts_estimado: o.fgts_saldo == null || o.fgts_saldo === '',
+    em_experiencia: emExperiencia, termo_experiencia: emExperiencia ? String(termo).slice(0, 10) : null,
+    competencia: cfg.competencia, tabela_confirmada: cfg.confirmada === true,
+    dependentes: nDep,
+    modalidades: motivos.map(m => rhRescisaoDe(m, base, cfg, nDep))
   };
 }
 

@@ -10889,12 +10889,15 @@ function rhAbaVinculo(painel, d, id) {
         ${linha('Seguro de vida', v.seguro_vida ? 'Sim' : 'Não')}
       </div></div>` : '<div class="rh-nota">🔒 Remuneração e benefícios não estão visíveis para o seu acesso.</div>'}
     ${rhQuadroCusto(d.custo)}
+    ${rem ? '<div class="rh-sec rh-resc" id="rh-rescisao"></div>' : ''}
     ${rhHistoricoVinculos(historico, rem)}`;
 
   const be = painel.querySelector('#rh-editar-vinculo');
   if (be) be.onclick = () => rhFormVinculo(id, v, d);
   const bc = painel.querySelector('[data-ir-encargos]');
   if (bc) bc.onclick = () => rhFormEncargos(() => abrirFichaRH(id, 'vinculo'));
+  const br = painel.querySelector('#rh-rescisao');
+  if (br) rhQuadroRescisao(br, id);
 }
 
 // Quadro de custo: do bruto ao líquido, e do líquido ao custo da empresa.
@@ -10946,6 +10949,106 @@ function rhQuadroCusto(c) {
       </div>
     </div>
   </div>`;
+}
+
+async function rhQuadroRescisao(host, id) {
+  const p = host.dataset;
+  host.innerHTML = '<h4>Rescisão <span class="rh-lgpd">simulação</span></h4><div class="rh-nota">Calculando…</div>';
+  let sim;
+  try {
+    const q = new URLSearchParams({ saida: p.saida || '' });
+    if (p.vencidas) q.set('ferias_vencidas', p.vencidas);
+    if (p.fgts) q.set('fgts_saldo', p.fgts);
+    sim = await api(`/api/rh/colaboradores/${id}/rescisao?${q}`);
+  } catch (err) {
+    host.innerHTML = `<h4>Rescisão</h4><div class="rh-nota">${esc(err.message)}</div>`;
+    return;
+  }
+
+  // Numa verba, zero significa "não se aplica" e vira travessão. Numa linha de
+  // TOTAL, zero é resultado — sair como travessão faria parecer que a conta não
+  // foi feita, justamente onde ela mais importa.
+  const brlOuTraco = v => (v ? brl(v) : '—');
+  const linha = (rot, campo, cls, fmt) => `<tr class="${cls || ''}"><th>${rot}</th>` +
+    sim.modalidades.map(m => `<td>${(fmt || (/sub|total|custo/.test(cls || '') ? brl : brlOuTraco))(m[campo], m)}</td>`)
+      .join('') + '</tr>';
+  const temAlgum = campo => sim.modalidades.some(m => m[campo]);
+
+  // Só aparece a linha que tem valor em alguma coluna: tabela de comparação
+  // cheia de travessão esconde o que importa.
+  const corpo = [
+    linha(`Saldo de salário <i>${sim.modalidades[0].saldo_dias} dia(s)</i>`, 'saldo_salario'),
+    // O aviso devido PELA empresa entra aqui; o devido A ELA só aparece na
+    // linha de desconto, lá embaixo. Repetir o mesmo valor nos dois lugares faz
+    // a coluna parecer cobrar duas vezes.
+    temAlgum('aviso') ? linha('Aviso prévio indenizado', 'aviso', '', (v, m) => v > 0
+      ? brl(v) + `<i>${m.aviso_dias} dias${m.aviso_projetado ? ', projetado' : ''}</i>`
+      : v < 0 ? '<i>devido à empresa</i>' : '—') : '',
+    linha('13º proporcional', 'decimo', '', (v, m) => v ? brl(v) + `<i>${m.decimo_avos}/12</i>` : '—'),
+    linha('Férias proporcionais', 'ferias_prop', '', (v, m) => v ? brl(v) + `<i>${m.ferias_avos}/12</i>` : '—'),
+    linha('Terço constitucional', 'terco_prop'),
+    temAlgum('ferias_vencidas') ? linha('Férias vencidas', 'ferias_vencidas') : '',
+    temAlgum('terco_vencidas') ? linha('Terço sobre as vencidas', 'terco_vencidas') : '',
+    temAlgum('indenizacao_479') ? linha('Indenização do art. 479', 'indenizacao_479') : '',
+    linha('= Total bruto', 'bruta', 'sub'),
+    linha('(−) INSS', 'inss', 'neg', v => v ? '− ' + brl(v) : '—'),
+    linha('(−) IRRF', 'irrf', 'neg', v => v ? '− ' + brl(v) : '—'),
+    temAlgum('aviso_descontado') ? linha('(−) Aviso não cumprido', 'aviso_descontado', 'neg',
+      (v, m) => v ? '− ' + brl(v) + (m.aviso_nao_absorvido
+        ? `<i>limitado ao crédito; sobram ${brl(m.aviso_nao_absorvido)}</i>` : '') : '—') : '',
+    linha('= Líquido ao colaborador', 'liquido', 'total'),
+    linha('FGTS do mês', 'fgts_mes'),
+    linha('Multa do FGTS', 'multa_fgts', '', (v, m) => v ? brl(v) + `<i>${m.multa_fgts_pct}%</i>` : '—'),
+    linha('INSS empresa e RAT', 'inss_patronal', '', (v, m) => brlOuTraco(v + m.rat + m.terceiros)),
+    linha('= Custo para a empresa', 'custo_empresa', 'custo'),
+    linha('FGTS que o colaborador saca', 'fgts_a_sacar', 'info',
+      (v, m) => v ? brl(v) + `<i>${m.saque_fgts_pct}% + multa</i>` : '—')
+  ].filter(Boolean).join('');
+
+  host.innerHTML = `<h4>Rescisão <span class="rh-lgpd">simulação</span></h4>
+
+    <div class="rh-resc-topo">
+      <label>Data da saída <input type="date" id="resc-saida" value="${esc(sim.saida)}"></label>
+      <label>Férias vencidas <input type="number" id="resc-venc" min="0" max="2" step="1"
+        value="${sim.ferias_vencidas_periodos}"> <span class="rh-resc-un">período(s)</span></label>
+      <label>Saldo do FGTS <input type="text" id="resc-fgts" inputmode="decimal"
+        value="${sim.fgts_estimado ? '' : sim.fgts_saldo_base}"
+        placeholder="${sim.fgts_saldo_base.toFixed(2)} (estimado)"></label>
+      <div class="spacer"></div>
+      <span class="rh-resc-casa">${sim.anos_de_casa ? sim.anos_de_casa + ' ano(s) e ' : ''}${
+        sim.meses_de_casa - sim.anos_de_casa * 12} mes(es) de casa · aviso de ${sim.aviso_dias} dias</span>
+    </div>
+
+    ${sim.em_experiencia ? `<div class="rh-nota aviso">Contrato de <strong>experiência</strong> até
+      ${rhData(sim.termo_experiencia)}: entram as duas modalidades próprias do contrato a termo.
+      As colunas com aviso prévio só se aplicam se o contrato tiver cláusula assecuratória (art. 481 da CLT);
+      sem ela, romper antes do termo é o caso do art. 479.</div>` : ''}
+
+    <div class="rh-resc-rolagem"><table class="tbl-resc">
+      <thead><tr><th></th>${sim.modalidades.map(m => `<th>${esc(m.curto)}</th>`).join('')}</tr></thead>
+      <tbody>${corpo}</tbody>
+    </table></div>
+
+    <ul class="rh-resc-notas">${sim.modalidades.map(m =>
+      `<li><strong>${esc(m.curto)}:</strong> ${esc(m.nota)}</li>`).join('')}</ul>
+
+    <p class="rh-custo-nota">Simulação, não rescisão: nada aqui é gravado. ${
+      sim.fgts_estimado ? `O saldo do FGTS está <strong>estimado</strong> em ${brl(sim.fgts_saldo_base)}
+      (8% do bruto atual por mês de contrato) — informe o saldo do extrato para a multa sair certa. ` : ''}${
+      !sim.tabela_confirmada ? `O líquido usa a tabela de ${esc(sim.competencia)}, <strong>ainda não
+      confirmada</strong>; o custo da empresa não depende dela. ` : ''}Não entram verbas variáveis,
+      horas extras nem o que a convenção coletiva exigir.</p>`;
+
+  // Trocar qualquer parâmetro recarrega do servidor: o cálculo mora num lugar só.
+  const repor = () => {
+    p.saida = host.querySelector('#resc-saida').value || '';
+    p.vencidas = host.querySelector('#resc-venc').value || '';
+    p.fgts = host.querySelector('#resc-fgts').value.replace(/\./g, '').replace(',', '.').trim();
+    rhQuadroRescisao(host, id);
+  };
+  host.querySelector('#resc-saida').onchange = repor;
+  host.querySelector('#resc-venc').onchange = repor;
+  host.querySelector('#resc-fgts').onchange = repor;
 }
 
 // Tabela de encargos: as faixas de INSS e IRRF, e os percentuais patronais.

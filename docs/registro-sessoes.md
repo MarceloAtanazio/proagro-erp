@@ -4150,3 +4150,79 @@ produção se for publicado antes da migração**. O teste já está avisando.
 O mesmo nome inventado aparecia em mais dois lugares, calados: a contagem de dependentes
 de IR na ficha em PDF dava sempre zero, e a coluna "IR" da tabela de dependentes imprimia
 "não" para todo mundo. Os três pontos foram para `irrf`.
+
+---
+
+## 2026-09-14 — Quadro de Rescisão: quanto custa cada saída possível
+
+**Pedido:** um quadro que simule a saída do colaborador conforme a data de entrada e o motivo —
+sem justa causa, pedido do colaborador, justa causa e afins — "apenas para que possamos ter uma
+visão e tomar as devidas atitudes quando necessário".
+
+### Comparativo, não simulador
+
+A decisão que o quadro serve nunca é "quanto sai nesta modalidade". É **"qual sai mais barata, e
+por quanto"**. Um simulador de uma modalidade por vez obriga a anotar num papel e comparar de
+cabeça; a tabela com as modalidades lado a lado responde de um olhar.
+
+Por isso as colunas são as modalidades e as linhas são as verbas: a leitura que importa é
+horizontal — a mesma verba atravessando os cenários.
+
+### O que muda entre elas é DIREITO, não percentual
+
+Este foi o ponto que exigiu cuidado. Não é um multiplicador por cima de um valor base:
+
+- **Justa causa** perde o 13º e as férias proporcionais (Súmula 171 do TST). Mas as férias já
+  **vencidas** continuam devidas — inclusive aí.
+- **Pedido de demissão** mantém as duas, e o aviso passa a ser devido **à empresa**: se não for
+  cumprido, descontam-se 30 dias — só os 30, porque a proporcionalidade da Lei 12.506 é direito do
+  empregado, não da empresa.
+- **Aviso indenizado projeta o contrato**: os avos de 13º e de férias contam até o fim do aviso, não
+  até o último dia trabalhado. É o que faz a dispensa ter 7/12 onde o pedido tem 6/12.
+- **Acordo (art. 484-A)**: metade do aviso, multa de 20%, saque de 80%.
+- **Contrato de experiência** tem duas modalidades próprias, que só aparecem quando a data simulada
+  ainda está dentro do termo: chegar ao fim (sem aviso, sem multa) e romper antes (art. 479: metade
+  dos salários do período que faltava).
+
+E o que é **indenizatório não sofre encargo**: férias e terço indenizados não têm FGTS nem
+contribuição previdenciária; o aviso indenizado tem FGTS (Súmula 305) mas não patronal.
+
+### Um defeito que a tela mostrou antes do usuário
+
+Na simulação de quem tem pouco tempo de casa, o **custo da empresa saía negativo**. A conta estava
+certa: o aviso de 30 dias devido pelo colaborador era maior que tudo o que ele tinha a receber.
+
+Mas a leitura que aquilo produzia era falsa — a tela dizia, em verde e em negrito, que a empresa
+**ganha** com o pedido de demissão. Na prática o desconto vai até zerar o crédito e o resto vira
+cobrança à parte, que quase nunca se faz. Passou a ser assim, com o saldo não absorvido dito em voz
+alta na própria linha: *"limitado ao crédito; sobram R$ 8.129,74"*.
+
+Conta certa que leva à conclusão errada é pior que conta errada, porque ninguém desconfia dela.
+
+### O que o sistema não sabe, e diz que não sabe
+
+Duas coisas entram como **parâmetro editável**, não como chute disfarçado de número:
+
+- **Saldo do FGTS** — o sistema não tem o extrato da Caixa. Sai estimado em 8% do bruto atual por mês
+  de contrato, marcado como estimativa, e o campo aceita o valor do extrato.
+- **Férias vencidas** — não há controle de gozo. Começa em zero e é informado em períodos.
+
+Mesma disciplina do quadro de Custo: o custo da empresa é aritmética e sai com certeza; o líquido
+depende da tabela de INSS/IRRF e carrega o aviso enquanto a competência não for confirmada.
+
+### Verificação
+
+**59 asserções.** A âncora é um caso calculado à mão verba por verba — saldo de salário, aviso, avos
+de 13º e de férias, terço, FGTS, multa e custo total, tudo ao centavo. O resto é mecanismo: cada
+direito que uma modalidade dá ou tira virou uma asserção própria, mais o aviso proporcional em cinco
+tempos de casa (30, 33, 48, 90, 90 dias), as duas modalidades de experiência aparecendo e sumindo na
+data certa, e o custo que **nunca** fica negativo.
+
+Na tela: 6 casos, zero cortes de texto, sem rolagem lateral da página em 1400, 1024 e 375px — a
+tabela rola dentro da própria caixa quando não cabe. Os três controles recalculam do servidor.
+
+### Fora do PDF, de propósito
+
+Não entrou na ficha em PDF. Uma ficha de funcionário com a simulação de demissão impressa é
+constrangedora se sair da sala — e a ficha circula. O quadro fica na tela, sob a mesma trava de
+remuneração.

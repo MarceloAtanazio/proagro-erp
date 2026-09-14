@@ -1288,3 +1288,42 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-enc td { padding: 2px 6px 2px 0; }
 .tbl-enc input { width: 100%; border: 1px solid var(--line); border-radius: 7px;
   padding: 6px 9px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Quadro de rescisão: comparativo das modalidades de saída.
+   Tabela, e não cartões lado a lado, porque a leitura que importa é
+   HORIZONTAL — a mesma verba atravessando as modalidades. */
+.rh-resc-topo { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; margin-bottom: 12px; }
+.rh-resc-topo label { display: flex; flex-direction: column; gap: 4px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.rh-resc-topo input { font-size: 13px; padding: 6px 9px; border: 1px solid var(--line);
+  border-radius: 7px; background: #fff; color: var(--ink); }
+.rh-resc-topo input[type="number"] { width: 72px; }
+.rh-resc-topo input[type="text"] { width: 150px; text-align: right; font-variant-numeric: tabular-nums; }
+.rh-resc-topo label:has(input[type="number"]) { flex-direction: row; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rh-resc-un { text-transform: none; letter-spacing: 0; }
+.rh-resc-casa { font-size: 11.5px; color: var(--muted); align-self: center; }
+
+.rh-resc-rolagem { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.tbl-resc { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+.tbl-resc thead th { position: sticky; top: 0; background: var(--bg-2, #F7F8F7); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); font-weight: 600;
+  padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl-resc thead th:first-child { text-align: left; }
+.tbl-resc tbody th { text-align: left; font-weight: 400; color: var(--ink-2); padding: 7px 12px;
+  border-bottom: 1px solid var(--line-2, #F0F1F0); white-space: nowrap; }
+.tbl-resc td { text-align: right; padding: 7px 12px; font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--line-2, #F0F1F0); white-space: nowrap; }
+/* A unidade do número (dias, avos, %) fica embaixo e miúda: explica sem competir. */
+.tbl-resc i { display: block; font-style: normal; font-size: 10.5px; color: var(--muted); }
+.tbl-resc tr.neg td, .tbl-resc .neg { color: var(--danger, #C0392B); }
+.tbl-resc tr.sub th, .tbl-resc tr.sub td { border-top: 1px solid var(--line); font-weight: 600; }
+.tbl-resc tr.total th, .tbl-resc tr.total td { border-top: 1px solid var(--line); font-weight: 600; }
+/* A linha que decide é a do custo: é a única que ganha peso de verdade. */
+.tbl-resc tr.custo th, .tbl-resc tr.custo td { border-top: 2px solid var(--verde-600, #2E7D4F);
+  font-weight: 700; font-size: 14.5px; color: var(--verde-600, #2E7D4F); padding: 10px 12px; }
+.tbl-resc tr.custo th { color: var(--ink); }
+.tbl-resc tr.info th, .tbl-resc tr.info td { color: var(--muted); font-size: 12px; }
+.tbl-resc tbody tr:last-child th, .tbl-resc tbody tr:last-child td { border-bottom: 0; }
+
+.rh-resc-notas { margin: 11px 0 0; padding-left: 17px; font-size: 11.5px; color: var(--muted); line-height: 1.65; }
+.rh-resc-notas strong { color: var(--ink-2); }
