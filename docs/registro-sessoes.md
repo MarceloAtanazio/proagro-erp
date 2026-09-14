@@ -3984,3 +3984,85 @@ adicional, diz quanto dele é, quantas pessoas o recebem — e uma que fixa a di
 texto corrido, mas o autoTable quebra o rótulo em duas linhas dentro da célula; a outra esperava o
 contato de emergência na ficha **sem** permissão sensível — mas ele é dado pessoal de um terceiro, que
 nem funcionário é, e fica sob `rh_sensivel` de propósito.
+
+---
+
+## 2026-09-14 — Quadro de Custo: do bruto ao líquido, e do líquido ao custo da empresa
+
+**Pedido:** trazer para a aba Vínculo e para o PDF a tabela de composição de custo que o usuário já
+usava por fora — bruto, INSS, IRRF, líquido, provisões, FGTS, INSS patronal, RAT, custo mês e ano.
+
+### A primeira coisa foi conferir a tabela dele
+
+Antes de escrever qualquer cálculo, reproduzi a tabela que ele trouxe, coluna por coluna, nos três
+cargos. Fechou ao centavo — e revelou a regra que eu teria errado por conta própria:
+
+**FGTS, INSS patronal e RAT incidem sobre bruto + PROVISÕES**, não só sobre o salário. Para o
+Coordenador: 13.527,76 + 1.127,31 + 375,77 + 1.127,31 = 16.158,15, e é sobre isso que os 8%, 20% e 1%
+são aplicados. É assim que o encargo de fato se acumula ao longo do ano.
+
+### Duas naturezas, tratadas de forma diferente
+
+O ponto de projeto está aqui:
+
+**O custo da empresa é aritmética.** Percentuais fixos sobre a remuneração. Sai com certeza, e é o
+número que serve para orçar.
+
+**O salário líquido depende das tabelas de INSS e IRRF, que mudam todo ano.** Eu não tenho como saber
+a tabela vigente com segurança, e chutar faixa seria o pior caminho possível: o número sai com cara
+de oficial e vira base de decisão salarial.
+
+Então as faixas viraram **dado editável** (`erp_rh_encargos`), com `competencia` e `confirmada`. O
+sistema nasce com a tabela de 2025 e `confirmada = false`; enquanto ninguém confirmar, o quadro mostra
+o líquido **com aviso**, e o PDF imprime "NÃO CONFIRMADA". O custo da empresa não carrega esse aviso,
+porque não depende das faixas.
+
+Uma pista para quem for confirmar: a tabela do usuário implica um **teto de INSS de R$ 988,09**,
+diferente do de 2025 (R$ 951,62) — ou seja, ele usou a tabela de outro ano, e é essa que precisa
+entrar.
+
+### O cálculo
+
+- **INSS progressivo**: cada faixa incide só sobre a parte do salário dentro dela; acima do teto para
+  de subir — é o que faz dois salários muito diferentes descontarem o mesmo.
+- **IRRF** por dedução de faixa, com a base sendo o bruto menos INSS e deduções legais **ou** menos o
+  desconto simplificado, o que for mais vantajoso ao colaborador — que é o que a lei manda aplicar.
+- **Periculosidade entra no bruto**, e portanto nas provisões e nos encargos.
+- **Benefícios entram no custo mas não na base de encargos** — não são remuneração.
+
+### Onde aparece
+
+Quadro **Custo** na aba Vínculo, em duas colunas lado a lado ("o que o colaborador recebe" × "o que a
+empresa gasta") porque a pergunta é sempre a relação entre os dois. No PDF, a seção **Composição do
+custo** em coluna única — duas colunas ficariam estreitas demais no A4 retrato.
+
+E a tela de **configuração das faixas**, acessível pelo próprio aviso, com as faixas editáveis e o
+"confirmar" separado do "salvar": dá para corrigir uma faixa em duas etapas sem, no meio do caminho,
+declarar a tabela conferida.
+
+### Um defeito real que quase passou
+
+O PDF usava **−** (U+2212, sinal de menos tipográfico) nas linhas de INSS e IRRF. A Helvetica embutida
+do jsPDF não tem esse glifo, e a biblioteca **troca a codificação da linha inteira** — o texto saía
+como lixo. A extração de texto mostrou ` (\" )   I N S S` no
+lugar de "(−) INSS".
+
+O codebase já tinha o aviso — *"sem emojis: a fonte padrão do jsPDF não tem esses glifos e imprime
+lixo no lugar"* — e eu caí nele mesmo assim. Trocado por hífen ASCII **só no PDF**; a tela continua
+com o Unicode correto. Varri o bloco inteiro do PDF atrás de outros caracteres fora do WinAnsi: era o
+único.
+
+### Verificação
+
+**52 asserções** no cálculo, começando pela reprodução da tabela do usuário nos três cargos —
+provisões, FGTS, INSS empresa, RAT, custo mensal **e anual**, tudo ao centavo. Mais o mecanismo:
+INSS progressivo e com teto, dois salários altos descontando igual, isenção de IRRF, dependente
+reduzindo o imposto exatamente na alíquota da dedução, o simplificado vencendo em salário baixo e
+perdendo com muitos dependentes, e a configuração sendo de fato configuração (mudar o RAT muda o
+custo).
+
+Na tela: 4 estados, zero cortes, sem rolagem a 1280px, e uma coluna a 375px. No PDF: 6 asserções
+sobre o texto do arquivo, incluindo que o custo inteiro **some** para quem não vê remuneração.
+
+**Um erro meu que o teste pegou:** o endpoint indexava `[0].n` de um `COUNT` sem guarda. Em produção
+o `COUNT` sempre devolve linha, mas o stub não devolvia — e a ficha inteira respondia 500. Protegido.

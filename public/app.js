@@ -9735,6 +9735,61 @@ async function rhFichaPDF(id) {
         rhPdfRotulo(RH_DESLIG_TIPO, x.desligamento_tipo)]));
   }
 
+  // ---- composição do custo ----
+  // Mesmo conteúdo do quadro da aba Vínculo, em coluna única: uma tabela de
+  // duas colunas lado a lado ficaria estreita demais no A4 retrato.
+  const cst = m.custo_mensal;
+  if (cst) {
+    y = relatorioSecao(doc, y, 'Composição do custo') + 1;
+    const pct = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + '%';
+    // Hifen ASCII, nao o sinal de menos tipografico: a Helvetica embutida do
+    // jsPDF nao tem U+2212, e ele troca a codificacao da linha inteira --
+    // sai lixo no lugar do texto. A tela pode usar o Unicode; o PDF, nao.
+    const linhas = [
+      ['Salário base', brl(cst.salario)],
+      ...(cst.periculosidade ? [[`Periculosidade (${pct(cst.periculosidade_pct)})`, brl(cst.periculosidade)]] : []),
+      ['Salário bruto', brl(cst.bruto)],
+      ['(-) INSS', '- ' + brl(cst.inss)],
+      [`(-) IRRF${cst.dependentes ? ` · ${cst.dependentes} dependente(s)` : ''}`, '- ' + brl(cst.irrf)],
+      ['= Salário líquido', brl(cst.liquido)],
+      ['Provisão de férias (1/12)', brl(cst.ferias)],
+      ['Terço constitucional', brl(cst.terco_ferias)],
+      ['Provisão de 13º (1/12)', brl(cst.decimo_terceiro)],
+      [`FGTS (${pct(cst.fgts_pct)})`, brl(cst.fgts)],
+      [`INSS empresa (${pct(cst.inss_patronal_pct)})`, brl(cst.inss_patronal)],
+      [`RAT (${pct(cst.rat_pct)})`, brl(cst.rat)],
+      ...(cst.terceiros ? [[`Terceiros (${pct(cst.terceiros_pct)})`, brl(cst.terceiros)]] : []),
+      ...(cst.beneficios ? [[`Benefícios (${cst.beneficios_base_dias} dias)`, brl(cst.beneficios)]] : []),
+      ['= Custo total / mês', brl(cst.custo_mensal)],
+      ['Custo total / ano', brl(cst.custo_anual)]
+    ];
+    const destaque = ['= Salário líquido', '= Custo total / mês', 'Salário bruto'];
+    doc.autoTable(relatorioTabelaEstilo(rodape, {
+      startY: y, body: linhas, tableWidth: larg,
+      styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, textColor: [40, 46, 42],
+                lineColor: [230, 236, 232], lineWidth: 0.1 },
+      alternateRowStyles: {},
+      columnStyles: { 0: { cellWidth: larg * 0.62, textColor: [90, 100, 94] },
+                      1: { halign: 'right', fontStyle: 'bold' } },
+      didParseCell: h => {
+        const rot = linhas[h.row.index] && linhas[h.row.index][0];
+        if (destaque.includes(rot)) {
+          h.cell.styles.fontStyle = 'bold';
+          h.cell.styles.fillColor = [246, 251, 248];
+          if (rot !== 'Salário bruto') h.cell.styles.textColor = [0, 120, 63];
+        }
+        if (h.column.index === 1 && /^- /.test(String(h.cell.raw))) h.cell.styles.textColor = [178, 58, 47];
+      }
+    }));
+    y = doc.lastAutoTable.finalY + 3;
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7);
+    doc.setTextColor(...(cst.tabela_confirmada ? [110, 120, 114] : [178, 58, 47]));
+    const nota = `Encargos sobre ${brl(cst.base_encargos)} (bruto + provisões). Tabela de INSS/IRRF: ${cst.competencia}` +
+      (cst.tabela_confirmada ? '.' : ' — NÃO CONFIRMADA; o líquido pode mudar.');
+    doc.splitTextToSize(nota, larg).forEach((t, i) => doc.text(t, MARGIN, y + i * 3.4));
+    y += 10;
+  }
+
   // ---- o raio-x ----
   y = relatorioSecao(doc, y, 'Indicadores do colaborador') + 1;
   const ind = [
@@ -9749,12 +9804,9 @@ async function rhFichaPDF(id) {
     ['Treinamentos', `${m.desenvolvimento.registros} · ${m.desenvolvimento.horas}h` +
       (m.desenvolvimento.investimento != null ? ` · ${brl(m.desenvolvimento.investimento)}` : '') +
       (m.desenvolvimento.certificacoes_vencidas ? ` · ${m.desenvolvimento.certificacoes_vencidas} vencida(s)` : '')],
-    ...(m.custo_mensal ? [['Custo mensal',
-      `${brl(m.custo_mensal.salario + m.custo_mensal.periculosidade + m.custo_mensal.beneficios)}` +
-      ` (salário ${brl(m.custo_mensal.salario)}` +
-      (m.custo_mensal.periculosidade
-        ? ` + periculosidade ${m.custo_mensal.periculosidade_pct}% ${brl(m.custo_mensal.periculosidade)}` : '') +
-      ` + benefícios ${brl(m.custo_mensal.beneficios)})`]] : [])
+    ...(m.custo_mensal ? [
+      ['Salário líquido', brl(m.custo_mensal.liquido) + ` (bruto ${brl(m.custo_mensal.bruto)})`],
+      ['Custo mensal', brl(m.custo_mensal.custo_mensal) + ` · ${brl(m.custo_mensal.custo_anual)}/ano`]] : [])
   ];
   doc.autoTable(relatorioTabelaEstilo(rodape, {
     startY: y, body: ind, tableWidth: larg,
@@ -10836,10 +10888,134 @@ function rhAbaVinculo(painel, d, id) {
         ${linha('Clube Saúde', v.clube_saude ? 'Sim' : 'Não')}
         ${linha('Seguro de vida', v.seguro_vida ? 'Sim' : 'Não')}
       </div></div>` : '<div class="rh-nota">🔒 Remuneração e benefícios não estão visíveis para o seu acesso.</div>'}
+    ${rhQuadroCusto(d.custo)}
     ${rhHistoricoVinculos(historico, rem)}`;
 
   const be = painel.querySelector('#rh-editar-vinculo');
   if (be) be.onclick = () => rhFormVinculo(id, v, d);
+  const bc = painel.querySelector('[data-ir-encargos]');
+  if (bc) bc.onclick = () => rhFormEncargos(() => abrirFichaRH(id, 'vinculo'));
+}
+
+// Quadro de custo: do bruto ao líquido, e do líquido ao custo da empresa.
+//
+// Dois blocos com naturezas diferentes, e a tela diz qual é qual. O que a
+// empresa gasta é aritmética e sai com certeza. O que o colaborador recebe
+// depende das tabelas de INSS e IRRF, que mudam todo ano — por isso o aviso
+// quando a competência não foi confirmada. Número com cara de oficial que está
+// errado é pior que número nenhum.
+function rhQuadroCusto(c) {
+  if (!c) return '';
+  const l = (rot, val, cls) => `<div class="rh-custo-linha ${cls || ''}"><span>${rot}</span><b>${val}</b></div>`;
+  const pct = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + '%';
+  return `<div class="rh-sec rh-custo"><h4>Custo <span class="rh-lgpd">restrito</span></h4>
+
+    ${!c.tabela_confirmada ? `<div class="rh-nota aviso">A tabela de INSS/IRRF em uso é a de
+      <strong>${esc(c.competencia)}</strong> e <strong>ainda não foi confirmada</strong>. O custo da empresa
+      não depende dela, mas o <strong>líquido</strong> sim — confira as faixas em
+      <button class="rh-link" data-ir-encargos="1">Configurações de encargos</button>.</div>` : ''}
+
+    <div class="rh-custo-cols">
+      <div class="rh-custo-bloco">
+        <h5>O que o colaborador recebe</h5>
+        ${l('Salário base', brl(c.salario))}
+        ${c.periculosidade ? l(`Periculosidade (${pct(c.periculosidade_pct)})`, '+ ' + brl(c.periculosidade)) : ''}
+        ${l('Salário bruto', brl(c.bruto), 'sub')}
+        ${l('(−) INSS', '− ' + brl(c.inss), 'neg')}
+        ${l(`(−) IRRF${c.dependentes ? ` · ${c.dependentes} dependente(s)` : ''}`, '− ' + brl(c.irrf), 'neg')}
+        ${l('= Salário líquido', brl(c.liquido), 'total')}
+        <p class="rh-custo-nota">IRRF sobre base de ${brl(c.irrf_base)} a ${pct(c.irrf_aliquota)}${
+          c.irrf_simplificado ? ', com desconto simplificado (mais vantajoso)' : ''}. Tabela ${esc(c.competencia)}.</p>
+      </div>
+
+      <div class="rh-custo-bloco">
+        <h5>O que a empresa gasta</h5>
+        ${l('Salário bruto', brl(c.bruto))}
+        ${l('Provisão de férias (1/12)', '+ ' + brl(c.ferias))}
+        ${l('Terço constitucional', '+ ' + brl(c.terco_ferias))}
+        ${l('Provisão de 13º (1/12)', '+ ' + brl(c.decimo_terceiro))}
+        ${l(`FGTS (${pct(c.fgts_pct)})`, '+ ' + brl(c.fgts))}
+        ${l(`INSS empresa (${pct(c.inss_patronal_pct)})`, '+ ' + brl(c.inss_patronal))}
+        ${l(`RAT (${pct(c.rat_pct)})`, '+ ' + brl(c.rat))}
+        ${c.terceiros ? l(`Terceiros (${pct(c.terceiros_pct)})`, '+ ' + brl(c.terceiros)) : ''}
+        ${c.beneficios ? l(`Benefícios (${c.beneficios_base_dias} dias)`, '+ ' + brl(c.beneficios)) : ''}
+        ${l('= Custo total / mês', brl(c.custo_mensal), 'total')}
+        ${l('Custo total / ano', brl(c.custo_anual), 'ano')}
+        <p class="rh-custo-nota">FGTS, INSS empresa e RAT incidem sobre ${brl(c.base_encargos)} —
+          o bruto mais as provisões, que é como o encargo de fato se acumula no ano.</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Tabela de encargos: as faixas de INSS e IRRF, e os percentuais patronais.
+//
+// Editável porque MUDA TODO ANO. O botão "confirmar" é separado de salvar: dá
+// para corrigir uma faixa em duas etapas sem, no meio do caminho, declarar que
+// a tabela está conferida.
+function rhFormEncargos(voltarPara) {
+  api('/api/rh/encargos').then(c => {
+    const inss = Array.isArray(c.inss_faixas) ? c.inss_faixas : [];
+    const irrf = Array.isArray(c.irrf_faixas) ? c.irrf_faixas : [];
+    const numIn = (id, v, attrs) => `<input id="${id}" type="number" step="0.01" min="0" value="${v == null ? '' : v}" ${attrs || ''}>`;
+
+    openModal('Tabela de encargos e impostos', `
+      <div class="rh-nota">Estas faixas definem o <strong>salário líquido</strong> de todo mundo. O custo da
+        empresa (provisões, FGTS, INSS patronal, RAT) não depende delas — depende só dos percentuais abaixo.
+        <strong>As tabelas mudam todo ano</strong>: atualize a competência quando a nova sair.</div>
+
+      <div class="form-row">
+        ${fld('en-comp', 'Competência (ex.: 2026)', 'text', c.competencia)}
+        ${fld('en-dep', 'Dedução por dependente (R$)', 'number', c.irrf_dependente, 'step="0.01" min="0"')}
+        ${fld('en-simpl', 'Desconto simplificado (R$)', 'number', c.irrf_simplificado, 'step="0.01" min="0"')}
+      </div>
+
+      <h5 class="rh-enc-h">INSS do colaborador — progressivo</h5>
+      <p class="rh-custo-nota">Cada faixa incide só sobre a parte do salário dentro dela. A última é o
+        <strong>teto</strong>: acima dela o desconto para de subir.</p>
+      <table class="tbl-enc"><thead><tr><th>Até (R$)</th><th>Alíquota (%)</th></tr></thead>
+        <tbody>${inss.map((f, i) => `<tr>
+          <td>${numIn('en-in-ate-' + i, f.ate)}</td>
+          <td>${numIn('en-in-aliq-' + i, f.aliquota, 'max="100"')}</td></tr>`).join('')}</tbody></table>
+
+      <h5 class="rh-enc-h">IRRF — alíquota e parcela a deduzir</h5>
+      <p class="rh-custo-nota">A última faixa não tem teto: deixe "Até" vazio.</p>
+      <table class="tbl-enc"><thead><tr><th>Até (R$)</th><th>Alíquota (%)</th><th>Deduzir (R$)</th></tr></thead>
+        <tbody>${irrf.map((f, i) => `<tr>
+          <td>${numIn('en-ir-ate-' + i, f.ate, 'placeholder="sem teto"')}</td>
+          <td>${numIn('en-ir-aliq-' + i, f.aliquota, 'max="100"')}</td>
+          <td>${numIn('en-ir-ded-' + i, f.deducao)}</td></tr>`).join('')}</tbody></table>
+
+      <h5 class="rh-enc-h">Encargos da empresa</h5>
+      <div class="form-row">
+        ${fld('en-fgts', 'FGTS (%)', 'number', c.fgts_pct, 'step="0.001" min="0"')}
+        ${fld('en-inssp', 'INSS empresa (%)', 'number', c.inss_patronal_pct, 'step="0.001" min="0"')}
+        ${fld('en-rat', 'RAT (%)', 'number', c.rat_pct, 'step="0.001" min="0"')}
+        ${fld('en-terc', 'Terceiros / Sistema S (%)', 'number', c.terceiros_pct, 'step="0.001" min="0"')}
+      </div>
+      <label class="check-chip"><input type="checkbox" id="en-conf" ${c.confirmada ? 'checked' : ''}>
+        Confirmo que estas faixas são as da competência informada
+        <span style="color:var(--muted);font-weight:400">— sem isso, o líquido aparece com aviso</span></label>`,
+      [{ label: 'Cancelar', onClick: voltarPara },
+       { label: 'Salvar', cls: 'primary', onClick: async () => {
+          const num = id => { const el = $('#' + id); return el && el.value !== '' ? Number(el.value) : null; };
+          const body = {
+            competencia: $('#en-comp').value.trim(),
+            confirmada: $('#en-conf').checked,
+            irrf_dependente: num('en-dep'), irrf_simplificado: num('en-simpl'),
+            fgts_pct: num('en-fgts'), inss_patronal_pct: num('en-inssp'),
+            rat_pct: num('en-rat'), terceiros_pct: num('en-terc'),
+            inss_faixas: inss.map((_, i) => ({ ate: num('en-in-ate-' + i), aliquota: num('en-in-aliq-' + i) })),
+            irrf_faixas: irrf.map((_, i) => ({ ate: num('en-ir-ate-' + i), aliquota: num('en-ir-aliq-' + i),
+                                               deducao: num('en-ir-ded-' + i) || 0 }))
+          };
+          try {
+            await api('/api/rh/encargos', { method: 'PUT', body });
+            closeModal(); toast('Tabela de encargos atualizada.');
+            if (voltarPara) voltarPara();
+          } catch (e) { modalError(e.message); }
+       }}], { wide: true });
+  }).catch(e => toast(e.message));
 }
 
 function rhHistoricoVinculos(lista, rem) {

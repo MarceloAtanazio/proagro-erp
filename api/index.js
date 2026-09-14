@@ -274,6 +274,7 @@ const AUDIT_MAP = {
   'DELETE /api/rh/colaboradores/:id': req => `EXCLUIU o colaborador ID ${req.params.id}`,
   'POST /api/rh/admissoes/:id/encerrar': req => `ENCERROU a candidatura do processo ID ${req.params.id} — ${req.body.tipo || 'sem motivo'}${req.body.motivo ? ` (${req.body.motivo})` : ''}`,
   'POST /api/rh/admissoes/:id/reabrir': req => `Reabriu o processo de admissão ID ${req.params.id}`,
+  'PUT /api/rh/encargos': req => `Atualizou a tabela de encargos para a competência ${req.body.competencia}${req.body.confirmada ? ' (confirmada)' : ''}`,
   'POST /api/rh/colaboradores/:id/treinamentos': req => `Registrou o treinamento "${req.body.titulo}" para o colaborador ID ${req.params.id}`,
   'DELETE /api/rh/treinamentos/:id': req => `Excluiu o treinamento ID ${req.params.id}`,
   'POST /api/rh/clima': req => `Registrou resposta da pesquisa de clima do ciclo ${req.body.ciclo}`,
@@ -2330,10 +2331,21 @@ app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(asyn
                      FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1
                     ORDER BY created_at DESC`, [id])
     : [];
+  // Custo so para quem ve remuneracao: ele expoe salario, liquido e encargos.
+  const verRemunFicha = rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab);
+  const vinculoVigente = vinculos.find(v => !v.desligamento) || null;
+  const custo = verRemunFicha && vinculoVigente
+    ? rhCustoDoVinculo(vinculoVigente, await rhEncargos(),
+        // COUNT sempre devolve linha em Postgres, mas indexar [0] sem guarda faz
+        // a ficha inteira responder 500 se algum dia nao devolver.
+        ((await query('SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND dependente_ir=true', [id]))[0] || {}).n || 0)
+    : null;
+
   res.json({
     colaborador: rhFiltrar(colab, req.user, colab),
     vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
     dependentes,
+    custo,
     dossie: anexos,
     checklist: rhChecklist(colab, anexos),
     tipos_documento: RH_DOC_TIPOS,
@@ -3501,6 +3513,103 @@ function rhSomaDiasISO(iso, n) {
   return new Date(Date.UTC(a, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
+// ============================================================
+// RH — custo real do colaborador
+//
+// Duas naturezas, tratadas de forma diferente de propósito:
+//
+//   O CUSTO DA EMPRESA é aritmética — provisões e percentuais fixos sobre a
+//   remuneração. Sai com certeza, e é o número que interessa para orçar.
+//
+//   O SALÁRIO LÍQUIDO depende das tabelas de INSS e IRRF, que mudam todo ano.
+//   Elas são DADO editável (erp_rh_encargos), e enquanto ninguém confirmar a
+//   competência a tela mostra o líquido com aviso. Chutar faixa seria pior que
+//   não mostrar: o número sai com cara de oficial e vira base de decisão.
+//
+// FGTS, INSS patronal e RAT incidem sobre remuneração + PROVISÕES (férias, o
+// terço e o 13º), não só sobre o salário — é assim que o encargo de fato se
+// acumula ao longo do ano, e é o que a tabela de referência da empresa faz.
+// ============================================================
+const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+
+async function rhEncargos() {
+  const r = await query('SELECT * FROM erp_rh_encargos WHERE id=1');
+  return r[0] || null;
+}
+
+// INSS progressivo: cada faixa incide só sobre a parte do salário dentro dela.
+// Acima do teto a contribuição para de subir — é o que faz dois salários muito
+// diferentes descontarem o mesmo valor.
+function rhINSS(bruto, faixas) {
+  let restante = Number(bruto) || 0, anterior = 0, total = 0;
+  for (const f of faixas) {
+    const teto = f.ate == null ? Infinity : Number(f.ate);
+    const base = Math.min(restante, teto - anterior);
+    if (base <= 0) break;
+    total += base * (Number(f.aliquota) / 100);
+    restante -= base; anterior = teto;
+    if (restante <= 0) break;
+  }
+  return r2(total);
+}
+
+// IRRF pelo modelo dedução-por-faixa: alíquota sobre a base menos a parcela a
+// deduzir. A base é o bruto menos INSS e menos as deduções legais — ou menos o
+// desconto simplificado, o que for MAIS VANTAJOSO para o colaborador, que é o
+// que a lei manda aplicar.
+function rhIRRF(bruto, inss, dependentes, cfg) {
+  const legais = inss + (Number(dependentes) || 0) * n(cfg.irrf_dependente);
+  const base = Math.max(0, Number(bruto) - Math.max(legais, n(cfg.irrf_simplificado)));
+  const faixas = Array.isArray(cfg.irrf_faixas) ? cfg.irrf_faixas : [];
+  const f = faixas.find(x => x.ate == null || base <= Number(x.ate)) || faixas[faixas.length - 1];
+  if (!f) return { imposto: 0, base: r2(base), aliquota: 0 };
+  const imposto = Math.max(0, base * (Number(f.aliquota) / 100) - Number(f.deducao || 0));
+  return { imposto: r2(imposto), base: r2(base), aliquota: Number(f.aliquota),
+           usou_simplificado: n(cfg.irrf_simplificado) > legais };
+}
+
+function rhCustoDoVinculo(v, cfg, nDependentes) {
+  if (!v || !cfg) return null;
+  const salario = n(v.salario);
+  const periculosidade = r2(salario * (n(v.periculosidade_pct) / 100));
+  const bruto = r2(salario + periculosidade);
+
+  const inss = rhINSS(bruto, Array.isArray(cfg.inss_faixas) ? cfg.inss_faixas : []);
+  const irrf = rhIRRF(bruto, inss, nDependentes, cfg);
+  const liquido = r2(bruto - inss - irrf.imposto);
+
+  // Provisões: 1/12 por mês de férias e de 13º, mais o terço sobre as férias.
+  const ferias = r2(bruto / 12);
+  const terco = r2(ferias / 3);
+  const decimo = r2(bruto / 12);
+  const baseEncargos = r2(bruto + ferias + terco + decimo);
+
+  const fgts = r2(baseEncargos * n(cfg.fgts_pct) / 100);
+  const inssPatronal = r2(baseEncargos * n(cfg.inss_patronal_pct) / 100);
+  const rat = r2(baseEncargos * n(cfg.rat_pct) / 100);
+  const terceiros = r2(baseEncargos * n(cfg.terceiros_pct) / 100);
+
+  // Benefícios não são encargo e não entram na base — são custo direto.
+  const beneficios = r2((n(v.vr_dia) + n(v.home_office_dia)) * 22);
+
+  const custoMensal = r2(bruto + ferias + terco + decimo + fgts + inssPatronal + rat + terceiros + beneficios);
+
+  return {
+    competencia: cfg.competencia, tabela_confirmada: cfg.confirmada === true,
+    salario, periculosidade_pct: v.periculosidade_pct != null ? n(v.periculosidade_pct) : null,
+    periculosidade, bruto,
+    inss, irrf: irrf.imposto, irrf_base: irrf.base, irrf_aliquota: irrf.aliquota,
+    irrf_simplificado: irrf.usou_simplificado === true,
+    dependentes: Number(nDependentes) || 0, liquido,
+    ferias, terco_ferias: terco, decimo_terceiro: decimo, base_encargos: baseEncargos,
+    fgts, inss_patronal: inssPatronal, rat, terceiros,
+    fgts_pct: n(cfg.fgts_pct), inss_patronal_pct: n(cfg.inss_patronal_pct),
+    rat_pct: n(cfg.rat_pct), terceiros_pct: n(cfg.terceiros_pct),
+    beneficios, beneficios_base_dias: 22,
+    custo_mensal: custoMensal, custo_anual: r2(custoMensal * 12)
+  };
+}
+
 // ---- Ficha completa para impressão ----
 //
 // Endpoint próprio, e não um "?completo=1" no GET da ficha: a tela carrega
@@ -3599,16 +3708,12 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
       investimento: verRemun ? Math.round(treinos.reduce((s, t) => s + n(t.custo), 0) * 100) / 100 : null,
       certificacoes_vencidas: treinos.filter(t => t.validade && String(t.validade).slice(0, 10) < hoje).length
     },
-    custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento ? {
-      salario: n(vinculoAtual.salario),
-      // Periculosidade compõe a remuneração — entra no 13º, nas férias e no
-      // FGTS. Deixá-la de fora subestimava o custo em 30% de quem a recebe.
-      periculosidade_pct: vinculoAtual.periculosidade_pct != null ? n(vinculoAtual.periculosidade_pct) : null,
-      periculosidade: Math.round(n(vinculoAtual.salario) * (n(vinculoAtual.periculosidade_pct) / 100) * 100) / 100,
-      // Mesma base de 22 dias úteis do painel, para os dois números conversarem.
-      beneficios: Math.round((n(vinculoAtual.vr_dia) + n(vinculoAtual.home_office_dia)) * 22 * 100) / 100,
-      base_dias_uteis: 22
-    } : null
+    // O custo completo (liquido, provisoes e encargos) vem de rhCustoDoVinculo,
+    // a MESMA funcao que a aba Vinculo usa -- os dois nao podem divergir.
+    custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento
+      ? rhCustoDoVinculo(vinculoAtual, await rhEncargos(),
+          dependentes.filter(d => d.dependente_ir).length)
+      : null
   };
 
   res.json({
@@ -3623,6 +3728,56 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
     metricas,
     pode: { sensivel: verSens, remuneracao: verRemun, dossie: podeDossie }
   });
+}));
+
+// ---- Tabela de encargos ----
+// Ler exige ver remuneração; editar exige editar RH. São as faixas que definem
+// o líquido de todo mundo — não é configuração de tela.
+app.get('/api/rh/encargos', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  if (!rhVeRemuneracao(req.user)) return res.status(403).json({ error: 'Exige a permissão “RH · remuneração e benefícios”.' });
+  const c = await rhEncargos();
+  if (!c) return res.status(404).json({ error: 'Tabela de encargos não configurada.' });
+  res.json({ ...c, irrf_dependente: n(c.irrf_dependente), irrf_simplificado: n(c.irrf_simplificado),
+    fgts_pct: n(c.fgts_pct), inss_patronal_pct: n(c.inss_patronal_pct),
+    rat_pct: n(c.rat_pct), terceiros_pct: n(c.terceiros_pct) });
+}));
+
+app.put('/api/rh/encargos', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhVeRemuneracao(req.user)) return res.status(403).json({ error: 'Exige a permissão “RH · remuneração e benefícios”.' });
+  const b = req.body;
+  const competencia = sanitize(b.competencia);
+  if (!competencia) return res.status(400).json({ error: 'Informe a competência da tabela (ex.: 2026).' });
+
+  // As faixas são o coração do cálculo: entram conferidas ou não entram.
+  const faixasINSS = Array.isArray(b.inss_faixas) ? b.inss_faixas : null;
+  if (!faixasINSS || !faixasINSS.length) return res.status(400).json({ error: 'Informe as faixas do INSS.' });
+  for (const f of faixasINSS) {
+    if (!(Number(f.ate) > 0) || !(Number(f.aliquota) >= 0)) {
+      return res.status(400).json({ error: 'Cada faixa do INSS precisa de um teto e uma alíquota.' });
+    }
+  }
+  // Progressivo só faz sentido com os tetos em ordem crescente; fora de ordem,
+  // o cálculo para na primeira faixa e o desconto sai menor que o devido.
+  for (let i = 1; i < faixasINSS.length; i++) {
+    if (Number(faixasINSS[i].ate) <= Number(faixasINSS[i - 1].ate)) {
+      return res.status(400).json({ error: 'As faixas do INSS precisam estar em ordem crescente de teto.' });
+    }
+  }
+  const faixasIRRF = Array.isArray(b.irrf_faixas) ? b.irrf_faixas : null;
+  if (!faixasIRRF || !faixasIRRF.length) return res.status(400).json({ error: 'Informe as faixas do IRRF.' });
+  if (faixasIRRF[faixasIRRF.length - 1].ate != null) {
+    return res.status(400).json({ error: 'A última faixa do IRRF não tem teto — deixe o campo vazio.' });
+  }
+  const pct = (v, padrao) => (v === undefined || v === '' || !isFinite(Number(v)) ? padrao : Number(v));
+
+  await query(
+    `UPDATE erp_rh_encargos SET competencia=$1, confirmada=$2, inss_faixas=$3, irrf_faixas=$4,
+        irrf_dependente=$5, irrf_simplificado=$6, fgts_pct=$7, inss_patronal_pct=$8,
+        rat_pct=$9, terceiros_pct=$10, atualizado_em=now(), atualizado_por=$11 WHERE id=1`,
+    [competencia, b.confirmada === true, JSON.stringify(faixasINSS), JSON.stringify(faixasIRRF),
+     pct(b.irrf_dependente, 189.59), pct(b.irrf_simplificado, 607.20), pct(b.fgts_pct, 8),
+     pct(b.inss_patronal_pct, 20), pct(b.rat_pct, 1), pct(b.terceiros_pct, 0), req.user.id]);
+  res.json({ ok: true });
 }));
 
 // ---- Arquivar e desarquivar ----
