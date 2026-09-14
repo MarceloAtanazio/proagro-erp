@@ -3863,3 +3863,57 @@ navegador trata PDF como download e bloqueia o worker do pdf.js, o que inviabili
 a leitura do content stream, que acabou sendo a verificação melhor.
 
 O roteiro ficou guardado em `conferir-ficha-pdf.txt`, para rodar de novo quando a ficha mudar.
+
+---
+
+## 2026-09-14 — Trocar o CEP deixava a rua da cidade anterior
+
+**Reportado pelo usuário:** o primeiro CEP preencheu tudo certo; ao trocar por outro, só município e
+UF mudaram.
+
+### O que acontecia
+
+O código escrevia cada campo **só quando o CEP devolvia valor**:
+
+    if (e.logradouro) $('#rh-endereco').value = e.logradouro;
+    if (e.bairro)     $('#rh-bairro').value   = e.bairro;
+
+O comentário que eu mesmo tinha escrito ali denuncia o raciocínio errado: *"só sobrescreve o que veio
+do CEP; número e complemento ficam intactos"*. Proteger número e complemento está certo — o ViaCEP
+não os conhece. Mas logradouro e bairro **são** do CEP, e a mesma guarda os congelava.
+
+CEP de cidade pequena vem sem logradouro e sem bairro. O do print é exatamente assim:
+
+    86990-000 → logradouro: ""  bairro: ""  localidade: "Marialva"  uf: "PR"
+
+Então trocar de 01310-930 para 86990-000 produzia:
+
+    rua "Avenida Paulista" · bairro "Bela Vista" · município "Marialva" · UF "PR"
+
+Um endereço **Frankenstein**, com a rua de uma cidade e o município de outra. E isso não é cosmético:
+o endereço vai para o contrato de trabalho. Endereço meio certo é pior que vazio — ele parece
+preenchido, então ninguém confere.
+
+### A correção
+
+Os quatro campos pertencem ao CEP e são reescritos **sempre**, inclusive em branco. Número e
+complemento continuam sendo do usuário.
+
+E o aviso mudou de papel: quando não há logradouro, ele deixa de dizer "falta o número" e passa a
+dizer *"este CEP não tem logradouro. Digite a rua e o número"* — com o foco indo para a **rua**, que é
+o que realmente falta.
+
+Vale para os dois lugares que usam CEP, porque compartilham a função: a aba Contato e o card do
+Kanban na etapa Documentação — este último é justamente onde o endereço do contrato é preenchido.
+
+### Verificação
+
+**15 asserções** com as funções reais de `app.js` e respostas gravadas do ViaCEP (as de verdade,
+conferidas na API). Cobrem a troca para CEP sem logradouro, a volta para um CEP com logradouro,
+número e complemento preservados, CEP inexistente que avisa sem destruir o endereço válido, e que não
+se consulta a cada tecla nem duas vezes o mesmo CEP.
+
+**E confirmei que o teste pega o defeito:** reconstruí a versão antiga num diretório à parte e rodei
+a mesma suíte — 4 asserções falharam, reproduzindo o Frankenstein exato
+(`{"rua":"Avenida Paulista", ..., "municipio":"Marialva"}`). Teste que passa nos dois lados não prova
+nada.

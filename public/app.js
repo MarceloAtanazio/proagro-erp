@@ -10710,14 +10710,26 @@ function rhLigarCEP() {
     try {
       const e = await rhBuscarCEP(d);
       if (!e) { status.textContent = 'CEP não encontrado. Preencha o endereço à mão.'; status.className = 'campo-dica erro'; return; }
-      // Só sobrescreve o que veio do CEP; número e complemento ficam intactos.
-      if (e.logradouro) $('#rh-endereco').value = e.logradouro;
-      if (e.bairro) $('#rh-bairro').value = e.bairro;
-      if (e.municipio) $('#rh-municipio').value = e.municipio;
-      if (e.uf) $('#rh-uf').value = e.uf;
-      status.textContent = `Endereço preenchido: ${e.logradouro || '(sem logradouro)'} — ${e.municipio}/${e.uf}. Falta o número.`;
+      // Os quatro campos pertencem ao CEP e são reescritos SEMPRE — inclusive
+      // em branco. CEP de cidade pequena costuma vir sem logradouro e sem
+      // bairro; mantendo o valor anterior, trocar o CEP deixava a rua de uma
+      // cidade com o município de outra. Endereço meio certo é pior que vazio:
+      // ele parece preenchido e vai parar no contrato.
+      //
+      // Número e complemento NÃO vêm do CEP e continuam sendo do usuário.
+      $('#rh-endereco').value = e.logradouro;
+      $('#rh-bairro').value = e.bairro;
+      $('#rh-municipio').value = e.municipio;
+      $('#rh-uf').value = e.uf;
+
+      // Sem logradouro, o que falta digitar é a rua — não o número.
+      const semRua = !e.logradouro;
+      status.textContent = semRua
+        ? `CEP de ${e.municipio}/${e.uf} — este CEP não tem logradouro. Digite a rua e o número.`
+        : `Endereço preenchido: ${e.logradouro} — ${e.municipio}/${e.uf}. Falta o número.`;
       status.className = 'campo-dica ok';
-      const n = $('#rh-endereco_numero'); if (n && !n.value) n.focus();
+      const alvo = semRua ? $('#rh-endereco') : $('#rh-endereco_numero');
+      if (alvo && !alvo.value) alvo.focus();
     } catch (err) {
       status.textContent = 'Não consegui consultar o CEP agora — preencha o endereço à mão.';
       status.className = 'campo-dica erro';
