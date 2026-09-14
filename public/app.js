@@ -9827,7 +9827,7 @@ async function rhFichaPDF(id) {
   if (pode.sensivel) {
     tabela('Dependentes', ['Nome', 'Parentesco', 'Nascimento', 'IR', 'Salário-família'],
       (d.dependentes || []).map(x => [rhPdfTxt(x.nome), rhPdfTxt(x.parentesco), rhPdfData(x.data_nascimento),
-        x.dependente_ir ? 'sim' : 'não', x.salario_familia ? 'sim' : 'não']));
+        x.irrf ? 'sim' : 'não', x.salario_familia ? 'sim' : 'não']));
   }
 
   tabela('Desenvolvimento', ['Título', 'Tipo', 'Instituição', 'Horas', 'Concluído', 'Validade'],

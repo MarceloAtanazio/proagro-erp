@@ -4066,3 +4066,87 @@ sobre o texto do arquivo, incluindo que o custo inteiro **some** para quem não 
 
 **Um erro meu que o teste pegou:** o endpoint indexava `[0].n` de um `COUNT` sem guarda. Em produção
 o `COUNT` sempre devolve linha, mas o stub não devolvia — e a ficha inteira respondia 500. Protegido.
+
+---
+
+## 2026-09-14 — A ficha de quem tem vínculo respondia 500: uma coluna que eu inventei
+
+**Sintoma:** a tela de Recursos Humanos mostrava só *"Erro interno. Tente novamente."*
+
+### Achar o erro custou mais do que corrigir
+
+O diagnóstico andou em círculos por um tempo porque eu procurava no lugar errado.
+Descartei, um a um: colisão de nome no bloco novo de custo, erro de sintaxe (`node --check`
+passava), erro de banco nos logs do Supabase (só aparecia a migração), commit errado no
+`origin/main`, e a consulta-base do painel rodando contra os dados reais de produção —
+que funcionava. Sondar as rotas em produção devolvia 401 em tudo, porque a autenticação
+roda antes e não distingue rota sã de rota quebrada.
+
+O que resolveu foi **abrir o sistema logado e varrer todos os endpoints de RH de uma vez**.
+Aí o padrão apareceu em um segundo:
+
+```
+ficha 1  Fabricio ......... 200
+ficha 6  Marcelo .......... 500
+ficha 7  Leticia .......... 500
+ficha 8  Gabriel .......... 200
+```
+
+Fichas 6 e 7 são **exatamente as duas pessoas com vínculo registrado** — as únicas que
+entram no caminho novo de custo. Com o recorte certo, a causa era uma linha:
+
+```sql
+SELECT count(*)::int AS n FROM erp_rh_dependentes
+ WHERE colaborador_id=$1 AND dependente_ir=true
+```
+
+A coluna chama-se **`irrf`**. `dependente_ir` nunca existiu — eu inventei o nome.
+
+### O mesmo erro pela segunda vez na semana
+
+Dois dias antes, o contato de emergência não aparecia na ficha em PDF pelo mesmo motivo:
+eu tinha escrito `contato_emergencia` e `contato_emergencia_fone` quando as colunas são
+`emergencia_nome`, `emergencia_telefone` e `emergencia_parentesco`.
+
+A diferença entre os dois é só sorte: um nome inventado no **SELECT** volta `undefined` e
+o campo aparece vazio; no **WHERE** o Postgres recusa a consulta e a rota inteira cai. O
+defeito é idêntico — muda o quanto ele grita.
+
+E ele escapa dos testes porque **o caminho quebrado só roda para alguns registros**. Aqui,
+só para quem tem vínculo vigente: 2 de 12 pessoas. Nos stubs de teste a consulta nunca
+chega ao Postgres, então nenhum deles reclamaria.
+
+### A rede de proteção
+
+Em vez de prometer conferir melhor da próxima vez, `tools/conferir-colunas.js` confere
+sozinho, sem banco, em segundos:
+
+```
+node tools/conferir-colunas.js
+```
+
+Ele lê todo SQL literal do código e cobra as colunas contra um retrato do schema
+(`tools/schema-colunas.json`, que carrega a consulta que o regenera). Só acusa o que dá
+para afirmar com certeza — referência qualificada (`c.emergencia_nome`), e coluna solta
+quando o statement tem uma tabela só e nenhuma subconsulta, que é quando não existe outra
+origem possível. Trecho interpolado (`${...}`) some da análise em vez de virar acusação:
+**aviso que erra treina a ser ignorado**, e um verificador em que não se confia não serve
+para nada.
+
+Rodado contra o código que estava no ar, ele aponta o defeito de hoje:
+
+```
+erp_rh_dependentes.dependente_ir
+  em api/index.js:2341
+```
+
+Contra o código corrigido, o único apontamento que sobra é verdadeiro e não é meu: o
+import de despesas cita `import_batch` e `import_linha`, que só existem depois da migração
+`2026-09-01-flash-import-idempotente.sql` — ou seja, aquele código **vai quebrar em
+produção se for publicado antes da migração**. O teste já está avisando.
+
+### Também corrigido de passagem
+
+O mesmo nome inventado aparecia em mais dois lugares, calados: a contagem de dependentes
+de IR na ficha em PDF dava sempre zero, e a coluna "IR" da tabela de dependentes imprimia
+"não" para todo mundo. Os três pontos foram para `irrf`.

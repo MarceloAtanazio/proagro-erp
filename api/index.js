@@ -2338,7 +2338,7 @@ app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(asyn
     ? rhCustoDoVinculo(vinculoVigente, await rhEncargos(),
         // COUNT sempre devolve linha em Postgres, mas indexar [0] sem guarda faz
         // a ficha inteira responder 500 se algum dia nao devolver.
-        ((await query('SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND dependente_ir=true', [id]))[0] || {}).n || 0)
+        ((await query('SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND irrf=true', [id]))[0] || {}).n || 0)
     : null;
 
   res.json({
@@ -3712,7 +3712,7 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
     // a MESMA funcao que a aba Vinculo usa -- os dois nao podem divergir.
     custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento
       ? rhCustoDoVinculo(vinculoAtual, await rhEncargos(),
-          dependentes.filter(d => d.dependente_ir).length)
+          dependentes.filter(d => d.irrf).length)
       : null
   };
 
