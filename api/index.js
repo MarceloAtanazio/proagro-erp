@@ -3250,7 +3250,8 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   const base = await query(`
     SELECT c.id, c.name, c.sexo, c.data_nascimento, c.ativo, c.arquivado_em,
            v.id AS vinculo_id, v.admissao, v.desligamento, v.departamento, v.cargo, v.nivel,
-           v.modelo_trabalho, v.regime, v.tipo, v.salario, v.vr_dia, v.home_office_dia,
+           v.modelo_trabalho, v.regime, v.tipo, v.salario, v.periculosidade_pct,
+           v.vr_dia, v.home_office_dia,
            v.experiencia_fim, v.prorrogacao_fim
       FROM erp_colaboradores c ${RH_SQL_VINCULO_ATUAL}
      WHERE c.arquivado_em IS NULL`);
@@ -3308,7 +3309,13 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
 
   // ---------- custo de pessoal ----------
   const soma = (linhas, campo) => linhas.reduce((s, r) => s + Number(r[campo] || 0), 0);
-  const folha = soma(comVinculo, 'salario');
+  // Periculosidade é parte da REMUNERAÇÃO, não um extra à margem: entra na folha,
+  // no 13º, nas férias e no FGTS. Somar só `salario` subestimava a folha em 30%
+  // de quem tem o adicional — e é justamente o pessoal de campo.
+  const salarioCheio = r => Number(r.salario || 0) * (1 + Number(r.periculosidade_pct || 0) / 100);
+  const folha = comVinculo.reduce((s, r) => s + salarioCheio(r), 0);
+  const periculosidade = comVinculo.reduce((s, r) =>
+    s + Number(r.salario || 0) * (Number(r.periculosidade_pct || 0) / 100), 0);
   // VR e ajuda de custo são por DIA trabalhado: 22 dias úteis é a média usada
   // em folha. É estimativa, e a tela diz isso.
   const beneficios = comVinculo.reduce((s, r) => s + Number(r.vr_dia || 0) * 22 + Number(r.home_office_dia || 0) * 22, 0);
@@ -3316,7 +3323,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   comVinculo.forEach(r => {
     const k = r.departamento || '— não informado —';
     porDepto[k] = porDepto[k] || { chave: k, n: 0, salario: 0 };
-    porDepto[k].n++; porDepto[k].salario += Number(r.salario || 0);
+    porDepto[k].n++; porDepto[k].salario += salarioCheio(r);
   });
 
   // ---------- recrutamento ----------
@@ -3449,6 +3456,10 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
     },
     custo: verCusto ? {
       folha_mensal: Math.round(folha * 100) / 100,
+      // Quanto da folha e adicional de periculosidade: quem olha o numero quer
+      // saber se ele subiu por contratacao ou por exposicao a risco.
+      periculosidade_mensal: Math.round(periculosidade * 100) / 100,
+      com_periculosidade: comVinculo.filter(r => Number(r.periculosidade_pct || 0) > 0).length,
       beneficios_mensais: Math.round(beneficios * 100) / 100,
       custo_medio: comVinculo.length ? Math.round(100 * (folha + beneficios) / comVinculo.length) / 100 : null,
       por_departamento: Object.values(porDepto).sort((a, b) => b.salario - a.salario),
@@ -3517,11 +3528,19 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
                     WHERE entity_type='rh_doc' AND entity_id=$1 ORDER BY created_at DESC`, [id]) : [];
   const treinos = await query(
     'SELECT * FROM erp_rh_treinamentos WHERE colaborador_id=$1 ORDER BY concluido_em DESC NULLS LAST', [id]);
+  // `destino` é a coluna antiga e está nula em tudo que foi criado pelo fluxo
+  // atual: o destino de verdade mora em `destinos` (jsonb), que aceita mais de
+  // um município. Montar aqui, e não na tela, mantém o PDF e a lista iguais.
   const viagens = await query(`
-    SELECT s.id, s.ordem_trabalho, s.destino, s.data_inicio, s.data_fim, s.status,
+    SELECT s.id, s.ordem_trabalho, s.destino, s.destinos, s.data_inicio, s.data_fim, s.status,
            s.valor_solicitado, s.valor_liberado, s.valor_devolvido, s.valor_pendencia,
            COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id),0) AS comprovado
       FROM erp_viaticos_solicitacoes s WHERE s.colaborador_id=$1 ORDER BY s.data_inicio DESC`, [id]);
+  const destinoDe = s => {
+    const lista = Array.isArray(s.destinos) ? s.destinos : [];
+    const txt = lista.filter(d => d && d.municipio).map(d => `${d.municipio}/${d.uf || ''}`.replace(/\/$/, ''));
+    return txt.length ? txt.join(', ') : (s.destino || null);
+  };
   const kms = await query(`
     SELECT k.km_rodado, k.valor_reembolso, k.modelo, k.status
       FROM erp_viaticos_km k JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
@@ -3582,6 +3601,10 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
     },
     custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento ? {
       salario: n(vinculoAtual.salario),
+      // Periculosidade compõe a remuneração — entra no 13º, nas férias e no
+      // FGTS. Deixá-la de fora subestimava o custo em 30% de quem a recebe.
+      periculosidade_pct: vinculoAtual.periculosidade_pct != null ? n(vinculoAtual.periculosidade_pct) : null,
+      periculosidade: Math.round(n(vinculoAtual.salario) * (n(vinculoAtual.periculosidade_pct) / 100) * 100) / 100,
       // Mesma base de 22 dias úteis do painel, para os dois números conversarem.
       beneficios: Math.round((n(vinculoAtual.vr_dia) + n(vinculoAtual.home_office_dia)) * 22 * 100) / 100,
       base_dias_uteis: 22
@@ -3594,7 +3617,7 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
     vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
     dependentes, dossie: anexos, checklist,
     treinamentos: treinos.map(t => (verRemun ? t : { ...t, custo: null })),
-    viagens: viagens.map(v => ({ ...v, valor_solicitado: n(v.valor_solicitado),
+    viagens: viagens.map(v => ({ ...v, destino: destinoDe(v), valor_solicitado: n(v.valor_solicitado),
       valor_liberado: n(v.valor_liberado), valor_devolvido: n(v.valor_devolvido),
       valor_pendencia: n(v.valor_pendencia), comprovado: n(v.comprovado) })),
     metricas,

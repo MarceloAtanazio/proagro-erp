@@ -9647,8 +9647,10 @@ async function rhFichaPDF(id) {
     y = relatorioSecao(doc, y, titulo) + 1;
     const corpo = [];
     for (let i = 0; i < linhas.length; i += 2) {
-      const a = linhas[i], b = linhas[i + 1] || ['', ''];
-      corpo.push([a[0], rhPdfTxt(a[1]), b[0], rhPdfTxt(b[1])]);
+      const a = linhas[i], b = linhas[i + 1];
+      // Número ímpar de campos deixa a última célula vazia — e vazia mesmo,
+      // não com um "—", que pareceria um campo existente sem valor.
+      corpo.push([a[0], rhPdfTxt(a[1]), b ? b[0] : '', b ? rhPdfTxt(b[1]) : '']);
     }
     doc.autoTable(relatorioTabelaEstilo(rodape, {
       startY: y, body: corpo, tableWidth: larg,
@@ -9701,7 +9703,11 @@ async function rhFichaPDF(id) {
       ['Endereço', [c.endereco, c.endereco_numero, c.endereco_complemento].filter(Boolean).join(', ')],
       ['Bairro', c.bairro],
       ['Município', [c.municipio, c.uf].filter(Boolean).join('/')],
-      ['Contato de emergência', [c.contato_emergencia, c.contato_emergencia_fone].filter(Boolean).join(' - ')]
+      // Os nomes das colunas são emergencia_* — na primeira versão eu escrevi
+      // contato_emergencia_*, que não existe, e o campo saía sempre vazio.
+      ['Contato de emergência', [c.emergencia_nome,
+        c.emergencia_parentesco ? `(${c.emergencia_parentesco})` : null].filter(Boolean).join(' ')],
+      ['Telefone de emergência', c.emergencia_telefone]
     ]);
   }
 
@@ -9713,8 +9719,13 @@ async function rhFichaPDF(id) {
     ['Desligamento', v.desligamento ? rhPdfData(v.desligamento) : 'em aberto'],
     ['Tempo de casa', rhPdfDuracao(m.tempo_casa_dias)],
     ['Experiência até', rhPdfData(m.experiencia_fim)],
-    ...(pode.remuneracao ? [['Salário', v.salario != null ? brl(v.salario) : '—'],
-                           ['Benefícios/dia', brl(Number(v.vr_dia || 0) + Number(v.home_office_dia || 0))]] : [])
+    ...(pode.remuneracao ? [
+      ['Salário base', v.salario != null ? brl(v.salario) : '—'],
+      ['Periculosidade', v.periculosidade_pct != null && Number(v.periculosidade_pct) > 0
+        ? `${Number(v.periculosidade_pct)}% · ${brl(Number(v.salario || 0) * Number(v.periculosidade_pct) / 100)}`
+        : 'não se aplica'],
+      ['Remuneração', brl(Number(v.salario || 0) * (1 + Number(v.periculosidade_pct || 0) / 100))],
+      ['Benefícios/dia', brl(Number(v.vr_dia || 0) + Number(v.home_office_dia || 0))]] : [])
   ] : [['Situação', 'Nenhum vínculo registrado']]);
 
   if ((d.vinculos || []).length > 1) {
@@ -9739,7 +9750,11 @@ async function rhFichaPDF(id) {
       (m.desenvolvimento.investimento != null ? ` · ${brl(m.desenvolvimento.investimento)}` : '') +
       (m.desenvolvimento.certificacoes_vencidas ? ` · ${m.desenvolvimento.certificacoes_vencidas} vencida(s)` : '')],
     ...(m.custo_mensal ? [['Custo mensal',
-      `${brl(m.custo_mensal.salario + m.custo_mensal.beneficios)} (salário ${brl(m.custo_mensal.salario)} + benefícios ${brl(m.custo_mensal.beneficios)})`]] : [])
+      `${brl(m.custo_mensal.salario + m.custo_mensal.periculosidade + m.custo_mensal.beneficios)}` +
+      ` (salário ${brl(m.custo_mensal.salario)}` +
+      (m.custo_mensal.periculosidade
+        ? ` + periculosidade ${m.custo_mensal.periculosidade_pct}% ${brl(m.custo_mensal.periculosidade)}` : '') +
+      ` + benefícios ${brl(m.custo_mensal.beneficios)})`]] : [])
   ];
   doc.autoTable(relatorioTabelaEstilo(rodape, {
     startY: y, body: ind, tableWidth: larg,
@@ -10112,7 +10127,8 @@ async function rhPainel(c) {
 
     ${cu ? `<div class="rh-painel-sec"><h3>Custo de pessoal</h3>
       <div class="kpis">
-        ${rhKpi('Folha mensal', brl(cu.folha_mensal), `${co.com_salario} salário(s) cadastrado(s)`)}
+        ${rhKpi('Folha mensal', brl(cu.folha_mensal), `${co.com_salario} salário(s) cadastrado(s)` +
+          (cu.periculosidade_mensal ? ` · inclui ${brl(cu.periculosidade_mensal)} de periculosidade` : ''))}
         ${rhKpi('Benefícios/mês', brl(cu.beneficios_mensais), `estimado em ${cu.base_dias_uteis} dias úteis`)}
         ${rhKpi('Custo médio', cu.custo_medio == null ? '—' : brl(cu.custo_medio), 'por colaborador com vínculo')}
         ${rhKpi('Custo anual', brl((cu.folha_mensal + cu.beneficios_mensais) * 12), 'sem encargos e 13º')}

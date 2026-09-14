@@ -3917,3 +3917,70 @@ se consulta a cada tecla nem duas vezes o mesmo CEP.
 a mesma suíte — 4 asserções falharam, reproduzindo o Frankenstein exato
 (`{"rua":"Avenida Paulista", ..., "municipio":"Marialva"}`). Teste que passa nos dois lados não prova
 nada.
+
+---
+
+## 2026-09-14 — Periculosidade entra na folha, e dois acertos na ficha em PDF
+
+**Reportado pelo usuário**, sobre a ficha gerada: (1) não trazia o contato de emergência; (2) a
+periculosidade informada não entrava no cálculo — *"isso conta muito para nós na composição do
+salário"*; (3) a tabela de viagens não trazia o destino.
+
+Os três eram reais. E o segundo era maior do que o PDF.
+
+### 1. Contato de emergência: eu inventei os nomes das colunas
+
+Escrevi `contato_emergencia` e `contato_emergencia_fone`. As colunas são `emergencia_nome`,
+`emergencia_telefone` e `emergencia_parentesco` — então o campo saía sempre vazio. Não houve erro de
+lógica: houve não ter conferido o esquema.
+
+Agora saem em duas linhas: *"Eliete Atanázio (mãe)"* e o telefone com rótulo próprio.
+
+### 2. A periculosidade faltava também na FOLHA do painel
+
+No PDF, o custo somava salário + benefícios. Mas a mesma omissão estava no painel de RH:
+
+    const folha = soma(comVinculo, 'salario');
+
+Periculosidade é **parte da remuneração** — entra no 13º, nas férias, no FGTS. Somar só `salario`
+subestimava a folha em 30% de quem tem o adicional, que é justamente o pessoal de campo.
+
+Na produção:
+
+    folha que o painel mostrava:  R$ 23.824,64
+    folha real:                   R$ 26.932,20
+    diferença:                    R$  3.107,56/mês  (30% sobre R$ 10.358,54)
+
+O painel passa a somar o salário cheio, a dizer **quanto da folha é periculosidade** e **quantas
+pessoas a recebem** — quem olha o número quer saber se ele subiu por contratação ou por exposição a
+risco. O rateio por departamento também passou a usar o salário cheio.
+
+Na ficha, o vínculo agora mostra três linhas: **salário base**, **periculosidade (% e valor)** e
+**remuneração**; e o indicador de custo mensal abre as três parcelas.
+
+### 3. Destino das viagens
+
+A coluna `destino` está **nula em tudo** que o fluxo atual cria — o destino de verdade mora em
+`destinos` (jsonb), que aceita mais de um município. Resolvido no servidor, não na tela, para o PDF e
+a lista contarem a mesma coisa. Viagem com dois destinos sai "Assis/SP, Marília/SP".
+
+### De quebra
+
+A grade de duas colunas imprimia um "—" solto na célula de preenchimento quando o número de campos
+era ímpar — parecia um campo existente sem valor. Agora fica vazia de verdade.
+
+### Verificação
+
+**36 asserções** no endpoint da ficha (9 novas) e **9 sobre o PDF gerado**, lendo o texto do arquivo:
+periculosidade com percentual e valor, remuneração = base + adicional, custo somando as três
+parcelas, destino na tabela, contato de emergência com parentesco e telefone, e a célula de
+preenchimento sem o traço solto.
+
+No painel, **4 asserções novas** com a forma da produção (um com 30%, outro sem): a folha inclui o
+adicional, diz quanto dele é, quantas pessoas o recebem — e uma que fixa a diferença:
+`folha − periculosidade === 13.000`, o número que o painel mostrava antes.
+
+**Duas asserções minhas estavam erradas, não o código:** uma exigia `"Telefone de emergência"` como
+texto corrido, mas o autoTable quebra o rótulo em duas linhas dentro da célula; a outra esperava o
+contato de emergência na ficha **sem** permissão sensível — mas ele é dado pessoal de um terceiro, que
+nem funcionário é, e fica sob `rh_sensivel` de propósito.
