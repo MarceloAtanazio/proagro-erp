@@ -4226,3 +4226,61 @@ tabela rola dentro da própria caixa quando não cabe. Os três controles recalc
 Não entrou na ficha em PDF. Uma ficha de funcionário com a simulação de demissão impressa é
 constrangedora se sair da sala — e a ficha circula. O quadro fica na tela, sob a mesma trava de
 remuneração.
+
+---
+
+## 2026-09-14 — Rescisão: a tira comparativa, e o que a tabela sozinha não dizia
+
+**Pedido:** "podemos melhorar essa visualização e essa tabela, deixar mais agradável ao usuário".
+
+### O problema não era estética
+
+A tabela estava correta e completa, e ainda assim fazia o leitor trabalhar. Quinze linhas de peso
+igual e quatro totais no rodapé — para responder *"qual sai mais cara, e por quanto"* era preciso
+achar a linha do custo, ler quatro números e subtrair de cabeça. **Esse é justamente o trabalho que
+o quadro existe para fazer.**
+
+Então a mudança principal não foi de acabamento: foi separar **resposta** de **justificativa**.
+
+### Duas camadas
+
+**A tira de cartões**, no topo, é a resposta. Um cartão por modalidade, com o custo em corpo grande e
+uma **barra proporcional ao maior** — a comparação vira comprimento, que se lê sem somar. O menor
+custo é o único marcado, com a diferença dita nos outros ("+ R$ 38.619,14").
+
+Só o menor ganha realce de propósito. Pintar o maior de vermelho sugeriria um juízo que não cabe:
+sair caro não é defeito, e a barra já diz quem é quem.
+
+**A tabela**, abaixo, virou a justificativa — para quem quer conferir de onde veio cada número. E
+ganhou três coisas que a tornam legível numa leitura só:
+
+- **Faixas** separando as três perguntas que ela responde: o que o colaborador recebe, o que se
+  desconta dele, o que a empresa gasta além disso.
+- **Coluna de rótulos grudada** à esquerda: em tela estreita as colunas passam por trás dela, e sem
+  isso se perde de vista qual verba se está olhando.
+- **Realce na linha sob o cursor** — ela atravessa de quatro a seis colunas, e o olho perdia a altura
+  no meio do caminho. Mais o travessão rebaixado a cor de linha: ausência deve pesar menos que
+  qualquer número ao lado.
+
+### O que faltava não era visual
+
+Revisando o quadro com olhos de quem vai usá-lo para decidir, apareceu um silêncio grave: **a coluna
+mais barata é a de maior risco**, e a tela não dizia. Um quadro feito para "tomar as devidas
+atitudes" que aponta a justa causa como a saída de R$ 8.106,59 — sem mais nada — está induzindo a
+erro caro.
+
+Entrou na nota da modalidade: exige motivo do art. 482 e prova, e **revertida em juízo volta a
+custar como dispensa sem justa causa, com correção por cima**. É a única nota em vermelho.
+
+Número certo que leva à decisão errada é o mesmo problema do custo negativo da versão anterior —
+muda só a forma.
+
+### Medido, não achado
+
+Zero cortes de texto em 1500, 900 e 375px, e a página não rola de lado em nenhuma. A tabela rola
+dentro da própria caixa quando não cabe, e com ela rolada até o fim o rótulo da linha continua
+visível, com duas colunas passando por trás. As barras conferidas em pixel: 100%, 26%, 17% e 80% —
+proporcionais aos custos, não decorativas. No celular os seis cartões empilham e as barras continuam
+legíveis.
+
+As 59 asserções do cálculo seguem passando: nada aqui tocou em conta.

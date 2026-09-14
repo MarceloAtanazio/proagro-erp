@@ -1289,41 +1289,90 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-enc input { width: 100%; border: 1px solid var(--line); border-radius: 7px;
   padding: 6px 9px; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Quadro de rescisão: comparativo das modalidades de saída.
-   Tabela, e não cartões lado a lado, porque a leitura que importa é
-   HORIZONTAL — a mesma verba atravessando as modalidades. */
-.rh-resc-topo { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; margin-bottom: 12px; }
-.rh-resc-topo label { display: flex; flex-direction: column; gap: 4px; font-size: 11px;
-  text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
-.rh-resc-topo input { font-size: 13px; padding: 6px 9px; border: 1px solid var(--line);
-  border-radius: 7px; background: #fff; color: var(--ink); }
-.rh-resc-topo input[type="number"] { width: 72px; }
-.rh-resc-topo input[type="text"] { width: 150px; text-align: right; font-variant-numeric: tabular-nums; }
-.rh-resc-topo label:has(input[type="number"]) { flex-direction: row; align-items: center; gap: 6px; flex-wrap: wrap; }
-.rh-resc-un { text-transform: none; letter-spacing: 0; }
-.rh-resc-casa { font-size: 11.5px; color: var(--muted); align-self: center; }
+/* ------------------------------------------------------------------
+   Quadro de rescisão: comparativo das modalidades de saída.
 
-.rh-resc-rolagem { overflow-x: auto; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+   Duas camadas, de propósito. A TIRA de cartões é a resposta — qual sai
+   mais cara e por quanto — e a TABELA é a justificativa, para quem quer
+   conferir de onde veio cada número. Só a tabela deixava quinze linhas
+   de mesmo peso e quatro totais para comparar de cabeça, que é o
+   trabalho que o quadro deveria fazer pelo leitor.
+   ------------------------------------------------------------------ */
+.rh-resc-topo { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
+.rh-resc-topo label { display: flex; flex-direction: column; gap: 5px; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.rh-resc-topo input { font-size: 13px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: #fff; color: var(--ink); }
+.rh-resc-topo input:focus { outline: none; border-color: var(--verde-600, #2E7D4F);
+  box-shadow: 0 0 0 3px rgba(46, 125, 79, .12); }
+.rh-resc-topo input[type="number"] { width: 68px; text-align: center; }
+.rh-resc-topo input[type="text"] { width: 160px; text-align: right; font-variant-numeric: tabular-nums; }
+.rh-resc-topo label:has(input[type="number"]) { flex-direction: row; align-items: center; gap: 7px; flex-wrap: wrap; }
+.rh-resc-un { text-transform: none; letter-spacing: 0; }
+.rh-resc-casa { font-size: 12px; color: var(--ink-2); text-align: right; line-height: 1.35; }
+.rh-resc-casa i { display: block; font-style: normal; font-size: 11px; color: var(--muted); }
+
+/* A tira. Cada cartão carrega o total e uma barra proporcional ao maior:
+   a comparação vira comprimento, que se lê sem somar. */
+.rh-resc-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px; margin-bottom: 14px; }
+.rh-resc-card { border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px 12px;
+  background: #fff; display: flex; flex-direction: column; gap: 3px; }
+.rh-resc-card-nome { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); line-height: 1.3; }
+.rh-resc-card b { font-size: 17px; font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+  color: var(--ink); }
+.rh-resc-barra { height: 4px; border-radius: 3px; background: var(--line-2, #F0F1F0); margin: 4px 0 2px; }
+.rh-resc-barra i { display: block; height: 100%; border-radius: 3px; background: #9BB8A8; }
+.rh-resc-card-dif { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* O menor custo é o único marcado. "Mais caro" não precisa de destaque:
+   a barra já diz, e pintar de vermelho sugeriria um juízo que não cabe. */
+.rh-resc-card.menor { border-color: var(--verde-600, #2E7D4F); }
+.rh-resc-card.menor b { color: var(--verde-600, #2E7D4F); }
+.rh-resc-card.menor .rh-resc-barra i { background: var(--verde-600, #2E7D4F); }
+.rh-resc-card.menor .rh-resc-card-dif { color: var(--verde-600, #2E7D4F); font-weight: 600; }
+
+.rh-resc-rolagem { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .tbl-resc { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
-.tbl-resc thead th { position: sticky; top: 0; background: var(--bg-2, #F7F8F7); font-size: 11px;
-  text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); font-weight: 600;
-  padding: 9px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl-resc thead th { background: var(--bg-2, #F7F8F7); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--ink-2); font-weight: 600; padding: 10px 14px; text-align: right;
+  border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl-resc thead th.menor { color: var(--verde-600, #2E7D4F); }
 .tbl-resc thead th:first-child { text-align: left; }
-.tbl-resc tbody th { text-align: left; font-weight: 400; color: var(--ink-2); padding: 7px 12px;
+
+/* A linha atravessa quatro a seis colunas: sem realce, o olho perde a
+   altura no meio do caminho. */
+.tbl-resc tbody tr:hover td, .tbl-resc tbody tr:hover > th { background: #FAFBFA; }
+/* Grudada à esquerda: em tela estreita as colunas passam por trás dela, e sem
+   isso o leitor perde de vista qual verba está olhando. A hairline à direita
+   marca a divisa entre o que é rótulo e o que é número. */
+.tbl-resc tbody th { text-align: left; font-weight: 400; color: var(--ink-2); padding: 8px 14px;
+  border-bottom: 1px solid var(--line-2, #F0F1F0); white-space: nowrap; background: #fff;
+  position: sticky; left: 0; z-index: 1; box-shadow: 1px 0 0 var(--line-2, #F0F1F0); }
+.tbl-resc tbody th i { display: block; font-style: normal; font-size: 10.5px; color: var(--muted); }
+.tbl-resc td { text-align: right; padding: 8px 14px; font-variant-numeric: tabular-nums;
   border-bottom: 1px solid var(--line-2, #F0F1F0); white-space: nowrap; }
-.tbl-resc td { text-align: right; padding: 7px 12px; font-variant-numeric: tabular-nums;
-  border-bottom: 1px solid var(--line-2, #F0F1F0); white-space: nowrap; }
-/* A unidade do número (dias, avos, %) fica embaixo e miúda: explica sem competir. */
 .tbl-resc i { display: block; font-style: normal; font-size: 10.5px; color: var(--muted); }
-.tbl-resc tr.neg td, .tbl-resc .neg { color: var(--danger, #C0392B); }
-.tbl-resc tr.sub th, .tbl-resc tr.sub td { border-top: 1px solid var(--line); font-weight: 600; }
-.tbl-resc tr.total th, .tbl-resc tr.total td { border-top: 1px solid var(--line); font-weight: 600; }
+/* Travessão é ausência: deve pesar menos que qualquer número ao lado. */
+.tbl-resc .vazio { color: var(--line); }
+.tbl-resc tr.neg td { color: var(--danger, #C0392B); }
+
+/* Faixas: separam as três perguntas que a tabela responde. */
+.tbl-resc tr.faixa th { position: static; background: var(--bg-2, #F7F8F7); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600;
+  padding: 7px 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.tbl-resc tr.faixa:first-child th { border-top: 0; }
+
+.tbl-resc tr.sub th, .tbl-resc tr.sub td,
+.tbl-resc tr.total th, .tbl-resc tr.total td { font-weight: 600; background: #FCFDFC; }
 /* A linha que decide é a do custo: é a única que ganha peso de verdade. */
 .tbl-resc tr.custo th, .tbl-resc tr.custo td { border-top: 2px solid var(--verde-600, #2E7D4F);
-  font-weight: 700; font-size: 14.5px; color: var(--verde-600, #2E7D4F); padding: 10px 12px; }
+  font-weight: 700; font-size: 15px; color: var(--verde-600, #2E7D4F); padding: 12px 14px;
+  background: rgba(46, 125, 79, .045); }
 .tbl-resc tr.custo th { color: var(--ink); }
 .tbl-resc tr.info th, .tbl-resc tr.info td { color: var(--muted); font-size: 12px; }
 .tbl-resc tbody tr:last-child th, .tbl-resc tbody tr:last-child td { border-bottom: 0; }
 
-.rh-resc-notas { margin: 11px 0 0; padding-left: 17px; font-size: 11.5px; color: var(--muted); line-height: 1.65; }
+.rh-resc-notas { margin: 12px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
 .rh-resc-notas strong { color: var(--ink-2); }
+.rh-resc-notas .risco { color: var(--danger, #C0392B); }

@@ -10968,15 +10968,20 @@ async function rhQuadroRescisao(host, id) {
   // Numa verba, zero significa "não se aplica" e vira travessão. Numa linha de
   // TOTAL, zero é resultado — sair como travessão faria parecer que a conta não
   // foi feita, justamente onde ela mais importa.
-  const brlOuTraco = v => (v ? brl(v) : '—');
+  const brlOuTraco = v => (v ? brl(v) : '<span class="vazio">—</span>');
   const linha = (rot, campo, cls, fmt) => `<tr class="${cls || ''}"><th>${rot}</th>` +
     sim.modalidades.map(m => `<td>${(fmt || (/sub|total|custo/.test(cls || '') ? brl : brlOuTraco))(m[campo], m)}</td>`)
       .join('') + '</tr>';
   const temAlgum = campo => sim.modalidades.some(m => m[campo]);
+  // A tabela é longa e as três partes respondem a perguntas diferentes: o que o
+  // colaborador recebe, o que se desconta dele, e o que a empresa gasta além
+  // disso. Sem essa separação, quinze linhas de mesmo peso viram uma parede.
+  const faixa = rot => `<tr class="faixa"><th colspan="${sim.modalidades.length + 1}">${rot}</th></tr>`;
 
   // Só aparece a linha que tem valor em alguma coluna: tabela de comparação
   // cheia de travessão esconde o que importa.
   const corpo = [
+    faixa('Verbas rescisórias'),
     linha(`Saldo de salário <i>${sim.modalidades[0].saldo_dias} dia(s)</i>`, 'saldo_salario'),
     // O aviso devido PELA empresa entra aqui; o devido A ELA só aparece na
     // linha de desconto, lá embaixo. Repetir o mesmo valor nos dois lugares faz
@@ -10990,20 +10995,41 @@ async function rhQuadroRescisao(host, id) {
     temAlgum('ferias_vencidas') ? linha('Férias vencidas', 'ferias_vencidas') : '',
     temAlgum('terco_vencidas') ? linha('Terço sobre as vencidas', 'terco_vencidas') : '',
     temAlgum('indenizacao_479') ? linha('Indenização do art. 479', 'indenizacao_479') : '',
-    linha('= Total bruto', 'bruta', 'sub'),
-    linha('(−) INSS', 'inss', 'neg', v => v ? '− ' + brl(v) : '—'),
-    linha('(−) IRRF', 'irrf', 'neg', v => v ? '− ' + brl(v) : '—'),
-    temAlgum('aviso_descontado') ? linha('(−) Aviso não cumprido', 'aviso_descontado', 'neg',
+    linha('Total bruto', 'bruta', 'sub'),
+
+    faixa('Descontos do colaborador'),
+    linha('INSS', 'inss', 'neg', v => v ? '− ' + brl(v) : brlOuTraco(0)),
+    linha('IRRF', 'irrf', 'neg', v => v ? '− ' + brl(v) : brlOuTraco(0)),
+    temAlgum('aviso_descontado') ? linha('Aviso não cumprido', 'aviso_descontado', 'neg',
       (v, m) => v ? '− ' + brl(v) + (m.aviso_nao_absorvido
-        ? `<i>limitado ao crédito; sobram ${brl(m.aviso_nao_absorvido)}</i>` : '') : '—') : '',
-    linha('= Líquido ao colaborador', 'liquido', 'total'),
+        ? `<i>limitado ao crédito; sobram ${brl(m.aviso_nao_absorvido)}</i>` : '') : brlOuTraco(0)) : '',
+    linha('Líquido ao colaborador', 'liquido', 'total'),
+
+    faixa('O que a empresa gasta além disso'),
     linha('FGTS do mês', 'fgts_mes'),
-    linha('Multa do FGTS', 'multa_fgts', '', (v, m) => v ? brl(v) + `<i>${m.multa_fgts_pct}%</i>` : '—'),
+    linha('Multa do FGTS', 'multa_fgts', '', (v, m) => v ? brl(v) + `<i>${m.multa_fgts_pct}%</i>` : brlOuTraco(0)),
     linha('INSS empresa e RAT', 'inss_patronal', '', (v, m) => brlOuTraco(v + m.rat + m.terceiros)),
-    linha('= Custo para a empresa', 'custo_empresa', 'custo'),
-    linha('FGTS que o colaborador saca', 'fgts_a_sacar', 'info',
-      (v, m) => v ? brl(v) + `<i>${m.saque_fgts_pct}% + multa</i>` : '—')
+    linha('Custo para a empresa', 'custo_empresa', 'custo'),
+    // Não é custo: já foi depositado mês a mês. Fica por último e apagado, para
+    // não ser somado com o olho ao que está acima.
+    linha('FGTS que o colaborador saca <i>já depositado, não sai do caixa agora</i>', 'fgts_a_sacar', 'info',
+      (v, m) => v ? brl(v) + `<i>${m.saque_fgts_pct}% + multa</i>` : brlOuTraco(0))
   ].filter(Boolean).join('');
+
+  // Tira comparativa: a resposta antes da justificativa. A tabela diz COMO se
+  // chega a cada número; isto aqui diz qual é maior e por quanto, que é a
+  // pergunta que faz alguém abrir o quadro.
+  const custos = sim.modalidades.map(m => m.custo_empresa);
+  const maior = Math.max(...custos, 1), menor = Math.min(...custos);
+  const cartoes = sim.modalidades.map(m => {
+    const dif = Math.round((m.custo_empresa - menor) * 100) / 100;
+    return `<div class="rh-resc-card${m.custo_empresa === menor ? ' menor' : ''}">
+      <span class="rh-resc-card-nome">${esc(m.curto)}</span>
+      <b>${brl(m.custo_empresa)}</b>
+      <div class="rh-resc-barra"><i style="width:${Math.max(3, m.custo_empresa / maior * 100)}%"></i></div>
+      <span class="rh-resc-card-dif">${dif ? '+ ' + brl(dif) : 'menor custo'}</span>
+    </div>`;
+  }).join('');
 
   host.innerHTML = `<h4>Rescisão <span class="rh-lgpd">simulação</span></h4>
 
@@ -11016,7 +11042,7 @@ async function rhQuadroRescisao(host, id) {
         placeholder="${sim.fgts_saldo_base.toFixed(2)} (estimado)"></label>
       <div class="spacer"></div>
       <span class="rh-resc-casa">${sim.anos_de_casa ? sim.anos_de_casa + ' ano(s) e ' : ''}${
-        sim.meses_de_casa - sim.anos_de_casa * 12} mes(es) de casa · aviso de ${sim.aviso_dias} dias</span>
+        sim.meses_de_casa - sim.anos_de_casa * 12} mês(es) de casa<i>aviso de ${sim.aviso_dias} dias</i></span>
     </div>
 
     ${sim.em_experiencia ? `<div class="rh-nota aviso">Contrato de <strong>experiência</strong> até
@@ -11024,13 +11050,17 @@ async function rhQuadroRescisao(host, id) {
       As colunas com aviso prévio só se aplicam se o contrato tiver cláusula assecuratória (art. 481 da CLT);
       sem ela, romper antes do termo é o caso do art. 479.</div>` : ''}
 
+    <div class="rh-resc-cards">${cartoes}</div>
+
     <div class="rh-resc-rolagem"><table class="tbl-resc">
-      <thead><tr><th></th>${sim.modalidades.map(m => `<th>${esc(m.curto)}</th>`).join('')}</tr></thead>
+      <thead><tr><th></th>${sim.modalidades.map(m =>
+        `<th${m.custo_empresa === menor ? ' class="menor"' : ''}>${esc(m.curto)}</th>`).join('')}</tr></thead>
       <tbody>${corpo}</tbody>
     </table></div>
 
     <ul class="rh-resc-notas">${sim.modalidades.map(m =>
-      `<li><strong>${esc(m.curto)}:</strong> ${esc(m.nota)}</li>`).join('')}</ul>
+      `<li><strong>${esc(m.curto)}:</strong> ${esc(m.nota)}${
+        m.risco ? ` <span class="risco">${esc(m.risco)}</span>` : ''}</li>`).join('')}</ul>
 
     <p class="rh-custo-nota">Simulação, não rescisão: nada aqui é gravado. ${
       sim.fgts_estimado ? `O saldo do FGTS está <strong>estimado</strong> em ${brl(sim.fgts_saldo_base)}

@@ -3713,7 +3713,12 @@ const RH_RESCISAO_MOTIVOS = [
     nota: 'O aviso é devido À empresa: se não for cumprido, desconta-se 30 dias. Sem multa e sem saque.' },
   { cod: 'justa_causa', nome: 'Dispensa por justa causa', curto: 'Justa causa',
     aviso: 0, decimo: false, ferias_prop: false, multa_fgts: 0, saque_fgts: 0, projeta: false,
-    nota: 'Perde 13º e férias proporcionais (Súmula 171 do TST). Férias já VENCIDAS continuam devidas.' },
+    nota: 'Perde 13º e férias proporcionais (Súmula 171 do TST). Férias já VENCIDAS continuam devidas.',
+    // A coluna mais barata é a de maior risco, e um quadro feito para decidir
+    // não pode calar isso: revertida em juízo, ela volta a custar como dispensa
+    // sem justa causa, com correção e honorários por cima.
+    risco: 'É sempre a saída mais barata da tabela — e a de maior risco: exige motivo do art. 482 e prova. '
+         + 'Revertida em juízo, volta a custar como dispensa sem justa causa, com correção por cima.' },
   { cod: 'acordo', nome: 'Acordo entre as partes (art. 484-A)', curto: 'Acordo',
     aviso: 0.5, decimo: true, ferias_prop: true, multa_fgts: 20, saque_fgts: 80, projeta: true,
     nota: 'Metade do aviso, multa de 20% e saque de 80%. Não dá direito ao seguro-desemprego.' },
@@ -3797,7 +3802,7 @@ function rhRescisaoDe(mot, base, cfg, nDependentes) {
   const custo = r2(bruta + fgtsMes + multaFgts + inssPatronal + rat + terceiros - avisoDescontado);
 
   return {
-    cod: mot.cod, nome: mot.nome, curto: mot.curto, nota: mot.nota,
+    cod: mot.cod, nome: mot.nome, curto: mot.curto, nota: mot.nota, risco: mot.risco || null,
     saldo_salario: saldoSalario, saldo_dias: diaDoMes,
     aviso: avisoValor, aviso_dias: mot.aviso < 0 ? 30 : diasAviso, aviso_projetado: !!(mot.projeta && diasAviso),
     aviso_descontado: avisoDescontado, aviso_nao_absorvido: avisoNaoAbsorvido,
