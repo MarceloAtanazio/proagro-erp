@@ -1333,7 +1333,10 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-resc-card.menor .rh-resc-card-dif { color: var(--verde-600, #2E7D4F); font-weight: 600; }
 
 .rh-resc-rolagem { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-.tbl-resc { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+/* `max-content` + `min-width:100%`: a tabela nunca fica mais estreita que o
+   conteúdo (senão os valores longos se cortam dentro da célula em vez de a
+   caixa rolar) e ainda assim preenche a largura quando sobra espaço. */
+.tbl-resc { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl-resc thead th { background: var(--bg-2, #F7F8F7); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: .05em; color: var(--ink-2); font-weight: 600; padding: 10px 14px; text-align: right;
   border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -1369,10 +1372,56 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-resc tr.custo th, .tbl-resc tr.custo td { border-top: 2px solid var(--verde-600, #2E7D4F);
   font-weight: 700; font-size: 15px; color: var(--verde-600, #2E7D4F); padding: 12px 14px;
   background: rgba(46, 125, 79, .045); }
-.tbl-resc tr.custo th { color: var(--ink); }
+.tbl-resc tr.custo th { color: var(--ink); background: #F4F8F5; }   /* opaco: e' grudado */
 .tbl-resc tr.info th, .tbl-resc tr.info td { color: var(--muted); font-size: 12px; }
 .tbl-resc tbody tr:last-child th, .tbl-resc tbody tr:last-child td { border-bottom: 0; }
 
 .rh-resc-notas { margin: 12px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
 .rh-resc-notas strong { color: var(--ink-2); }
 .rh-resc-notas .risco { color: var(--danger, #C0392B); }
+
+/* ------------------------------------------------------------------
+   Aba Financeiro. Reaproveita a tabela da Rescisão -- é a mesma leitura
+   (linhas de dinheiro em colunas alinhadas), e duas tabelas parecidas
+   com estilos diferentes na mesma ficha seriam ruído.
+   ------------------------------------------------------------------ */
+.rh-fin-cards { margin-top: 2px; }
+.tbl-fin thead th, .tbl-fin-mov thead th { position: static; }
+/* Esta tabela tem rótulos à esquerda também no corpo (Descrição, Tipo): a
+   classe marca as células que fogem do alinhamento à direita dos valores. */
+.tbl-resc td.esq, .tbl-resc th.esq { text-align: left; }
+.tbl-resc td.forte { font-weight: 600; }
+.tbl-resc td.custo { color: var(--verde-600, #2E7D4F); font-weight: 600; }
+
+/* Ano: a linha que se lê primeiro. O mês só aparece quando pedido. */
+.tbl-resc tr.ano > th { background: var(--bg-2, #F7F8F7); }
+.tbl-resc tr.ano td { background: var(--bg-2, #F7F8F7); font-weight: 600; }
+.rh-fin-abrir { background: none; border: 0; padding: 0; font: inherit; font-weight: 600;
+  color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.rh-fin-abrir:hover { color: var(--verde-600, #2E7D4F); }
+.rh-fin-abrir .seta { color: var(--muted); font-size: 10px; width: 9px; }
+.tbl-resc tr.mes > th { padding-left: 33px; color: var(--muted); }
+.tbl-resc tr.mes td { color: var(--ink-2); }
+
+.tbl-resc tfoot tr.custo th, .tbl-resc tfoot tr.custo td {
+  border-top: 2px solid var(--verde-600, #2E7D4F); background: rgba(46, 125, 79, .045);
+  font-weight: 700; padding: 12px 14px; }
+/* Grudado como os do corpo — e por isso precisa de fundo OPACO e de ficar por
+   cima: sem os dois, o rótulo some por trás dos números ao rolar. */
+.tbl-resc tfoot tr.custo th { color: var(--ink); position: sticky; left: 0; z-index: 2;
+  white-space: nowrap; background: #F4F8F5; box-shadow: 1px 0 0 var(--line-2, #F0F1F0); }
+/* O rótulo do total é curto de propósito: a coluna grudada tem a largura da sua
+   maior célula, e um rótulo longo aqui alargaria a coluna na tabela inteira e
+   cobriria os valores ao rolar até o fim. */
+.tbl-resc tfoot tr.custo th i { display: block; font-style: normal; font-size: 10.5px;
+  font-weight: 400; color: var(--muted); }
+
+/* Natureza do movimento: etiqueta, não cor de alerta. Adiantamento não é
+   problema -- é só uma categoria de dinheiro diferente de reembolso. */
+.rh-fin-nat { display: inline-block; font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; cursor: help; }
+.rh-fin-nat.reembolso { border-color: #BFD9C9; color: var(--verde-600, #2E7D4F); background: rgba(46,125,79,.06); }
+.rh-fin-nat.adiantamento { border-color: #D9CFB8; color: #8A6D2F; background: rgba(180,140,40,.07); }
+.rh-fin-nat.investimento { border-color: var(--line); color: var(--muted); }
+
+.tbl-fin-mov tbody th { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; }

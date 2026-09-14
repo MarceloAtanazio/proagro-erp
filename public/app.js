@@ -10459,7 +10459,8 @@ async function abrirFichaRH(id, aba) {
     { k: 'vinculo', t: 'Vínculo' },
     { k: 'deps', t: 'Dependentes' },
     { k: 'desenv', t: 'Desenvolvimento' },
-    { k: 'dossie', t: 'Dossiê' }
+    { k: 'dossie', t: 'Dossiê' },
+    { k: 'financeiro', t: 'Financeiro' }
   ];
   const atual = aba && abas.some(a => a.k === aba) ? aba : 'ident';
   const falta = d.checklist.filter(x => !x.ok);
@@ -10497,7 +10498,8 @@ async function abrirFichaRH(id, aba) {
     vinculo: () => rhAbaVinculo(painel, d, id),
     deps: () => rhAbaDependentes(painel, d, id),
     desenv: () => rhAbaDesenvolvimento(painel, d, id),
-    dossie: () => rhAbaDossie(painel, d, id)
+    dossie: () => rhAbaDossie(painel, d, id),
+    financeiro: () => rhAbaFinanceiro(painel, d, id)
   };
   pintar[atual]();
 }
@@ -11080,6 +11082,139 @@ async function rhQuadroRescisao(host, id) {
   host.querySelector('#resc-venc').onchange = repor;
   host.querySelector('#resc-fgts').onchange = repor;
 }
+
+// Aba Financeiro: o histórico do dinheiro desde a admissão.
+//
+// Duas naturezas na mesma tela, e a tela diz qual é qual. A REMUNERAÇÃO é
+// reconstituída do contrato mês a mês — o sistema não tem folha de pagamento,
+// não existe lançamento dizendo "em maio pagamos tanto". Os MOVIMENTOS
+// (viáticos, quilometragem, treinamentos, equipamentos) são registros de
+// verdade, com data e valor.
+//
+// Misturar as duas coisas num total só daria a um número reconstituído a mesma
+// cara de um número lançado. Por isso ficam em tabelas separadas, e o rodapé
+// diz de onde veio cada parte.
+const RH_FIN_NATUREZA = {
+  reembolso:    { rot: 'Reembolso', ajuda: 'Dinheiro dele, devolvendo o que gastou do próprio bolso.' },
+  adiantamento: { rot: 'Adiantamento', ajuda: 'Dinheiro da empresa que passou pela mão dele, já líquido do que voltou. Não é renda.' },
+  investimento: { rot: 'Investimento', ajuda: 'Gasto COM ele, que nunca passou pela mão dele.' }
+};
+
+async function rhAbaFinanceiro(painel, d, id) {
+  if (!d.pode.remuneracao) {
+    painel.innerHTML = '<div class="rh-nota">🔒 O histórico financeiro exige a permissão “RH · remuneração e benefícios”.</div>';
+    return;
+  }
+  painel.innerHTML = '<div class="rh-nota">Reconstituindo o histórico…</div>';
+  let f;
+  try { f = await api(`/api/rh/colaboradores/${id}/financeiro`); }
+  catch (err) { painel.innerHTML = `<div class="rh-nota">${esc(err.message)}</div>`; return; }
+
+  if (!f.meses.length) {
+    painel.innerHTML = `<div class="rh-vazio"><p><strong>Sem histórico ainda.</strong> O histórico financeiro
+      nasce do vínculo: ele precisa de uma admissão registrada para saber a partir de quando contar.</p></div>`;
+    return;
+  }
+
+  const anoDe = m => m.mes.slice(0, 4);
+  const anos = [...new Set(f.meses.map(anoDe))].sort().reverse();
+  const anoCorrente = f.ate.slice(0, 4);
+  const somar = lista => ['bruto', 'inss', 'irrf', 'liquido', 'provisoes', 'encargos', 'beneficios', 'custo']
+    .reduce((o, c) => (o[c] = lista.reduce((s, x) => s + Number(x[c] || 0), 0), o), {});
+
+  const celulas = x => `
+    <td>${brl(x.bruto)}</td>
+    <td class="neg">${x.inss + x.irrf ? '− ' + brl(x.inss + x.irrf) : '—'}</td>
+    <td class="forte">${brl(x.liquido)}</td>
+    <td>${brl(x.provisoes + x.encargos)}</td>
+    <td>${x.beneficios ? brl(x.beneficios) : '<span class="vazio">—</span>'}</td>
+    <td class="custo">${brl(x.custo)}</td>`;
+
+  // Um ano por linha, aberto sob demanda: doze meses vezes dez anos viram cento
+  // e vinte linhas, e a resposta que se procura quase sempre é a do ano.
+  const corpo = anos.map(a => {
+    const doAno = f.meses.filter(m => anoDe(m) === a);
+    const aberto = a === anoCorrente;
+    return `<tr class="ano" data-ano="${a}">
+        <th><button class="rh-fin-abrir" data-abrir="${a}" aria-expanded="${aberto}">
+          <span class="seta">${aberto ? '▾' : '▸'}</span> ${a}</button>
+          <i>${doAno.length} mês(es)</i></th>${celulas(somar(doAno))}
+      </tr>` + doAno.slice().reverse().map(m => `
+      <tr class="mes" data-mes-de="${a}"${aberto ? '' : ' hidden'}>
+        <th>${rhFinMes(m.mes)}${m.parcial ? `<i>${m.dias} de ${m.dias_no_mes} dias</i>` : ''}</th>${celulas(m)}
+      </tr>`).join('');
+  }).join('');
+
+  const t = f.totais;
+  const movimentos = f.movimentos.length ? `
+    <h4>Movimentos registrados</h4>
+    <div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin-mov">
+      <thead><tr><th>Data</th><th>Tipo</th><th class="esq">Descrição</th><th>Natureza</th><th>Valor</th></tr></thead>
+      <tbody>${f.movimentos.map(m => `<tr>
+        <th>${rhData(m.data)}</th>
+        <td class="esq">${esc(m.tipo)}</td>
+        <td class="esq">${esc(m.descricao)}${m.detalhe ? `<i>${esc(m.detalhe)}</i>` : ''}</td>
+        <td class="esq"><span class="rh-fin-nat ${m.natureza}"
+          title="${esc((RH_FIN_NATUREZA[m.natureza] || {}).ajuda || '')}">${esc((RH_FIN_NATUREZA[m.natureza] || {}).rot || m.natureza)}</span></td>
+        <td>${brl(m.valor)}</td></tr>`).join('')}
+      </tbody>
+    </table></div>`
+    : '<h4>Movimentos registrados</h4><div class="rh-nota">Nenhum viático, reembolso, treinamento ou equipamento lançado para esta pessoa.</div>';
+
+  painel.innerHTML = `
+    <div class="rh-resc-cards rh-fin-cards">
+      <div class="rh-resc-card">
+        <span class="rh-resc-card-nome">Pago ao colaborador</span>
+        <b>${brl(t.pago_ao_colaborador)}</b>
+        <span class="rh-resc-card-dif">líquido reconstituído${t.reembolso ? ' + reembolsos' : ''}</span>
+      </div>
+      <div class="rh-resc-card menor">
+        <span class="rh-resc-card-nome">Custo para a empresa</span>
+        <b>${brl(t.custo_empresa)}</b>
+        <span class="rh-resc-card-dif">com encargos, provisões e benefícios</span>
+      </div>
+      <div class="rh-resc-card">
+        <span class="rh-resc-card-nome">Desde a admissão</span>
+        <b>${rhFinMes(f.desde)}</b>
+        <span class="rh-resc-card-dif">${f.meses.length} mês(es)${f.vinculos > 1 ? ` · ${f.vinculos} vínculos` : ''}</span>
+      </div>
+    </div>
+
+    <h4>Remuneração, mês a mês <span class="rh-lgpd">reconstituído</span></h4>
+    <div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin">
+      <thead><tr><th></th><th>Salário bruto</th><th>(−) Descontos</th><th>= Líquido</th>
+        <th>+ Provisões e encargos</th><th>+ Benefícios</th><th>= Custo</th></tr></thead>
+      <tbody>${corpo}</tbody>
+      <tfoot><tr class="custo"><th>Total<i>desde ${rhFinMes(f.desde)}</i></th>${celulas(f.folha)}</tr></tfoot>
+    </table></div>
+
+    ${movimentos}
+
+    <p class="rh-custo-nota">O sistema não tem folha de pagamento: a remuneração acima é
+      <strong>reconstituída do contrato</strong>, mês a mês, com o mesmo cálculo da aba Vínculo. Cada mês usa
+      o salário que estava em vigor nele${f.vigencias.length > 1
+        ? ` — há <strong>${f.vigencias.length} vigências</strong> registradas.`
+        : ', e há uma vigência registrada até agora.'}
+      Mês incompleto entra proporcional aos dias. O 13º e as férias aparecem provisionados 1/12 ao mês,
+      que é como o custo de fato se acumula — a data em que foram pagos não está registrada.${
+      !f.tabela_confirmada ? ` O líquido usa a tabela de ${esc(f.competencia)}, <strong>ainda não confirmada</strong>;
+      o custo da empresa não depende dela.` : ''}</p>`;
+
+  painel.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
+    const a = b.dataset.abrir, mostrar = b.getAttribute('aria-expanded') !== 'true';
+    b.setAttribute('aria-expanded', mostrar);
+    b.querySelector('.seta').textContent = mostrar ? '▾' : '▸';
+    painel.querySelectorAll(`[data-mes-de="${a}"]`).forEach(tr => { tr.hidden = !mostrar; });
+  });
+}
+
+// "2026-03" -> "mar/2026". Mês numérico numa coluna de datas obriga a converter
+// de cabeça a cada linha.
+const RH_FIN_MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const rhFinMes = s => {
+  const [a, m] = String(s || '').split('-');
+  return RH_FIN_MESES[Number(m) - 1] ? `${RH_FIN_MESES[Number(m) - 1]}/${a}` : (s || '—');
+};
 
 // Tabela de encargos: as faixas de INSS e IRRF, e os percentuais patronais.
 //

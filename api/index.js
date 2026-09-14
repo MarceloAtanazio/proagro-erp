@@ -2343,6 +2343,59 @@ app.get('/api/rh/colaboradores/:id/rescisao', requireAuth, requireViewAny(['rh']
   res.json(sim);
 }));
 
+// Histórico financeiro. Rota própria porque é caro (varre meses e quatro
+// origens de movimento) e a ficha já é pesada -- quem não abre a aba não paga.
+app.get('/api/rh/colaboradores/:id/financeiro', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const colab = (await query('SELECT * FROM erp_colaboradores WHERE id=$1', [id]))[0];
+  if (!colab) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  if (!(rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab)))
+    return res.status(403).json({ error: 'Sem acesso à remuneração deste colaborador.' });
+
+  const ate = hojeISO();
+  const vinculos = await query(
+    'SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao', [id]);
+  const vigencias = vinculos.length
+    ? await query(`SELECT * FROM erp_rh_salario_hist WHERE vinculo_id = ANY($1::int[])
+                    ORDER BY vinculo_id, vigencia_inicio`, [vinculos.map(v => v.id)])
+    : [];
+  const dep = ((await query(
+    'SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND irrf=true', [id]))[0] || {}).n || 0;
+  const cfg = await rhEncargos();
+
+  const meses = [];
+  for (const v of vinculos)
+    meses.push(...rhFinanceiroDoVinculo(v, vigencias.filter(g => g.vinculo_id === v.id), cfg, dep, ate));
+  meses.sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : 0));
+
+  const movimentos = await rhMovimentosDoColaborador(id);
+  const porNatureza = nat => r2(movimentos.filter(m => m.natureza === nat)
+    .reduce((s, m) => s + n(m.valor), 0));
+  const folha = rhSomar(meses, RH_FIN_CAMPOS);
+  const reembolso = porNatureza('reembolso');
+  const adiantado = porNatureza('adiantamento');
+  const investimento = porNatureza('investimento');
+
+  res.json({
+    desde: meses.length ? meses[0].mes : null, ate,
+    meses, vinculos: vinculos.length,
+    // A reconstituição só é fiel onde houve vigência registrada. Sem nenhuma,
+    // o mês cai no valor do contrato de hoje -- e a tela precisa poder dizer.
+    vigencias: vigencias.map(g => ({ vinculo_id: g.vinculo_id, desde: String(g.vigencia_inicio).slice(0, 10),
+      salario: r2(n(g.salario)), periculosidade_pct: g.periculosidade_pct == null ? null : n(g.periculosidade_pct),
+      motivo: g.motivo })),
+    folha, movimentos,
+    totais: {
+      ...folha, reembolso, adiantado, investimento,
+      // Ao colaborador: o líquido do contrato mais o que foi devolvido do bolso
+      // dele. Adiantamento de viático NÃO entra -- não é renda.
+      pago_ao_colaborador: r2(folha.liquido + reembolso),
+      custo_empresa: r2(folha.custo + reembolso + adiantado + investimento)
+    },
+    competencia: cfg && cfg.competencia, tabela_confirmada: !!(cfg && cfg.confirmada)
+  });
+}));
+
 // ---- Ficha completa ----
 app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const id = Number(req.params.id);
@@ -2420,6 +2473,32 @@ app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (re
 }));
 
 // ---- Vínculos ----
+
+// Vigências de remuneração. O salário mora no vínculo, e um aumento
+// sobrescreveria o campo levando junto TODO o passado: o histórico financeiro
+// passaria a afirmar que a pessoa sempre ganhou o valor de hoje. Por isso cada
+// mudança vira uma linha aqui, e é dela que o histórico lê.
+const RH_REMUN_VIGENCIA = ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia'];
+
+async function rhRegistrarVigencia(vinculoId, valores, desde, motivo, userId) {
+  await query(`INSERT INTO erp_rh_salario_hist
+      (vinculo_id, vigencia_inicio, salario, periculosidade_pct, vr_dia, home_office_dia, motivo, registrado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [vinculoId, desde, valores.salario ?? null, valores.periculosidade_pct ?? null,
+     valores.vr_dia ?? null, valores.home_office_dia ?? null, motivo, userId]);
+}
+
+// Só grava quando algum valor MUDOU de fato: salvar a ficha sem mexer na
+// remuneração não pode encher o histórico de linhas iguais.
+function rhRemuneracaoMudou(antes, depois) {
+  return RH_REMUN_VIGENCIA.some(c => {
+    if (!(c in depois)) return false;
+    const a = antes[c] == null ? null : Number(antes[c]);
+    const b = depois[c] == null || depois[c] === '' ? null : Number(depois[c]);
+    return a !== b;
+  });
+}
+
 app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const id = Number(req.params.id);
   const existe = await query('SELECT id FROM erp_colaboradores WHERE id=$1', [id]);
@@ -2435,6 +2514,9 @@ app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h
   cols.push('colaborador_id', 'created_by'); vals.push(id, req.user.id);
   const ph = cols.map((_, i) => D + (i + 1)).join(',');
   const ins = await query(`INSERT INTO erp_rh_vinculos (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
+  // O contrato nasce com a sua vigência inicial, na data da admissão.
+  await rhRegistrarVigencia(ins[0].id, corpo, String(corpo.admissao).slice(0, 10),
+    'Vigência inicial (admissão)', req.user.id);
   res.json({ ok: true, id: ins[0].id });
 }));
 
@@ -2451,8 +2533,21 @@ app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, re
   const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
   if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
+
+  // A comparação é feita ANTES de gravar, com o estado antigo ainda em mãos:
+  // decidir depois do UPDATE obrigaria a reler e a confiar que a releitura não
+  // é a mesma linha já alterada.
+  const mudouRemuneracao = rhRemuneracaoMudou(atual[0], corpo);
+
   const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
   await query(`UPDATE erp_rh_vinculos SET ${set}, updated_at=now() WHERE id=` + D + (cols.length + 1), [...vals, id]);
+
+  // Vigência nova vale a partir de HOJE — o passado continua valendo o que
+  // valia, que é a razão de a tabela existir.
+  if (mudouRemuneracao) {
+    const novo = (await query('SELECT * FROM erp_rh_vinculos WHERE id=$1', [id]))[0];
+    if (novo) await rhRegistrarVigencia(id, novo, hojeISO(), 'Alteração de remuneração', req.user.id);
+  }
   res.json({ ok: true });
 }));
 
@@ -3865,6 +3960,158 @@ function rhRescisaoDoVinculo(v, cfg, opcoes) {
   };
 }
 
+// O destino de uma viagem mora no jsonb `destinos`; a coluna `destino` é legado
+// e vem nula. Uma definição só, porque a ficha e o histórico leem o mesmo dado.
+const rhDestinoDe = s => {
+  const lista = Array.isArray(s.destinos) ? s.destinos : [];
+  const txt = lista.filter(d => d && d.municipio).map(d => `${d.municipio}/${d.uf || ''}`.replace(/\/$/, ''));
+  return txt.length ? txt.join(', ') : (s.destino || null);
+};
+
+// ------------------------------------------------------------
+// Histórico financeiro do colaborador
+// ------------------------------------------------------------
+//
+// O que é, e o que NÃO é: o sistema não tem folha de pagamento. Não existe
+// lançamento dizendo "em maio pagamos tanto". O que existe é o contrato, com a
+// remuneração e as datas — e é dele que este histórico é RECONSTITUÍDO, mês a
+// mês, usando o mesmo cálculo da aba Vínculo.
+//
+// Isso torna a reconstituição exata enquanto a remuneração for a que está
+// registrada; por isso as vigências (erp_rh_salario_hist) existem: cada mês usa
+// o valor que valia NAQUELE mês, não o de hoje.
+//
+// Ao lado dela ficam os movimentos REGISTRADOS — viáticos, reembolso de
+// quilometragem, treinamentos, equipamentos. Esses têm data e valor de verdade.
+// A tela mantém os dois separados, porque têm confiabilidades diferentes.
+
+// A vigência em força numa data: a última que começou até ali.
+function rhVigenciaEm(vigencias, dataISO) {
+  let achada = null;
+  for (const v of vigencias) if (String(v.vigencia_inicio).slice(0, 10) <= dataISO) achada = v;
+  return achada;
+}
+
+// Um vínculo, mês a mês. Mês incompleto (o da admissão, o do desligamento e o
+// corrente) entra proporcional aos dias — inclusive no INSS e no IRRF, que
+// incidem sobre o bruto menor, como de fato acontece.
+function rhFinanceiroDoVinculo(v, vigencias, cfg, nDep, ateISO) {
+  const inicio = String(v.admissao).slice(0, 10);
+  const fim = v.desligamento ? String(v.desligamento).slice(0, 10) : ateISO;
+  if (!inicio || fim < inicio) return [];
+
+  const meses = [];
+  let ano = Number(inicio.slice(0, 4)), mes = Number(inicio.slice(5, 7));
+  for (let guarda = 0; guarda < 720; guarda++) {          // 60 anos: trava contra laço infinito
+    const priDia = Date.UTC(ano, mes - 1, 1), ultDia = Date.UTC(ano, mes, 0);
+    const de = Math.max(priDia, emDias(inicio));
+    const ate = Math.min(ultDia, emDias(fim));
+    if (de > emDias(fim)) break;
+
+    const diasNoMes = (ultDia - priDia) / DIA_MS + 1;
+    const dias = (ate - de) / DIA_MS + 1;
+    const fator = Math.min(1, dias / diasNoMes);
+
+    // A remuneração do mês é a que valia no ÚLTIMO dia trabalhado dele. Regra
+    // simples e dita em voz alta: reajuste no meio do mês vale para o mês todo.
+    const vig = rhVigenciaEm(vigencias, emISO(ate)) || v;
+    const c = rhCustoDoVinculo({
+      salario: n(vig.salario) * fator,
+      periculosidade_pct: vig.periculosidade_pct,
+      vr_dia: n(vig.vr_dia) * fator,
+      home_office_dia: n(vig.home_office_dia) * fator
+    }, cfg, nDep);
+
+    if (c) meses.push({
+      mes: ano + '-' + String(mes).padStart(2, '0'),
+      vinculo_id: v.id, dias, dias_no_mes: diasNoMes, parcial: fator < 1,
+      salario_vigente: r2(n(vig.salario)),
+      bruto: c.bruto, inss: c.inss, irrf: c.irrf, liquido: c.liquido,
+      provisoes: r2(c.ferias + c.terco_ferias + c.decimo_terceiro),
+      encargos: r2(c.fgts + c.inss_patronal + c.rat + c.terceiros),
+      beneficios: c.beneficios, custo: c.custo_mensal
+    });
+
+    if (ultDia >= emDias(fim)) break;
+    mes++; if (mes > 12) { mes = 1; ano++; }
+  }
+  return meses;
+}
+
+function rhSomar(lista, campos) {
+  const t = {};
+  for (const c of campos) t[c] = r2(lista.reduce((s, x) => s + n(x[c]), 0));
+  return t;
+}
+
+const RH_FIN_CAMPOS = ['bruto', 'inss', 'irrf', 'liquido', 'provisoes', 'encargos', 'beneficios', 'custo'];
+
+// Formato curto, para a coluna de detalhe.
+const brlSeco = v => 'R$ ' + n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ---- Movimentos de verdade: têm data, valor e origem ----
+//
+// Três naturezas, que a tela não pode misturar:
+//   reembolso     -- dinheiro DELE, devolvendo o que gastou do próprio bolso;
+//   adiantamento  -- dinheiro da empresa que passou pela mão dele, líquido do
+//                    que voltou (não é renda, mas é caixa que saiu);
+//   investimento  -- gasto COM ele, que nunca passou pela mão dele.
+async function rhMovimentosDoColaborador(id) {
+  const mov = [];
+
+  const viaticos = await query(
+    `SELECT id, data_inicio, created_at, destino, destinos, status,
+            COALESCE(valor_liberado,0) AS liberado, COALESCE(valor_devolvido,0) AS devolvido
+       FROM erp_viaticos_solicitacoes
+      WHERE colaborador_id=$1 AND COALESCE(valor_liberado,0) <> 0`, [id]);
+  for (const s of viaticos) {
+    const liquido = r2(n(s.liberado) - n(s.devolvido));
+    mov.push({
+      data: String(s.data_inicio || s.created_at).slice(0, 10),
+      natureza: 'adiantamento', tipo: 'Viático',
+      descricao: rhDestinoDe(s) || 'Viagem a serviço',
+      detalhe: `liberado ${brlSeco(s.liberado)}` + (n(s.devolvido) ? `, devolveu ${brlSeco(s.devolvido)}` : ''),
+      valor: liquido, ref: 'viatico:' + s.id
+    });
+  }
+
+  const kms = await query(
+    `SELECT k.id, k.decidido_em, k.created_at, k.valor_reembolso, k.km_rodado, s.destino, s.destinos
+       FROM erp_viaticos_km k JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
+      WHERE s.colaborador_id=$1 AND k.status='aprovado'`, [id]);
+  for (const k of kms) mov.push({
+    data: String(k.decidido_em || k.created_at).slice(0, 10),
+    natureza: 'reembolso', tipo: 'Quilometragem',
+    descricao: rhDestinoDe(k) || 'Uso de veículo próprio',
+    detalhe: `${n(k.km_rodado).toLocaleString('pt-BR')} km`,
+    valor: r2(n(k.valor_reembolso)), ref: 'km:' + k.id
+  });
+
+  const trein = await query(
+    `SELECT id, titulo, instituicao, custo, concluido_em, created_at
+       FROM erp_rh_treinamentos WHERE colaborador_id=$1 AND COALESCE(custo,0) <> 0`, [id]);
+  for (const t of trein) mov.push({
+    data: String(t.concluido_em || t.created_at).slice(0, 10),
+    natureza: 'investimento', tipo: 'Treinamento',
+    descricao: t.titulo || 'Treinamento', detalhe: t.instituicao || '',
+    valor: r2(n(t.custo)), ref: 'treino:' + t.id
+  });
+
+  const equip = await query(
+    `SELECT m.id, m.data, m.tipo, m.valor_total, m.status, i.nome
+       FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id
+      WHERE m.colaborador_id=$1 AND COALESCE(m.valor_total,0) <> 0`, [id]);
+  for (const e of equip) mov.push({
+    data: String(e.data).slice(0, 10),
+    natureza: 'investimento', tipo: 'Equipamento',
+    descricao: e.nome || 'Item de estoque', detalhe: e.status || e.tipo || '',
+    valor: r2(n(e.valor_total)), ref: 'estoque:' + e.id
+  });
+
+  mov.sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+  return mov;
+}
+
 // ---- Ficha completa para impressão ----
 //
 // Endpoint próprio, e não um "?completo=1" no GET da ficha: a tela carrega
@@ -3900,11 +4147,6 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
            s.valor_solicitado, s.valor_liberado, s.valor_devolvido, s.valor_pendencia,
            COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id),0) AS comprovado
       FROM erp_viaticos_solicitacoes s WHERE s.colaborador_id=$1 ORDER BY s.data_inicio DESC`, [id]);
-  const destinoDe = s => {
-    const lista = Array.isArray(s.destinos) ? s.destinos : [];
-    const txt = lista.filter(d => d && d.municipio).map(d => `${d.municipio}/${d.uf || ''}`.replace(/\/$/, ''));
-    return txt.length ? txt.join(', ') : (s.destino || null);
-  };
   const kms = await query(`
     SELECT k.km_rodado, k.valor_reembolso, k.modelo, k.status
       FROM erp_viaticos_km k JOIN erp_viaticos_solicitacoes s ON s.id = k.solicitacao_id
@@ -3977,7 +4219,7 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
     vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
     dependentes, dossie: anexos, checklist,
     treinamentos: treinos.map(t => (verRemun ? t : { ...t, custo: null })),
-    viagens: viagens.map(v => ({ ...v, destino: destinoDe(v), valor_solicitado: n(v.valor_solicitado),
+    viagens: viagens.map(v => ({ ...v, destino: rhDestinoDe(v), valor_solicitado: n(v.valor_solicitado),
       valor_liberado: n(v.valor_liberado), valor_devolvido: n(v.valor_devolvido),
       valor_pendencia: n(v.valor_pendencia), comprovado: n(v.comprovado) })),
     metricas,

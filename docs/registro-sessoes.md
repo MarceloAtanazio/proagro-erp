@@ -4284,3 +4284,79 @@ proporcionais aos custos, não decorativas. No celular os seis cartões empilham
 legíveis.
 
 As 59 asserções do cálculo seguem passando: nada aqui tocou em conta.
+
+---
+
+## 2026-09-14 — Aba Financeiro, e o histórico de salário que não existia
+
+**Pedido:** uma aba "Financeiro" ao lado de Dossiê, com o histórico de quanto foi pago ao
+colaborador desde a admissão e o custo total para a empresa até a data de hoje.
+
+### O que o sistema sabia, e o que não sabia
+
+A primeira coisa foi olhar o que existe de pagamento registrado. O resultado mudou o desenho:
+
+**O ERP não tem folha de pagamento.** Não existe lançamento dizendo "em maio pagamos tanto". O
+salário mora como *atributo do contrato* — um campo no vínculo. Já os **movimentos** existem de
+verdade: R$ 119 mil em viáticos com colaborador identificado, mais quilometragem, treinamentos e
+equipamentos, todos com data e valor.
+
+São duas naturezas com confiabilidades diferentes, e juntá-las num total só daria a um número
+reconstituído a mesma cara de um número lançado. Por isso a aba as mantém em tabelas separadas, e o
+rodapé diz de onde veio cada parte.
+
+### O defeito que teria aparecido no primeiro aumento
+
+Reconstituir a partir do contrato funciona — até alguém receber um reajuste. Aí o campo `salario` é
+sobrescrito e **todo o passado vai junto**: o histórico passaria a afirmar que a pessoa sempre ganhou
+o valor de hoje. Silenciosamente, e crescendo a cada ano.
+
+Então entrou `erp_rh_salario_hist`: vigências de remuneração, alimentadas sozinhas. O vínculo nasce
+com a sua vigência na data da admissão, e cada edição que mexa em salário, periculosidade, VR ou
+home office acrescenta outra, valendo a partir de hoje — o passado continua valendo o que valia. Não
+há tela para editá-la à mão de propósito: **histórico que se edita não é histórico.**
+
+Os vínculos que já existiam foram semeados com a vigência inicial na data da admissão, com o valor
+do contrato de hoje. É a melhor verdade disponível: o que houve antes disso não foi registrado em
+lugar nenhum.
+
+### A reconstituição
+
+Mês a mês, com o **mesmo** `rhCustoDoVinculo` da aba Vínculo — os dois não podem divergir. Cada mês
+usa a vigência em força no seu último dia trabalhado. Mês incompleto (o da admissão, o do
+desligamento, o corrente) entra proporcional aos dias, e a proporção vale também para o INSS e o
+IRRF, que incidem sobre o bruto menor — como de fato acontece.
+
+Esse detalhe é o que uma regra de três ingênua erraria, e o teste prova nos dois sentidos: acima do
+teto do INSS, mês parcial e mês cheio descontam **exatamente o mesmo**; em salário baixo, o mês
+parcial desconta **menos que a fração**, porque cai em faixa mais baixa.
+
+A tela agrupa por ano, com o ano corrente aberto e os demais fechados — nove anos de casa são 116
+linhas, e a resposta que se procura quase sempre é a do ano.
+
+### Um defeito do teste que passaria por defeito do código
+
+O primeiro teste das vigências acusou que um aumento não gravava nada. Era o stub: ele devolvia o
+**mesmo objeto** no `SELECT`, então o `UPDATE` seguinte alterava a linha que o código já tinha lido,
+e a comparação "mudou?" via os dois valores iguais. O Postgres devolve um retrato.
+
+Mas o teste falso apontou código frágil de verdade: a comparação era feita **depois** de gravar.
+Passou a ser feita antes, com o estado antigo ainda em mãos.
+
+### Medido
+
+**55 asserções** na reconstituição (recorte dos meses, proporcionalidade, vigências, desligamento,
+recontratação, contrato de 36 anos) e **15** no gatilho das vigências — incluindo o caso que mais
+importa no dia a dia: abrir o formulário e salvar sem mudar nada, em texto ou em número, **não pode**
+criar vigência.
+
+Na tela: 5 cenários, zero cortes em 1500 e 375px, sem rolagem lateral da página. Dois defeitos reais
+apareceram na medição a 375px e foram corrigidos — o rótulo do total cobria os números (faltava fundo
+opaco) e as colunas cortavam texto porque a tabela tinha largura mínima fixa em vez de acompanhar o
+conteúdo.
+
+### O que ainda não é verdade
+
+O 13º e as férias aparecem **provisionados 1/12 ao mês**, que é como o custo se acumula — a data em
+que foram efetivamente pagos não está registrada. E a reconstituição é do contrato: horas extras,
+faltas e verbas variáveis não entram, porque não existem no sistema.
