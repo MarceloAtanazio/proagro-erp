@@ -4360,3 +4360,27 @@ conteúdo.
 O 13º e as férias aparecem **provisionados 1/12 ao mês**, que é como o custo se acumula — a data em
 que foram efetivamente pagos não está registrada. E a reconstituição é do contrato: horas extras,
 faltas e verbas variáveis não entram, porque não existem no sistema.
+
+---
+
+## 2026-09-14 — Quem tinha viático mas não tinha vínculo sumia da aba Financeiro
+
+Defeito que só os dados reais mostraram. Logo depois de publicar a aba, varri os dez colaboradores
+em produção e apareceu isto:
+
+```
+Gustavo Fonseca ...... 0 meses, 13 movimentos, R$ 17.419,60 de custo
+Mayara Vieira ........ 0 meses, 11 movimentos, R$ 12.557,63
+Gustavo do Amaral .... 0 meses,  9 movimentos, R$ 14.520,69
+```
+
+São pessoas sem vínculo registrado — a maioria da equipe, hoje — que **têm** história financeira:
+viáticos, treinamentos, equipamentos. A aba checava só `meses.length` e caía no estado vazio,
+apagando da tela R$ 44 mil de gasto já realizado.
+
+O estado vazio agora exige as duas ausências. Sem vínculo mas com movimentos, a tela mostra os
+cartões, a tabela de movimentos e uma frase dizendo por que a parte de remuneração não está ali — e
+os subtítulos dos cartões param de descrever encargos que não foram calculados.
+
+O caso entrou no banco de cenários da tela, com o rótulo que ele merece: *"o caso real que a produção
+mostrou"*.

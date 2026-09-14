@@ -11110,9 +11110,14 @@ async function rhAbaFinanceiro(painel, d, id) {
   try { f = await api(`/api/rh/colaboradores/${id}/financeiro`); }
   catch (err) { painel.innerHTML = `<div class="rh-nota">${esc(err.message)}</div>`; return; }
 
-  if (!f.meses.length) {
-    painel.innerHTML = `<div class="rh-vazio"><p><strong>Sem histórico ainda.</strong> O histórico financeiro
-      nasce do vínculo: ele precisa de uma admissão registrada para saber a partir de quando contar.</p></div>`;
+  // Sem vínculo não há remuneração a reconstituir — mas pode haver viático,
+  // treinamento e equipamento, que são registros de verdade e já custaram
+  // dinheiro. Esconder tudo atrás de "sem histórico" apagaria esse gasto: em
+  // produção havia gente sem vínculo com treze movimentos lançados.
+  if (!f.meses.length && !f.movimentos.length) {
+    painel.innerHTML = `<div class="rh-vazio"><p><strong>Sem histórico ainda.</strong> A remuneração é
+      reconstituída do vínculo, e não há admissão registrada; também não há viático, treinamento ou
+      equipamento lançado para esta pessoa.</p></div>`;
     return;
   }
 
@@ -11166,31 +11171,39 @@ async function rhAbaFinanceiro(painel, d, id) {
       <div class="rh-resc-card">
         <span class="rh-resc-card-nome">Pago ao colaborador</span>
         <b>${brl(t.pago_ao_colaborador)}</b>
-        <span class="rh-resc-card-dif">líquido reconstituído${t.reembolso ? ' + reembolsos' : ''}</span>
+        <span class="rh-resc-card-dif">${f.meses.length
+          ? 'líquido reconstituído' + (t.reembolso ? ' + reembolsos' : '')
+          : (t.reembolso ? 'só reembolsos' : 'nada registrado')}</span>
       </div>
       <div class="rh-resc-card menor">
         <span class="rh-resc-card-nome">Custo para a empresa</span>
         <b>${brl(t.custo_empresa)}</b>
-        <span class="rh-resc-card-dif">com encargos, provisões e benefícios</span>
+        <span class="rh-resc-card-dif">${f.meses.length
+          ? 'com encargos, provisões e benefícios'
+          : 'só os movimentos lançados'}</span>
       </div>
       <div class="rh-resc-card">
-        <span class="rh-resc-card-nome">Desde a admissão</span>
-        <b>${rhFinMes(f.desde)}</b>
-        <span class="rh-resc-card-dif">${f.meses.length} mês(es)${f.vinculos > 1 ? ` · ${f.vinculos} vínculos` : ''}</span>
+        <span class="rh-resc-card-nome">${f.meses.length ? 'Desde a admissão' : 'Movimentos'}</span>
+        <b>${f.meses.length ? rhFinMes(f.desde) : f.movimentos.length}</b>
+        <span class="rh-resc-card-dif">${f.meses.length
+          ? `${f.meses.length} mês(es)${f.vinculos > 1 ? ` · ${f.vinculos} vínculos` : ''}`
+          : 'sem vínculo registrado'}</span>
       </div>
     </div>
 
     <h4>Remuneração, mês a mês <span class="rh-lgpd">reconstituído</span></h4>
-    <div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin">
+    ${f.meses.length ? `<div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin">
       <thead><tr><th></th><th>Salário bruto</th><th>(−) Descontos</th><th>= Líquido</th>
         <th>+ Provisões e encargos</th><th>+ Benefícios</th><th>= Custo</th></tr></thead>
       <tbody>${corpo}</tbody>
       <tfoot><tr class="custo"><th>Total<i>desde ${rhFinMes(f.desde)}</i></th>${celulas(f.folha)}</tr></tfoot>
-    </table></div>
+    </table></div>`
+    : `<div class="rh-nota">Sem vínculo registrado, não há remuneração a reconstituir — só se sabe a partir
+       de quando contar com uma admissão. Os movimentos abaixo, esses, estão lançados.</div>`}
 
     ${movimentos}
 
-    <p class="rh-custo-nota">O sistema não tem folha de pagamento: a remuneração acima é
+    <p class="rh-custo-nota">${f.meses.length ? `O sistema não tem folha de pagamento: a remuneração acima é
       <strong>reconstituída do contrato</strong>, mês a mês, com o mesmo cálculo da aba Vínculo. Cada mês usa
       o salário que estava em vigor nele${f.vigencias.length > 1
         ? ` — há <strong>${f.vigencias.length} vigências</strong> registradas.`
@@ -11198,7 +11211,9 @@ async function rhAbaFinanceiro(painel, d, id) {
       Mês incompleto entra proporcional aos dias. O 13º e as férias aparecem provisionados 1/12 ao mês,
       que é como o custo de fato se acumula — a data em que foram pagos não está registrada.${
       !f.tabela_confirmada ? ` O líquido usa a tabela de ${esc(f.competencia)}, <strong>ainda não confirmada</strong>;
-      o custo da empresa não depende dela.` : ''}</p>`;
+      o custo da empresa não depende dela.` : ''}` : `Registre o vínculo na aba
+      <strong>Vínculo</strong> para que a remuneração passe a ser reconstituída aqui.`}
+      Horas extras, faltas e verbas variáveis não entram: não existem no sistema.</p>`;
 
   painel.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
     const a = b.dataset.abrir, mostrar = b.getAttribute('aria-expanded') !== 'true';
