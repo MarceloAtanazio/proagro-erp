@@ -11124,16 +11124,20 @@ async function rhAbaFinanceiro(painel, d, id) {
   const anoDe = m => m.mes.slice(0, 4);
   const anos = [...new Set(f.meses.map(anoDe))].sort().reverse();
   const anoCorrente = f.ate.slice(0, 4);
-  const somar = lista => ['bruto', 'inss', 'irrf', 'liquido', 'provisoes', 'encargos', 'beneficios', 'custo']
+  const somar = lista => ['bruto', 'inss', 'irrf', 'liquido', 'provisoes', 'encargos', 'beneficios', 'custo',
+    'lancado_pago', 'lancado_aberto', 'lancado_titulos']
     .reduce((o, c) => (o[c] = lista.reduce((s, x) => s + Number(x[c] || 0), 0), o), {});
 
-  const celulas = x => `
-    <td>${brl(x.bruto)}</td>
-    <td class="neg">${x.inss + x.irrf ? '− ' + brl(x.inss + x.irrf) : '—'}</td>
-    <td class="forte">${brl(x.liquido)}</td>
-    <td>${brl(x.provisoes + x.encargos)}</td>
-    <td>${x.beneficios ? brl(x.beneficios) : '<span class="vazio">—</span>'}</td>
-    <td class="custo">${brl(x.custo)}</td>`;
+  // Duas fontes lado a lado, e a tela nunca as soma: o que foi LANÇADO em
+  // Contas a Pagar é fato, o PREVISTO sai do contrato. Ver os dois na mesma
+  // linha é o que revela o mês em que um não bateu com o outro.
+  const vazio = '<span class="vazio">—</span>';
+  const celulas = (x, det) => `
+    <td class="forte"${det && x.lancado_detalhe ? ` title="${esc(x.lancado_detalhe)}"` : ''}>${
+      x.lancado_pago ? brl(x.lancado_pago) : vazio}</td>
+    <td class="aberto">${x.lancado_aberto ? brl(x.lancado_aberto) : vazio}</td>
+    <td>${x.liquido ? brl(x.liquido) : vazio}</td>
+    <td class="custo">${x.custo ? brl(x.custo) : vazio}</td>`;
 
   // Um ano por linha, aberto sob demanda: doze meses vezes dez anos viram cento
   // e vinte linhas, e a resposta que se procura quase sempre é a do ano.
@@ -11146,7 +11150,8 @@ async function rhAbaFinanceiro(painel, d, id) {
           <i>${doAno.length} mês(es)</i></th>${celulas(somar(doAno))}
       </tr>` + doAno.slice().reverse().map(m => `
       <tr class="mes" data-mes-de="${a}"${aberto ? '' : ' hidden'}>
-        <th>${rhFinMes(m.mes)}${m.parcial ? `<i>${m.dias} de ${m.dias_no_mes} dias</i>` : ''}</th>${celulas(m)}
+        <th>${rhFinMes(m.mes)}${m.lancado_titulos ? `<i>${m.lancado_titulos} título(s)</i>`
+          : m.parcial ? `<i>${m.dias} de ${m.dias_no_mes} dias</i>` : ''}</th>${celulas(m, true)}
       </tr>`).join('');
   }).join('');
 
@@ -11171,49 +11176,57 @@ async function rhAbaFinanceiro(painel, d, id) {
       <div class="rh-resc-card">
         <span class="rh-resc-card-nome">Pago ao colaborador</span>
         <b>${brl(t.pago_ao_colaborador)}</b>
-        <span class="rh-resc-card-dif">${f.meses.length
-          ? 'líquido reconstituído' + (t.reembolso ? ' + reembolsos' : '')
-          : (t.reembolso ? 'só reembolsos' : 'nada registrado')}</span>
+        <span class="rh-resc-card-dif">${f.titulos
+          ? `${f.titulos} título(s) em Contas a Pagar` + (t.reembolso ? ' + reembolsos' : '')
+          : (t.reembolso ? 'só reembolsos' : 'nenhum título lançado')}</span>
+      </div>
+      <div class="rh-resc-card">
+        <span class="rh-resc-card-nome">Ainda a pagar</span>
+        <b>${brl(t.lancado_aberto)}</b>
+        <span class="rh-resc-card-dif">títulos lançados e em aberto</span>
       </div>
       <div class="rh-resc-card menor">
         <span class="rh-resc-card-nome">Custo para a empresa</span>
         <b>${brl(t.custo_empresa)}</b>
-        <span class="rh-resc-card-dif">${f.meses.length
-          ? 'com encargos, provisões e benefícios'
+        <span class="rh-resc-card-dif">${f.meses.some(m => m.custo)
+          ? 'calculado: encargos, provisões e benefícios'
           : 'só os movimentos lançados'}</span>
       </div>
       <div class="rh-resc-card">
-        <span class="rh-resc-card-nome">${f.meses.length ? 'Desde a admissão' : 'Movimentos'}</span>
-        <b>${f.meses.length ? rhFinMes(f.desde) : f.movimentos.length}</b>
-        <span class="rh-resc-card-dif">${f.meses.length
-          ? `${f.meses.length} mês(es)${f.vinculos > 1 ? ` · ${f.vinculos} vínculos` : ''}`
-          : 'sem vínculo registrado'}</span>
+        <span class="rh-resc-card-nome">Desde</span>
+        <b>${rhFinMes(f.desde)}</b>
+        <span class="rh-resc-card-dif">${f.meses.length} mês(es)${
+          f.vinculos > 1 ? ` · ${f.vinculos} vínculos` : f.vinculos ? '' : ' · sem vínculo'}</span>
       </div>
     </div>
 
-    <h4>Remuneração, mês a mês <span class="rh-lgpd">reconstituído</span></h4>
+    <h4>Remuneração, mês a mês</h4>
     ${f.meses.length ? `<div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin">
-      <thead><tr><th></th><th>Salário bruto</th><th>(−) Descontos</th><th>= Líquido</th>
-        <th>+ Provisões e encargos</th><th>+ Benefícios</th><th>= Custo</th></tr></thead>
+      <thead><tr><th></th>
+        <th class="grupo">Pago<i>Contas a Pagar</i></th>
+        <th class="grupo">Em aberto<i>Contas a Pagar</i></th>
+        <th>Previsto<i>pelo contrato</i></th>
+        <th>Custo p/ a empresa<i>calculado</i></th></tr></thead>
       <tbody>${corpo}</tbody>
-      <tfoot><tr class="custo"><th>Total<i>desde ${rhFinMes(f.desde)}</i></th>${celulas(f.folha)}</tr></tfoot>
+      <tfoot><tr class="custo"><th>Total<i>desde ${rhFinMes(f.desde)}</i></th>${
+        celulas({ ...f.folha, lancado_pago: t.lancado_pago, lancado_aberto: t.lancado_aberto })}</tr></tfoot>
     </table></div>`
-    : `<div class="rh-nota">Sem vínculo registrado, não há remuneração a reconstituir — só se sabe a partir
-       de quando contar com uma admissão. Os movimentos abaixo, esses, estão lançados.</div>`}
+    : `<div class="rh-nota">Nem título lançado, nem vínculo registrado — não há mês nenhum a mostrar.</div>`}
 
     ${movimentos}
 
-    <p class="rh-custo-nota">${f.meses.length ? `O sistema não tem folha de pagamento: a remuneração acima é
-      <strong>reconstituída do contrato</strong>, mês a mês, com o mesmo cálculo da aba Vínculo. Cada mês usa
-      o salário que estava em vigor nele${f.vigencias.length > 1
-        ? ` — há <strong>${f.vigencias.length} vigências</strong> registradas.`
-        : ', e há uma vigência registrada até agora.'}
-      Mês incompleto entra proporcional aos dias. O 13º e as férias aparecem provisionados 1/12 ao mês,
-      que é como o custo de fato se acumula — a data em que foram pagos não está registrada.${
-      !f.tabela_confirmada ? ` O líquido usa a tabela de ${esc(f.competencia)}, <strong>ainda não confirmada</strong>;
-      o custo da empresa não depende dela.` : ''}` : `Registre o vínculo na aba
-      <strong>Vínculo</strong> para que a remuneração passe a ser reconstituída aqui.`}
-      Horas extras, faltas e verbas variáveis não entram: não existem no sistema.</p>`;
+    <p class="rh-custo-nota">As três colunas de dinheiro têm naturezas diferentes e a tela não as soma.
+      <strong>Pago</strong> e <strong>em aberto</strong> são títulos de Contas a Pagar ligados a esta pessoa,
+      agrupados pelo mês do vencimento — é o que de fato saiu ou vai sair do caixa${
+      f.titulos ? `, ${f.titulos} título(s) no total` : ''}.
+      <strong>Previsto</strong> é o líquido reconstituído do contrato${f.vigencias.length > 1
+        ? `, com as <strong>${f.vigencias.length} vigências</strong> de remuneração registradas`
+        : ''}${f.vinculos ? '' : ' — vazio aqui, porque não há vínculo registrado'}.
+      <strong>Custo</strong> é calculado, não lançado: FGTS, INSS patronal e RAT saem em guia única para a
+      empresa inteira, sem rateio por pessoa, então não dá para lê-los dos títulos.${
+      !f.tabela_confirmada ? ` O previsto usa a tabela de ${esc(f.competencia)}, <strong>ainda não
+      confirmada</strong>; o custo não depende dela.` : ''}
+      O 13º e as férias entram provisionados 1/12 ao mês no custo, que é como ele se acumula.</p>`;
 
   painel.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
     const a = b.dataset.abrir, mostrar = b.getAttribute('aria-expanded') !== 'true';

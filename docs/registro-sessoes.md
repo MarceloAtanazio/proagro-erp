@@ -4384,3 +4384,87 @@ os subtítulos dos cartões param de descrever encargos que não foram calculado
 
 O caso entrou no banco de cenários da tela, com o rótulo que ele merece: *"o caso real que a produção
 mostrou"*.
+
+---
+
+## 2026-09-15 — A folha estava em Contas a Pagar o tempo todo
+
+**Pedido:** ler os pagamentos de salário que já existem em Contas a Pagar, categoria "Folha de
+Pagamento", e pré-cadastrar os funcionários que já saíram e não estão no RH.
+
+### Eu tinha afirmado o contrário
+
+Ontem escrevi, no commit da aba Financeiro: *"o ERP não tem folha de pagamento; o salário mora como
+atributo do contrato, não como lançamento"*. Está lá em Contas a Pagar — **142 títulos, R$ 2,21
+milhões**, um por pessoa por mês, desde março. Eu não procurei no lugar certo, e construí uma
+reconstituição onde havia registro.
+
+A reconstituição não foi perdida: ela responde outra pergunta (quanto o contrato prevê, e quanto
+custa com encargos). Mas deixou de ser a fonte do "quanto foi pago".
+
+### A ponte que faltava
+
+A pessoa aparece nos títulos como **fornecedor**. Sem ligação explícita, o único jeito de saber que
+o fornecedor "Diego Bispo dos Santos Farias" é o colaborador Diego seria comparar nomes — que quebra
+no primeiro acento diferente, no primeiro "Jr." e no primeiro homônimo.
+
+Entrou `erp_suppliers.colaborador_id`, semeada por nome exato só onde o nome bate inteiro e é único
+dos dois lados. Daqui para a frente a ligação é escolhida, não inferida.
+
+### A premissa do pedido estava errada, e isso importava mais
+
+O pedido dizia "funcionários que já saíram da empresa". Cruzando os títulos pagos com o cadastro,
+sete pessoas recebiam salário sem estar no RH — mas **só duas** tinham saído:
+
+| Pessoa | Último salário pago | Títulos futuros | Situação real |
+|---|---|---|---|
+| Lúcia Cardoso Moron Rodrigues | mar/2026 | — | saiu |
+| Roberta Gil Duarte Salgado de Castro | jun/2026 | — | saiu |
+| Alcenir de Amorim Fernandes Júnior | ago/2026 | 4 | **ativo** |
+| Diego Bispo dos Santos Farias | ago/2026 | 4 | **ativo** |
+| Adele Mariana Nunes Polastre | ago/2026 | 4 | **ativo** |
+| Brenda Porcinelli Baptistone | ago/2026 | 4 | **ativo** |
+| Idalino Mezzon Neto | ago/2026 | 1 | **ativo** |
+
+Cinco pessoas **na folha hoje** e fora do RH. Isso muda o que os painéis vinham dizendo: a folha
+mensal e o custo de pessoal do painel cobriam menos da metade da empresa.
+
+O critério usado foi o que os dados provam: quem tem título futuro lançado está ativo; quem não tem
+e parou de receber, saiu. Os dois que saíram entraram arquivados, com o motivo dizendo a data do
+último salário e pedindo confirmação. Os cinco ativos entraram como ativos.
+
+Também apareceram três "fornecedores" que **não** são pessoas — *Novo Analista Comercial*, *Novo
+Analista de Sinistro*, *Novo Técnico de Campo* — previsões orçamentárias de vagas. Ficaram de fora, e
+é por isso que o pré-cadastro exige salário **pago**, não apenas lançado.
+
+### Três colunas que a tela nunca soma
+
+A tabela mês a mês passou a mostrar **Pago** e **Em aberto** (títulos, fato) ao lado de **Previsto**
+(contrato) e **Custo** (cálculo). Ver os quatro na mesma linha é o que revela o mês em que um não
+bateu com o outro.
+
+O custo continua vindo do cálculo por um motivo que a tela diz em voz alta: **FGTS, INSS patronal e
+RAT são lançados em guia única para a empresa inteira**, sem rateio por pessoa — não dá para lê-los
+dos títulos. Apresentar um número calculado com a mesma cara de um número lançado seria o mesmo erro
+de ontem, invertido.
+
+A competência é o **mês do vencimento**, não o que está escrito na descrição: "Salário – Maio 2026"
+vence em 29/05, e a base tem um "Jullho" digitado errado. Data é dado; descrição é texto livre.
+
+E o viático ficou **de fora** dos títulos: ele já entra pela sua própria origem, com liberado e
+devolvido. Ler também o título contaria o mesmo dinheiro duas vezes — a exclusão está no SQL, e o
+teste cobra que esteja lá.
+
+### Verificação
+
+13 asserções na leitura dos títulos, com um mês só de viático que **não pode aparecer**, um mês misto
+de pago e em aberto, e uma categoria não mapeada caindo em "outros". Na tela, 6 cenários incluindo a
+ex-funcionária só com títulos e sem vínculo — a coluna de previsto vazia e a de pago cheia, que é
+exatamente o estado de quem ainda não foi complementado.
+
+### Duas inconsistências encontradas de passagem
+
+- **Lucila Stoianov Rezende** está cadastrada como inativa, teve o último salário pago em jul/2026 e
+  **ainda tem 3 títulos futuros lançados**. Ou saiu e os títulos precisam ser cancelados, ou não saiu
+  e falta lançar agosto.
+- **Patricia dos Santos Ferreira** está cadastrada com o **mesmo CPF do Marcelo**.

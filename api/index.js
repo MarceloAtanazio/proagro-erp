@@ -2363,10 +2363,26 @@ app.get('/api/rh/colaboradores/:id/financeiro', requireAuth, requireViewAny(['rh
     'SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND irrf=true', [id]))[0] || {}).n || 0;
   const cfg = await rhEncargos();
 
-  const meses = [];
+  let meses = [];
   for (const v of vinculos)
     meses.push(...rhFinanceiroDoVinculo(v, vigencias.filter(g => g.vinculo_id === v.id), cfg, dep, ate));
   meses.sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : 0));
+
+  // O que foi de fato LANÇADO, mês a mês. Entra na MESMA linha da reconstituição
+  // para que previsto e lançado se olhem de frente; mês que só existe num dos
+  // lados (ex-funcionário sem vínculo, ou mês sem título) aparece assim mesmo.
+  const pagamentos = await rhPagamentosDoColaborador(id);
+  const porMes = new Map(meses.map(m => [m.mes, m]));
+  for (const p of pagamentos) {
+    if (!porMes.has(p.mes)) porMes.set(p.mes, { mes: p.mes, sem_contrato: true, dias: 0, dias_no_mes: 0,
+      bruto: 0, inss: 0, irrf: 0, liquido: 0, provisoes: 0, encargos: 0, beneficios: 0, custo: 0 });
+    Object.assign(porMes.get(p.mes), {
+      lancado: p.total, lancado_pago: p.pago, lancado_aberto: p.aberto,
+      lancado_folha: p.folha, lancado_beneficio: p.beneficio,
+      lancado_titulos: p.titulos, lancado_detalhe: p.detalhe.join('\n')
+    });
+  }
+  meses = [...porMes.values()].sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : 0));
 
   const movimentos = await rhMovimentosDoColaborador(id);
   const porNatureza = nat => r2(movimentos.filter(m => m.natureza === nat)
@@ -2375,21 +2391,28 @@ app.get('/api/rh/colaboradores/:id/financeiro', requireAuth, requireViewAny(['rh
   const reembolso = porNatureza('reembolso');
   const adiantado = porNatureza('adiantamento');
   const investimento = porNatureza('investimento');
+  const lancado = rhSomar(pagamentos, ['pago', 'aberto', 'total']);
 
   res.json({
     desde: meses.length ? meses[0].mes : null, ate,
-    meses, vinculos: vinculos.length,
+    meses, vinculos: vinculos.length, titulos: pagamentos.reduce((s, p) => s + p.titulos, 0),
     // A reconstituição só é fiel onde houve vigência registrada. Sem nenhuma,
     // o mês cai no valor do contrato de hoje -- e a tela precisa poder dizer.
     vigencias: vigencias.map(g => ({ vinculo_id: g.vinculo_id, desde: String(g.vigencia_inicio).slice(0, 10),
       salario: r2(n(g.salario)), periculosidade_pct: g.periculosidade_pct == null ? null : n(g.periculosidade_pct),
       motivo: g.motivo })),
-    folha, movimentos,
+    folha, movimentos, lancado,
     totais: {
       ...folha, reembolso, adiantado, investimento,
-      // Ao colaborador: o líquido do contrato mais o que foi devolvido do bolso
-      // dele. Adiantamento de viático NÃO entra -- não é renda.
-      pago_ao_colaborador: r2(folha.liquido + reembolso),
+      lancado_pago: lancado.pago, lancado_aberto: lancado.aberto,
+      // Ao colaborador: o que foi de fato PAGO nos títulos, mais o reembolso de
+      // quilometragem. Adiantamento de viático não entra -- não é renda dele.
+      pago_ao_colaborador: r2(lancado.pago + reembolso),
+      // O custo da empresa não sai dos títulos: FGTS, INSS patronal e RAT são
+      // lançados em guia única para a empresa inteira, sem rateio por pessoa.
+      // Por isso ele continua vindo do CÁLCULO do contrato -- e é por isso que
+      // a tela não pode apresentar os dois números como se fossem da mesma
+      // natureza.
       custo_empresa: r2(folha.custo + reembolso + adiantado + investimento)
     },
     competencia: cfg && cfg.competencia, tabela_confirmada: !!(cfg && cfg.confirmada)
@@ -4048,6 +4071,55 @@ const RH_FIN_CAMPOS = ['bruto', 'inss', 'irrf', 'liquido', 'provisoes', 'encargo
 
 // Formato curto, para a coluna de detalhe.
 const brlSeco = v => 'R$ ' + n(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// ---- O que foi LANÇADO em Contas a Pagar ----
+//
+// A folha é lançada título a título, um por pessoa por mês, e a pessoa entra
+// como fornecedor. `erp_suppliers.colaborador_id` faz a ponte.
+//
+// Isto aqui é a fonte de VERDADE do que saiu do caixa. A reconstituição do
+// contrato continua ao lado porque responde outra pergunta -- quanto o contrato
+// prevê, e quanto custa com encargos, que os títulos não mostram. As duas juntas
+// deixam a divergência à vista.
+const RH_PAG_CLASSE = {
+  'Folha de Pagamento': 'folha',
+  'RH / Benefícios': 'beneficio',
+  'Reembolso de Despesas': 'reembolso'
+};
+// Viático já vem da sua própria origem, com liberado e devolvido. Ler também o
+// título seria contar o mesmo dinheiro duas vezes.
+const RH_PAG_IGNORAR = ['Viáticos', 'Repasse de Viáticos'];
+
+// A competência é o MÊS DO VENCIMENTO, não o que está escrito na descrição:
+// "Salário - Maio 2026" vence em 29/05, e a base tem um "Jullho" digitado
+// errado. Data é dado; descrição é texto livre.
+async function rhPagamentosDoColaborador(id) {
+  const rows = await query(`
+    SELECT to_char(p.due_date, 'YYYY-MM') AS mes, p.category, p.description,
+           p.amount, p.status, p.due_date, p.payment_date
+      FROM erp_payables p
+      JOIN erp_suppliers s ON s.id = p.supplier_id
+     WHERE s.colaborador_id = $1 AND NOT (p.category = ANY($2::text[]))
+     ORDER BY p.due_date`, [id, RH_PAG_IGNORAR]);
+
+  const porMes = new Map();
+  for (const r of rows) {
+    if (!porMes.has(r.mes)) porMes.set(r.mes, {
+      mes: r.mes, folha: 0, beneficio: 0, reembolso: 0, outros: 0,
+      pago: 0, aberto: 0, total: 0, titulos: 0, detalhe: []
+    });
+    const m = porMes.get(r.mes);
+    const v = n(r.amount);
+    m[RH_PAG_CLASSE[r.category] || 'outros'] += v;
+    m[r.status === 'pago' ? 'pago' : 'aberto'] += v;
+    m.total += v; m.titulos++;
+    m.detalhe.push(`${r.description} — ${brlSeco(v)}${r.status === 'pago' ? '' : ' (em aberto)'}`);
+  }
+  for (const m of porMes.values())
+    for (const c of ['folha', 'beneficio', 'reembolso', 'outros', 'pago', 'aberto', 'total']) m[c] = r2(m[c]);
+
+  return [...porMes.values()].sort((a, b) => (a.mes < b.mes ? -1 : 1));
+}
 
 // ---- Movimentos de verdade: têm data, valor e origem ----
 //

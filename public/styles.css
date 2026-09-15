@@ -1425,3 +1425,11 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-fin-nat.investimento { border-color: var(--line); color: var(--muted); }
 
 .tbl-fin-mov tbody th { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; }
+
+/* Confronto entre o lançado e o previsto: as duas primeiras colunas são fato
+   (títulos de Contas a Pagar), as outras são cálculo. O grupo marcado separa
+   as naturezas sem precisar de uma segunda linha de cabeçalho. */
+.tbl-resc thead th.grupo { border-bottom-color: var(--verde-600, #2E7D4F); }
+.tbl-resc thead th i { display: block; font-style: normal; font-size: 9.5px; font-weight: 400;
+  text-transform: none; letter-spacing: 0; color: var(--muted); margin-top: 1px; }
+.tbl-resc td.aberto { color: #8A6D2F; }
