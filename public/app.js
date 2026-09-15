@@ -11614,7 +11614,7 @@ async function viaFilaKm() {
   openModal('Reembolsos de quilometragem a aprovar', `
     <div class="rh-nota">São <strong>${regs.length}</strong> registro(s), somando <strong>${brl(total)}</strong>.
       Aprovando hoje, as contas a pagar vencem em <strong>${brDate(d.vencimento_reembolso)}</strong>.</div>
-    <div class="table-wrap"><table class="tbl-rh">
+    <div class="table-wrap"><table class="tbl-rh tbl-rh-km">
       <colgroup><col class="c-nome"><col class="c-cargo"><col class="c-etapa"><col class="c-data"><col class="c-acoes"></colgroup>
       <thead><tr><th>Colaborador</th><th>Viagem</th><th>Rodado</th><th class="num">A ressarcir</th>
         <th class="actions">Ações</th></tr></thead>

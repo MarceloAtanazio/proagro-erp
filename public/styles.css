@@ -892,13 +892,22 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    A grade da lista segue o mesmo princípio de .tbl-fin: colunas estreitas em
    PIXEL para nunca encolherem e cortarem conteúdo em silêncio, largura mínima
    com rolagem abaixo dela, e a coluna de ações ancorada à direita. */
-.tbl-rh { table-layout: fixed; min-width: 1126px; }
+/* TODAS as colunas em pixel, inclusive a do nome. Com `width: auto` ela era a
+   única sem largura e engolia sozinha toda a sobra da tela: numa janela de
+   1734px ficava com 764px -- metade da tabela para um nome de 34 caracteres --
+   enquanto "Coordenador de Subscrição" quebrava em duas linhas nos seus 200px.
+   Com todas fixas, o navegador reparte a sobra PROPORCIONALMENTE e a grade
+   cresce inteira, em vez de uma coluna crescer às custas das outras.
+   As larguras abaixo são as mínimas medidas com o texto mais longo de cada
+   coluna, mais o padding: nenhuma quebra em 1306px, que é a soma delas. */
+.tbl-rh { table-layout: fixed; min-width: 1306px; }
 .tbl-rh col.c-id    { width: 52px; }
-.tbl-rh col.c-nome  { width: auto; }
-.tbl-rh col.c-cargo { width: 200px; }
-.tbl-rh col.c-dep   { width: 170px; }
-.tbl-rh col.c-adm   { width: 106px; }
-.tbl-rh col.c-sit   { width: 190px; }
+.tbl-rh col.c-nome  { width: 280px; }
+.tbl-rh col.c-cargo { width: 230px; }
+.tbl-rh col.c-dep   { width: 180px; }
+.tbl-rh col.c-adm   { width: 112px; }
+/* 200px cabe "Experiência até 07/06/2026", o rótulo mais longo desta coluna. */
+.tbl-rh col.c-sit   { width: 200px; }
 .tbl-rh col.c-docs  { width: 132px; }
 /* 3 ícones de 30px + os espaços entre eles + o padding da célula. Em 74px eles
    empilhavam e a linha inteira ia a 101px de altura. */
@@ -1176,6 +1185,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Lista de processos encerrados. Grade própria: o motivo é o conteúdo da tela,
    então é ele que fica com a sobra — no gabarito da lista de colaboradores quem
    estica é o nome, e o motivo quebrava em três linhas. */
+/* A fila de quilometragem reusa a grade de .tbl-rh, mas tem cinco colunas e
+   duas delas -- "Rodado" e "A ressarcir" -- nao existem naquele gabarito. Sem
+   largura propria, dividiam sozinhas a sobra de uma minima pensada para oito
+   colunas, e ficavam absurdas. */
+.tbl-rh-km { min-width: 930px; }
+.tbl-rh-km col.c-etapa { width: 160px; }
+.tbl-rh-km col.c-data  { width: 140px; }
+
 .tbl-rh-enc col.c-nome   { width: 260px; }
 .tbl-rh-enc col.c-cargo  { width: 190px; }
 .tbl-rh-enc col.c-etapa  { width: 150px; }

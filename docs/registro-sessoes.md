@@ -4537,3 +4537,55 @@ eram a mesma palavra, repetida duas vezes em cada linha — e são a maioria das
 
 O tipo agora só aparece quando diz algo a mais que o conceito: "Investimento · Treinamento",
 "Investimento · Equipamento", "Outros · Comodato". Onde os dois coincidem, fica só o selo.
+
+---
+
+## 2026-09-15 — A coluna do nome comia metade da tabela de Colaboradores
+
+**Sintoma:** a lista de Colaboradores com a coluna do nome gigante e as outras espremidas,
+"Coordenador de Subscrição" quebrando em duas linhas.
+
+### Uma coluna sem largura suga tudo
+
+`.tbl-rh` é `table-layout: fixed` e tinha largura em pixel para todas as colunas **menos uma**:
+
+```css
+.tbl-rh col.c-nome { width: auto; }
+```
+
+Sendo a única sem largura, ela recebia sozinha toda a sobra da tela. Medido em produção, numa janela
+de 1734px: **Colaborador com 764px** — quase metade da tabela para um nome de 34 caracteres —
+enquanto Cargo ficava preso nos seus 200px e quebrava.
+
+A regra está lá desde a fase 1 do RH. Não apareceu antes porque a sobra era pequena; ela cresce com a
+janela, e o defeito cresce junto.
+
+### Todas em pixel, e a sobra repartida
+
+Com **todas** as colunas em pixel, o navegador reparte o espaço que sobra proporcionalmente — a grade
+inteira cresce em vez de uma coluna crescer às custas das outras. Medido: o fator é uniforme para
+todas (1734px dá 1,33× em cada uma).
+
+As larguras novas não foram escolhidas no olho. Para cada coluna, medi em produção a largura real do
+texto mais longo que ela recebe, mais o padding, e subi só o necessário:
+
+| Coluna | Antes | Agora | Por quê |
+|---|---|---|---|
+| Colaborador | auto | 280px | cabe "Alcenir de Amorim Fernandes Júnior" |
+| Cargo | 200px | 230px | "Coordenador de Subscrição" quebrava |
+| Departamento | 170px | 180px | — |
+| Admissão | 106px | 112px | faltavam 5px para "09/03/2026" |
+| Situação | 190px | 200px | faltavam 9px para "Experiência até 07/06/2026" |
+
+A mínima da tabela passou de 1126px para **1306px**, que é a soma delas: abaixo disso rola, nunca
+quebra. Verificado em 1306, 1400, 1500, 1600 e 1734px, na lista normal e na de arquivados: **zero
+células apertadas**, cabeçalhos incluídos.
+
+O pior caso da coluna Situação não existe nos dados de hoje — foi medido à parte, porque o dia em que
+alguém entrar em experiência não é o dia de descobrir que o selo não cabe.
+
+### Um efeito colateral que valia consertar
+
+A fila de quilometragem reusa `.tbl-rh`, mas tem cinco colunas e duas delas — "Rodado" e "A
+ressarcir" — não existem naquele gabarito. Sem largura própria, dividiam sozinhas a sobra de uma
+mínima pensada para oito colunas. Ganhou grade própria em `.tbl-rh-km`, com 930px de mínima.
