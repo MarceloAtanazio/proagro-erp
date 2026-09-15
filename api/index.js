@@ -2503,12 +2503,22 @@ app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (re
 // mudança vira uma linha aqui, e é dela que o histórico lê.
 const RH_REMUN_VIGENCIA = ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia'];
 
+// Campo em branco no formulário chega como STRING VAZIA, e '' numa coluna
+// numeric o Postgres recusa -- "invalid input syntax for type numeric". A
+// normalização mora aqui, e não em quem chama, porque a função aceita tanto uma
+// linha do banco (já tipada) quanto um corpo de requisição (texto puro).
+const rhNumOuNulo = v => {
+  if (v === null || v === undefined || String(v).trim() === '') return null;
+  const x = Number(v);
+  return isFinite(x) ? x : null;
+};
+
 async function rhRegistrarVigencia(vinculoId, valores, desde, motivo, userId) {
   await query(`INSERT INTO erp_rh_salario_hist
       (vinculo_id, vigencia_inicio, salario, periculosidade_pct, vr_dia, home_office_dia, motivo, registrado_por)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [vinculoId, desde, valores.salario ?? null, valores.periculosidade_pct ?? null,
-     valores.vr_dia ?? null, valores.home_office_dia ?? null, motivo, userId]);
+    [vinculoId, desde, rhNumOuNulo(valores.salario), rhNumOuNulo(valores.periculosidade_pct),
+     rhNumOuNulo(valores.vr_dia), rhNumOuNulo(valores.home_office_dia), motivo, userId]);
 }
 
 // Só grava quando algum valor MUDOU de fato: salvar a ficha sem mexer na
@@ -2536,9 +2546,13 @@ app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
   cols.push('colaborador_id', 'created_by'); vals.push(id, req.user.id);
   const ph = cols.map((_, i) => D + (i + 1)).join(',');
-  const ins = await query(`INSERT INTO erp_rh_vinculos (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
+  // RETURNING * e não só o id: a vigência é registrada a partir da LINHA
+  // GRAVADA, não do corpo da requisição. O corpo é texto de formulário; a linha
+  // já passou pela normalização e tem os tipos certos, que é o mesmo caminho
+  // que a edição do vínculo usa.
+  const ins = await query(`INSERT INTO erp_rh_vinculos (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
   // O contrato nasce com a sua vigência inicial, na data da admissão.
-  await rhRegistrarVigencia(ins[0].id, corpo, String(corpo.admissao).slice(0, 10),
+  await rhRegistrarVigencia(ins[0].id, ins[0], String(corpo.admissao).slice(0, 10),
     'Vigência inicial (admissão)', req.user.id);
   res.json({ ok: true, id: ins[0].id });
 }));

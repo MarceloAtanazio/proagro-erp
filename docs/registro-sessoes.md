@@ -4589,3 +4589,57 @@ alguém entrar em experiência não é o dia de descobrir que o selo não cabe.
 A fila de quilometragem reusa `.tbl-rh`, mas tem cinco colunas e duas delas — "Rodado" e "A
 ressarcir" — não existem naquele gabarito. Sem largura própria, dividiam sozinhas a sobra de uma
 mínima pensada para oito colunas. Ganhou grade própria em `.tbl-rh-km`, com 930px de mínima.
+
+---
+
+## 2026-09-15 — Registrar admissão gravava e respondia 500
+
+**Sintoma:** ao registrar a admissão dentro da ficha do colaborador, "Erro interno. Tente novamente."
+— mas o vínculo entrava. Era preciso fechar e recarregar a página para ver que dera certo.
+
+### Defeito meu, de ontem
+
+Quem grava e depois falha está falhando DEPOIS do INSERT. Foi a vigência de remuneração que
+acrescentei ontem:
+
+```js
+const ins = await query(`INSERT INTO erp_rh_vinculos (...) RETURNING id`, vals);
+await rhRegistrarVigencia(ins[0].id, corpo, ...);   // <- corpo = req.body, cru
+```
+
+O vínculo é gravado a partir de `rhMontarSet`, que **normaliza**: campo em branco vira `null`, número
+em texto vira número. A vigência recebia o `corpo` da requisição, **sem** essa passagem. E o
+formulário manda string vazia no que o usuário deixou em branco — no caso, a periculosidade.
+
+`''` numa coluna `numeric` o Postgres recusa:
+
+```
+invalid input syntax for type numeric: ""
+```
+
+O vínculo já estava gravado; a transação não existia para desfazer; o `h()` devolveu 500.
+
+A edição do vínculo nunca falhou porque ela relê a linha do banco antes de registrar a vigência —
+valores já tipados. Era a mesma função com duas fontes de dado diferentes, e só uma delas confiável.
+
+### Duas camadas de correção
+
+**A rota** passou a usar `RETURNING *` e a registrar a vigência a partir da **linha gravada**, não do
+corpo — o mesmo caminho que a edição já usava. Uma fonte só para as duas.
+
+**A função** normaliza por conta própria, porque aceita tanto uma linha do banco quanto um corpo de
+requisição, e quem chama não deveria ter de lembrar qual das duas é segura.
+
+### O teste passava, e esse é o ponto
+
+Eu tinha escrito 15 asserções para as vigências ontem, e todas passavam. Duas razões:
+
+1. **Só exercitavam a edição**, nunca o registro de admissão.
+2. **O stub aceitava o que o Postgres recusa.** Ele empilhava os parâmetros num array sem olhar o
+   tipo, então `''` numa coluna `numeric` passava batido.
+
+O stub agora recusa o que o banco recusaria, e o teste começa pelo caso real: registrar admissão com
+a periculosidade em branco, exatamente o formulário da tela. Rodado contra o código de ontem, ele
+reproduz o 500; contra o de hoje, passa.
+
+São 20 asserções, e a primeira delas é a que faltava.
