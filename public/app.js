@@ -11094,11 +11094,18 @@ async function rhQuadroRescisao(host, id) {
 // Misturar as duas coisas num total só daria a um número reconstituído a mesma
 // cara de um número lançado. Por isso ficam em tabelas separadas, e o rodapé
 // diz de onde veio cada parte.
+// Os conceitos do histórico. A ordem aqui é a ordem em que aparecem no resumo,
+// e vai do que é remuneração para o que é gasto com a pessoa — ler de cima para
+// baixo deve contar a história na sequência em que ela faz sentido.
 const RH_FIN_NATUREZA = {
+  folha:        { rot: 'Salário', ajuda: 'Folha de pagamento lançada em Contas a Pagar.' },
+  beneficio:    { rot: 'Benefício', ajuda: 'Vale-refeição, auxílio home-office e afins, lançados em Contas a Pagar.' },
   reembolso:    { rot: 'Reembolso', ajuda: 'Dinheiro dele, devolvendo o que gastou do próprio bolso.' },
-  adiantamento: { rot: 'Adiantamento', ajuda: 'Dinheiro da empresa que passou pela mão dele, já líquido do que voltou. Não é renda.' },
-  investimento: { rot: 'Investimento', ajuda: 'Gasto COM ele, que nunca passou pela mão dele.' }
+  adiantamento: { rot: 'Viático', ajuda: 'Dinheiro da empresa que passou pela mão dele, já líquido do que voltou. Não é renda.' },
+  investimento: { rot: 'Investimento', ajuda: 'Gasto COM ele, que nunca passou pela mão dele: treinamento, equipamento.' },
+  outros:       { rot: 'Outros', ajuda: 'Títulos em outras categorias ligados a esta pessoa.' }
 };
+const RH_FIN_ORDEM = Object.keys(RH_FIN_NATUREZA);
 
 async function rhAbaFinanceiro(painel, d, id) {
   if (!d.pode.remuneracao) {
@@ -11156,20 +11163,42 @@ async function rhAbaFinanceiro(painel, d, id) {
   }).join('');
 
   const t = f.totais;
+  // Histórico completo: título de folha, benefício, viático, reembolso e
+  // investimento na MESMA linha do tempo, cada um dizendo o que é. O resumo em
+  // cima existe porque "R$ 190 mil em 40 lançamentos" não responde de onde veio
+  // o dinheiro — e, sendo clicável, também serve de filtro.
+  const porNat = n => f.movimentos.filter(m => m.natureza === n);
+  const conceitos = RH_FIN_ORDEM.filter(nat => porNat(nat).length).map(nat => {
+    const lista = porNat(nat);
+    return `<button class="rh-fin-conc ${nat}" data-nat="${nat}"
+      title="${esc(RH_FIN_NATUREZA[nat].ajuda)}">
+      <span>${esc(RH_FIN_NATUREZA[nat].rot)}</span>
+      <b>${brl(lista.reduce((s, m) => s + Number(m.valor || 0), 0))}</b>
+      <i>${lista.length} lançamento(s)</i></button>`;
+  }).join('');
+
   const movimentos = f.movimentos.length ? `
-    <h4>Movimentos registrados</h4>
-    <div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin-mov">
-      <thead><tr><th>Data</th><th>Tipo</th><th class="esq">Descrição</th><th>Natureza</th><th>Valor</th></tr></thead>
-      <tbody>${f.movimentos.map(m => `<tr>
+    <h4>Histórico completo <span class="rh-lgpd">${f.movimentos.length} lançamento(s)</span></h4>
+    <div class="rh-fin-conceitos">
+      <button class="rh-fin-conc ativo" data-nat=""><span>Tudo</span>
+        <b>${brl(f.movimentos.reduce((s, m) => s + Number(m.valor || 0), 0))}</b>
+        <i>${f.movimentos.length} lançamento(s)</i></button>${conceitos}</div>
+    <div class="rh-resc-rolagem"><table class="tbl-resc tbl-rh-mov">
+      <thead><tr><th>Data</th><th class="esq">Conceito</th><th class="esq">Descrição</th>
+        <th class="esq">Situação</th><th>Valor</th></tr></thead>
+      <tbody>${f.movimentos.map(m => `<tr data-nat="${esc(m.natureza)}">
         <th>${rhData(m.data)}</th>
-        <td class="esq">${esc(m.tipo)}</td>
-        <td class="esq">${esc(m.descricao)}${m.detalhe ? `<i>${esc(m.detalhe)}</i>` : ''}</td>
-        <td class="esq"><span class="rh-fin-nat ${m.natureza}"
-          title="${esc((RH_FIN_NATUREZA[m.natureza] || {}).ajuda || '')}">${esc((RH_FIN_NATUREZA[m.natureza] || {}).rot || m.natureza)}</span></td>
+        <td class="esq"><span class="rh-fin-nat ${esc(m.natureza)}"
+          title="${esc((RH_FIN_NATUREZA[m.natureza] || {}).ajuda || '')}">${
+          esc((RH_FIN_NATUREZA[m.natureza] || {}).rot || m.natureza)}</span>
+          <i>${esc(m.tipo)}</i></td>
+        <td class="esq">${esc(m.descricao)}</td>
+        <td class="esq">${m.pendente ? '<span class="rh-fin-pend">em aberto</span>' : ''}
+          <i>${esc(m.detalhe || '')}</i></td>
         <td>${brl(m.valor)}</td></tr>`).join('')}
       </tbody>
     </table></div>`
-    : '<h4>Movimentos registrados</h4><div class="rh-nota">Nenhum viático, reembolso, treinamento ou equipamento lançado para esta pessoa.</div>';
+    : '<h4>Histórico completo</h4><div class="rh-nota">Nenhum título, viático, treinamento ou equipamento lançado para esta pessoa.</div>';
 
   painel.innerHTML = `
     <div class="rh-resc-cards rh-fin-cards">
@@ -11201,7 +11230,7 @@ async function rhAbaFinanceiro(painel, d, id) {
     </div>
 
     <h4>Remuneração, mês a mês</h4>
-    ${f.meses.length ? `<div class="rh-resc-rolagem"><table class="tbl-resc tbl-fin">
+    ${f.meses.length ? `<div class="rh-resc-rolagem"><table class="tbl-resc tbl-rh-fin">
       <thead><tr><th></th>
         <th class="grupo">Pago<i>Contas a Pagar</i></th>
         <th class="grupo">Em aberto<i>Contas a Pagar</i></th>
@@ -11233,6 +11262,16 @@ async function rhAbaFinanceiro(painel, d, id) {
     b.setAttribute('aria-expanded', mostrar);
     b.querySelector('.seta').textContent = mostrar ? '▾' : '▸';
     painel.querySelectorAll(`[data-mes-de="${a}"]`).forEach(tr => { tr.hidden = !mostrar; });
+  });
+
+  // Clicar num conceito filtra o histórico. Sem recarregar nada: os lançamentos
+  // já estão todos na tela, e o filtro só esconde os das outras naturezas.
+  painel.querySelectorAll('.rh-fin-conc').forEach(b => b.onclick = () => {
+    const nat = b.dataset.nat;
+    painel.querySelectorAll('.rh-fin-conc').forEach(x => x.classList.toggle('ativo', x === b));
+    painel.querySelectorAll('.tbl-rh-mov tbody tr').forEach(tr => {
+      tr.hidden = !!nat && tr.dataset.nat !== nat;
+    });
   });
 }
 

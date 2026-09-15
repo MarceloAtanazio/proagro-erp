@@ -1386,7 +1386,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    com estilos diferentes na mesma ficha seriam ruído.
    ------------------------------------------------------------------ */
 .rh-fin-cards { margin-top: 2px; }
-.tbl-fin thead th, .tbl-fin-mov thead th { position: static; }
+.tbl-rh-fin thead th, .tbl-rh-mov thead th { position: static; }
 /* Esta tabela tem rótulos à esquerda também no corpo (Descrição, Tipo): a
    classe marca as células que fogem do alinhamento à direita dos valores. */
 .tbl-resc td.esq, .tbl-resc th.esq { text-align: left; }
@@ -1424,7 +1424,7 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-fin-nat.adiantamento { border-color: #D9CFB8; color: #8A6D2F; background: rgba(180,140,40,.07); }
 .rh-fin-nat.investimento { border-color: var(--line); color: var(--muted); }
 
-.tbl-fin-mov tbody th { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; }
+.tbl-rh-mov tbody th { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 400; }
 
 /* Confronto entre o lançado e o previsto: as duas primeiras colunas são fato
    (títulos de Contas a Pagar), as outras são cálculo. O grupo marcado separa
@@ -1433,3 +1433,23 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .tbl-resc thead th i { display: block; font-style: normal; font-size: 9.5px; font-weight: 400;
   text-transform: none; letter-spacing: 0; color: var(--muted); margin-top: 1px; }
 .tbl-resc td.aberto { color: #8A6D2F; }
+
+/* Resumo por conceito: responde "de onde veio o dinheiro" antes de o leitor ter
+   de somar quarenta linhas — e clicar filtra, porque é a pergunta seguinte. */
+.rh-fin-conceitos { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px; }
+.rh-fin-conc { display: flex; flex-direction: column; gap: 1px; text-align: left;
+  border: 1px solid var(--line); border-radius: 9px; background: #fff; cursor: pointer;
+  padding: 8px 12px; font: inherit; min-width: 118px; }
+.rh-fin-conc:hover { border-color: #BFD9C9; }
+.rh-fin-conc span { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.rh-fin-conc b { font-size: 14px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.rh-fin-conc i { font-style: normal; font-size: 10.5px; color: var(--muted); }
+.rh-fin-conc.ativo { border-color: var(--verde-600, #2E7D4F); background: rgba(46, 125, 79, .045); }
+.rh-fin-conc.ativo b { color: var(--verde-600, #2E7D4F); }
+
+.tbl-rh-mov td i { color: var(--muted); }
+.rh-fin-pend { display: inline-block; font-size: 10.5px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid #D9CFB8; background: rgba(180, 140, 40, .07); color: #8A6D2F; white-space: nowrap; }
+.rh-fin-nat.folha { border-color: #BFD9C9; color: var(--verde-600, #2E7D4F); background: rgba(46,125,79,.06); }
+.rh-fin-nat.beneficio { border-color: #C6D4E4; color: #3B5E86; background: rgba(59,94,134,.06); }
+.rh-fin-nat.outros { border-color: var(--line); color: var(--ink-2); }

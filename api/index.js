@@ -2371,7 +2371,7 @@ app.get('/api/rh/colaboradores/:id/financeiro', requireAuth, requireViewAny(['rh
   // O que foi de fato LANÇADO, mês a mês. Entra na MESMA linha da reconstituição
   // para que previsto e lançado se olhem de frente; mês que só existe num dos
   // lados (ex-funcionário sem vínculo, ou mês sem título) aparece assim mesmo.
-  const pagamentos = await rhPagamentosDoColaborador(id);
+  const { meses: pagamentos, lancamentos } = await rhPagamentosDoColaborador(id);
   const porMes = new Map(meses.map(m => [m.mes, m]));
   for (const p of pagamentos) {
     if (!porMes.has(p.mes)) porMes.set(p.mes, { mes: p.mes, sem_contrato: true, dias: 0, dias_no_mes: 0,
@@ -2384,7 +2384,7 @@ app.get('/api/rh/colaboradores/:id/financeiro', requireAuth, requireViewAny(['rh
   }
   meses = [...porMes.values()].sort((a, b) => (a.mes < b.mes ? -1 : a.mes > b.mes ? 1 : 0));
 
-  const movimentos = await rhMovimentosDoColaborador(id);
+  const movimentos = await rhMovimentosDoColaborador(id, lancamentos);
   const porNatureza = nat => r2(movimentos.filter(m => m.natureza === nat)
     .reduce((s, m) => s + n(m.valor), 0));
   const folha = rhSomar(meses, RH_FIN_CAMPOS);
@@ -4118,8 +4118,31 @@ async function rhPagamentosDoColaborador(id) {
   for (const m of porMes.values())
     for (const c of ['folha', 'beneficio', 'reembolso', 'outros', 'pago', 'aberto', 'total']) m[c] = r2(m[c]);
 
-  return [...porMes.values()].sort((a, b) => (a.mes < b.mes ? -1 : 1));
+  // Devolve os dois recortes da MESMA leitura: o mês a mês para a tabela de
+  // cima, e o título a título para o histórico. Duas consultas ao mesmo dado
+  // seria só uma chance a mais de elas divergirem.
+  return {
+    meses: [...porMes.values()].sort((a, b) => (a.mes < b.mes ? -1 : 1)),
+    lancamentos: rows.map(r => ({
+      data: String(r.payment_date || r.due_date).slice(0, 10),
+      natureza: RH_PAG_CLASSE[r.category] || 'outros',
+      tipo: RH_PAG_TIPO[r.category] || r.category,
+      descricao: r.description || r.category,
+      detalhe: r.status === 'pago'
+        ? (r.payment_date ? 'pago em ' + rhDataBR(r.payment_date) : 'pago')
+        : 'vence em ' + rhDataBR(r.due_date),
+      pendente: r.status !== 'pago',
+      valor: r2(n(r.amount)), ref: 'titulo:' + r.category + ':' + r.description
+    }))
+  };
 }
+
+// O rótulo que a tela mostra para cada categoria de título.
+const RH_PAG_TIPO = {
+  'Folha de Pagamento': 'Salário',
+  'RH / Benefícios': 'Benefício',
+  'Reembolso de Despesas': 'Reembolso'
+};
 
 // ---- Movimentos de verdade: têm data, valor e origem ----
 //
@@ -4128,8 +4151,11 @@ async function rhPagamentosDoColaborador(id) {
 //   adiantamento  -- dinheiro da empresa que passou pela mão dele, líquido do
 //                    que voltou (não é renda, mas é caixa que saiu);
 //   investimento  -- gasto COM ele, que nunca passou pela mão dele.
-async function rhMovimentosDoColaborador(id) {
-  const mov = [];
+async function rhMovimentosDoColaborador(id, lancamentos) {
+  // Os títulos de Contas a Pagar entram na MESMA linha do tempo dos viáticos e
+  // treinamentos. O histórico é um só: separar por origem obrigaria o leitor a
+  // juntar de cabeça o que aconteceu em cada mês.
+  const mov = (lancamentos || []).slice();
 
   const viaticos = await query(
     `SELECT id, data_inicio, created_at, destino, destinos, status,

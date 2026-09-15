@@ -4468,3 +4468,62 @@ exatamente o estado de quem ainda não foi complementado.
   **ainda tem 3 títulos futuros lançados**. Ou saiu e os títulos precisam ser cancelados, ou não saiu
   e falta lançar agosto.
 - **Patricia dos Santos Ferreira** está cadastrada com o **mesmo CPF do Marcelo**.
+
+---
+
+## 2026-09-15 — O total fora do lugar era colisão de nome de classe
+
+Dois pedidos: alinhar o total da coluna "Custo p/ a empresa", que saía deslocado uns 250px para a
+esquerda, e detalhar os movimentos conceito a conceito.
+
+### O alinhamento não era de alinhamento
+
+A célula estava no lugar certo — medindo, cabeçalho e rodapé tinham as mesmas cinco colunas e as
+mesmas bordas (405, 745, 1081, 1453, 1831). O que fugia era o **conteúdo dentro** da última célula:
+`text-align: left` onde deveria ser `right`, e 253px de espaço à direita.
+
+A causa: chamei a tabela de `tbl-fin`, e **`tbl-fin` já era a tabela de Contas a Pagar** — 39 regras
+dela, entre as quais:
+
+```css
+.tbl-fin td.actions, .tbl-fin thead th.actions, .tbl-fin tfoot td:last-child {
+  position: sticky; right: 0; padding-left: 8px; text-align: left; ...
+}
+```
+
+A coluna de ações daquela tela, grudada à direita e alinhada à esquerda de propósito, caía na última
+célula do meu rodapé. Renomeada para `tbl-rh-fin` (e `tbl-rh-mov`), o total voltou a ficar a exatos
+14px da borda da sua coluna — a mesma distância das outras quatro.
+
+Nome de classe é espaço de nomes global, e este arquivo tem 773 regras. Reaproveitar um nome curto e
+genérico como `tbl-fin` foi o erro; o comportamento estranho veio de graça junto.
+
+### Histórico completo, conceito a conceito
+
+Os títulos de Contas a Pagar passaram a entrar **um a um** na mesma linha do tempo dos viáticos,
+treinamentos e equipamentos. Separar por origem obrigaria o leitor a juntar de cabeça o que
+aconteceu em cada mês.
+
+Cada lançamento diz o que é — Salário, Benefício, Reembolso, Viático, Investimento, Outros — e, no
+caso dos títulos, se está pago (com a data) ou em aberto (com o vencimento).
+
+Acima da tabela entrou um **resumo por conceito**, porque "R$ 190 mil em 40 lançamentos" não responde
+de onde veio o dinheiro. E como a pergunta seguinte é sempre "me mostra só esses", cada conceito é
+clicável e filtra a tabela.
+
+A leitura dos títulos ficou numa consulta só, devolvendo os dois recortes — mês a mês para a tabela
+de cima, título a título para o histórico. Duas consultas ao mesmo dado seriam só uma chance a mais
+de elas divergirem, e uma asserção cobra que as duas somas batam.
+
+### Verificação
+
+As 13 asserções da leitura viraram 22, cobrindo a classificação de cada categoria em conceito, o
+rótulo de cada uma, o título pago dizendo quando foi pago, o em aberto dizendo quando vence, e o
+viático continuando de fora também no histórico. Na tela: o rodapé medido célula a célula contra as
+bordas das colunas, o filtro por conceito indo de 21 para 8 e para 2 lançamentos e voltando, e zero
+cortes em 1500 e 375px.
+
+### Um duplicado que o `node --check` pegou
+
+Declarei um `rhDataBR` que já existia no arquivo desde a emissão de contratos. Removido — passou a
+usar o que já estava lá.
