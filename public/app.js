@@ -11190,8 +11190,10 @@ async function rhAbaFinanceiro(painel, d, id) {
         <th>${rhData(m.data)}</th>
         <td class="esq"><span class="rh-fin-nat ${esc(m.natureza)}"
           title="${esc((RH_FIN_NATUREZA[m.natureza] || {}).ajuda || '')}">${
-          esc((RH_FIN_NATUREZA[m.natureza] || {}).rot || m.natureza)}</span>
-          <i>${esc(m.tipo)}</i></td>
+          esc((RH_FIN_NATUREZA[m.natureza] || {}).rot || m.natureza)}</span>${
+          // O tipo só aparece quando diz algo a mais que o conceito: em "Salário"
+          // os dois são a mesma palavra, e repeti-la é ruído.
+          m.tipo && m.tipo !== (RH_FIN_NATUREZA[m.natureza] || {}).rot ? `<i>${esc(m.tipo)}</i>` : ''}</td>
         <td class="esq">${esc(m.descricao)}</td>
         <td class="esq">${m.pendente ? '<span class="rh-fin-pend">em aberto</span>' : ''}
           <i>${esc(m.detalhe || '')}</i></td>

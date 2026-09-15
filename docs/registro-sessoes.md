@@ -4527,3 +4527,13 @@ cortes em 1500 e 375px.
 
 Declarei um `rhDataBR` que já existia no arquivo desde a emissão de contratos. Removido — passou a
 usar o que já estava lá.
+
+---
+
+## 2026-09-15 — O selo e a linha embaixo diziam a mesma palavra
+
+Retoque do histórico. Em "Salário", "Reembolso" e "Viático" o selo do conceito e o tipo logo abaixo
+eram a mesma palavra, repetida duas vezes em cada linha — e são a maioria das linhas.
+
+O tipo agora só aparece quando diz algo a mais que o conceito: "Investimento · Treinamento",
+"Investimento · Equipamento", "Outros · Comodato". Onde os dois coincidem, fica só o selo.
