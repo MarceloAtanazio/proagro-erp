@@ -995,6 +995,10 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-nota { background: var(--verde-050); border: 1px solid #CDE5D6; border-radius: 8px;
   padding: 11px 14px; font-size: 13px; color: var(--ink-2); margin-bottom: 14px; }
 .rh-nota.aviso { background: #FBF7EF; border-color: #E7D3AE; color: #6B4700; }
+/* Mais forte que o aviso: aqui o numero na tela esta ERRADO, nao so
+   pendente de conferencia. Tabela de imposto vencida nao da erro nenhum --
+   so entrega um liquido errado com cara de certo. */
+.rh-nota.alerta { background: #FCF0EE; border-color: #E8BDB5; color: #8C2F20; }
 .rh-vazio { background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius);
   padding: 28px 24px; text-align: center; margin-bottom: 16px; }
 .rh-vazio p { font-size: 14px; color: var(--ink-2); max-width: 560px; margin: 0 auto 16px; line-height: 1.6; }

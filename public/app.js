@@ -9792,9 +9792,13 @@ async function rhFichaPDF(id) {
     }));
     y = doc.lastAutoTable.finalY + 3;
     doc.setFont('helvetica', 'italic'); doc.setFontSize(7);
-    doc.setTextColor(...(cst.tabela_confirmada ? [110, 120, 114] : [178, 58, 47]));
+    // Vermelho tambem quando a tabela e de um ano que ja passou: nesse caso o
+    // numero nao esta so' pendente, esta errado.
+    doc.setTextColor(...(cst.tabela_confirmada && !rhTabelaVencida(cst.competencia) ? [110, 120, 114] : [178, 58, 47]));
     const nota = `Encargos sobre ${brl(cst.base_encargos)} (bruto + provisões). Tabela de INSS/IRRF: ${cst.competencia}` +
-      (cst.tabela_confirmada ? '.' : ' — NÃO CONFIRMADA; o líquido pode mudar.');
+      (rhTabelaVencida(cst.competencia)
+        ? ` — DE ${rhTabelaVencida(cst.competencia)}, E ESTAMOS EM ${new Date().getFullYear()}: liquido desatualizado.`
+        : cst.tabela_confirmada ? '.' : ' — NÃO CONFIRMADA; o líquido pode mudar.');
     doc.splitTextToSize(nota, larg).forEach((t, i) => doc.text(t, MARGIN, y + i * 3.4));
     y += 10;
   }
@@ -10983,13 +10987,30 @@ function rhAbaVinculo(painel, d, id) {
 // depende das tabelas de INSS e IRRF, que mudam todo ano — por isso o aviso
 // quando a competência não foi confirmada. Número com cara de oficial que está
 // errado é pior que número nenhum.
+// A tabela de INSS/IRRF é de um ANO. Ficar com a do ano passado não dá erro
+// nenhum: o líquido continua saindo, com cara de oficial, e errado por uma
+// diferença constante. Foi assim que o IRRF ficou R$ 103,91 acima do holerite
+// em 2026 com a tabela de 2025 ainda configurada, e nada na tela avisava.
+// Confirmar a tabela não protege disso — confirma-se uma tabela velha do mesmo
+// jeito. Quem protege é a comparação com o ano corrente.
+const rhTabelaVencida = comp => {
+  const ano = Number(String(comp || '').match(/\d{4}/));
+  return ano && ano < new Date().getFullYear() ? ano : null;
+};
+
 function rhQuadroCusto(c) {
   if (!c) return '';
   const l = (rot, val, cls) => `<div class="rh-custo-linha ${cls || ''}"><span>${rot}</span><b>${val}</b></div>`;
   const pct = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + '%';
+  const vencida = rhTabelaVencida(c.competencia);
   return `<div class="rh-sec rh-custo"><h4>Custo <span class="rh-lgpd">restrito</span></h4>
 
-    ${!c.tabela_confirmada ? `<div class="rh-nota aviso">A tabela de INSS/IRRF em uso é a de
+    ${vencida ? `<div class="rh-nota alerta">A tabela de INSS/IRRF em uso é a de
+      <strong>${vencida}</strong> e estamos em <strong>${new Date().getFullYear()}</strong>. As faixas
+      mudam todo ano — enquanto ela não for trocada, o <strong>líquido sai errado</strong>, e o erro é
+      silencioso porque o número continua parecendo certo. Atualize em
+      <button class="rh-link" data-ir-encargos="1">Configurações de encargos</button>.</div>`
+    : !c.tabela_confirmada ? `<div class="rh-nota aviso">A tabela de INSS/IRRF em uso é a de
       <strong>${esc(c.competencia)}</strong> e <strong>ainda não foi confirmada</strong>. O custo da empresa
       não depende dela, mas o <strong>líquido</strong> sim — confira as faixas em
       <button class="rh-link" data-ir-encargos="1">Configurações de encargos</button>.</div>` : ''}
@@ -11152,7 +11173,7 @@ async function rhQuadroRescisao(host, id) {
     <p class="rh-custo-nota">Simulação, não rescisão: nada aqui é gravado. ${
       sim.fgts_estimado ? `O saldo do FGTS está <strong>estimado</strong> em ${brl(sim.fgts_saldo_base)}
       (8% do bruto atual por mês de contrato) — informe o saldo do extrato para a multa sair certa. ` : ''}${
-      !sim.tabela_confirmada ? `O líquido usa a tabela de ${esc(sim.competencia)}, <strong>ainda não
+      rhTabelaVencida(sim.competencia) ? `<strong>A tabela de INSS/IRRF é a de ${rhTabelaVencida(sim.competencia)} e estamos em ${new Date().getFullYear()}</strong> — o líquido está desatualizado até ela ser trocada. ` : !sim.tabela_confirmada ? `O líquido usa a tabela de ${esc(sim.competencia)}, <strong>ainda não
       confirmada</strong>; o custo da empresa não depende dela. ` : ''}Não entram verbas variáveis,
       horas extras nem o que a convenção coletiva exigir.</p>`;
 
@@ -11340,7 +11361,7 @@ async function rhAbaFinanceiro(painel, d, id) {
         : ''}${f.vinculos ? '' : ' — vazio aqui, porque não há vínculo registrado'}.
       <strong>Custo</strong> é calculado, não lançado: FGTS, INSS patronal e RAT saem em guia única para a
       empresa inteira, sem rateio por pessoa, então não dá para lê-los dos títulos.${
-      !f.tabela_confirmada ? ` O previsto usa a tabela de ${esc(f.competencia)}, <strong>ainda não
+      rhTabelaVencida(f.competencia) ? ` <strong>A tabela de INSS/IRRF é a de ${rhTabelaVencida(f.competencia)} e estamos em ${new Date().getFullYear()}</strong> — o previsto está desatualizado até ela ser trocada.` : !f.tabela_confirmada ? ` O previsto usa a tabela de ${esc(f.competencia)}, <strong>ainda não
       confirmada</strong>; o custo não depende dela.` : ''}
       O 13º e as férias entram provisionados 1/12 ao mês no custo, que é como ele se acumula.</p>`;
 

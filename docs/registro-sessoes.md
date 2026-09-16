@@ -4821,3 +4821,65 @@ Vale registrar que a mudança da véspera funcionou: a ficha da Brenda mostra ho
 *"(−) IRRF · **sem dependentes** — R$ 699,55"* e a nota *"Nenhum dependente abatendo o imposto — se
 houver, cadastre em Dependentes"*. A informação estava na tela; o que faltou foi ela competir com um
 botão que parecia resolver.
+
+---
+
+## 2026-09-16 — Era a tabela do ano passado, não os dependentes
+
+**Correção de um diagnóstico meu.** Eu havia atribuído a divergência do líquido da Brenda a dois
+dependentes não cadastrados. Ela **não tem dependentes**. Minha leitura estava errada.
+
+### O que me levou ao erro
+
+Testei o cálculo com 0, 1, 2 e 3 dependentes e vi que com dois o resultado chegava a 34 centavos do
+holerite. Tomei a proximidade por explicação. **Chegar perto não é explicar** — e a hipótese tinha um
+resíduo de 36 centavos que eu não sabia justificar. Esse resíduo era o aviso de que a causa era outra,
+e eu o tratei como arredondamento.
+
+O jeito certo era o que fiz agora: em vez de procurar uma entrada que reproduza o número, **isolar a
+variável a partir do próprio holerite**.
+
+### A conta que resolve
+
+O holerite dá base, alíquota e imposto. Com isso a parcela a deduzir sai por subtração:
+
+```
+base 5.848,32 × 27,5% = 1.608,29
+1.608,29 − 595,64 (imposto do holerite) = 1.012,65   <- a parcela que a folha usou
+parcela configurada aqui (2025)          =   908,73
+diferença                                =   103,92
+```
+
+E a diferença do imposto que o usuário via era **R$ 103,91**. É a mesma coisa. A base cai na última
+faixa nos dois cálculos, então nenhuma outra faixa participa: **a divergência inteira era um número da
+tabela.**
+
+Trocando só a parcela da última faixa para 1.012,65, o IRRF bate ao centavo e o líquido fica a 2
+centavos — os do arredondamento do INSS, que a folha trunca por faixa.
+
+A tabela configurada está marcada como **competência 2025**, e o holerite é de **2026**. As faixas
+mudam todo ano; a do ano passado continuou em uso.
+
+### O que o sistema não fazia, e agora faz
+
+Tabela de imposto vencida **não dá erro nenhum**. O líquido continua saindo, com cara de oficial, e
+errado por uma diferença constante em todo mundo. Confirmar a tabela não protege disso — confirma-se
+uma tabela velha do mesmo jeito, e foi exatamente o que aconteceu.
+
+Entrou `rhTabelaVencida`: compara a competência com o ano corrente e, quando ficou para trás, troca o
+aviso amarelo por um **alerta vermelho** — no quadro de Custo, na Rescisão, no histórico Financeiro e
+na ficha em PDF, que passa a imprimir a advertência em vermelho também.
+
+O texto diz o que está em jogo, não só o fato: *"as faixas mudam todo ano — enquanto ela não for
+trocada, o líquido sai errado, e o erro é silencioso porque o número continua parecendo certo"*.
+
+### Verificação
+
+As asserções do caso Brenda foram **reescritas com a causa certa** — as antigas afirmavam a
+explicação errada e passavam. Dez asserções agora: o INSS batendo a 2 centavos, a base batendo, a
+faixa sendo a mesma nos dois, a parcela de R$ 1.012,65 derivada do holerite, a diferença das parcelas
+explicando **a diferença inteira** do imposto, e a prova final — trocando só aquele número, bate ao
+centavo.
+
+Um teste que passa afirmando a causa errada é pior que teste nenhum: ele dá confiança na explicação
+errada.
