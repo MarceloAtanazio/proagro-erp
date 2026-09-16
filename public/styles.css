@@ -996,6 +996,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Um vínculo encerrado no histórico: cabeçalho com o período e o cargo, e
    abaixo como o contrato terminou. Vários vínculos empilhados precisam de
    separação visível, senão viram uma lista só e o leitor perde de quem é o quê. */
+/* Tiras de métrica do vínculo: duração, fase, aviso. Quebram em linha em vez de
+   encolher, porque número espremido some — e são a resposta rápida da tela. */
+.rh-tiras { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.rh-tira { background: var(--verde-050); border: 1px solid #CDE5D6; border-radius: 8px;
+  padding: 7px 12px; min-width: 128px; }
+.rh-tira span { display: block; font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .04em; margin-bottom: 2px; }
+.rh-tira b { font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .rh-vinc-hist { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
 .rh-vinc-cab { display: flex; justify-content: space-between; gap: 14px; align-items: baseline;
   flex-wrap: wrap; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid #EAF0EC; }

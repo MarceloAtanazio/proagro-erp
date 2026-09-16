@@ -2283,12 +2283,23 @@ const RH_CAMPOS_FICHA = ['nome_social', 'data_nascimento', 'sexo', 'estado_civil
   'emergencia_parentesco', 'banco_numero', 'banco_nome', 'agencia', 'conta', 'conta_tipo', 'pix_chave'];
 const RH_CAMPOS_DATA = ['data_nascimento', 'rg_emissao', 'ctps_emissao'];
 
+// Os motivos de saída, num vocabulário só. Os seis primeiros são exatamente os
+// `cod` de RH_RESCISAO_MOTIVOS: o que se compara no quadro de rescisão é o que
+// fica registrado no histórico, sem tradução no meio. Os dois últimos não são
+// decisão de ninguém e por isso não têm coluna no comparativo — mas acontecem,
+// e um histórico que não sabe dizer "faleceu" força quem registra a escolher
+// uma dispensa que não houve.
+const RH_DESLIGAMENTO_TIPOS = ['sem_justa_causa', 'pedido', 'justa_causa', 'acordo',
+  'experiencia_fim', 'experiencia_antes', 'aposentadoria', 'falecimento'];
+const RH_DESLIGAMENTO_AVISOS = ['trabalhado', 'indenizado', 'dispensado', 'nao_aplicavel'];
+
 const RH_CAMPOS_VINCULO = ['tipo', 'matricula', 'admissao', 'desligamento', 'desligamento_motivo',
-  'desligamento_tipo', 'cargo', 'nivel', 'departamento', 'centro_custo', 'gestor_id', 'unidade',
+  'desligamento_tipo', 'desligamento_aviso', 'desligamento_aviso_em', 'desligamento_obs',
+  'cargo', 'nivel', 'departamento', 'centro_custo', 'gestor_id', 'unidade',
   'regime', 'modelo_trabalho', 'controle_ponto', 'experiencia_fim', 'prorrogacao_fim', 'salario',
   'periculosidade_pct', 'vr_dia', 'home_office_dia', 'vt_opcao', 'totalpass', 'clube_saude',
   'seguro_vida', 'cct', 'sindicato', 'observacao'];
-const RH_VINC_DATA = ['admissao', 'desligamento', 'experiencia_fim', 'prorrogacao_fim'];
+const RH_VINC_DATA = ['admissao', 'desligamento', 'desligamento_aviso_em', 'experiencia_fim', 'prorrogacao_fim'];
 const RH_VINC_NUM = ['salario', 'periculosidade_pct', 'vr_dia', 'home_office_dia', 'gestor_id'];
 const RH_VINC_BOOL = ['controle_ponto', 'totalpass', 'clube_saude', 'seguro_vida'];
 
@@ -2494,7 +2505,9 @@ app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(asyn
 
   res.json({
     colaborador: rhFiltrar(colab, req.user, colab),
-    vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
+    // As métricas vão DEPOIS do filtro: elas não têm remuneração dentro, e
+    // calcular antes faria rhFiltrar podá-las junto por não conhecer o campo.
+    vinculos: vinculos.map(v => ({ ...rhFiltrar(v, req.user, colab), metricas: rhMetricasVinculo(v) })),
     dependentes,
     custo,
     dossie: anexos,
@@ -2619,6 +2632,40 @@ app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, re
   if (isDate(corpo.admissao) && corpo.admissao !== String(atual[0].admissao).slice(0, 10)) {
     Object.assign(corpo, rhDatasExperiencia(corpo.admissao));
   }
+  // Fechar contrato por AQUI também precisa arquivar.
+  //
+  // Havia duas portas para encerrar um vínculo — este PUT genérico e o registro
+  // de término — e só uma arquivava. Deu no que tinha de dar: um colaborador
+  // desligado em 14/09 continuou aparecendo na lista, contando como gente da
+  // casa. E o motivo gravado foi `fim_contrato`, um código que o cálculo de
+  // rescisão nem conhece, porque a tela que enviou era uma versão antiga ainda
+  // no cache do navegador. Validar no servidor é o que protege disso: cliente
+  // velho existe, e não adianta corrigir só a tela.
+  const fechandoAgora = !atual[0].desligamento && isDate(corpo.desligamento);
+  const mexeNoDesligamento = fechandoAgora || (atual[0].desligamento &&
+    ['desligamento', 'desligamento_tipo', 'desligamento_aviso', 'desligamento_aviso_em']
+      .some(c => corpo[c] !== undefined));
+  if (mexeNoDesligamento) {
+    const tipo = corpo.desligamento_tipo !== undefined ? corpo.desligamento_tipo : atual[0].desligamento_tipo;
+    if (!RH_DESLIGAMENTO_TIPOS.includes(tipo)) {
+      return res.status(400).json({ error: 'Informe um motivo de desligamento válido.' });
+    }
+    const aviso = corpo.desligamento_aviso !== undefined ? corpo.desligamento_aviso : atual[0].desligamento_aviso;
+    if (aviso && !RH_DESLIGAMENTO_AVISOS.includes(aviso)) {
+      return res.status(400).json({ error: 'Situação do aviso prévio desconhecida.' });
+    }
+    const adm = String(corpo.admissao || atual[0].admissao).slice(0, 10);
+    const saida = isDate(corpo.desligamento) ? corpo.desligamento : String(atual[0].desligamento || '').slice(0, 10);
+    if (saida && saida < adm) {
+      return res.status(400).json({ error: `A saída (${saida}) não pode ser anterior à admissão (${adm}).` });
+    }
+    const avisoEm = isDate(corpo.desligamento_aviso_em) ? corpo.desligamento_aviso_em
+      : String(atual[0].desligamento_aviso_em || '').slice(0, 10);
+    if (saida && avisoEm && avisoEm > saida) {
+      return res.status(400).json({ error: 'O aviso não pode ser comunicado depois da data de saída.' });
+    }
+  }
+
   const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
   if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
@@ -2637,7 +2684,23 @@ app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, re
     const novo = (await query('SELECT * FROM erp_rh_vinculos WHERE id=$1', [id]))[0];
     if (novo) await rhRegistrarVigencia(id, novo, hojeISO(), 'Alteração de remuneração', req.user.id);
   }
-  res.json({ ok: true });
+
+  // Quem sai, sai inteiro: carimba quem registrou e arquiva o colaborador. O
+  // `arquivado_em IS NULL` é o que torna isto idempotente — reeditar um vínculo
+  // já encerrado não mexe em quem já está arquivado.
+  let arquivou = false;
+  if (fechandoAgora) {
+    await query(
+      `UPDATE erp_rh_vinculos SET desligamento_registrado_em=now(), desligamento_registrado_por=$1
+        WHERE id=$2 AND desligamento_registrado_em IS NULL`, [req.user.id, id]);
+    const r = await query(
+      `UPDATE erp_colaboradores SET arquivado_em=now(), arquivado_por=$1,
+          arquivado_motivo=COALESCE(arquivado_motivo, $2), ativo=false
+        WHERE id=$3 AND arquivado_em IS NULL RETURNING id`,
+      [req.user.id, sanitize(corpo.desligamento_motivo) || null, atual[0].colaborador_id]);
+    arquivou = r.length > 0;
+  }
+  res.json({ ok: true, arquivou });
 }));
 
 app.delete('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
@@ -3919,6 +3982,47 @@ function rhAvisoDias(admissao, ate) {
   return Math.min(30 + 3 * rhAnosDeCasa(admissao, ate), 90);
 }
 
+// As métricas de um vínculo, calculadas no SERVIDOR.
+//
+// Tempo de casa e aviso proporcional já viviam aqui, para a rescisão. Repetir a
+// conta na tela criaria duas definições da mesma coisa, e o dia em que uma
+// mudasse a outra ficaria para trás sem ninguém notar — foi assim que os
+// motivos de desligamento viraram dois vocabulários. Uma definição só, e a tela
+// só formata.
+function rhMetricasVinculo(v) {
+  if (!v || !v.admissao) return null;
+  const dia = s => Math.round(Date.parse(String(s).slice(0, 10) + 'T00:00:00Z') / 86400000);
+  const hoje = hojeISO();
+  const adm = String(v.admissao).slice(0, 10);
+  const saida = v.desligamento ? String(v.desligamento).slice(0, 10) : null;
+  const ate = saida || hoje;
+  const termo = v.prorrogacao_fim || v.experiencia_fim || null;
+  const termoISO = termo ? String(termo).slice(0, 10) : null;
+
+  // No encerrado o tempo é o que foi; no aberto, o que já corre. O +1 conta o
+  // dia da admissão: quem entra e sai no mesmo dia trabalhou um dia, não zero.
+  const dias = Math.max(0, dia(ate) - dia(adm)) + (saida ? 1 : 0);
+  const emExperiencia = !!(termoISO && ate <= termoISO);
+
+  return {
+    admissao: adm, saida, referencia: ate, em_curso: !saida,
+    dias, anos_completos: rhAnosDeCasa(adm, ate),
+    // Quanto a empresa deveria de aviso se o contrato acabasse na data de
+    // referência. No contrato aberto é a pergunta "e se for hoje?".
+    aviso_dias: rhAvisoDias(adm, ate),
+    fase: emExperiencia ? (v.prorrogacao_fim && termoISO === String(v.prorrogacao_fim).slice(0, 10)
+      && v.experiencia_fim && ate > String(v.experiencia_fim).slice(0, 10) ? 'prorrogacao' : 'experiencia') : 'efetivo',
+    termo_experiencia: termoISO,
+    // Dias entre a referência e o termo: positivo no aberto é quanto falta;
+    // no encerrado é quanto se antecipou, que é o que o art. 479 cobra.
+    dias_ate_o_termo: termoISO && ate <= termoISO ? dia(termoISO) - dia(ate) : null,
+    saiu_na_experiencia: !!(saida && emExperiencia),
+    // Antecedência do aviso: distância entre comunicar e sair.
+    aviso_antecedencia_dias: saida && v.desligamento_aviso_em
+      ? Math.max(0, dia(saida) - dia(String(v.desligamento_aviso_em).slice(0, 10))) : null
+  };
+}
+
 // Avos contados pela regra dos 15 dias: mês em que se trabalhou 15 dias ou mais
 // conta inteiro; abaixo disso não conta.
 function rhAvosNoAno(inicio, fim) {
@@ -4447,7 +4551,9 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
   res.json({
     gerado_em: hoje,
     colaborador: rhFiltrar(colab, req.user, colab),
-    vinculos: vinculos.map(v => rhFiltrar(v, req.user, colab)),
+    // As métricas vão DEPOIS do filtro: elas não têm remuneração dentro, e
+    // calcular antes faria rhFiltrar podá-las junto por não conhecer o campo.
+    vinculos: vinculos.map(v => ({ ...rhFiltrar(v, req.user, colab), metricas: rhMetricasVinculo(v) })),
     dependentes, dossie: anexos, checklist,
     treinamentos: treinos.map(t => (verRemun ? t : { ...t, custo: null })),
     viagens: viagens.map(v => ({ ...v, destino: rhDestinoDe(v), valor_solicitado: n(v.valor_solicitado),
@@ -4524,17 +4630,6 @@ app.put('/api/rh/encargos', requireAuth, requireEdit('rh'), h(async (req, res) =
 }));
 
 // ---- Desligar e arquivar ----
-//
-// Os motivos de saída, num vocabulário só. Os seis primeiros são exatamente os
-// `cod` de RH_RESCISAO_MOTIVOS: o que se compara no quadro de rescisão é o que
-// fica registrado no histórico, sem tradução no meio. Os dois últimos não são
-// decisão de ninguém e por isso não têm coluna no comparativo — mas acontecem,
-// e um histórico que não sabe dizer "faleceu" força quem registra a escolher
-// uma dispensa que não houve.
-const RH_DESLIGAMENTO_TIPOS = ['sem_justa_causa', 'pedido', 'justa_causa', 'acordo',
-  'experiencia_fim', 'experiencia_antes', 'aposentadoria', 'falecimento'];
-const RH_DESLIGAMENTO_AVISOS = ['trabalhado', 'indenizado', 'dispensado', 'nao_aplicavel'];
-
 // Arquivar é o caminho normal para quem saiu: preserva vínculo, dossiê e
 // histórico, e tira a pessoa de todas as listas. Excluir apaga tudo.
 //

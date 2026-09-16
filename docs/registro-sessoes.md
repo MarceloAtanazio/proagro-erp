@@ -5110,3 +5110,72 @@ Na tela, com o CSS real: três vínculos encerrados no histórico com motivo, av
 o que não tem motivo gravado diz *"não registrado"* em vez de traço mudo; o formulário muda título, botão
 e campos conforme haja contrato aberto; escolher aviso indenizado ou dispensado preenche a data da
 comunicação sozinho; zero corte a 1180px e a 375px. As doze suítes passam.
+
+## 2026-09-16 — Sessão 106: a porta que não arquivava, e métricas no vínculo
+
+**Solicitação:** *"Informei o desligamento do funcionário em destaque e ele continua aparecendo na lista
+de colaboradores, porém o ideal é que ele fosse pra arquivamento mantendo todos os dados registrados pra
+manter histórico. E em 'vínculo' e 'vínculos anteriores' acho que a gente pode deixar um registro um
+pouco mais robusto e com mais informações, mostrando métricas de tempo, duração, motivo e essas
+coisas."*
+
+### O furo: duas portas, uma só arquivava
+
+O recurso da sessão 105 funcionava — mas eu tinha fechado **uma** das portas. A outra, o
+`PUT /api/rh/vinculos/:id` do formulário genérico de editar vínculo, continuava encerrando contrato sem
+arquivar ninguém.
+
+E o usuário entrou justamente por ela. Pior: gravou `fim_contrato`, o código que a migração daquela
+mesma manhã tinha aposentado — porque a tela que enviou era a **versão antiga ainda no cache do
+navegador**. O resultado no banco era o estado que o ato único existia para impedir: desligado em 14/09,
+`ativo = true`, aparecendo na lista, contando como gente da casa, com um motivo que o cálculo de
+rescisão não conhece.
+
+A lição, que é mais geral do que o caso: **não adianta corrigir só a tela**. Cliente velho existe e
+continua mandando o que mandava; quem tem de recusar é o servidor. Duas correções:
+
+1. Fechar contrato pelo PUT agora **valida** (motivo da lista, data não anterior à admissão, aviso
+   coerente) e **arquiva** o colaborador no mesmo ato, idempotente via `arquivado_em IS NULL`.
+2. Os campos de desligamento saíram do formulário de editar vínculo, que passa a explicar onde o
+   registro mora agora. Uma porta só na tela, e as duas travadas no servidor.
+
+Dado de produção corrigido: vínculo 11 remapeado para `experiencia_fim` e o colaborador 8 arquivado.
+
+### O buraco que eu mesmo abri
+
+Tirar os campos do formulário de edição deixava um registro de desligamento **impossível de corrigir**:
+encerrar arquiva, e o formulário de vínculo só alcança o contrato aberto. Um motivo digitado errado
+ficaria errado para sempre. Entra o ✎ em cada vínculo do histórico, abrindo um formulário de correção
+que altera só o que ficou escrito sobre a saída — sem rearquivar e sem mexer em quem registrou
+originalmente.
+
+### Métricas: calculadas no servidor, de propósito
+
+Tempo de casa e aviso proporcional já viviam na API para a rescisão. Repetir a conta na tela criaria
+duas definições de "ano completo", e a segunda ficaria para trás no dia em que a primeira mudasse — foi
+exatamente assim que os motivos de desligamento viraram dois vocabulários. `rhMetricasVinculo` é uma
+definição só; a tela só formata.
+
+Em tiras, no contrato em vigor e em cada vínculo anterior: duração (ou tempo de casa), situação
+(em experiência / prorrogada / efetivo), quanto falta para o termo — ou **quanto se antecipou**, que é o
+que o art. 479 cobra —, aviso prévio devido pela Lei 12.506 e com quanta antecedência ele foi
+comunicado. No topo do histórico, quando há mais de uma passagem: quantas e o tempo somado.
+
+Dois detalhes que só aparecem quando se testa a aritmética:
+
+- a virada de ano é no **aniversário da admissão**, não a cada 365 dias — véspera conta 5 anos, no dia
+  conta 6, e o aviso sobe 3 dias junto;
+- quem entra e sai no mesmo dia trabalhou **um** dia, não zero;
+- abaixo de 60 dias a duração sai em dias. "46 dias" virando "1 mês" é um quarto a menos, e é justamente
+  na faixa da experiência que o dia importa.
+
+### Verificação
+
+Duas suítes novas. `verifica-desl-porta.js` (19 asserções) reproduz o caso real: o código morto recusado
+no servidor, nada gravado quando a validação barra, fechar por ali arquivando, editar só o cargo **não**
+arquivando ninguém, e a correção de um registro já encerrado. `verifica-metricas-vinculo.js` (24) testa
+a aritmética contra o código real da API — virada no aniversário, teto de 90 dias do aviso, duração
+parando na saída, antecedência nula em vez de zero quando não há aviso registrado.
+
+Na tela, com o CSS real: três vínculos com tiras corretas, o ✎ abrindo o formulário preenchido e enviando
+só os campos do desligamento, zero corte a 1180px e a 375px. As quatorze suítes passam.
