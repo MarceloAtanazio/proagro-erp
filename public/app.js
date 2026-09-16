@@ -11417,7 +11417,8 @@ function rhFormEncargos(voltarPara) {
       </div>
       <label class="check-chip"><input type="checkbox" id="en-conf" ${c.confirmada ? 'checked' : ''}>
         Confirmo que estas faixas são as da competência informada
-        <span style="color:var(--muted);font-weight:400">— sem isso, o líquido aparece com aviso</span></label>`,
+        <span style="color:var(--muted);font-weight:400">— só tira o aviso da tela.
+        <strong>Nenhum valor muda</strong>: quem altera o cálculo são as faixas acima.</span></label>`,
       [{ label: 'Cancelar', onClick: voltarPara },
        { label: 'Salvar', cls: 'primary', onClick: async () => {
           const num = id => { const el = $('#' + id); return el && el.value !== '' ? Number(el.value) : null; };

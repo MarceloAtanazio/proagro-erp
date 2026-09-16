@@ -4793,3 +4793,31 @@ O caso virou regressão em `verifica-custo.js`, com os números do holerite real
 está configurada: cinco asserções que fixam o INSS, a distância de R$ 103,93 sem dependente, a
 aproximação com dois, o valor de cada dependente, e que o resultado carrega a contagem — **zero
 inclusive**, que é o que a tela precisa para poder dizer.
+
+---
+
+## 2026-09-16 — "Confirmar a tabela" parecia consertar o cálculo, e não conserta
+
+Depois do diagnóstico do líquido da Brenda, o retorno foi: *"aprovei a mudança e mesmo assim o IRRF
+continua divergente"*.
+
+O que foi aprovado era a **tabela de encargos** — e confirmar a tabela não mexe em nenhum número. É
+uma declaração de que um humano conferiu as faixas; serve só para tirar o aviso amarelo da tela. Os
+dois dependentes continuavam sem cadastro, e o IRRF continuava em R$ 699,55 pelo mesmo motivo de
+antes.
+
+O rótulo da caixa de confirmação ajudava a confundir:
+
+> Confirmo que estas faixas são as da competência informada — **sem isso, o líquido aparece com aviso**
+
+A frase é verdadeira, mas lida de trás para frente vira "com isso, o líquido fica certo". Passou a
+dizer o que realmente acontece:
+
+> — só tira o aviso da tela. **Nenhum valor muda**: quem altera o cálculo são as faixas acima.
+
+### O que a tela já dizia certo
+
+Vale registrar que a mudança da véspera funcionou: a ficha da Brenda mostra hoje
+*"(−) IRRF · **sem dependentes** — R$ 699,55"* e a nota *"Nenhum dependente abatendo o imposto — se
+houver, cadastre em Dependentes"*. A informação estava na tela; o que faltou foi ela competir com um
+botão que parecia resolver.
