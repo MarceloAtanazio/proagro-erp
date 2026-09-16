@@ -9759,7 +9759,7 @@ async function rhFichaPDF(id) {
       ...(cst.periculosidade ? [[`Periculosidade (${pct(cst.periculosidade_pct)})`, brl(cst.periculosidade)]] : []),
       ['Salário bruto', brl(cst.bruto)],
       ['(-) INSS', '- ' + brl(cst.inss)],
-      [`(-) IRRF${cst.dependentes ? ` · ${cst.dependentes} dependente(s)` : ''}`, '- ' + brl(cst.irrf)],
+      [`(-) IRRF · ${cst.dependentes ? `${cst.dependentes} dependente(s)` : 'sem dependentes'}`, '- ' + brl(cst.irrf)],
       ['= Salário líquido', brl(cst.liquido)],
       ['Provisão de férias (1/12)', brl(cst.ferias)],
       ['Terço constitucional', brl(cst.terco_ferias)],
@@ -11001,10 +11001,11 @@ function rhQuadroCusto(c) {
         ${c.periculosidade ? l(`Periculosidade (${pct(c.periculosidade_pct)})`, '+ ' + brl(c.periculosidade)) : ''}
         ${l('Salário bruto', brl(c.bruto), 'sub')}
         ${l('(−) INSS', '− ' + brl(c.inss), 'neg')}
-        ${l(`(−) IRRF${c.dependentes ? ` · ${c.dependentes} dependente(s)` : ''}`, '− ' + brl(c.irrf), 'neg')}
+        ${l(`(−) IRRF · ${c.dependentes ? `${c.dependentes} dependente(s)` : 'sem dependentes'}`, '− ' + brl(c.irrf), 'neg')}
         ${l('= Salário líquido', brl(c.liquido), 'total')}
         <p class="rh-custo-nota">IRRF sobre base de ${brl(c.irrf_base)} a ${pct(c.irrf_aliquota)}${
-          c.irrf_simplificado ? ', com desconto simplificado (mais vantajoso)' : ''}. Tabela ${esc(c.competencia)}.</p>
+          c.irrf_simplificado ? ', com desconto simplificado (mais vantajoso)' : ''}. Tabela ${esc(c.competencia)}.${
+          c.dependentes || !c.irrf ? '' : ' <strong>Nenhum dependente</strong> abatendo o imposto — se houver, cadastre em Dependentes.'}</p>
       </div>
 
       <div class="rh-custo-bloco">

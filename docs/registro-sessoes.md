@@ -4725,3 +4725,71 @@ sobrou, e o CPF incompleto do dependente ficou intacto.
 O harness do PDF interceptava `jsPDF.prototype.save` para capturar o arquivo. Isso parou de funcionar
 em algum momento e ele passou a devolver `null` **sem reclamar**. Agora captura a instância na
 construção e **falha em voz alta** se o PDF não for gerado.
+
+---
+
+## 2026-09-16 — O líquido da Brenda: a conta estava certa, o dado é que faltava
+
+**Relato:** o líquido calculado divergia do holerite. ERP R$ 5.148,75, holerite R$ 5.252,68 — uma
+diferença de R$ 103,93.
+
+### Onde a diferença estava
+
+Conferindo verba por verba contra o holerite, com a tabela que está de fato configurada:
+
+| | Holerite | ERP | Diferença |
+|---|---|---|---|
+| INSS | 721,23 | 721,25 | **2 centavos** |
+| IRRF | 595,64 | 699,55 | **103,91** |
+| Líquido | 5.252,68 | 5.148,75 | 103,93 |
+
+O INSS de 2 centavos é convenção de arredondamento: a folha **trunca cada faixa** em duas casas
+(121,57 + 115,36 + 174,17 + 310,13 = 721,23), e o cálculo aqui soma exato e arredonda no fim. Fica
+registrado e não foi mexido — ver o porquê mais abaixo.
+
+O IRRF é que respondia pela diferença inteira. Rodando o mesmo cálculo com número crescente de
+dependentes:
+
+```
+0 dependentes: líquido 5.148,75   (103,93 abaixo do holerite)
+1 dependente : líquido 5.200,88   ( 51,80 abaixo)
+2 dependentes: líquido 5.253,02   (  0,34 acima)  <-- é este
+3 dependentes: líquido 5.305,16   ( 52,48 acima)
+```
+
+**Não era defeito de cálculo: eram dois dependentes que não estavam cadastrados no ERP.** Com eles, a
+sobra cai de R$ 103,93 para 34 centavos, que é arredondamento dos dois lados.
+
+### O que era defeito, e é meu
+
+O quadro de Custo só mencionava dependentes **quando havia algum**:
+
+```js
+`(−) IRRF${c.dependentes ? ` · ${c.dependentes} dependente(s)` : ''}`
+```
+
+Com zero, a linha dizia apenas "(−) IRRF" — e a ausência do dado ficava invisível. Quem conferisse
+contra o holerite veria dois números diferentes sem nenhuma pista de por quê.
+
+Agora diz sempre, inclusive o zero: **"(−) IRRF · sem dependentes"**, e a nota abaixo completa —
+*"Nenhum dependente abatendo o imposto — se houver, cadastre em Dependentes"*. Na tela e no PDF.
+
+O aviso some quando o IRRF já é zero: para quem está na faixa isenta, dependente não muda nada, e o
+recado viraria ruído em toda ficha de salário baixo.
+
+### Por que NÃO mudei o arredondamento do INSS
+
+Seria tentador truncar por faixa para bater com a folha ao centavo. Testei: com os dois dependentes,
+o líquido sai a 34 centavos do holerite arredondando, e a **36** truncando. Truncar piora, porque o
+resíduo que sobra vem do IRRF, não do INSS — a folha aplica uma parcela a deduzir 36 centavos
+diferente da tabela publicada.
+
+Mudar a convenção com base num único holerite, para trocar 34 por 36 centavos, seria mexer sem
+ganho — e com o risco de errar mais nos outros casos.
+
+### Verificação
+
+O caso virou regressão em `verifica-custo.js`, com os números do holerite real e a tabela de 2025 que
+está configurada: cinco asserções que fixam o INSS, a distância de R$ 103,93 sem dependente, a
+aproximação com dois, o valor de cada dependente, e que o resultado carrega a contagem — **zero
+inclusive**, que é o que a tela precisa para poder dizer.
