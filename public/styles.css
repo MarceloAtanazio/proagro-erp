@@ -1004,11 +1004,28 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-tira span { display: block; font-size: 10.5px; color: var(--muted); text-transform: uppercase;
   letter-spacing: .04em; margin-bottom: 2px; }
 .rh-tira b { font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; }
-.rh-vinc-hist { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
-.rh-vinc-cab { display: flex; justify-content: space-between; gap: 14px; align-items: baseline;
-  flex-wrap: wrap; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid #EAF0EC; }
-.rh-vinc-cab span { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.rh-vinc-cab b { font-size: 13.5px; color: var(--ink); }
+.rh-vinc-hist { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+.rh-vinc-cab { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start;
+  padding-bottom: 10px; border-bottom: 1px solid #EAF0EC; }
+/* Período em cima e cargo embaixo: o período é o que identifica o vínculo na
+   lista, e ficava competindo com o cargo na mesma linha, um em cada ponta. */
+.rh-vinc-id b { display: block; font-size: 14px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.rh-vinc-id span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+
+/* Rótulo EM CIMA do valor, os dois à esquerda, e a coluna com largura MÁXIMA.
+   Sem o teto, em tela larga a grade abria quatro colunas esticadas e o valor
+   alinhado à direita ficava a meio palmo do próprio rótulo. */
+.rh-vinc-dados { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 300px));
+  justify-content: start; gap: 12px 32px; margin-top: 12px; }
+.rh-vinc-campo dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .04em; margin-bottom: 3px; }
+.rh-vinc-campo dd { font-size: 13.5px; color: var(--ink); font-weight: 600; line-height: 1.45; }
+/* Texto corrido ocupa a linha toda: motivo e observação são frases, não rótulos
+   curtos, e espremidos numa coluna de 300px viram uma escada de quebras. */
+.rh-vinc-campo.largo { grid-column: 1 / -1; max-width: 900px; }
+.rh-vinc-campo.largo dd { font-weight: 500; color: var(--ink-2); }
+/* Complemento do valor — "por Fulano", "comunicado em" — pesa menos que o fato. */
+.rh-vinc-fraco { font-weight: 400; color: var(--muted); }
 /* Falta de dado é dado: sai em cinza e por extenso, não como traço mudo. */
 .rh-sem-registro { color: var(--muted); font-weight: 400; font-style: italic; }
 .rh-linha b { color: var(--ink); font-weight: 600; text-align: right; }

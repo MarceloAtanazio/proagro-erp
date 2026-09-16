@@ -11575,7 +11575,7 @@ const rhRotulo = (lst, v) => (lst.find(t => t.v === v) || {}).t || rhTxt(v);
 // é onde o tempo de casa e o aviso proporcional já eram calculados para a
 // rescisão — a tela só formata, e não existe uma segunda definição de "ano
 // completo" para divergir da primeira.
-function rhTirasVinculo(m) {
+function rhTirasVinculo(m, temAviso) {
   if (!m) return '';
   const tira = (rot, val, dica) => `<div class="rh-tira"${dica ? ` title="${esc(dica)}"` : ''}>
     <span>${rot}</span><b>${val}</b></div>`;
@@ -11596,7 +11596,7 @@ function rhTirasVinculo(m) {
       : ''}
     ${tira(m.em_curso ? 'Aviso prévio hoje' : 'Aviso prévio devido', `${m.aviso_dias} dias`,
         'Lei 12.506: 30 dias mais 3 por ano completo, limitado a 90')}
-    ${m.aviso_antecedencia_dias != null
+    ${m.aviso_antecedencia_dias && temAviso !== false
       ? tira('Aviso comunicado com', `${m.aviso_antecedencia_dias} dia(s)`, 'de antecedência em relação à saída')
       : ''}
   </div>`;
@@ -11608,7 +11608,18 @@ function rhTirasVinculo(m) {
 // COMO terminou, com que aviso, por quê e quem registrou.
 function rhHistoricoVinculos(lista, rem, colabId, podeEditar) {
   if (!lista.length) return '';
-  const linha = (r, val) => `<div class="rh-linha"><span>${r}</span><b>${val}</b></div>`;
+  // Rótulo EM CIMA do valor, os dois à esquerda.
+  //
+  // A grade antiga era a do vínculo em vigor: rótulo à esquerda, valor colado
+  // na direita. Funciona com "Cargo · Técnico de Campo", some com telas largas
+  // — em 1750px a grade abria QUATRO colunas e cada par ficava com meio palmo
+  // de vazio no meio, o valor órfão do próprio rótulo. E texto corrido
+  // alinhado à direita, como o motivo da saída, vira um bloco irregular que
+  // ninguém lê. Aqui a coluna tem largura máxima e não estica: o par continua
+  // junto em qualquer monitor.
+  const campo = (rot, val, largo) => `<div class="rh-vinc-campo${largo ? ' largo' : ''}">
+    <dt>${rot}</dt><dd>${val}</dd></div>`;
+  const semRegistro = '<span class="rh-sem-registro">não registrado</span>';
   const total = lista.reduce((s, v) => s + ((v.metricas && v.metricas.dias) || 0), 0);
   return `<div class="rh-sec"><h4>Vínculos anteriores</h4>
     ${lista.length > 1 ? `<div class="rh-tiras">
@@ -11616,30 +11627,37 @@ function rhHistoricoVinculos(lista, rem, colabId, podeEditar) {
       <div class="rh-tira" title="${total} dia(s) somados"><span>Tempo somado</span><b>${rhPdfDuracao(total)}</b></div>
     </div>` : ''}
     ${lista.map(v => {
+      // "Não se aplica · comunicado em 14/09" se contradiz. Quando o aviso não
+      // existe, a data de comunicação não é informação — é sobra de um campo
+      // que ficou preenchido.
+      const temAviso = v.desligamento_aviso && v.desligamento_aviso !== 'nao_aplicavel';
       const avisoTxt = v.desligamento_aviso
-        ? rhRotulo(RH_DESLIG_AVISO, v.desligamento_aviso) +
-          (v.desligamento_aviso_em ? ` · comunicado em ${rhData(v.desligamento_aviso_em)}` : '')
-        : null;
+        ? esc(rhRotulo(RH_DESLIG_AVISO, v.desligamento_aviso)) +
+          (temAviso && v.desligamento_aviso_em
+            ? ` <span class="rh-vinc-fraco">· comunicado em ${rhData(v.desligamento_aviso_em)}</span>` : '')
+        : semRegistro;
       const registro = v.desligamento_registrado_em
-        ? `${rhData(v.desligamento_registrado_em)}${v.desligamento_registrado_nome ? ' por ' + esc(v.desligamento_registrado_nome) : ''}`
-        : null;
+        ? `${rhData(v.desligamento_registrado_em)}${v.desligamento_registrado_nome
+            ? ` <span class="rh-vinc-fraco">por ${esc(v.desligamento_registrado_nome)}</span>` : ''}`
+        : '<span class="rh-sem-registro">antes deste campo existir</span>';
       return `<div class="rh-vinc-hist">
         <div class="rh-vinc-cab">
-          <span>${rhData(v.admissao)} → ${rhData(v.desligamento)}</span>
-          <b>${esc(rhTxt(v.cargo))} · ${esc(rhRotulo(RH_TIPO_VINCULO, v.tipo))}</b>
+          <div class="rh-vinc-id">
+            <b>${rhData(v.admissao)} → ${rhData(v.desligamento)}</b>
+            <span>${esc(rhTxt(v.cargo))} · ${esc(rhRotulo(RH_TIPO_VINCULO, v.tipo))}</span>
+          </div>
           ${podeEditar ? `<button class="btn-ic" data-corrigir-desl="${v.id}" title="Corrigir o registro"
             aria-label="Corrigir o registro">✎</button>` : ''}
         </div>
-        ${rhTirasVinculo(v.metricas)}
-        <div class="rh-linhas">
-          ${linha('Motivo do desligamento', v.desligamento_tipo
-            ? esc(rhRotulo(RH_DESLIG_TIPO, v.desligamento_tipo))
-            : '<span class="rh-sem-registro">não registrado</span>')}
-          ${linha('Aviso prévio', avisoTxt ? esc(avisoTxt) : '<span class="rh-sem-registro">não registrado</span>')}
-          ${v.desligamento_motivo ? linha('Motivo', esc(v.desligamento_motivo)) : ''}
-          ${v.desligamento_obs ? linha('Observações', esc(v.desligamento_obs)) : ''}
-          ${linha('Registrado em', registro || '<span class="rh-sem-registro">antes deste campo existir</span>')}
-        </div></div>`;
+        ${rhTirasVinculo(v.metricas, temAviso)}
+        <dl class="rh-vinc-dados">
+          ${campo('Motivo do desligamento', v.desligamento_tipo
+            ? esc(rhRotulo(RH_DESLIG_TIPO, v.desligamento_tipo)) : semRegistro)}
+          ${campo('Aviso prévio', avisoTxt)}
+          ${campo('Registrado em', registro)}
+          ${v.desligamento_motivo ? campo('Motivo', esc(v.desligamento_motivo), true) : ''}
+          ${v.desligamento_obs ? campo('Observações', esc(v.desligamento_obs), true) : ''}
+        </dl></div>`;
     }).join('')}
     <div class="rh-nota">No acervo da empresa todo funcionário tem um distrato de PJ antes da admissão CLT — por isso o vínculo é histórico, não um campo da ficha.
       Os <strong>valores</strong> da rescisão ficam em Contas a Pagar e aparecem na aba <strong>Financeiro</strong>.</div></div>`;

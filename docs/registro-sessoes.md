@@ -5179,3 +5179,49 @@ parando na saída, antecedência nula em vez de zero quando não há aviso regis
 
 Na tela, com o CSS real: três vínculos com tiras corretas, o ✎ abrindo o formulário preenchido e enviando
 só os campos do desligamento, zero corte a 1180px e a 375px. As quatorze suítes passam.
+
+## 2026-09-16 — Sessão 107: o cartão do histórico em tela larga
+
+**Solicitação:** *"Vamos melhorar essa visualização aqui em vínculos anteriores, a experiência do usuário
+não está boa, está tudo meio deslocado e quebrado."*
+
+### Por que quebrou, e por que eu não vi
+
+O cartão reusava `.rh-linhas`, a grade do contrato em vigor: rótulo à esquerda, valor colado na direita,
+colunas de `minmax(280px, 1fr)`. Funciona para pares curtos como "Cargo · Técnico de Campo".
+
+Em tela larga, não. A área útil do usuário tem ~1750px: a grade abria **quatro colunas esticadas**, cada
+par com meio palmo de vazio entre rótulo e valor — o valor órfão do próprio rótulo. E o motivo da saída,
+que é texto corrido, saía alinhado à direita, virando um bloco irregular que ninguém lê.
+
+**Eu medi a 1180px e a 375px e dei por verificado.** As duas larguras que escolhi eram justamente as que
+não mostravam o problema: a partir de ~1200px a grade ganha a quarta coluna. Medir duas larguras não é
+medir a faixa — e a largura que importa é a da tela de quem usa, não a do meu enquadramento.
+
+### O que mudou
+
+- Rótulo **em cima** do valor, os dois à esquerda, e a coluna com **largura máxima** (`minmax(210px,
+  300px)` com `justify-content: start`). O par continua junto em qualquer monitor: a grade acrescenta
+  colunas em vez de esticar as que existem.
+- Motivo e Observações ocupam a linha inteira, com teto de 900px — são frases, não rótulos curtos, e
+  espremidas numa coluna de 300px viram uma escada de quebras.
+- Cabeçalho reorganizado: período em cima, cargo e tipo embaixo. Antes os dois competiam na mesma linha,
+  um em cada ponta, e o período é o que identifica o vínculo na lista.
+- Complemento do valor — "por Fulano", "comunicado em" — em peso menor que o fato.
+
+### Uma incoerência que a tela mostrava sem piscar
+
+O registro dizia **"Não se aplica · comunicado em 14/09/2026"**, e uma tira com **"Aviso comunicado com
+0 dia(s)"**. Aviso que não se aplica não tem data de comunicação: aquilo era sobra de um campo que ficou
+preenchido quando o motivo mudou. Agora a data só acompanha aviso que existe, e a tira de antecedência
+não aparece com zero.
+
+Vale dizer o que isso é: o dado no banco continua lá, inconsistente. A tela deixou de exibi-lo como se
+fizesse sentido, que é o que estava errado — mas quem grava aviso e data em campos separados vai produzir
+outros pares assim.
+
+### Verificação
+
+Desta vez medindo em **1780px**, a largura real da tela do usuário: colunas de 300px fixos, espaçamento
+uniforme de 32px, tudo começando na mesma margem, nenhum corte, nenhuma rolagem lateral. Conferido também
+a 1180, 800 e 375 — 3, 2 e 1 coluna, sem corte em nenhuma. As dez suítes passam.
