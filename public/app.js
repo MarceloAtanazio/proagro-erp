@@ -11599,25 +11599,47 @@ function rhAbaDependentes(painel, d, id) {
         <tbody>${d.dependentes.map(x => `<tr>
           <td>${esc(x.nome)}</td><td>${esc(rhTxt(x.parentesco))}</td><td class="venc-cell">${rhData(x.data_nascimento)}</td>
           <td class="mono">${esc(docCPF(x.cpf))}</td><td>${x.irrf ? '✔' : '—'}</td><td>${x.salario_familia ? '✔' : '—'}</td>
-          <td class="actions">${ed ? `<button class="btn-ic perigo" data-del-dep="${x.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</td>
+          <td class="actions">${ed ? `<button class="btn-ic" data-ed-dep="${x.id}" title="Editar" aria-label="Editar">✎</button>
+            <button class="btn-ic perigo" data-del-dep="${x.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</td>
         </tr>`).join('')}</tbody></table></div>`
         : '<div class="empty">Nenhum dependente cadastrado.</div>'}
     </div>`;
   const add = painel.querySelector('#rh-add-dep');
-  if (add) add.onclick = () => openModal('Novo dependente', `
-    ${fld('dp-nome', 'Nome completo *', 'text', '')}
+  if (add) add.onclick = () => rhFormDependente(id, null);
+  painel.querySelectorAll('[data-ed-dep]').forEach(b => b.onclick = () =>
+    rhFormDependente(id, d.dependentes.find(x => String(x.id) === b.dataset.edDep)));
+  painel.querySelectorAll('[data-del-dep]').forEach(b => b.onclick = () =>
+    confirmDelete('dependente', '/api/rh/dependentes/' + b.dataset.delDep, () => abrirFichaRH(id, 'deps')));
+}
+
+// Um formulário só para cadastrar e para editar.
+//
+// Dois formulários com os mesmos oito campos divergem com o tempo — passa a
+// existir campo que só dá para preencher no cadastro, ou validação que só roda
+// num deles. Aqui o que muda entre os dois casos é só o título, o rótulo do
+// botão e para onde a requisição vai; o resto é o mesmo código, então nao tem
+// como um lado ficar para trás do outro.
+function rhFormDependente(id, dep) {
+  const e = dep || {};
+  openModal(dep ? 'Editar dependente' : 'Novo dependente', `
+    ${fld('dp-nome', 'Nome completo *', 'text', e.nome || '')}
     <div class="form-row">
-      ${fldSel('dp-parentesco', 'Parentesco', rhOpcoes(RH_PARENTESCO, '— selecione —'), '')}
-      ${fld('dp-data_nascimento', 'Data de nascimento', 'date', '')}
-      ${fldSel('dp-sexo', 'Sexo', RH_SEXO, '')}
+      ${fldSel('dp-parentesco', 'Parentesco', rhOpcoes(RH_PARENTESCO, '— selecione —'), e.parentesco || '')}
+      ${fld('dp-data_nascimento', 'Data de nascimento', 'date', String(e.data_nascimento || '').slice(0, 10))}
+      ${fldSel('dp-sexo', 'Sexo', RH_SEXO, e.sexo || '')}
     </div>
-    ${fld('dp-cpf', 'CPF', 'text', '', 'placeholder="000.000.000-00" inputmode="numeric"')}
+    ${/* A máscara só roda ao digitar, então o valor que JÁ vem do banco passa por
+          ela aqui. Hoje ele chega formatado, mas um CPF cru apareceria colado no
+          campo e o usuário teria de reescrever para consertar o que era só exibição. */
+      fld('dp-cpf', 'CPF', 'text', rhMascaraCPF(e.cpf || ''), 'placeholder="000.000.000-00" inputmode="numeric"')}
     <div class="chip-row">
-      <label class="check-chip"><input type="checkbox" id="dp-irrf"> Dependente para IRRF</label>
-      <label class="check-chip"><input type="checkbox" id="dp-salario_familia"> Recebe salário-família</label>
-    </div>`,
+      <label class="check-chip"><input type="checkbox" id="dp-irrf" ${e.irrf ? 'checked' : ''}> Dependente para IRRF</label>
+      <label class="check-chip"><input type="checkbox" id="dp-salario_familia" ${e.salario_familia ? 'checked' : ''}> Recebe salário-família</label>
+    </div>
+    <div class="rh-nota">Marcar <strong>Dependente para IRRF</strong> abate imposto e <strong>muda o líquido</strong>
+      do colaborador na hora — só marque quem a Receita aceita como dependente.</div>`,
     [{ label: 'Cancelar', onClick: closeModal },
-     { label: 'Adicionar', cls: 'primary', onClick: async () => {
+     { label: dep ? 'Salvar' : 'Adicionar', cls: 'primary', onClick: async () => {
         const body = {
           nome: $('#dp-nome').value, parentesco: $('#dp-parentesco').value,
           data_nascimento: $('#dp-data_nascimento').value, sexo: $('#dp-sexo').value,
@@ -11625,14 +11647,13 @@ function rhAbaDependentes(painel, d, id) {
         };
         if (!body.nome.trim()) return modalError('O nome é obrigatório.');
         try {
-          await api(`/api/rh/colaboradores/${id}/dependentes`, { method: 'POST', body });
-          closeModal(); toast('Dependente adicionado.'); abrirFichaRH(id, 'deps');
-        } catch (e) { modalError(e.message); }
+          await api(dep ? '/api/rh/dependentes/' + dep.id : `/api/rh/colaboradores/${id}/dependentes`,
+            { method: dep ? 'PUT' : 'POST', body });
+          closeModal(); toast(dep ? 'Dependente atualizado.' : 'Dependente adicionado.'); abrirFichaRH(id, 'deps');
+        } catch (e2) { modalError(e2.message); }
      }}]);
   // O CPF do dependente e' um CPF: mesma mascara e mesma validacao do titular.
   rhLigarCampo('dp-cpf', rhMascaraCPF, v => !v || rhCPFValido(v), 'CPF inválido — confira os dígitos.');
-  painel.querySelectorAll('[data-del-dep]').forEach(b => b.onclick = () =>
-    confirmDelete('dependente', '/api/rh/dependentes/' + b.dataset.delDep, () => abrirFichaRH(id, 'deps')));
 }
 
 function rhAbaDossie(painel, d, id) {

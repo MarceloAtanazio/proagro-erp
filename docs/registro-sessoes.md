@@ -4964,3 +4964,67 @@ As outras seis suítes seguem passando.
 - [ ] Rodar a migração `2026-09-16-irrf-reducao.sql` no Supabase — o classificador de produção barrou
       a aplicação automática. **Ela precisa ir antes do deploy**: sem a coluna, salvar em
       Configurações de encargos dá erro (o cálculo continua funcionando, só não grava).
+
+## 2026-09-16 — Sessão 104: editar dependente, e um stub que dizia "tudo certo" sem testar nada
+
+**Solicitação:** *"Adicionalmente eu gostaria de solicitar a inclusão de um botão de editar na página
+'dependentes', o botão fica ao lado do dependente adicionado."*
+
+### O que foi feito
+
+1. **`PUT /api/rh/dependentes/:id`** — não existia; só dava para cadastrar e excluir. Aplica as mesmas
+   regras do cadastro (nome obrigatório, CPF validado e formatado no servidor) e responde **404** para
+   id inexistente, em vez do `{ok:true}` silencioso de um UPDATE que não achou linha — o erro que faz
+   a tela recarregar mostrando o valor antigo e parecer que quem digitou errado foi o usuário.
+2. **Botão ✎ ao lado da lixeira**, na coluna de ações de cada dependente.
+3. **Um formulário só** para cadastrar e editar (`rhFormDependente`). Dois formulários com os mesmos
+   oito campos divergem com o tempo: passa a existir campo que só dá para preencher num deles, ou
+   validação que só roda num deles. Aqui muda só o título, o rótulo do botão e para onde a requisição
+   vai.
+4. O valor gravado do CPF passa pela máscara ao abrir o formulário. A máscara só roda ao digitar, então
+   um CPF cru apareceria colado no campo e o usuário teria de reescrever para consertar o que era só
+   exibição.
+5. Aviso no formulário de que marcar **Dependente para IRRF** muda o líquido na hora, e a linha de
+   auditoria do PUT diz se o dependente abate ou não abate imposto — não só "editou".
+6. **CSS:** CPF na tabela deixou de quebrar em duas linhas (`529.982.247-` / `25`), que se lê como dois
+   números. Em tela estreita a coluna encolhe e a tabela rola, como as demais.
+
+### O achado do dia: o stub que devolvia `[]` para tudo
+
+Ao rodar a suíte de RH inteira apareceu uma falha que **não era do que eu tinha acabado de fazer**:
+"CPF de outra pessoa é recusado com 409" dava 200. Reproduzida contra o `HEAD`, era anterior.
+
+A trava de duplicidade no servidor está certa. O cego era o teste. Quando a consulta passou a comparar
+dígitos (`regexp_replace(...)`, em 16/09), o stub ainda casava com `WHERE cpf` — e o `query()` do stub
+terminava em `return []` para qualquer SQL não previsto. A consulta caiu nesse catch-all, "não achou
+duplicata", e a asserção passou a exercitar **nada**, em silêncio.
+
+Troquei o `return []` final por um `throw`. Na mesma rodada ele denunciou mais duas defasagens que
+estavam escondidas do mesmo jeito: o stub da contagem de dependentes ainda usava `dependente_ir` — o
+**nome de coluna inventado** que já derrubou a página de RH em produção — e portanto devolvia zero
+dependente para todo mundo; e o `INSERT INTO erp_rh_salario_hist`, criado em 14/09, não tinha stub
+nenhum.
+
+É a terceira vez que um stub complacente esconde um caminho não testado (antes: o POST de vínculos
+aceitando `''` em coluna `numeric` que o Postgres recusa). O padrão é sempre o mesmo — **o stub
+responde o que o Postgres não responderia**, e a suíte fica verde por cima do buraco. Stub que não
+sabe responder tem de gritar, não devolver vazio.
+
+### Verificação
+
+Suíte nova `verifica-dependentes.js`, 16 asserções contra o Express de verdade: as duas travas de
+permissão (só-leitura e RH sem "dados sensíveis"), nome em branco recusado, CPF inválido recusado **e
+nada gravado quando a validação barra**, CPF gravado formatado mesmo digitado só com dígitos,
+desmarcar IRRF gravando `false`, opcionais virando `null` e não string vazia, data inválida virando
+`null`, `created_at` preservado, o UPDATE não tocando em `colaborador_id`, e 404 para id inexistente.
+
+Na tela, com o CSS real: o botão aparece nas três linhas, o modal de edição abre preenchido (nome,
+parentesco, data, sexo, CPF mascarado e as duas caixas), o de cadastro abre vazio e com o rótulo
+"Adicionar", o CPF ocupa uma linha só, e a 375px a tabela rola dentro do quadro sem estourar a página.
+As outras nove suítes passam.
+
+### Pendência encontrada de passagem
+
+- [ ] `verifica-rh-admissao.js` falha em "a prévia lista os 18 campos" (recebe 0). Reproduz no `HEAD`,
+      então é anterior a esta sessão e provavelmente é a minuta de exemplo do harness sem os slots —
+      mas não conferi, e suíte vermelha parada treina a ignorar suíte vermelha.

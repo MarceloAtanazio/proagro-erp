@@ -278,6 +278,8 @@ const AUDIT_MAP = {
   'POST /api/rh/colaboradores/:id/treinamentos': req => `Registrou o treinamento "${req.body.titulo}" para o colaborador ID ${req.params.id}`,
   'DELETE /api/rh/treinamentos/:id': req => `Excluiu o treinamento ID ${req.params.id}`,
   'POST /api/rh/clima': req => `Registrou resposta da pesquisa de clima do ciclo ${req.body.ciclo}`,
+  // A flag de IRRF mexe no líquido de quem recebe: fica dita no log, não só "editou".
+  'PUT /api/rh/dependentes/:id': req => `Editou o dependente ID ${req.params.id} — ${req.body.nome || 'sem nome'}, ${req.body.irrf === true ? 'ABATE' : 'não abate'} IRRF`,
   'DELETE /api/rh/dependentes/:id': req => `Excluiu o dependente ID ${req.params.id}`,
   'DELETE /api/attachments/:id': req => `Excluiu o anexo ID ${req.params.id}`,
   'POST /api/settings/categories': req => `Criou a categoria "${req.body.name}" (${req.body.type})`,
@@ -2651,6 +2653,29 @@ app.post('/api/rh/colaboradores/:id/dependentes', requireAuth, requireEdit('rh')
      isDate(req.body.data_nascimento) ? req.body.data_nascimento : null,
      sanitize(req.body.sexo) || null, req.body.irrf === true, req.body.salario_familia === true]);
   res.json({ ok: true, id: ins[0].id });
+}));
+
+// Editar em vez de apagar e recadastrar: um dependente errado costuma ser um
+// dígito de CPF ou uma data, e apagar leva junto o `created_at` — o registro de
+// desde quando aquele dependente abate imposto. As mesmas regras do cadastro,
+// porque um CPF continua sendo um CPF depois de corrigido.
+app.put('/api/rh/dependentes/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'Dependentes são dado pessoal sensível.' });
+  const nome = sanitize(req.body.nome);
+  if (!nome) return res.status(400).json({ error: 'Nome do dependente é obrigatório.' });
+  let cpfDep = sanitize(req.body.cpf) || null;
+  if (cpfDep) {
+    if (!rhCPFValido(cpfDep)) return res.status(400).json({ error: 'CPF do dependente inválido — confira os dígitos.' });
+    cpfDep = rhFormatarCPF(cpfDep);
+  }
+  const upd = await query(
+    `UPDATE erp_rh_dependentes SET nome=$2, cpf=$3, parentesco=$4, data_nascimento=$5, sexo=$6,
+        irrf=$7, salario_familia=$8 WHERE id=$1 RETURNING id`,
+    [Number(req.params.id), nome, cpfDep, sanitize(req.body.parentesco) || null,
+     isDate(req.body.data_nascimento) ? req.body.data_nascimento : null,
+     sanitize(req.body.sexo) || null, req.body.irrf === true, req.body.salario_familia === true]);
+  if (!upd.length) return res.status(404).json({ error: 'Dependente não encontrado.' });
+  res.json({ ok: true });
 }));
 
 app.delete('/api/rh/dependentes/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {

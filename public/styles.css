@@ -1020,7 +1020,10 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   text-transform: uppercase; letter-spacing: .04em; }
 .rh-doc { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EAF0EC; }
 .rh-doc span { font-size: 11.5px; color: var(--muted); margin-left: auto; white-space: nowrap; }
-.tbl-rh-dep td.actions, .tbl-rh-dep th:last-child { text-align: right; }
+.tbl-rh-dep td.actions, .tbl-rh-dep th:last-child { text-align: right; white-space: nowrap; }
+/* CPF quebrado em duas linhas ("529.982.247-" / "25") se lê como dois números.
+   Documento não quebra: em tela estreita a coluna encolhe e a tabela rola. */
+.tbl-rh-dep td.mono { white-space: nowrap; }
 
 /* Subtítulo dentro da matriz de permissões, separando as travas finas de RH */
 .perm-sub { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
