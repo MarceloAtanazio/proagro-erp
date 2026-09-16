@@ -4004,12 +4004,35 @@ function rhMetricasVinculo(v) {
   const dias = Math.max(0, dia(ate) - dia(adm)) + (saida ? 1 : 0);
   const emExperiencia = !!(termoISO && ate <= termoISO);
 
+  // O aviso prévio sai do MOTIVO, lido de RH_RESCISAO_MOTIVOS — a mesma tabela
+  // que o quadro comparativo usa.
+  //
+  // Eu tinha exibido o proporcional da Lei 12.506 direto, e num contrato de
+  // experiência encerrado no termo isso mostrava "aviso prévio devido: 30 dias"
+  // ao lado de um comparativo que dizia zero, na mesma ficha. Aviso prévio é
+  // instituto do contrato por prazo INDETERMINADO: no contrato a termo que
+  // chega ao fim não há aviso, e na rescisão antecipada o que existe é o art.
+  // 479, não aviso. Terceira vez que recalcular o que já existia produziu
+  // contradição — a regra mora num lugar só, e este código lê de lá.
+  const mot = saida ? RH_RESCISAO_MOTIVOS.find(m => m.cod === v.desligamento_tipo) : null;
+  const base = rhAvisoDias(adm, ate);
+  // Contrato ainda a termo não tem aviso a projetar: o que importa nele é o
+  // termo, e o aviso só passa a existir quando vira prazo indeterminado.
+  const avisoVale = saida ? !!(mot && mot.aviso !== 0) : !emExperiencia;
+
   return {
     admissao: adm, saida, referencia: ate, em_curso: !saida,
     dias, anos_completos: rhAnosDeCasa(adm, ate),
-    // Quanto a empresa deveria de aviso se o contrato acabasse na data de
-    // referência. No contrato aberto é a pergunta "e se for hoje?".
-    aviso_dias: rhAvisoDias(adm, ate),
+    aviso_aplicavel: avisoVale,
+    // Proporcional cheio da Lei 12.506, antes da fração do motivo.
+    aviso_base_dias: base,
+    // O devido de fato: integral, metade no acordo, 30 dias fixos quando é o
+    // colaborador que deve à empresa (pedido de demissão não é proporcional).
+    aviso_dias: !avisoVale ? 0
+      : !mot ? base
+      : mot.aviso < 0 ? 30
+      : Math.round(base * mot.aviso),
+    aviso_de_quem: !avisoVale ? null : (mot && mot.aviso < 0 ? 'colaborador' : 'empresa'),
     fase: emExperiencia ? (v.prorrogacao_fim && termoISO === String(v.prorrogacao_fim).slice(0, 10)
       && v.experiencia_fim && ate > String(v.experiencia_fim).slice(0, 10) ? 'prorrogacao' : 'experiencia') : 'efetivo',
     termo_experiencia: termoISO,

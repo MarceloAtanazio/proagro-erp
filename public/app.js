@@ -11594,8 +11594,19 @@ function rhTirasVinculo(m, temAviso) {
           m.em_curso ? `Termo em ${rhData(m.termo_experiencia)}`
                      : `O contrato iria até ${rhData(m.termo_experiencia)} — art. 479 da CLT`)
       : ''}
-    ${tira(m.em_curso ? 'Aviso prévio hoje' : 'Aviso prévio devido', `${m.aviso_dias} dias`,
-        'Lei 12.506: 30 dias mais 3 por ano completo, limitado a 90')}
+    ${/* Aviso prévio é instituto do contrato por prazo indeterminado. No
+          contrato a termo que chega ao fim não há aviso — mostrar o
+          proporcional ali contradizia o comparativo de rescisão na mesma
+          ficha. Quem decide é o servidor, que lê do mesmo lugar que o cálculo. */
+      m.aviso_aplicavel
+        ? tira(m.em_curso ? 'Aviso se dispensar hoje'
+            : m.aviso_de_quem === 'colaborador' ? 'Aviso devido pelo colaborador' : 'Aviso prévio devido',
+            `${m.aviso_dias} dias`,
+            m.aviso_de_quem === 'colaborador'
+              ? 'No pedido de demissão o aviso é devido À empresa, e são 30 dias fixos — a proporcionalidade é direito do empregado'
+              : `Lei 12.506: 30 dias mais 3 por ano completo, limitado a 90${
+                  m.aviso_dias !== m.aviso_base_dias ? ` (proporcional cheio: ${m.aviso_base_dias} dias)` : ''}`)
+        : ''}
     ${m.aviso_antecedencia_dias && temAviso !== false
       ? tira('Aviso comunicado com', `${m.aviso_antecedencia_dias} dia(s)`, 'de antecedência em relação à saída')
       : ''}
@@ -11636,10 +11647,17 @@ function rhHistoricoVinculos(lista, rem, colabId, podeEditar) {
           (temAviso && v.desligamento_aviso_em
             ? ` <span class="rh-vinc-fraco">· comunicado em ${rhData(v.desligamento_aviso_em)}</span>` : '')
         : semRegistro;
+      // Sem carimbo de quem registrou, o campo simplesmente não aparece.
+      //
+      // Estava escrito "antes deste campo existir", que é verdade e não
+      // informa nada: é um detalhe da história do sistema, não do colaborador.
+      // "Não registrado" serve para o que ALGUÉM pode preencher — motivo,
+      // aviso; quem registrou um desligamento antigo não dá para saber, e
+      // linha que só diz "não sei" é ruído no meio do que se quer ler.
       const registro = v.desligamento_registrado_em
         ? `${rhData(v.desligamento_registrado_em)}${v.desligamento_registrado_nome
             ? ` <span class="rh-vinc-fraco">por ${esc(v.desligamento_registrado_nome)}</span>` : ''}`
-        : '<span class="rh-sem-registro">antes deste campo existir</span>';
+        : null;
       return `<div class="rh-vinc-hist">
         <div class="rh-vinc-cab">
           <div class="rh-vinc-id">
@@ -11654,7 +11672,7 @@ function rhHistoricoVinculos(lista, rem, colabId, podeEditar) {
           ${campo('Motivo do desligamento', v.desligamento_tipo
             ? esc(rhRotulo(RH_DESLIG_TIPO, v.desligamento_tipo)) : semRegistro)}
           ${campo('Aviso prévio', avisoTxt)}
-          ${campo('Registrado em', registro)}
+          ${registro ? campo('Registrado em', registro) : ''}
           ${v.desligamento_motivo ? campo('Motivo', esc(v.desligamento_motivo), true) : ''}
           ${v.desligamento_obs ? campo('Observações', esc(v.desligamento_obs), true) : ''}
         </dl></div>`;

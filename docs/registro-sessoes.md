@@ -5225,3 +5225,65 @@ outros pares assim.
 Desta vez medindo em **1780px**, a largura real da tela do usuário: colunas de 300px fixos, espaçamento
 uniforme de 32px, tudo começando na mesma margem, nenhum corte, nenhuma rolagem lateral. Conferido também
 a 1180, 800 e 375 — 3, 2 e 1 coluna, sem corte em nenhuma. As dez suítes passam.
+
+## 2026-09-16 — Sessão 108: aviso prévio num contrato a termo, e dois acertos de leitura
+
+**Solicitação:** três pontos, sobre o cartão do histórico. *"1 - Por que aviso prévio devido se são dois
+períodos de 45 dias e o término se deu no final do primeiro período? 2 - Não entendi essa informação
+está assim. 3 - Deixe o texto correr pra direita, não tem porque quebrar ele ali."*
+
+### 1. O erro de direito, e a terceira repetição do mesmo erro de método
+
+A tira dizia **"Aviso prévio devido: 30 dias"** num contrato de experiência encerrado no termo. Está
+errado: aviso prévio é instituto do contrato por prazo **indeterminado**. No contrato a termo que chega
+ao fim não há aviso; na rescisão antecipada pela empresa o que existe é o **art. 479** (metade dos
+salários do período restante), que não é aviso prévio.
+
+O mais incômodo é que o sistema **já sabia disso**. `RH_RESCISAO_MOTIVOS` traz `aviso: 0` para
+`experiencia_fim` e `experiencia_antes` desde que o comparativo de rescisão foi escrito. A ficha exibia
+as duas coisas ao mesmo tempo: o comparativo dizendo zero e a tira dizendo 30 dias.
+
+Eu peguei o proporcional da Lei 12.506 e mostrei direto, sem passar pelo motivo. **É a terceira vez na
+mesma semana que recalcular o que já existia produz contradição** — antes foram os dois vocabulários de
+motivo de desligamento e a segunda porta de encerrar contrato. O padrão é sempre o mesmo: a informação
+existe em um lugar, eu produzo uma segunda versão dela ao lado, e as duas divergem.
+
+Agora `rhMetricasVinculo` lê de `RH_RESCISAO_MOTIVOS`:
+
+| motivo | aviso |
+|---|---|
+| dispensa sem justa causa | integral, proporcional |
+| acordo (art. 484-A) | metade |
+| pedido de demissão | 30 dias fixos, devidos **pelo** colaborador — a proporcionalidade é direito do empregado |
+| justa causa, término e antecipação da experiência | nenhum — a tira some |
+
+Contrato **aberto** ainda em experiência também não mostra aviso: ele é a termo, e o que importa ali é o
+termo, que já está na tira ao lado. Encerrado **sem motivo registrado** também não mostra — não dá para
+afirmar um número sobre uma saída que ninguém sabe qual foi.
+
+### 2. "Antes deste campo existir"
+
+Era verdade e não informava nada: um detalhe da história do sistema, não do colaborador. O campo agora
+simplesmente não aparece quando não há carimbo.
+
+A distinção que ficou: **"não registrado" serve para o que alguém pode preencher** — motivo, aviso, e o
+✎ está ali para isso. Quem registrou um desligamento anterior ao campo não dá para saber, e linha que só
+diz "não sei" é ruído no meio do que se quer ler.
+
+### 3. O texto corre até a direita
+
+O teto de 900px cortava a frase no meio com meia tela vazia à frente. Removido. Em monitor muito largo a
+linha passa da medida tipográfica ideal — mas ler a frase inteira de uma vez vale mais aqui do que a
+largura de coluna de um livro. Medido: o motivo do usuário passou de duas linhas para uma, ocupando
+1296px.
+
+### Verificação
+
+`verifica-metricas-vinculo.js` subiu para 36 asserções, com um laço que percorre os seis motivos e exige
+que a métrica e o comparativo **concordem sobre haver aviso** — o teste que teria pegado este erro na
+origem. Duas asserções antigas foram reescritas: elas afirmavam o proporcional como devido, que é
+exatamente a confusão corrigida.
+
+Na tela, a 1780px: o cartão da experiência perdeu a tira de aviso, o da dispensa sem justa causa manteve
+os 36 dias, o sem motivo não mostra nenhuma, e nenhum deles tem mais a linha enigmática. Conferido
+também a 800 e 375, sem corte. As dez suítes passam.

@@ -1020,9 +1020,12 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-vinc-campo dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase;
   letter-spacing: .04em; margin-bottom: 3px; }
 .rh-vinc-campo dd { font-size: 13.5px; color: var(--ink); font-weight: 600; line-height: 1.45; }
-/* Texto corrido ocupa a linha toda: motivo e observação são frases, não rótulos
-   curtos, e espremidos numa coluna de 300px viram uma escada de quebras. */
-.rh-vinc-campo.largo { grid-column: 1 / -1; max-width: 900px; }
+/* Texto corrido ocupa a linha toda, sem teto de largura: motivo e observação
+   são frases, e cortá-las em 900px fazia quebrar cedo com meia tela vazia à
+   direita. Em monitor muito largo a linha fica longa para os padrões
+   tipográficos — mas ler uma frase inteira de uma vez vale mais aqui do que a
+   medida ideal de coluna. */
+.rh-vinc-campo.largo { grid-column: 1 / -1; }
 .rh-vinc-campo.largo dd { font-weight: 500; color: var(--ink-2); }
 /* Complemento do valor — "por Fulano", "comunicado em" — pesa menos que o fato. */
 .rh-vinc-fraco { font-weight: 400; color: var(--muted); }
