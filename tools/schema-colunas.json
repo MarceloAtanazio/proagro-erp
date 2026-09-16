@@ -1,6 +1,6 @@
 {
-  "_como_atualizar": "SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name LIKE 'erp[_]%' GROUP BY table_name ORDER BY table_name;",
-  "_conferido_em": "2026-09-14",
+  "_como_atualizar": "SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name ~ '^erp_' GROUP BY table_name ORDER BY table_name;",
+  "_conferido_em": "2026-09-16",
   "erp_attachments": "id,entity_type,entity_id,kind,file_name,mime_type,byte_size,data,uploaded_by,created_at,doc_tipo",
   "erp_audit_log": "id,user_id,user_name,action,created_at",
   "erp_bank_transactions": "id,txn_date,description,amount,reconciled,matched_type,matched_id,imported_batch,created_at,auto_generated",
@@ -19,7 +19,7 @@
   "erp_rh_admissoes": "id,colaborador_id,etapa,situacao,cargo_pretendido,nivel_pretendido,departamento,centro_custo,regime,modelo_trabalho,salario_previsto,admissao_prevista,gestor_id,responsavel_id,vinculo_id,oferta_enviada_em,oferta_aceita_em,exame_agendado_para,exame_realizado_em,exame_resultado,contrato_emitido_em,contrato_assinado_em,acessos_solicitados_em,acessos_concluidos_em,onboarding_iniciado_em,onboarding_concluido_em,observacao,cancelamento_motivo,created_at,created_by,updated_at,dias_presenciais,dias_home_office,vr_dia,home_office_dia,cancelamento_tipo,encerrada_em,encerrada_por",
   "erp_rh_clima": "id,ciclo,colaborador_id,departamento,enps,satisfacao,comentario,respondido_em,created_by",
   "erp_rh_dependentes": "id,colaborador_id,nome,cpf,parentesco,data_nascimento,sexo,irrf,salario_familia,created_at",
-  "erp_rh_encargos": "id,competencia,confirmada,inss_faixas,irrf_faixas,irrf_dependente,irrf_simplificado,fgts_pct,inss_patronal_pct,rat_pct,terceiros_pct,atualizado_em,atualizado_por",
+  "erp_rh_encargos": "id,competencia,confirmada,inss_faixas,irrf_faixas,irrf_dependente,irrf_simplificado,fgts_pct,inss_patronal_pct,rat_pct,terceiros_pct,atualizado_em,atualizado_por,irrf_reducao",
   "erp_rh_minutas": "id,nome,regime,modelo_trabalho,file_name,byte_size,data,slots,ativa,created_at,created_by",
   "erp_rh_salario_hist": "id,vinculo_id,vigencia_inicio,salario,periculosidade_pct,vr_dia,home_office_dia,motivo,registrado_em,registrado_por",
   "erp_rh_treinamentos": "id,colaborador_id,titulo,tipo,instituicao,carga_horaria,concluido_em,validade,custo,obrigatorio,observacao,created_at,created_by",
