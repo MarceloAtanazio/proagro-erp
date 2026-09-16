@@ -4643,3 +4643,85 @@ a periculosidade em branco, exatamente o formulário da tela. Rodado contra o c�
 reproduz o 500; contra o de hoje, passa.
 
 São 20 asserções, e a primeira delas é a que faltava.
+
+---
+
+## 2026-09-16 — Um formato só para cada documento, da digitação à extração
+
+**Pedido:** o CPF do dependente saía sem formatação; uma verificação geral de todos os formatos de
+documento, extrações incluídas.
+
+### O levantamento veio primeiro
+
+Antes de mexer, contei o que havia no banco. Estava misturado em quase todo campo:
+
+| Campo | No padrão | Fora |
+|---|---|---|
+| CPF do colaborador | 8 | 1 |
+| CPF do dependente | 0 | 1 |
+| PIS/PASEP | 3 | 3, em dois formatos diferentes |
+| CEP | 5 | 1 |
+| Celular | — | 5, em três formatos |
+
+O motivo: os campos foram gravados por caminhos diferentes. A ficha do colaborador **já** validava e
+formatava ao salvar — por isso 8 de 9 CPFs estavam certos. O dependente, o fornecedor, a empresa, o
+PIS, o título e o celular não passavam por nada.
+
+### Três camadas, porque uma só não resolve
+
+**Ao digitar** — máscara. Existiam duas (`rhMascaraCPF`, `rhMascaraCEP`), ligadas em dois campos.
+Agora são sete máscaras ligadas em treze campos: CPF, CNPJ, PIS, CEP, título, telefone, e a do
+fornecedor que **decide entre CPF e CNPJ pelo que foi digitado** — o campo se chama "cnpj" mas guarda
+os dois.
+
+**Ao gravar** — o servidor formata, porque a máscara da tela é conveniência e quem chama a API direto
+passa por fora dela.
+
+**Ao exibir** — formatadores próprios, porque as duas camadas acima cuidam do que entra de hoje em
+diante; a exibição cuida do que **já está lá**, salvo antes de tudo isso existir. Tela, PDF e contrato
+usam os mesmos.
+
+### A regra que protege o dado
+
+Formata **se a contagem de dígitos bater**. Se não bater, devolve como veio — nunca completa, nunca
+corta.
+
+Isso não é detalhe: um documento pela metade exibido com máscara de completo **passa por conferido e
+nunca mais é olhado**. Na migração, um título de eleitor com 11 dígitos (tem 12) ficou deliberadamente
+sem máscara, e continua visivelmente errado até alguém corrigir. É o único registro que sobrou fora do
+padrão, e é assim que tem de ser.
+
+### Um defeito achado de raspão
+
+A checagem de "este CPF já está em outro colaborador" comparava **texto**. Com os dois formatos
+convivendo, `391.644.438-76` e `39164443876` passavam como pessoas diferentes — e era exatamente o
+caso de duas fichas na base. Agora compara dígitos, dos dois lados.
+
+### O PDF ganhou o CPF do dependente
+
+A tabela de dependentes da ficha não trazia o CPF — que é justamente o que a declaração de IRRF exige.
+Entrou, formatado.
+
+### Verificação
+
+**43 asserções** sobre os formatadores, em três frentes:
+
+1. Cada documento sai no formato certo a partir de qualquer entrada (cru, já formatado, com lixo no
+   meio, com DDI na frente).
+2. **Não inventar**: quinze entradas de contagem errada, todas saindo como vieram.
+3. **Os dois lados concordam.** A regra existe duplicada — servidor e cliente, sem módulo
+   compartilhado —, então o teste roda as **duas** implementações sobre as **mesmas** entradas e exige
+   o mesmo resultado. É o que impede a tela e o PDF de divergirem sem ninguém perceber.
+
+Mais uma varredura que lista toda saída de campo de documento sem formatador: ela achou dois pontos
+que eu tinha deixado passar (o telefone do contato do fornecedor e o telefone de emergência no PDF).
+
+E o PDF conferido lendo o texto do arquivo gerado, com o fixture alimentado **cru** de propósito — com
+os documentos já formatados, o teste não provava nada. Todos saem formatados, nenhuma forma crua
+sobrou, e o CPF incompleto do dependente ficou intacto.
+
+### Uma ferramenta que estava quebrada em silêncio
+
+O harness do PDF interceptava `jsPDF.prototype.save` para capturar o arquivo. Isso parou de funcionar
+em algum momento e ele passou a devolver `null` **sem reclamar**. Agora captura a instância na
+construção e **falha em voz alta** se o PDF não for gerado.

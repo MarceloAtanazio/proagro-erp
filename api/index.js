@@ -483,8 +483,8 @@ app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (re
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
   const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-    [sanitize(b.name), sanitize(b.cnpj), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
+    [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
@@ -492,8 +492,8 @@ app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async 
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
   await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10 WHERE id=$11`,
-    [sanitize(b.name), sanitize(b.cnpj), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), sanitize(b.phone), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
+    [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -1229,7 +1229,8 @@ app.put('/api/company', requireAuth, requireSuperAdmin, h(async (req, res) => {
   await query(`INSERT INTO erp_company_settings (id, legal_name, trade_name, cnpj, address, phone, email, updated_at)
     VALUES (1,$1,$2,$3,$4,$5,$6,now())
     ON CONFLICT (id) DO UPDATE SET legal_name=$1, trade_name=$2, cnpj=$3, address=$4, phone=$5, email=$6, updated_at=now()`,
-    [sanitize(b.legal_name), sanitize(b.trade_name), sanitize(b.cnpj), sanitize(b.address), sanitize(b.phone), sanitize(b.email)]);
+    [sanitize(b.legal_name), sanitize(b.trade_name), rhFormatarDocumento(sanitize(b.cnpj)),
+     sanitize(b.address), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.email)]);
   res.json({ ok: true });
 }));
 
@@ -2192,6 +2193,38 @@ const rhFormatarCEP = v => {
   const d = rhDigitos(v);
   return d.length === 8 ? `${d.slice(0, 5)}-${d.slice(5)}` : String(v || '').trim();
 };
+const rhFormatarCNPJ = v => {
+  const d = rhDigitos(v);
+  return d.length === 14
+    ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+    : String(v || '').trim();
+};
+// Fornecedor pode ser pessoa física: o campo se chama "cnpj" mas guarda os dois.
+// Quem decide o formato é a quantidade de dígitos, não o nome da coluna.
+const rhFormatarDocumento = v => {
+  const d = rhDigitos(v);
+  if (d.length === 11) return rhFormatarCPF(v);
+  if (d.length === 14) return rhFormatarCNPJ(v);
+  return String(v || '').trim();
+};
+const rhFormatarPIS = v => {
+  const d = rhDigitos(v);
+  return d.length === 11
+    ? `${d.slice(0, 3)}.${d.slice(3, 8)}.${d.slice(8, 10)}-${d.slice(10)}`
+    : String(v || '').trim();
+};
+const rhFormatarTitulo = v => {
+  const d = rhDigitos(v);
+  return d.length === 12 ? `${d.slice(0, 4)} ${d.slice(4, 8)} ${d.slice(8)}` : String(v || '').trim();
+};
+// Celular (11) e fixo (10). Com DDI 55 na frente, tira o DDI antes de formatar.
+const rhFormatarTelefone = v => {
+  let d = rhDigitos(v);
+  if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return String(v || '').trim();
+};
 
 const rhVeSensivel = u => u.role === 'admin' || canView(u, 'rh_sensivel');
 const rhVeRemuneracao = u => u.role === 'admin' || canView(u, 'rh_remuneracao');
@@ -2481,13 +2514,18 @@ app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (re
   }
   if (corpo.rg) corpo.rg = rhFormatarRG(corpo.rg);
   if (corpo.cep) corpo.cep = rhFormatarCEP(corpo.cep);
+  if (corpo.pis) corpo.pis = rhFormatarPIS(corpo.pis);
+  if (corpo.titulo_eleitor) corpo.titulo_eleitor = rhFormatarTitulo(corpo.titulo_eleitor);
+  if (corpo.celular) corpo.celular = rhFormatarTelefone(corpo.celular);
   if (corpo.banco_numero) corpo.banco_numero = rhDigitos(corpo.banco_numero).slice(0, 3).padStart(3, '0');
 
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_CAMPOS_DATA, [], []);
   if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
 
   if (corpo.cpf) {
-    const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1 AND id<>$2', [corpo.cpf, id]);
+    const dup = await query(
+      "SELECT id, name FROM erp_colaboradores WHERE regexp_replace(COALESCE(cpf,''),'\D','','g')=$1 AND id<>$2",
+      [rhDigitos(corpo.cpf), id]);
     if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name}.` });
   }
   const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
@@ -2599,10 +2637,17 @@ app.post('/api/rh/colaboradores/:id/dependentes', requireAuth, requireEdit('rh')
   const id = Number(req.params.id);
   const nome = sanitize(req.body.nome);
   if (!nome) return res.status(400).json({ error: 'Nome do dependente é obrigatório.' });
+  // O CPF do dependente e' um CPF como qualquer outro: mesma validacao e mesmo
+  // formato do titular. Entrava cru, e a tela mostrava onze digitos colados.
+  let cpfDep = sanitize(req.body.cpf) || null;
+  if (cpfDep) {
+    if (!rhCPFValido(cpfDep)) return res.status(400).json({ error: 'CPF do dependente inválido — confira os dígitos.' });
+    cpfDep = rhFormatarCPF(cpfDep);
+  }
   const ins = await query(
     `INSERT INTO erp_rh_dependentes (colaborador_id, nome, cpf, parentesco, data_nascimento, sexo, irrf, salario_familia)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [id, nome, sanitize(req.body.cpf) || null, sanitize(req.body.parentesco) || null,
+    [id, nome, cpfDep, sanitize(req.body.parentesco) || null,
      isDate(req.body.data_nascimento) ? req.body.data_nascimento : null,
      sanitize(req.body.sexo) || null, req.body.irrf === true, req.body.salario_familia === true]);
   res.json({ ok: true, id: ins[0].id });
@@ -2741,7 +2786,9 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
   if (cpf) {
     if (!rhCPFValido(cpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos.' });
     cpf = rhFormatarCPF(cpf);
-    const dup = await query('SELECT id, name FROM erp_colaboradores WHERE cpf=$1', [cpf]);
+    const dup = await query(
+      "SELECT id, name FROM erp_colaboradores WHERE regexp_replace(COALESCE(cpf,''),'\D','','g')=$1",
+      [rhDigitos(cpf)]);
     if (dup.length) return res.status(409).json({ error: `Este CPF já está em ${dup[0].name} (ID ${dup[0].id}).` });
   }
   // Quem entra pelo Quadro de admissão é CANDIDATO, não colaborador: nasce com
@@ -2756,7 +2803,7 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
     [nome, sanitize(req.body.cargo) || null, ['A', 'B'].includes(req.body.tier) ? req.body.tier : 'B',
      !abrirAdmissao,
      ['M', 'F', 'O'].includes(req.body.sexo) ? req.body.sexo : null, cpf,
-     sanitize(req.body.email_corporativo) || null, sanitize(req.body.celular) || null]);
+     sanitize(req.body.email_corporativo) || null, rhFormatarTelefone(sanitize(req.body.celular)) || null]);
   const colabId = ins[0].id;
 
   // Abrir o processo de admissão junto é o caminho normal: quem cadastra uma

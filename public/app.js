@@ -2764,8 +2764,8 @@ async function renderFornecedores() {
       <thead><tr><th>Razão social</th><th>CNPJ</th><th>Categoria</th><th>Contato</th><th>Condição pgto.</th><th>Status</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => `<tr>
         <td><strong>${esc(r.name)}</strong>${r.email ? '<br><small style="color:var(--muted)">' + esc(r.email) + '</small>' : ''}</td>
-        <td class="mono">${esc(r.cnpj || '—')}</td><td>${esc(r.category || '—')}</td>
-        <td>${esc(r.contact_name || '—')}${r.phone ? '<br><small style="color:var(--muted)">' + esc(r.phone) + '</small>' : ''}</td>
+        <td class="mono">${esc(docCpfCnpj(r.cnpj))}</td><td>${esc(r.category || '—')}</td>
+        <td>${esc(r.contact_name || '—')}${r.phone ? '<br><small style="color:var(--muted)">' + esc(docTelefone(r.phone)) + '</small>' : ''}</td>
         <td>${esc(r.payment_terms || '—')}</td>
         <td><span class="badge ${r.status === 'ativo' ? 'ok' : 'off'}">${r.status === 'ativo' ? 'Ativo' : 'Inativo'}</span></td>
         <td class="actions">
@@ -2785,7 +2785,7 @@ function formFornecedor(r) {
   openModal(isEdit ? 'Editar fornecedor' : 'Novo fornecedor', `
     ${fld('s-name', 'Razão social *', 'text', r.name || '')}
     <div class="form-row">
-      ${fld('s-cnpj', 'CNPJ', 'text', r.cnpj || '', 'placeholder="00.000.000/0000-00"')}
+      ${fld('s-cnpj', 'CNPJ/CPF', 'text', docCpfCnpj(r.cnpj) === '—' ? '' : docCpfCnpj(r.cnpj), 'placeholder="00.000.000/0000-00" inputmode="numeric"')}
       ${fldSel('s-cat', 'Categoria', [{ v: '', t: '—' }, ...CAT_FORNECEDOR.map(x => ({ v: x, t: x }))], r.category || '')}
     </div>
     <div class="form-row">
@@ -2812,6 +2812,9 @@ function formFornecedor(r) {
           closeModal(); toast(isEdit ? 'Fornecedor atualizado.' : 'Fornecedor cadastrado.'); renderFornecedores();
         } catch (e) { modalError(e.message); }
      }}]);
+  // Fornecedor pode ser PF ou PJ: a máscara escolhe pelo que foi digitado.
+  rhLigarCampo('s-cnpj', rhMascaraDocumento, null, '');
+  rhLigarCampo('s-phone', rhMascaraTelefone, null, '');
 }
 
 // ============================================================
@@ -8702,6 +8705,8 @@ async function renderConfig() {
     try { await api('/api/company', { method: 'PUT', body }); toast('Dados da empresa atualizados.'); await loadSettings(); }
     catch (e) { toast(e.message); }
   };
+  rhLigarCampo('cfg-cnpj', rhMascaraDocumento, null, '');
+  rhLigarCampo('cfg-phone', rhMascaraTelefone, null, '');
 
   const applyLogFilter = async () => {
     const params = new URLSearchParams();
@@ -9028,6 +9033,8 @@ async function rhAbrirCard(id) {
   if ($('#rh-cpf')) {
     rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
     rhLigarCampo('rh-rg', rhMascaraRG, null, '');
+    rhLigarCampo('rh-pis', rhMascaraPIS, null, '');
+    rhLigarCampo('rh-celular', rhMascaraTelefone, null, '');
     rhLigarCampo('rh-cep', rhMascaraCEP, null, '');
     rhLigarCEP();
   }
@@ -9573,6 +9580,8 @@ function rhFormNovoColaborador(comAdmissao = true) {
     sel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
   };
   ['nc-cargo', 'nc-regime', 'nc-modelo_trabalho'].forEach(x => { $('#' + x).onchange = sinc; });
+  rhLigarCampo('nc-cpf', rhMascaraCPF, v => !v || rhCPFValido(v), 'CPF inválido — confira os dígitos.');
+  rhLigarCampo('nc-celular', rhMascaraTelefone, null, '');
   sinc();
 }
 
@@ -9691,15 +9700,15 @@ async function rhFichaPDF(id) {
 
   if (pode.sensivel) {
     grade('Documentos', [
-      ['CPF', c.cpf], ['RG', [c.rg, c.rg_orgao, c.rg_uf].filter(Boolean).join(' ')],
-      ['CTPS', [c.ctps_numero, c.ctps_serie].filter(Boolean).join(' / ')], ['PIS/PASEP', c.pis],
-      ['Título de eleitor', c.titulo_eleitor], ['CNH', c.cnh],
+      ['CPF', docCPF(c.cpf)], ['RG', [c.rg, c.rg_orgao, c.rg_uf].filter(Boolean).join(' ')],
+      ['CTPS', [c.ctps_numero, c.ctps_serie].filter(Boolean).join(' / ')], ['PIS/PASEP', docPIS(c.pis)],
+      ['Título de eleitor', docTitulo(c.titulo_eleitor)], ['CNH', c.cnh],
       ['Reservista', c.reservista], ['Banco', [c.banco_numero, c.banco].filter(Boolean).join(' - ')],
       ['Agência', c.agencia], ['Conta', c.conta]
     ]);
     grade('Contato e endereço', [
-      ['Celular', c.celular], ['E-mail pessoal', c.email_pessoal],
-      ['E-mail corporativo', c.email_corporativo], ['CEP', c.cep],
+      ['Celular', docTelefone(c.celular)], ['E-mail pessoal', c.email_pessoal],
+      ['E-mail corporativo', c.email_corporativo], ['CEP', docCEP(c.cep)],
       ['Endereço', [c.endereco, c.endereco_numero, c.endereco_complemento].filter(Boolean).join(', ')],
       ['Bairro', c.bairro],
       ['Município', [c.municipio, c.uf].filter(Boolean).join('/')],
@@ -9707,7 +9716,7 @@ async function rhFichaPDF(id) {
       // contato_emergencia_*, que não existe, e o campo saía sempre vazio.
       ['Contato de emergência', [c.emergencia_nome,
         c.emergencia_parentesco ? `(${c.emergencia_parentesco})` : null].filter(Boolean).join(' ')],
-      ['Telefone de emergência', c.emergencia_telefone]
+      ['Telefone de emergência', docTelefone(c.emergencia_telefone)]
     ]);
   }
 
@@ -9825,9 +9834,9 @@ async function rhFichaPDF(id) {
   }
 
   if (pode.sensivel) {
-    tabela('Dependentes', ['Nome', 'Parentesco', 'Nascimento', 'IR', 'Salário-família'],
-      (d.dependentes || []).map(x => [rhPdfTxt(x.nome), rhPdfTxt(x.parentesco), rhPdfData(x.data_nascimento),
-        x.irrf ? 'sim' : 'não', x.salario_familia ? 'sim' : 'não']));
+    tabela('Dependentes', ['Nome', 'CPF', 'Parentesco', 'Nascimento', 'IR', 'Salário-família'],
+      (d.dependentes || []).map(x => [rhPdfTxt(x.nome), docCPF(x.cpf), rhPdfTxt(x.parentesco),
+        rhPdfData(x.data_nascimento), x.irrf ? 'sim' : 'não', x.salario_familia ? 'sim' : 'não']));
   }
 
   tabela('Desenvolvimento', ['Título', 'Tipo', 'Instituição', 'Horas', 'Concluído', 'Validade'],
@@ -10574,6 +10583,68 @@ function rhMascaraCEP(v) {
   return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
 }
 
+function rhMascaraCNPJ(v) {
+  const d = rhSoDigitos(v).slice(0, 14);
+  if (d.length <= 2) return d;
+  if (d.length <= 5) return d.slice(0, 2) + '.' + d.slice(2);
+  if (d.length <= 8) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5);
+  if (d.length <= 12) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8);
+  return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-' + d.slice(12);
+}
+
+// Fornecedor pode ser pessoa física: enquanto couber em 11 dígitos a máscara é
+// de CPF, e a partir do 12º vira CNPJ. Quem decide é o que foi digitado.
+function rhMascaraDocumento(v) {
+  const d = rhSoDigitos(v);
+  return d.length <= 11 ? rhMascaraCPF(v) : rhMascaraCNPJ(v);
+}
+
+function rhMascaraPIS(v) {
+  const d = rhSoDigitos(v).slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 8) return d.slice(0, 3) + '.' + d.slice(3);
+  if (d.length <= 10) return d.slice(0, 3) + '.' + d.slice(3, 8) + '.' + d.slice(8);
+  return d.slice(0, 3) + '.' + d.slice(3, 8) + '.' + d.slice(8, 10) + '-' + d.slice(10);
+}
+
+function rhMascaraTitulo(v) {
+  const d = rhSoDigitos(v).slice(0, 12);
+  if (d.length <= 4) return d;
+  if (d.length <= 8) return d.slice(0, 4) + ' ' + d.slice(4);
+  return d.slice(0, 4) + ' ' + d.slice(4, 8) + ' ' + d.slice(8);
+}
+
+// Celular tem 11 dígitos e fixo tem 10; a máscara só decide entre as duas
+// quando o número está completo, senão o traço pularia de lugar ao digitar.
+function rhMascaraTelefone(v) {
+  const d = rhSoDigitos(v).slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return '(' + d.slice(0, 2) + ') ' + d.slice(2);
+  if (d.length <= 10) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 6) + '-' + d.slice(6);
+  return '(' + d.slice(0, 2) + ') ' + d.slice(2, 7) + '-' + d.slice(7);
+}
+
+// ---- Formatação na EXIBIÇÃO ----
+//
+// A máscara cuida de quem digita hoje; isto cuida do que já está gravado. Um
+// documento vindo do banco pode ter sido salvo antes da máscara existir, ou por
+// importação, ou pela API direto. A regra é a mesma em todas: normaliza para
+// dígitos e formata SE a contagem bater; se não bater, devolve o que veio.
+// Nunca inventa dígito nem corta o que não entendeu — documento pela metade
+// exibido como se estivesse completo é pior do que documento torto.
+const docCPF   = v => { const d = rhSoDigitos(v); return d.length === 11 ? rhMascaraCPF(d) : rhTxt(v); };
+const docCNPJ  = v => { const d = rhSoDigitos(v); return d.length === 14 ? rhMascaraCNPJ(d) : rhTxt(v); };
+const docCpfCnpj = v => { const d = rhSoDigitos(v);
+  return d.length === 11 ? rhMascaraCPF(d) : d.length === 14 ? rhMascaraCNPJ(d) : rhTxt(v); };
+const docPIS   = v => { const d = rhSoDigitos(v); return d.length === 11 ? rhMascaraPIS(d) : rhTxt(v); };
+const docCEP   = v => { const d = rhSoDigitos(v); return d.length === 8 ? rhMascaraCEP(d) : rhTxt(v); };
+const docTitulo = v => { const d = rhSoDigitos(v); return d.length === 12 ? rhMascaraTitulo(d) : rhTxt(v); };
+const docTelefone = v => {
+  let d = rhSoDigitos(v);
+  if (d.length > 11 && d.slice(0, 2) === '55') d = d.slice(2);
+  return (d.length === 10 || d.length === 11) ? rhMascaraTelefone(d) : rhTxt(v);
+};
+
 // Municípios de uma UF, com o valor atual preservado mesmo que não esteja na
 // lista: ficha antiga pode ter município digitado à mão, e sumir com o dado ao
 // trocar a UF seria pior do que mostrar uma opção fora do catálogo.
@@ -10705,6 +10776,8 @@ function rhAbaDocumentos(painel, d, id) {
     rhSalvar(ed);
   rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
   rhLigarCampo('rh-rg', rhMascaraRG, null, '');
+  rhLigarCampo('rh-pis', rhMascaraPIS, null, '');
+  rhLigarCampo('rh-titulo_eleitor', rhMascaraTitulo, null, '');
   rhLigarSalvar(painel, id, ['cpf', 'rg', 'rg_orgao', 'rg_uf', 'rg_emissao', 'ctps_numero', 'ctps_serie',
     'ctps_uf', 'ctps_emissao', 'pis', 'titulo_eleitor', 'titulo_zona', 'titulo_secao', 'titulo_uf', 'reservista'], 'docs');
 }
@@ -10758,6 +10831,7 @@ function rhAbaContato(painel, d, id) {
     .concat(sens ? ['endereco', 'endereco_numero', 'endereco_complemento', 'bairro', 'municipio', 'uf', 'cep',
       'banco_numero', 'banco_nome', 'agencia', 'conta', 'conta_tipo', 'pix_chave'] : []);
 
+  rhLigarCampo('rh-celular', rhMascaraTelefone, null, '');
   if (sens) {
     rhLigarCampo('rh-cep', rhMascaraCEP, null, '');
     rhLigarCEP();
@@ -10953,6 +11027,16 @@ function rhQuadroCusto(c) {
   </div>`;
 }
 
+// Quadro de rescisão: quanto custa cada saída possível.
+//
+// Comparativo, e não um simulador de uma modalidade por vez, porque a pergunta
+// que se faz aqui nunca é "quanto sai nesta" — é "qual delas sai mais barata, e
+// por quanto". Com as colunas lado a lado a resposta é imediata.
+//
+// O que muda entre elas é DIREITO, não percentual: a justa causa tira o 13º e
+// as férias proporcionais, o pedido de demissão devolve o aviso à empresa, e a
+// multa do FGTS só existe na dispensa e no acordo. Por isso cada coluna traz o
+// seu porquê no rodapé.
 async function rhQuadroRescisao(host, id) {
   const p = host.dataset;
   host.innerHTML = '<h4>Rescisão <span class="rh-lgpd">simulação</span></h4><div class="rh-nota">Calculando…</div>';
@@ -11465,7 +11549,7 @@ function rhAbaDependentes(painel, d, id) {
         <thead><tr><th>Nome</th><th>Parentesco</th><th>Nascimento</th><th>CPF</th><th>IRRF</th><th>Sal.-família</th><th></th></tr></thead>
         <tbody>${d.dependentes.map(x => `<tr>
           <td>${esc(x.nome)}</td><td>${esc(rhTxt(x.parentesco))}</td><td class="venc-cell">${rhData(x.data_nascimento)}</td>
-          <td>${esc(rhTxt(x.cpf))}</td><td>${x.irrf ? '✔' : '—'}</td><td>${x.salario_familia ? '✔' : '—'}</td>
+          <td class="mono">${esc(docCPF(x.cpf))}</td><td>${x.irrf ? '✔' : '—'}</td><td>${x.salario_familia ? '✔' : '—'}</td>
           <td class="actions">${ed ? `<button class="btn-ic perigo" data-del-dep="${x.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</td>
         </tr>`).join('')}</tbody></table></div>`
         : '<div class="empty">Nenhum dependente cadastrado.</div>'}
@@ -11478,7 +11562,7 @@ function rhAbaDependentes(painel, d, id) {
       ${fld('dp-data_nascimento', 'Data de nascimento', 'date', '')}
       ${fldSel('dp-sexo', 'Sexo', RH_SEXO, '')}
     </div>
-    ${fld('dp-cpf', 'CPF', 'text', '')}
+    ${fld('dp-cpf', 'CPF', 'text', '', 'placeholder="000.000.000-00" inputmode="numeric"')}
     <div class="chip-row">
       <label class="check-chip"><input type="checkbox" id="dp-irrf"> Dependente para IRRF</label>
       <label class="check-chip"><input type="checkbox" id="dp-salario_familia"> Recebe salário-família</label>
@@ -11496,6 +11580,8 @@ function rhAbaDependentes(painel, d, id) {
           closeModal(); toast('Dependente adicionado.'); abrirFichaRH(id, 'deps');
         } catch (e) { modalError(e.message); }
      }}]);
+  // O CPF do dependente e' um CPF: mesma mascara e mesma validacao do titular.
+  rhLigarCampo('dp-cpf', rhMascaraCPF, v => !v || rhCPFValido(v), 'CPF inválido — confira os dígitos.');
   painel.querySelectorAll('[data-del-dep]').forEach(b => b.onclick = () =>
     confirmDelete('dependente', '/api/rh/dependentes/' + b.dataset.delDep, () => abrirFichaRH(id, 'deps')));
 }
