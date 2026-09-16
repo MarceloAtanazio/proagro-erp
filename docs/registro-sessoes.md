@@ -4883,3 +4883,84 @@ centavo.
 
 Um teste que passa afirmando a causa errada é pior que teste nenhum: ele dá confiança na explicação
 errada.
+
+## 2026-09-16 — Sessão 103: faltava o redutor da Lei 15.270/2025, não a tabela
+
+**Solicitação:** *"Eu já tinha atualizado e os valores que estão na tabela já são de 2026. Está
+correto, mas não sei se está aplicando incorretamente, pode verificar?"* — com as duas tabelas
+oficiais de 2026 (INSS e IRRF) em anexo.
+
+### O que estava errado — e a terceira tentativa é a que descreve o mecanismo
+
+Na sessão 102 eu disse que a divergência do líquido da Brenda vinha da tabela do ano anterior. Estava
+errado de novo. Consultando o banco: a linha de `erp_rh_encargos` já tinha as faixas de 2026 (teto do
+INSS 8.475,55, parcela a deduzir 908,73 na última faixa, dependente 189,59, simplificado 607,20).
+Só o rótulo `competencia` ficara em `'2025'`.
+
+O que falta não está na tabela. **A partir de 01/01/2026 o IRRF na fonte deixou de terminar na tabela
+progressiva.** A Lei 15.270/2025 acrescenta uma segunda etapa, o redutor, aplicada sobre o imposto já
+apurado:
+
+| rendimento tributável mensal | redução |
+|---|---|
+| até R$ 5.000,00 | até R$ 312,89 — na prática zera o imposto |
+| R$ 5.000,01 a R$ 7.350,00 | `978,62 − (0,133145 × rendimento)`, decrescendo em linha reta |
+| acima de R$ 7.350,00 | nenhuma |
+
+Limitada ao imposto apurado (§ 1º) — nunca vira crédito — e válida também no 13º. O valor que entra
+na fórmula é o **rendimento tributável bruto**, antes do INSS; não é a base de cálculo.
+
+Brenda ganha R$ 6.569,55, em cheio na rampa: `978,62 − 0,133145 × 6.569,55 = 103,92`. A diferença
+que ela via era **exatamente** o redutor.
+
+### O erro de método, que foi o mesmo das duas vezes
+
+Nas duas tentativas anteriores eu achei um número que reproduzia **aquele holerite** e parei ali:
+primeiro dois dependentes inexistentes, depois uma parcela a deduzir de R$ 1.012,65 que não existe em
+tabela nenhuma. A segunda é especialmente traiçoeira porque bate ao centavo — numa faixa de alíquota
+única, somar 103,92 à parcela e subtrair 103,92 do imposto dão o mesmo resultado **para aquele
+salário**. Reproduzir um ponto não é descrever o mecanismo, e um modelo que só vale num ponto erra
+em todos os outros: a parcela inflada desconta sempre, o redutor some no teto de 7.350.
+
+Duas coisas teriam derrubado a hipótese errada na hora, e eu tinha as duas ao alcance: **a tabela
+oficial publicada** (que diz 908,73, não 1.012,65) e **um segundo ponto de conferência** fora da
+rampa. Não conferi nenhuma das duas porque o número já tinha batido.
+
+### O que foi feito
+
+1. **`rhReducaoIRRF(rendimento, imposto, cfg)`** em `api/index.js`, aplicada dentro de `rhIRRF` —
+   logo, vale no custo mensal e nas duas incidências da rescisão (saldo de salário e 13º).
+2. **Coluna `irrf_reducao` (jsonb)** em `erp_rh_encargos`, com piso, teto, redução máxima, constante
+   e fator. Editável na mesma tela das faixas. Teto zerado significa "esta competência não tem
+   redutor", que é a regra de 2025 para trás — o cálculo antigo continua intacto.
+   Migração `supabase/migrations/2026-09-16-irrf-reducao.sql`, que também acerta o rótulo da
+   competência para `'2026'` **só se** as faixas gravadas forem comprovadamente as de 2026 (sem esse
+   teste ela renomearia uma tabela velha e apagaria justamente o alerta que existe para denunciá-la).
+3. **Tela e PDF** passam a mostrar as duas etapas separadas: `(−) IRRF pela tabela` e
+   `(+) Redução do IR (Lei 15.270/25)`, antes do IRRF final. Só aparecem quando há redução.
+
+### Por que coluna própria, e não mais uma faixa
+
+Porque o redutor é invisível na tabela. Quem atualiza as faixas para o ano novo — alíquotas, parcelas,
+dependente, simplificado, tudo certo — **não traz o redutor junto**, e o líquido continua errado para
+todo mundo que está na rampa. Foi exatamente o que aconteceu aqui: a tabela estava certa e o imposto
+saía R$ 103,92 a mais. Guardar o redutor junto da tabela e editável na mesma tela é o que faz a
+próxima mudança de lei ser um campo a trocar, e não um cálculo a reescrever.
+
+### Verificação
+
+`verifica-custo.js` subiu para 57 asserções. As do caso Brenda foram reescritas pela segunda vez, e
+desta vez com o teste que **separa as duas hipóteses** em vez de só confirmar a preferida: as duas
+empatam no salário dela (por isso a errada passava) e divergem em R$ 8.000, onde a lei não dá redução
+nenhuma. Mais: redução zero acima do teto, imposto zero e não negativo abaixo do piso, redução nunca
+maior que o imposto apurado, redução decrescente ao longo da rampa, e uma varredura de R$ 4.500 a
+R$ 7.800 de 5 em 5 reais provando que **não existe degrau** — nenhum ponto onde ganhar mais bruto
+derruba o líquido. Medido no navegador com o CSS real: Brenda sai com IRRF 595,63 contra 595,64 do
+holerite (1 centavo, do arredondamento por faixa do INSS) e líquido 5.252,67 contra 5.252,68.
+As outras seis suítes seguem passando.
+
+### Pendência
+
+- [ ] Rodar a migração `2026-09-16-irrf-reducao.sql` no Supabase — o classificador de produção barrou
+      a aplicação automática. **Ela precisa ir antes do deploy**: sem a coluna, salvar em
+      Configurações de encargos dá erro (o cálculo continua funcionando, só não grava).

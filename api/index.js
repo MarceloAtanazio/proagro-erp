@@ -3760,18 +3760,46 @@ function rhINSS(bruto, faixas) {
   return r2(total);
 }
 
+// O redutor da Lei 15.270/2025, em vigor desde 01/01/2026.
+//
+// O IRRF deixou de terminar na tabela progressiva. O imposto apurado por ela
+// ainda passa por uma segunda etapa: quem ganha até o piso tem o imposto
+// zerado, e daí até o teto a redução decresce em linha reta até sumir.
+//
+// Isso merece atenção porque é invisível na tabela. Atualizar as faixas para o
+// ano novo — alíquotas, parcelas a deduzir, dependente, simplificado, tudo
+// certo — não traz o redutor junto, e o líquido continua saindo errado para
+// todo mundo que está na rampa. Foi assim aqui: a tabela estava correta e o
+// IRRF saía R$ 103,92 acima do holerite.
+//
+// Dois detalhes que a lei fixa e são fáceis de errar: o valor que entra na
+// fórmula é o RENDIMENTO TRIBUTÁVEL (o bruto, antes do INSS), não a base de
+// cálculo; e a redução é limitada ao imposto apurado, nunca virando crédito.
+function rhReducaoIRRF(rendimento, imposto, cfg) {
+  const red = cfg && cfg.irrf_reducao;
+  if (!red || !(Number(red.teto) > 0)) return 0;
+  const rend = Number(rendimento) || 0;
+  if (rend > Number(red.teto)) return 0;
+  const bruta = rend <= Number(red.piso)
+    ? Number(red.maxima) || 0
+    : Number(red.constante) - Number(red.fator) * rend;
+  return r2(Math.min(Math.max(0, bruta), Math.max(0, Number(imposto) || 0)));
+}
+
 // IRRF pelo modelo dedução-por-faixa: alíquota sobre a base menos a parcela a
 // deduzir. A base é o bruto menos INSS e menos as deduções legais — ou menos o
 // desconto simplificado, o que for MAIS VANTAJOSO para o colaborador, que é o
-// que a lei manda aplicar.
+// que a lei manda aplicar. Sobre o resultado incide o redutor acima.
 function rhIRRF(bruto, inss, dependentes, cfg) {
   const legais = inss + (Number(dependentes) || 0) * n(cfg.irrf_dependente);
   const base = Math.max(0, Number(bruto) - Math.max(legais, n(cfg.irrf_simplificado)));
   const faixas = Array.isArray(cfg.irrf_faixas) ? cfg.irrf_faixas : [];
   const f = faixas.find(x => x.ate == null || base <= Number(x.ate)) || faixas[faixas.length - 1];
-  if (!f) return { imposto: 0, base: r2(base), aliquota: 0 };
-  const imposto = Math.max(0, base * (Number(f.aliquota) / 100) - Number(f.deducao || 0));
-  return { imposto: r2(imposto), base: r2(base), aliquota: Number(f.aliquota),
+  if (!f) return { imposto: 0, base: r2(base), aliquota: 0, tabela: 0, reducao: 0 };
+  const tabela = r2(Math.max(0, base * (Number(f.aliquota) / 100) - Number(f.deducao || 0)));
+  const reducao = rhReducaoIRRF(bruto, tabela, cfg);
+  return { imposto: r2(tabela - reducao), base: r2(base), aliquota: Number(f.aliquota),
+           tabela, reducao,
            usou_simplificado: n(cfg.irrf_simplificado) > legais };
 }
 
@@ -3806,6 +3834,7 @@ function rhCustoDoVinculo(v, cfg, nDependentes) {
     salario, periculosidade_pct: v.periculosidade_pct != null ? n(v.periculosidade_pct) : null,
     periculosidade, bruto,
     inss, irrf: irrf.imposto, irrf_base: irrf.base, irrf_aliquota: irrf.aliquota,
+    irrf_tabela: irrf.tabela, irrf_reducao: irrf.reducao,
     irrf_simplificado: irrf.usou_simplificado === true,
     dependentes: Number(nDependentes) || 0, liquido,
     ferias, terco_ferias: terco, decimo_terceiro: decimo, base_encargos: baseEncargos,
@@ -4426,13 +4455,28 @@ app.put('/api/rh/encargos', requireAuth, requireEdit('rh'), h(async (req, res) =
   }
   const pct = (v, padrao) => (v === undefined || v === '' || !isFinite(Number(v)) ? padrao : Number(v));
 
+  // O redutor é opcional: teto zerado (ou ausente) significa "não existe
+  // redutor nesta competência", que é a regra até 2025. Com teto, a rampa
+  // precisa ser uma rampa — piso abaixo do teto, ou a fórmula não descreve
+  // nada e o desconto sairia de qualquer jeito.
+  const red = b.irrf_reducao && typeof b.irrf_reducao === 'object' ? b.irrf_reducao : {};
+  const reducao = Number(red.teto) > 0
+    ? { piso: pct(red.piso, 0), teto: Number(red.teto), maxima: pct(red.maxima, 0),
+        constante: pct(red.constante, 0), fator: pct(red.fator, 0) }
+    : {};
+  if (reducao.teto != null && !(reducao.piso < reducao.teto)) {
+    return res.status(400).json({ error: 'No redutor do IRRF, o piso precisa ser menor que o teto.' });
+  }
+
   await query(
     `UPDATE erp_rh_encargos SET competencia=$1, confirmada=$2, inss_faixas=$3, irrf_faixas=$4,
         irrf_dependente=$5, irrf_simplificado=$6, fgts_pct=$7, inss_patronal_pct=$8,
-        rat_pct=$9, terceiros_pct=$10, atualizado_em=now(), atualizado_por=$11 WHERE id=1`,
+        rat_pct=$9, terceiros_pct=$10, irrf_reducao=$11,
+        atualizado_em=now(), atualizado_por=$12 WHERE id=1`,
     [competencia, b.confirmada === true, JSON.stringify(faixasINSS), JSON.stringify(faixasIRRF),
      pct(b.irrf_dependente, 189.59), pct(b.irrf_simplificado, 607.20), pct(b.fgts_pct, 8),
-     pct(b.inss_patronal_pct, 20), pct(b.rat_pct, 1), pct(b.terceiros_pct, 0), req.user.id]);
+     pct(b.inss_patronal_pct, 20), pct(b.rat_pct, 1), pct(b.terceiros_pct, 0),
+     JSON.stringify(reducao), req.user.id]);
   res.json({ ok: true });
 }));
 

@@ -9759,6 +9759,8 @@ async function rhFichaPDF(id) {
       ...(cst.periculosidade ? [[`Periculosidade (${pct(cst.periculosidade_pct)})`, brl(cst.periculosidade)]] : []),
       ['Salário bruto', brl(cst.bruto)],
       ['(-) INSS', '- ' + brl(cst.inss)],
+      ...(cst.irrf_reducao ? [['(-) IRRF pela tabela', '- ' + brl(cst.irrf_tabela)],
+                              ['(+) Redução do IR (Lei 15.270/25)', brl(cst.irrf_reducao)]] : []),
       [`(-) IRRF · ${cst.dependentes ? `${cst.dependentes} dependente(s)` : 'sem dependentes'}`, '- ' + brl(cst.irrf)],
       ['= Salário líquido', brl(cst.liquido)],
       ['Provisão de férias (1/12)', brl(cst.ferias)],
@@ -11022,10 +11024,14 @@ function rhQuadroCusto(c) {
         ${c.periculosidade ? l(`Periculosidade (${pct(c.periculosidade_pct)})`, '+ ' + brl(c.periculosidade)) : ''}
         ${l('Salário bruto', brl(c.bruto), 'sub')}
         ${l('(−) INSS', '− ' + brl(c.inss), 'neg')}
+        ${c.irrf_reducao ? l('(−) IRRF pela tabela', '− ' + brl(c.irrf_tabela), 'neg') : ''}
+        ${c.irrf_reducao ? l('(+) Redução do IR (Lei 15.270/25)', '+ ' + brl(c.irrf_reducao)) : ''}
         ${l(`(−) IRRF · ${c.dependentes ? `${c.dependentes} dependente(s)` : 'sem dependentes'}`, '− ' + brl(c.irrf), 'neg')}
         ${l('= Salário líquido', brl(c.liquido), 'total')}
         <p class="rh-custo-nota">IRRF sobre base de ${brl(c.irrf_base)} a ${pct(c.irrf_aliquota)}${
           c.irrf_simplificado ? ', com desconto simplificado (mais vantajoso)' : ''}. Tabela ${esc(c.competencia)}.${
+          c.irrf_reducao ? ` Sobre o imposto da tabela ainda incide a <strong>redução da Lei 15.270/2025</strong>,
+            de ${brl(c.irrf_reducao)} — ela vale até o bruto de R$ 7.350,00 e diminui conforme o salário sobe.` : ''}${
           c.dependentes || !c.irrf ? '' : ' <strong>Nenhum dependente</strong> abatendo o imposto — se houver, cadastre em Dependentes.'}</p>
       </div>
 
@@ -11400,6 +11406,7 @@ function rhFormEncargos(voltarPara) {
   api('/api/rh/encargos').then(c => {
     const inss = Array.isArray(c.inss_faixas) ? c.inss_faixas : [];
     const irrf = Array.isArray(c.irrf_faixas) ? c.irrf_faixas : [];
+    const red = c.irrf_reducao && typeof c.irrf_reducao === 'object' ? c.irrf_reducao : {};
     const numIn = (id, v, attrs) => `<input id="${id}" type="number" step="0.01" min="0" value="${v == null ? '' : v}" ${attrs || ''}>`;
 
     openModal('Tabela de encargos e impostos', `
@@ -11429,6 +11436,22 @@ function rhFormEncargos(voltarPara) {
           <td>${numIn('en-ir-aliq-' + i, f.aliquota, 'max="100"')}</td>
           <td>${numIn('en-ir-ded-' + i, f.deducao)}</td></tr>`).join('')}</tbody></table>
 
+      <h5 class="rh-enc-h">IRRF — redução sobre o imposto apurado</h5>
+      <p class="rh-custo-nota">Etapa <strong>depois</strong> da tabela, criada pela Lei 15.270/2025 e em vigor
+        desde 01/01/2026. Quem ganha até o piso tem o imposto zerado; do piso ao teto a redução cai em linha
+        reta até sumir. Entra na fórmula o <strong>bruto tributável</strong>, antes do INSS, e a redução nunca
+        passa do imposto apurado. <strong>Deixe o teto em zero se a competência não tiver redutor</strong> —
+        é o caso de 2025 para trás.</p>
+      <div class="form-row">
+        ${fld('en-rd-piso', 'Isenção até (R$)', 'number', red.piso, 'step="0.01" min="0"')}
+        ${fld('en-rd-teto', 'Redução acaba em (R$)', 'number', red.teto, 'step="0.01" min="0"')}
+        ${fld('en-rd-max', 'Redução máxima (R$)', 'number', red.maxima, 'step="0.01" min="0"')}
+      </div>
+      <div class="form-row">
+        ${fld('en-rd-const', 'Constante da fórmula', 'number', red.constante, 'step="0.01" min="0"')}
+        ${fld('en-rd-fator', 'Fator × rendimento', 'number', red.fator, 'step="0.000001" min="0"')}
+      </div>
+
       <h5 class="rh-enc-h">Encargos da empresa</h5>
       <div class="form-row">
         ${fld('en-fgts', 'FGTS (%)', 'number', c.fgts_pct, 'step="0.001" min="0"')}
@@ -11451,7 +11474,10 @@ function rhFormEncargos(voltarPara) {
             rat_pct: num('en-rat'), terceiros_pct: num('en-terc'),
             inss_faixas: inss.map((_, i) => ({ ate: num('en-in-ate-' + i), aliquota: num('en-in-aliq-' + i) })),
             irrf_faixas: irrf.map((_, i) => ({ ate: num('en-ir-ate-' + i), aliquota: num('en-ir-aliq-' + i),
-                                               deducao: num('en-ir-ded-' + i) || 0 }))
+                                               deducao: num('en-ir-ded-' + i) || 0 })),
+            irrf_reducao: { piso: num('en-rd-piso') || 0, teto: num('en-rd-teto') || 0,
+                            maxima: num('en-rd-max') || 0, constante: num('en-rd-const') || 0,
+                            fator: num('en-rd-fator') || 0 }
           };
           try {
             await api('/api/rh/encargos', { method: 'PUT', body });
