@@ -8758,9 +8758,29 @@ const RH_TIPO_VINCULO = [{ v: 'clt', t: 'CLT' }, { v: 'pj', t: 'PJ' }, { v: 'est
 const RH_REGIME = [{ v: 'regular', t: 'Empregado regular' }, { v: 'confianca', t: 'Cargo de confiança (art. 62, II)' }];
 const RH_MODELO_TRAB = [{ v: 'presencial', t: 'Presencial' }, { v: 'hibrido', t: 'Híbrido' },
   { v: 'home_office', t: 'Home office' }, { v: 'externo', t: 'Jornada externa (art. 62, I)' }];
-const RH_DESLIG_TIPO = [{ v: '', t: '—' }, { v: 'sem_justa_causa', t: 'Dispensa sem justa causa' },
-  { v: 'pedido', t: 'Pedido de demissão' }, { v: 'justa_causa', t: 'Justa causa' },
-  { v: 'fim_contrato', t: 'Fim do contrato de experiência' }, { v: 'acordo', t: 'Acordo (art. 484-A)' }];
+// Os motivos de saída. Os seis primeiros são os mesmos códigos das colunas do
+// quadro de rescisão — o que se compara antes de decidir é o que fica escrito
+// no histórico, sem tradução no meio. (Antes esta lista dizia `fim_contrato` e
+// o cálculo dizia `experiencia_fim`: a saída registrada não casava com a coluna
+// comparada.) Os dois últimos não são decisão de ninguém, e por isso não têm
+// coluna no comparativo — mas acontecem.
+const RH_DESLIG_TIPO = [{ v: '', t: '—' },
+  { v: 'sem_justa_causa', t: 'Dispensa sem justa causa' },
+  { v: 'pedido', t: 'Pedido de demissão' },
+  { v: 'justa_causa', t: 'Dispensa por justa causa' },
+  { v: 'acordo', t: 'Acordo entre as partes (art. 484-A)' },
+  { v: 'experiencia_fim', t: 'Término normal da experiência' },
+  { v: 'experiencia_antes', t: 'Rescisão antecipada da experiência (art. 479)' },
+  { v: 'aposentadoria', t: 'Aposentadoria' },
+  { v: 'falecimento', t: 'Falecimento' }];
+
+// O aviso é o que separa a data da comunicação da data em que o contrato de
+// fato acaba — no trabalhado, até 90 dias entre uma e outra.
+const RH_DESLIG_AVISO = [{ v: '', t: '—' },
+  { v: 'trabalhado', t: 'Trabalhado' },
+  { v: 'indenizado', t: 'Indenizado' },
+  { v: 'dispensado', t: 'Dispensado do cumprimento' },
+  { v: 'nao_aplicavel', t: 'Não se aplica' }];
 
 // A minuta sai do par regime × modelo de trabalho — são exatamente as cinco
 // combinações que existem em "Minutas Pro Agro".
@@ -9737,11 +9757,14 @@ async function rhFichaPDF(id) {
       ['Benefícios/dia', brl(Number(v.vr_dia || 0) + Number(v.home_office_dia || 0))]] : [])
   ] : [['Situação', 'Nenhum vínculo registrado']]);
 
-  if ((d.vinculos || []).length > 1) {
-    tabela('Histórico de vínculos', ['Admissão', 'Desligamento', 'Cargo', 'Tipo', 'Motivo da saída'],
+  // Um vínculo só, já encerrado, também merece a tabela: é o caso de quem saiu
+  // e nunca voltou, e sem ela o PDF do desligado não diz como o contrato acabou.
+  if ((d.vinculos || []).length > 1 || (d.vinculos || []).some(x => x.desligamento)) {
+    tabela('Histórico de vínculos', ['Admissão', 'Saída', 'Cargo', 'Tipo', 'Motivo da saída', 'Aviso'],
       d.vinculos.map(x => [rhPdfData(x.admissao), x.desligamento ? rhPdfData(x.desligamento) : 'em aberto',
         rhPdfTxt(x.cargo), rhPdfRotulo(RH_TIPO_VINCULO, x.tipo),
-        rhPdfRotulo(RH_DESLIG_TIPO, x.desligamento_tipo)]));
+        rhPdfRotulo(RH_DESLIG_TIPO, x.desligamento_tipo),
+        rhPdfRotulo(RH_DESLIG_AVISO, x.desligamento_aviso)]));
   }
 
   // ---- composição do custo ----
@@ -9942,33 +9965,72 @@ async function rhReabrirProcesso(id, nome) {
 
 // ---------------- Arquivar, excluir e desenvolvimento ----------------
 
-// Arquivar é o caminho normal para quem saiu. O formulário pede o desligamento
-// junto porque arquivar sem fechar o vínculo deixaria a pessoa fora das listas
-// mas ainda somando na folha e no headcount.
-function rhFormArquivar(r) {
-  openModal(`Arquivar ${r.name}`, `
-    <div class="rh-nota">Arquivar <strong>preserva tudo</strong> — vínculo, dossiê, dependentes e histórico —
-    e tira a pessoa das listas, de Viáticos e de Suprimentos. É o que se faz com quem deixou a empresa.
+// Registrar o término do contrato — um ato só: desliga, registra e arquiva.
+//
+// Separar em dois botões deixa existir estado incoerente: fora das listas mas
+// ainda "empregado" para headcount e folha, ou desligado e ainda aparecendo
+// como gente da casa. Quem sai, sai inteiro.
+//
+// NÃO tem campo de dinheiro de propósito. O cálculo da rescisão vem da
+// contabilidade externa e entra em Contas a Pagar no nome do colaborador — de
+// lá a aba Financeiro já o puxa. Um valor digitado aqui seria uma segunda
+// verdade sobre o mesmo pagamento, e a errada seria sempre a nossa.
+//
+// Serve tanto ao botão do Vínculo quanto ao de arquivar na lista: sem contrato
+// aberto (candidato que nunca foi contratado) os campos de saída somem, porque
+// não houve emprego a encerrar.
+function rhFormArquivar(r, aoConcluir) {
+  const temVinculo = !!(r.vinculo_id && !r.desligamento);
+  openModal(`${temVinculo ? 'Registrar término do contrato — ' : 'Arquivar '}${r.name}`, `
+    <div class="rh-nota">${temVinculo
+      ? 'Este registro faz as três coisas de uma vez: <strong>encerra o contrato</strong> na data abaixo, <strong>guarda a decisão</strong> no histórico e <strong>arquiva</strong> a pessoa.'
+      : 'Arquivar'} <strong>preserva tudo</strong> — vínculo, dossiê, dependentes e histórico —
+    e tira a pessoa das listas, de Viáticos e de Suprimentos.
     Para consultá-la depois, o filtro <strong>Arquivados</strong> em Colaboradores.</div>
-    ${r.vinculo_id && !r.desligamento
-      ? '<div class="rh-nota aviso">O vínculo aberto será <strong>encerrado</strong> na data abaixo — é ela que entra no cálculo de turnover.</div>'
-      : ''}
+    ${temVinculo ? `
     <div class="form-row">
-      ${fld('ar-data', 'Data do desligamento', 'date', todayISO())}
-      ${fldSel('ar-tipo', 'Tipo', RH_DESLIG_TIPO, '')}
+      ${fld('ar-data', 'Data da saída *', 'date', todayISO())}
+      ${fldSel('ar-tipo', 'Motivo do desligamento *', RH_DESLIG_TIPO, '')}
     </div>
-    ${fld('ar-motivo', 'Motivo', 'text', '', 'placeholder="fica no histórico e no log de auditoria"')}`,
+    <p class="rh-custo-nota" style="margin:-4px 0 14px">A <strong>data da saída</strong> é o último dia do
+      contrato — no aviso trabalhado ela cai no fim do aviso, não no dia em que foi comunicado. É ela que entra
+      no headcount, no turnover e no último mês de folha.</p>
+    <div class="form-row">
+      ${fldSel('ar-aviso', 'Aviso prévio', RH_DESLIG_AVISO, '')}
+      ${fld('ar-aviso-em', 'Comunicado em', 'date', '')}
+    </div>
+    ${fld('ar-motivo', 'Motivo em uma linha', 'text', '', 'placeholder="fica no histórico e no log de auditoria"')}
+    ${fldArea('ar-obs', 'Observações', '', 'placeholder="o que mais precisa ficar registrado sobre esta saída"')}
+    <p class="rh-custo-nota">Os <strong>valores da rescisão</strong> não entram aqui: eles vêm da contabilidade e
+      são lançados em <strong>Contas a Pagar</strong> no nome do colaborador. A aba <strong>Financeiro</strong>
+      da ficha os mostra automaticamente, junto com todo o histórico de pagamentos.</p>`
+    : ''}`,
     [{ label: 'Cancelar', onClick: closeModal },
-     { label: 'Arquivar', cls: 'primary', onClick: async () => {
+     { label: temVinculo ? 'Registrar e arquivar' : 'Arquivar', cls: 'primary', onClick: async () => {
+        const body = { motivo: temVinculo ? $('#ar-motivo').value : '' };
+        if (temVinculo) {
+          if (!$('#ar-tipo').value) return modalError('Escolha o motivo do desligamento.');
+          if (!$('#ar-data').value) return modalError('Informe a data da saída.');
+          body.desligamento = $('#ar-data').value;
+          body.desligamento_tipo = $('#ar-tipo').value;
+          body.desligamento_aviso = $('#ar-aviso').value;
+          body.desligamento_aviso_em = $('#ar-aviso-em').value;
+          body.observacao = $('#ar-obs').value;
+        }
         try {
-          const x = await api(`/api/rh/colaboradores/${r.id}/arquivar`, { method: 'POST', body: {
-            desligamento: $('#ar-data').value, desligamento_tipo: $('#ar-tipo').value,
-            motivo: $('#ar-motivo').value } });
+          const x = await api(`/api/rh/colaboradores/${r.id}/arquivar`, { method: 'POST', body });
           closeModal();
-          toast(x.vinculo_fechado ? 'Arquivado e vínculo encerrado.' : 'Arquivado.');
-          renderRH();
+          toast(x.vinculo_fechado ? 'Contrato encerrado e colaborador arquivado.' : 'Arquivado.');
+          (aoConcluir || renderRH)();
         } catch (e) { modalError(e.message); }
      }}]);
+  // Aviso indenizado ou dispensado é comunicado e encerra no mesmo ato: a data
+  // da comunicação é a própria saída, e deixá-la em branco perderia o dado.
+  const av = $('#ar-aviso');
+  if (av) av.onchange = () => {
+    const em = $('#ar-aviso-em');
+    if (!em.value && /indenizado|dispensado/.test(av.value)) em.value = $('#ar-data').value;
+  };
 }
 
 // Excluir apaga. O servidor recusa quando há história; aqui a tela já explica a
@@ -10940,7 +11002,8 @@ function rhAbaVinculo(painel, d, id) {
     : '';
 
   painel.innerHTML = alerta + `
-    <div class="rh-sec"><h4>Contrato em vigor ${ed ? '<button class="btn sm" id="rh-editar-vinculo">Editar</button>' : ''}</h4>
+    <div class="rh-sec"><h4>Contrato em vigor ${ed ? `<button class="btn sm" id="rh-editar-vinculo">Editar</button>
+      <button class="btn sm perigo" id="rh-desligar">Registrar término</button>` : ''}</h4>
       <div class="rh-linhas">
         ${linha('Tipo', (RH_TIPO_VINCULO.find(t => t.v === v.tipo) || {}).t || rhTxt(v.tipo))}
         ${linha('Matrícula', rhTxt(v.matricula))}
@@ -10976,6 +11039,12 @@ function rhAbaVinculo(painel, d, id) {
 
   const be = painel.querySelector('#rh-editar-vinculo');
   if (be) be.onclick = () => rhFormVinculo(id, v, d);
+  const bd = painel.querySelector('#rh-desligar');
+  // Depois de desligar a pessoa está arquivada e a ficha aberta não existe mais
+  // como estava: volta-se à lista, em vez de recarregar uma tela que virou outra.
+  if (bd) bd.onclick = () => rhFormArquivar(
+    { id, name: (d.colaborador || {}).name || 'colaborador', vinculo_id: v.id, desligamento: v.desligamento },
+    () => renderRH());
   const bc = painel.querySelector('[data-ir-encargos]');
   if (bc) bc.onclick = () => rhFormEncargos(() => abrirFichaRH(id, 'vinculo'));
   const br = painel.querySelector('#rh-rescisao');
@@ -11488,14 +11557,40 @@ function rhFormEncargos(voltarPara) {
   }).catch(e => toast(e.message));
 }
 
+// O histórico de vínculos é onde o término do contrato fica para sempre. Uma
+// linha por vínculo dizia só "de tal data a tal data, tal cargo" — e a pergunta
+// que se faz a um histórico é justamente a que ficava de fora: COMO terminou,
+// com que aviso, por quê e quem registrou.
 function rhHistoricoVinculos(lista, rem) {
   if (!lista.length) return '';
+  const rot = (lst, v) => (lst.find(t => t.v === v) || {}).t || rhTxt(v);
+  const linha = (r, val) => `<div class="rh-linha"><span>${r}</span><b>${val}</b></div>`;
   return `<div class="rh-sec"><h4>Vínculos anteriores</h4>
-    <div class="rh-linhas">${lista.map(v => `<div class="rh-linha">
-      <span>${rhData(v.admissao)} → ${rhData(v.desligamento)}</span>
-      <b>${esc(rhTxt(v.cargo))} · ${esc((RH_TIPO_VINCULO.find(t => t.v === v.tipo) || {}).t || v.tipo)}${v.desligamento_tipo ? ' · ' + esc((RH_DESLIG_TIPO.find(t => t.v === v.desligamento_tipo) || {}).t || v.desligamento_tipo) : ''}</b>
-    </div>`).join('')}</div>
-    <div class="rh-nota">No acervo da empresa todo funcionário tem um distrato de PJ antes da admissão CLT — por isso o vínculo é histórico, não um campo da ficha.</div></div>`;
+    ${lista.map(v => {
+      const avisoTxt = v.desligamento_aviso
+        ? rot(RH_DESLIG_AVISO, v.desligamento_aviso) +
+          (v.desligamento_aviso_em ? ` · comunicado em ${rhData(v.desligamento_aviso_em)}` : '')
+        : null;
+      const registro = v.desligamento_registrado_em
+        ? `${rhData(v.desligamento_registrado_em)}${v.desligamento_registrado_nome ? ' por ' + esc(v.desligamento_registrado_nome) : ''}`
+        : null;
+      return `<div class="rh-vinc-hist">
+        <div class="rh-vinc-cab">
+          <span>${rhData(v.admissao)} → ${rhData(v.desligamento)}</span>
+          <b>${esc(rhTxt(v.cargo))} · ${esc(rot(RH_TIPO_VINCULO, v.tipo))}</b>
+        </div>
+        <div class="rh-linhas">
+          ${linha('Motivo do desligamento', v.desligamento_tipo
+            ? esc(rot(RH_DESLIG_TIPO, v.desligamento_tipo))
+            : '<span class="rh-sem-registro">não registrado</span>')}
+          ${avisoTxt ? linha('Aviso prévio', esc(avisoTxt)) : ''}
+          ${v.desligamento_motivo ? linha('Motivo', esc(v.desligamento_motivo)) : ''}
+          ${v.desligamento_obs ? linha('Observações', esc(v.desligamento_obs)) : ''}
+          ${registro ? linha('Registrado em', registro) : ''}
+        </div></div>`;
+    }).join('')}
+    <div class="rh-nota">No acervo da empresa todo funcionário tem um distrato de PJ antes da admissão CLT — por isso o vínculo é histórico, não um campo da ficha.
+      Os <strong>valores</strong> da rescisão ficam em Contas a Pagar e aparecem na aba <strong>Financeiro</strong>.</div></div>`;
 }
 
 function rhFormVinculo(colabId, v, d) {

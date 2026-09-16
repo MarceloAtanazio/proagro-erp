@@ -5028,3 +5028,85 @@ As outras nove suítes passam.
 - [ ] `verifica-rh-admissao.js` falha em "a prévia lista os 18 campos" (recebe 0). Reproduz no `HEAD`,
       então é anterior a esta sessão e provavelmente é a minuta de exemplo do harness sem os slots —
       mas não conferi, e suíte vermelha parada treina a ignorar suíte vermelha.
+
+## 2026-09-16 — Sessão 105: registrar o término do contrato, e o vocabulário que não batia
+
+**Solicitação:** *"Dentro dos colaboradores na aba 'Vínculo' acho que é válido a gente criar uma maneira
+de registrar o término do contrato de trabalho seja lá por qual for a decisão, assim conseguimos manter
+um histórico completo."*
+
+Duas decisões foram do usuário, perguntadas antes de construir:
+
+- **Um ato só** — desliga, registra e arquiva. Ele não quis o estado intermediário.
+- **Sem campos de dinheiro** — *"o cálculo da rescisão é enviado pela contabilidade externa e colocarei
+  no contas a pagar associado ao funcionário"*.
+
+A segunda resposta economizou a parte mais cara do que eu ia propor. Eu ia sugerir congelar os valores
+calculados no momento do desligamento; ele já tem a fonte da verdade em outro lugar, e um número nosso
+ao lado seria uma segunda verdade sobre o mesmo pagamento — com a errada sendo sempre a nossa. E como a
+aba Financeiro já lê Contas a Pagar por colaborador, a rescisão aparece sozinha no histórico dele.
+
+### O que já existia, e por que não servia
+
+Dava para gravar desligamento por dois caminhos, os dois ruins: o formulário genérico de editar vínculo,
+onde a data de saída se perde entre trinta campos de contrato, e o botão **Arquivar**, que pedia data e
+tipo de passagem. Nos dois o registro sai pobre — não se sabe **quem** registrou, **quando**, nem como
+ficou o **aviso prévio**.
+
+### O achado: duas listas de motivo que não conversavam
+
+A tela de arquivar gravava `fim_contrato`. O quadro comparativo de rescisão calcula `experiencia_fim` e
+`experiencia_antes`. São telas diferentes que nasceram em momentos diferentes e criaram vocabulários
+diferentes para a mesma coisa — então **a saída registrada não casava com a coluna que a pessoa comparou
+antes de decidir**, que é justamente o que um histórico deveria ligar. A lista agora é uma só: os seis
+primeiros códigos são exatamente os `cod` de `RH_RESCISAO_MOTIVOS`, mais `aposentadoria` e `falecimento`
+— que não são decisão de ninguém, não têm coluna no comparativo, mas acontecem, e um histórico sem eles
+força quem registra a escolher uma dispensa que não houve.
+
+### O que foi feito
+
+1. Botão **Registrar término** na aba Vínculo, ao lado de Editar.
+2. Um formulário só, servindo o botão do Vínculo e o de arquivar na lista. Sem contrato aberto
+   (candidato que nunca foi contratado) os campos de saída somem — não houve emprego a encerrar.
+3. Campos novos em `erp_rh_vinculos`: `desligamento_aviso`, `desligamento_aviso_em`, `desligamento_obs`,
+   `desligamento_registrado_em`, `desligamento_registrado_por`.
+   **A data do aviso é separada da data de saída** de propósito: no aviso trabalhado elas diferem por até
+   90 dias, e é a de saída que conta para headcount, turnover e último mês de folha. O formulário diz
+   isso, porque confundir as duas é o erro mais fácil de cometer aqui.
+4. O servidor recusa o que deixaria o histórico incoerente: motivo obrigatório quando há contrato, motivo
+   e aviso só da lista conhecida, saída anterior à admissão (tempo de casa negativo contamina turnover e
+   permanência média de uma vez) e aviso comunicado depois da saída. Saída no **futuro** é permitida — é
+   o aviso trabalhado.
+5. O histórico de vínculos deixou de ser uma linha por contrato e passou a mostrar o registro inteiro:
+   motivo, aviso, observações e quem registrou quando. A pergunta que se faz a um histórico era
+   exatamente a que ficava de fora.
+6. Linha de auditoria com data e motivo, não só "alguém arquivou". A ficha em PDF passou a sair com o
+   histórico mesmo quando há um vínculo só, desde que encerrado — sem isso o PDF do desligado não dizia
+   como o contrato acabou.
+
+### De novo o stub complacente — e desta vez ele me pegou no mesmo dia
+
+O `throw` que entrou ontem no lugar do `return []` pagou na primeira hora: acusou a consulta nova da
+ficha (o `LEFT JOIN` para o nome de quem registrou) antes de eu publicar. E em `verifica-rh-painel.js`,
+que ainda tinha o catch-all silencioso, achou duas coisas:
+
+- o stub do UPDATE de desligamento usava `params[3]` para o id do vínculo, que agora é `params[7]`. Com o
+  índice velho não achava nada, não gravava nada, o endpoint respondia 200 — e **quatro asserções diziam
+  "fechou o vínculo", "guarda o tipo", "o turnover passa a contar" sem que nada disso tivesse ocorrido**;
+- faltava o stub de `SELECT ativo FROM erp_colaboradores`, então os testes de exclusão passavam por cima
+  de um caminho que nunca rodou.
+
+Os dois catch-alls agora gritam. O padrão se repete: **o stub responde o que o Postgres não responderia,
+e a suíte fica verde por cima do buraco**.
+
+### Verificação
+
+`verifica-desligamento.js`, 26 asserções contra o Express de verdade, organizadas pelas três incoerências
+que o ato pode produzir: arquivado com vínculo aberto (sai das listas e continua contando como empregado),
+desligado sem motivo (registra a saída e não a decisão) e saída antes da admissão. Inclui os oito motivos
+aceitos, `fim_contrato` recusado, data ausente caindo em hoje e nunca em nulo, e o caso sem vínculo.
+
+Na tela, com o CSS real: três vínculos encerrados no histórico com motivo, aviso, observação e registro;
+o que não tem motivo gravado diz *"não registrado"* em vez de traço mudo; o formulário muda título, botão
+e campos conforme haja contrato aberto; escolher aviso indenizado ou dispensado preenche a data da
+comunicação sozinho; zero corte a 1180px e a 375px. As doze suítes passam.

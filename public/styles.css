@@ -198,6 +198,10 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 .btn.blue { background: var(--azul-700); border-color: var(--azul-700); color: #fff; }
 .btn.danger-ghost { color: var(--danger); }
 .btn.sm { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
+/* Ação que encerra algo. Contorno, e não preenchido: fica distinguível do botão
+   ao lado sem competir com o primário da tela por atenção. */
+.btn.perigo { color: var(--danger); border-color: #E8BDB5; }
+.btn.perigo:hover { background: var(--danger-050); border-color: var(--danger); }
 a.btn { text-decoration: none; }   /* .btn usado em link (ex.: atalho do Rotas Brasil) */
 .btn.block { width: 100%; justify-content: center; padding: 11px; font-size: 14px; }
 .btn:disabled { opacity: .5; cursor: default; }
@@ -989,6 +993,16 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-linha { display: flex; justify-content: space-between; gap: 14px; align-items: baseline;
   padding: 8px 0; border-bottom: 1px solid #EAF0EC; font-size: 13.5px; }
 .rh-linha span { color: var(--muted); }
+/* Um vínculo encerrado no histórico: cabeçalho com o período e o cargo, e
+   abaixo como o contrato terminou. Vários vínculos empilhados precisam de
+   separação visível, senão viram uma lista só e o leitor perde de quem é o quê. */
+.rh-vinc-hist { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+.rh-vinc-cab { display: flex; justify-content: space-between; gap: 14px; align-items: baseline;
+  flex-wrap: wrap; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid #EAF0EC; }
+.rh-vinc-cab span { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rh-vinc-cab b { font-size: 13.5px; color: var(--ink); }
+/* Falta de dado é dado: sai em cinza e por extenso, não como traço mudo. */
+.rh-sem-registro { color: var(--muted); font-weight: 400; font-style: italic; }
 .rh-linha b { color: var(--ink); font-weight: 600; text-align: right; }
 .rh-minuta { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
 

@@ -269,7 +269,13 @@ const AUDIT_MAP = {
   'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
   // Arquivar e excluir mexem em registro trabalhista: ficam nomeados no log.
-  'POST /api/rh/colaboradores/:id/arquivar': req => `ARQUIVOU o colaborador ID ${req.params.id}${req.body.motivo ? ` — ${req.body.motivo}` : ''}`,
+  // Desligamento é registro trabalhista: o log diz a data e o motivo, não só que
+  // alguém arquivou. É por ele que se reconstrói quem decidiu o quê e quando.
+  'POST /api/rh/colaboradores/:id/arquivar': req => `DESLIGOU e arquivou o colaborador ID ${req.params.id}`
+    + (req.body.desligamento_tipo ? ` — ${req.body.desligamento_tipo}` : '')
+    + (req.body.desligamento ? `, saída em ${req.body.desligamento}` : '')
+    + (req.body.desligamento_aviso ? `, aviso ${req.body.desligamento_aviso}` : '')
+    + (req.body.motivo ? ` (${req.body.motivo})` : ''),
   'POST /api/rh/colaboradores/:id/desarquivar': req => `Desarquivou o colaborador ID ${req.params.id}`,
   'DELETE /api/rh/colaboradores/:id': req => `EXCLUIU o colaborador ID ${req.params.id}`,
   'POST /api/rh/admissoes/:id/encerrar': req => `ENCERROU a candidatura do processo ID ${req.params.id} — ${req.body.tipo || 'sem motivo'}${req.body.motivo ? ` (${req.body.motivo})` : ''}`,
@@ -2460,7 +2466,13 @@ app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(asyn
   const rows = await query('SELECT * FROM erp_colaboradores WHERE id=$1', [id]);
   if (!rows.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
   const colab = rows[0];
-  const vinculos = await query('SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao DESC', [id]);
+  // Quem registrou o desligamento vem junto: "registrado por ID 3" não é
+  // histórico para ninguém ler, e o log de auditoria é outro lugar.
+  const vinculos = await query(
+    `SELECT v.*, u.name AS desligamento_registrado_nome
+       FROM erp_rh_vinculos v
+       LEFT JOIN erp_users u ON u.id = v.desligamento_registrado_por
+      WHERE v.colaborador_id=$1 ORDER BY v.admissao DESC`, [id]);
   const dependentes = rhVeSensivel(req.user) || rhEhProprio(req.user, colab)
     ? await query('SELECT * FROM erp_rh_dependentes WHERE colaborador_id=$1 ORDER BY data_nascimento', [id])
     : [];
@@ -4344,7 +4356,13 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
   const verSens = rhVeSensivel(req.user) || rhEhProprio(req.user, colab);
   const podeDossie = await podeVerDossieRH(req.user, id);
 
-  const vinculos = await query('SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao DESC', [id]);
+  // Quem registrou o desligamento vem junto: "registrado por ID 3" não é
+  // histórico para ninguém ler, e o log de auditoria é outro lugar.
+  const vinculos = await query(
+    `SELECT v.*, u.name AS desligamento_registrado_nome
+       FROM erp_rh_vinculos v
+       LEFT JOIN erp_users u ON u.id = v.desligamento_registrado_por
+      WHERE v.colaborador_id=$1 ORDER BY v.admissao DESC`, [id]);
   const dependentes = verSens
     ? await query('SELECT * FROM erp_rh_dependentes WHERE colaborador_id=$1 ORDER BY data_nascimento', [id]) : [];
   const anexos = podeDossie
@@ -4505,9 +4523,26 @@ app.put('/api/rh/encargos', requireAuth, requireEdit('rh'), h(async (req, res) =
   res.json({ ok: true });
 }));
 
-// ---- Arquivar e desarquivar ----
+// ---- Desligar e arquivar ----
+//
+// Os motivos de saída, num vocabulário só. Os seis primeiros são exatamente os
+// `cod` de RH_RESCISAO_MOTIVOS: o que se compara no quadro de rescisão é o que
+// fica registrado no histórico, sem tradução no meio. Os dois últimos não são
+// decisão de ninguém e por isso não têm coluna no comparativo — mas acontecem,
+// e um histórico que não sabe dizer "faleceu" força quem registra a escolher
+// uma dispensa que não houve.
+const RH_DESLIGAMENTO_TIPOS = ['sem_justa_causa', 'pedido', 'justa_causa', 'acordo',
+  'experiencia_fim', 'experiencia_antes', 'aposentadoria', 'falecimento'];
+const RH_DESLIGAMENTO_AVISOS = ['trabalhado', 'indenizado', 'dispensado', 'nao_aplicavel'];
+
 // Arquivar é o caminho normal para quem saiu: preserva vínculo, dossiê e
 // histórico, e tira a pessoa de todas as listas. Excluir apaga tudo.
+//
+// O ato é um só — desliga, registra e arquiva — porque separar em dois botões
+// deixa existir o estado incoerente: fora das listas mas ainda "empregado" para
+// headcount e folha, ou desligado e ainda aparecendo como gente da casa. O que
+// NÃO entra aqui é dinheiro: os valores da rescisão vêm da contabilidade e
+// entram em Contas a Pagar no nome do colaborador.
 app.post('/api/rh/colaboradores/:id/arquivar', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const id = Number(req.params.id);
   const r = await query('SELECT id, name, arquivado_em FROM erp_colaboradores WHERE id=$1', [id]);
@@ -4517,13 +4552,38 @@ app.post('/api/rh/colaboradores/:id/arquivar', requireAuth, requireEdit('rh'), h
   const aberto = await query(
     'SELECT id, admissao FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL', [id]);
   const dataSaida = isDate(req.body.desligamento) ? req.body.desligamento : hojeISO();
+  const tipo = sanitize(req.body.desligamento_tipo) || null;
+  const aviso = sanitize(req.body.desligamento_aviso) || null;
+  const avisoEm = isDate(req.body.desligamento_aviso_em) ? req.body.desligamento_aviso_em : null;
+
   // Arquivar com vínculo aberto deixaria a pessoa fora das listas mas "empregada"
   // para o cálculo de headcount e de folha. Fecha-se o vínculo junto.
   if (aberto.length) {
+    // As validações valem só quando há contrato a encerrar. Arquivar candidato
+    // que nunca foi contratado não tem motivo de saída para informar.
+    if (!tipo) return res.status(400).json({ error: 'Informe o motivo do desligamento.' });
+    if (!RH_DESLIGAMENTO_TIPOS.includes(tipo)) {
+      return res.status(400).json({ error: 'Motivo de desligamento desconhecido.' });
+    }
+    if (aviso && !RH_DESLIGAMENTO_AVISOS.includes(aviso)) {
+      return res.status(400).json({ error: 'Situação do aviso prévio desconhecida.' });
+    }
+    // Saída antes da admissão vira tempo de casa negativo e contamina turnover,
+    // tempo médio de permanência e o histórico do colaborador de uma vez.
+    const adm = String(aberto[0].admissao).slice(0, 10);
+    if (dataSaida < adm) {
+      return res.status(400).json({ error: `A saída (${dataSaida}) não pode ser anterior à admissão (${adm}).` });
+    }
+    if (avisoEm && avisoEm > dataSaida) {
+      return res.status(400).json({ error: 'O aviso não pode ser comunicado depois da data de saída.' });
+    }
     await query(
-      `UPDATE erp_rh_vinculos SET desligamento=$1, desligamento_tipo=$2, desligamento_motivo=$3, updated_at=now()
-        WHERE id=$4`,
-      [dataSaida, sanitize(req.body.desligamento_tipo) || null, sanitize(req.body.motivo) || null, aberto[0].id]);
+      `UPDATE erp_rh_vinculos SET desligamento=$1, desligamento_tipo=$2, desligamento_motivo=$3,
+          desligamento_aviso=$4, desligamento_aviso_em=$5, desligamento_obs=$6,
+          desligamento_registrado_em=now(), desligamento_registrado_por=$7, updated_at=now()
+        WHERE id=$8`,
+      [dataSaida, tipo, sanitize(req.body.motivo) || null, aviso, avisoEm,
+       sanitize(req.body.observacao) || null, req.user.id, aberto[0].id]);
   }
   await query(
     `UPDATE erp_colaboradores SET arquivado_em=now(), arquivado_por=$1, arquivado_motivo=$2, ativo=false WHERE id=$3`,
