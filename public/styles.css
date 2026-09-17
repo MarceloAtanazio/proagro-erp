@@ -1222,14 +1222,51 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 
 /* Movimentação: 12 colunas de duas barras. Admissão sobe verde, desligamento
    sobe vermelho, lado a lado no mesmo mês. */
-.rh-mov { display: flex; align-items: flex-end; gap: 4px; height: 88px; }
-.rh-mov-mes { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+/* Movimentação mensal. Era 88px de altura com barras de 7px fixos: numa faixa
+   de 1700px cada mês ganhava ~140px de coluna e gastava 14 deles, então o
+   gráfico era quase todo espaço vazio e as alturas ficavam indistinguíveis.
+   Agora a barra cresce com a coluna (até um teto, para não virar bloco em
+   telas largas) e o gráfico tem altura para as diferenças aparecerem. */
+/* Em tela estreita, doze meses com o rótulo "out/25" não cabem: ou o gráfico
+   rola sozinho, ou empurra a página inteira para o lado. Rola aqui dentro, como
+   as tabelas largas fazem. O `padding-top` reserva o espaço da etiqueta, que
+   sobe acima da barra e seria cortada pelo `overflow`. */
+.rh-mov-rolagem { overflow-x: auto; overflow-y: visible; padding-top: 34px; margin-top: -34px; }
+.rh-mov { display: flex; align-items: flex-end; gap: 6px; height: 150px; min-width: 560px;
+  border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.rh-mov-mes { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  height: 100%; position: relative; border-radius: 6px 6px 0 0; }
+/* O mês inteiro reage ao mouse, não só a barra: em mês sem movimento não há
+   barra nenhuma para mirar, e é exatamente aí que se quer confirmar o zero. */
+.rh-mov-mes:hover { background: #F3F7F4; }
+/* A etiqueta sai na hora, com o mês por extenso e os dois números. O `title`
+   nativo demora quase um segundo e não dá para formatar. */
+.rh-mov-mes::after { content: attr(data-dica); position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%); background: var(--ink); color: #fff; font-size: 11.5px; font-weight: 500;
+  padding: 6px 10px; border-radius: 6px; white-space: nowrap; opacity: 0; pointer-events: none;
+  transition: opacity .12s; z-index: 5; box-shadow: var(--shadow); }
+.rh-mov-mes:hover::after { opacity: 1; }
+/* Nos dois primeiros e nos dois últimos a etiqueta encostaria na borda do
+   cartão; ancorar pela ponta a mantém dentro. */
+.rh-mov-mes:nth-child(-n+2)::after { left: 0; transform: none; }
+.rh-mov-mes:nth-last-child(-n+2)::after { left: auto; right: 0; transform: none; }
 .rh-mov-mes .col { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center;
-  gap: 2px; border-bottom: 1px solid var(--line); }
-.rh-mov-mes .col i { width: 7px; border-radius: 2px 2px 0 0; min-height: 1px; }
+  gap: 4px; padding: 0 6px; }
+/* `flex` com teto: a barra ocupa a coluna disponível e para de crescer em 30px,
+   para não virar um bloco em monitor largo. Sem `min-height`: mês sem
+   movimento não desenha barra (o HTML nem a cria), porque um risco de 1px onde
+   o valor é zero mostra atividade em mês parado. */
+.rh-mov-mes .col i { flex: 1 1 0; max-width: 30px; border-radius: 4px 4px 0 0;
+  position: relative; transition: filter .12s; }
+.rh-mov-mes:hover .col i { filter: brightness(1.12); }
+/* O número em cima da barra: dispensa o hover para quem só quer bater o olho. */
+.rh-mov-mes .col i b { position: absolute; bottom: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .rh-mov-mes .col i.adm { background: var(--verde-700); }
+.rh-mov-mes .col i.adm b { color: var(--verde-700); }
 .rh-mov-mes .col i.des { background: var(--danger); }
-.rh-mov-mes .mes { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rh-mov-mes .col i.des b { color: var(--danger); }
+.rh-mov-mes .mes { font-size: 11px; color: var(--muted); }
 .rh-legenda { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
 .rh-legenda .l { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .rh-legenda .l.adm { background: var(--verde-700); }

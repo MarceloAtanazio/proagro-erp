@@ -10259,6 +10259,35 @@ async function rhAbaDesenvolvimento(painel, d, id) {
 // de dado incompleto diz de quantos.
 
 const rhPct = (a, b) => (b ? Math.round(100 * a / b) : 0);
+
+// "2025-10" → "out/25" e "outubro de 2025".
+//
+// O eixo mostrava só o número do mês: "10, 11, 12, 01…". Doze meses assim não
+// dizem nem o ano, e a virada de dezembro para janeiro passa despercebida —
+// justamente o ponto em que ler o gráfico mais importa.
+const RH_MES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const RH_MES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const rhMesPartes = iso => {
+  const [a, m] = String(iso || '').split('-');
+  const i = Number(m) - 1;
+  return i >= 0 && i < 12 && a ? { ano: a, i } : null;
+};
+const rhMesCurto = iso => { const p = rhMesPartes(iso); return p ? `${RH_MES_ABREV[p.i]}/${p.ano.slice(2)}` : String(iso || '—'); };
+const rhMesLongo = iso => { const p = rhMesPartes(iso); return p ? `${RH_MES_NOME[p.i]} de ${p.ano}` : String(iso || '—'); };
+
+// Uma barra do gráfico de movimentação.
+//
+// Mês sem movimento NÃO desenha barra. Antes havia `min-height: 1px`, e o
+// resultado era um risco visível onde o valor é zero — o gráfico mostrava
+// atividade em meses parados. Zero é uma informação, e a forma honesta de
+// mostrá-lo é o espaço vazio.
+//
+// O valor sai escrito em cima da barra: são no máximo dois dígitos, e poupam o
+// hover para quem só quer bater o olho.
+const rhMovBarra = (tipo, valor, max) => (valor > 0
+  ? `<i class="${tipo}" style="height:${Math.max(6, rhPct(valor, max))}%"><b>${valor}</b></i>`
+  : '');
 const rhDias = d => {
   if (d == null) return '—';
   if (d < 60) return `${d} dias`;
@@ -10330,14 +10359,16 @@ async function rhPainel(c) {
           ${rhBarras(traduzir(hc.por_sexo, RH_SEXO_NOME), co.ativos, '#5B8DEF')}</div>
       </div>
       <h5>Admissões e desligamentos — 12 meses</h5>
-      <div class="rh-mov">${hc.movimentacao.map(m => `
-        <div class="rh-mov-mes" title="${m.mes}: ${m.admissoes} admissão(ões), ${m.desligamentos} desligamento(s)">
+      <div class="rh-mov-rolagem"><div class="rh-mov">${hc.movimentacao.map(m => `
+        <div class="rh-mov-mes" data-dica="${esc(rhMesLongo(m.mes))} · ${m.admissoes} ${
+            m.admissoes === 1 ? 'admissão' : 'admissões'} · ${m.desligamentos} ${
+            m.desligamentos === 1 ? 'desligamento' : 'desligamentos'}">
           <span class="col">
-            <i class="adm" style="height:${rhPct(m.admissoes, maxMov)}%"></i>
-            <i class="des" style="height:${rhPct(m.desligamentos, maxMov)}%"></i>
+            ${rhMovBarra('adm', m.admissoes, maxMov)}
+            ${rhMovBarra('des', m.desligamentos, maxMov)}
           </span>
-          <span class="mes">${m.mes.slice(5)}</span>
-        </div>`).join('')}</div>
+          <span class="mes">${esc(rhMesCurto(m.mes))}</span>
+        </div>`).join('')}</div></div>
       <div class="rh-legenda"><span class="l adm"></span>admissões <span class="l des"></span>desligamentos</div>
     </div>
 

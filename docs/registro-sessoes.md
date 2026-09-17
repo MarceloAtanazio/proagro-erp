@@ -5460,3 +5460,52 @@ preenche com `WHERE matricula IS NULL`, que não sobrescreve nada que alguém te
 na criação não muda nada **e o valor não entra em coluna nenhuma**, o `PUT` aceita os outros campos mas
 não reescreve a matrícula, uma edição que só traz matrícula responde 400 em vez de fingir que salvou, e
 dois vínculos da mesma pessoa saem com a mesma matrícula. As dez suítes passam.
+
+## 2026-09-17 — Sessão 112: o gráfico de movimentação ficou legível
+
+**Solicitação:** *"As barras acabam ficando muito pequenas e impossibilita qualquer tipo de leitura ou
+interpretação. Sugestão seria a legenda de mês ser algo meio 'out/25, nov/25, dez/25…', as barras serem
+mais largas e ao passar o mouse sobre ela aparece o rótulo a que se refere."*
+
+As três sugestões procediam, e o rótulo era o pior dos problemas: o eixo mostrava **só o número do mês**
+— "10, 11, 12, 01…". Doze meses assim não dizem nem o ano, e a virada de dezembro para janeiro passa
+despercebida, justamente o ponto em que ler o gráfico mais importa.
+
+### O que mudou
+
+- **Rótulo "out/25"**, com o ano. A virada de ano aparece: `dez/25` ao lado de `jan/26`.
+- **Barras largas.** Eram 7px fixos numa coluna de ~140px — o gráfico era quase todo espaço vazio e as
+  alturas ficavam indistinguíveis. Agora a barra cresce com a coluna até um teto de 30px, para não virar
+  um bloco em monitor largo. A altura do gráfico subiu de 88px para 150px.
+- **Etiqueta ao passar o mouse**, com o mês por extenso e os dois números: *"agosto de 2026 · 3 admissões
+  · 0 desligamentos"*. Feita em CSS, não com o `title` nativo — o nativo demora quase um segundo e não dá
+  para formatar. Quem reage ao mouse é a **coluna inteira**, não a barra: em mês sem movimento não há
+  barra para mirar, e é exatamente aí que se quer confirmar o zero.
+- **O número vai escrito em cima da barra**, poupando o hover para quem só quer bater o olho.
+
+### Uma correção que ninguém pediu
+
+O CSS antigo tinha `min-height: 1px` nas barras. O efeito: **mês parado desenhava um risco visível**, e
+quem batia o olho via atividade onde não houve nenhuma. Zero é uma informação, e a forma honesta de
+mostrá-lo é o espaço vazio — agora o HTML nem cria a barra quando o valor é zero.
+
+### Um problema que eu mesmo criei e a medição pegou
+
+Com o rótulo maior, a 375px os doze meses passaram a somar 552px e **estouravam a página inteira** para o
+lado. Encurtar o rótulo resolveria e desfaria justamente o que ele pediu. O gráfico passou a rolar dentro
+do próprio quadro, como as tabelas largas já fazem.
+
+Isso trouxe um segundo detalhe: `overflow-x: auto` obriga o `overflow-y` a acompanhar, e a etiqueta, que
+sobe acima da barra, seria cortada. O quadro reserva a altura dela em `padding-top`, compensado por uma
+margem negativa para nada se deslocar.
+
+### Verificação
+
+`verifica-movimentacao.js`, 14 asserções sobre as funções puras — onde mora o erro clássico: os doze
+rótulos na ordem certa (índice de mês fora por um faria o eixo dizer "set" onde é outubro), o ano com dois
+dígitos, mês vazio virando travessão em vez de `undefined`, zero **não** desenhando barra, e o piso de 6%
+para um valor pequeno não sumir.
+
+Na tela: a 1780px as barras medem 30px, o gráfico não rola e a página não transborda; a 375px o gráfico
+rola sozinho e a página fica intacta; a etiqueta aparece inteira, sem corte, e as dos meses das pontas
+ancoram pela borda para não sair do cartão.
