@@ -11846,7 +11846,14 @@ function rhFormVinculo(colabId, v, d) {
   openModal(novo ? 'Registrar admissão' : 'Editar vínculo', `
     <div class="form-row">
       ${fldSel('vc-tipo', 'Tipo de vínculo', RH_TIPO_VINCULO, v.tipo || 'clt')}
-      ${fld('vc-matricula', 'Matrícula', 'text', v.matricula || '')}
+      ${/* A matrícula é o ID do colaborador e quem a escreve é o servidor. O
+            campo fica visível porque o número interessa — é ele que se confere
+            contra a folha —, mas travado: digitar aqui não mudaria nada, já que
+            `matricula` saiu da lista de campos que a API aceita do formulário.
+            Campo que aceita digitação e descarta o que foi digitado é pior que
+            campo travado. */
+        fld('vc-matricula', 'Matrícula', 'text', v.matricula || String(colabId),
+          'disabled title="Gerada a partir do ID do colaborador — não é editável"')}
       ${fld('vc-admissao', 'Admissão *', 'date', v.admissao ? String(v.admissao).slice(0, 10) : todayISO())}
     </div>
     <div class="form-row">
@@ -11891,7 +11898,9 @@ function rhFormVinculo(colabId, v, d) {
     [{ label: 'Cancelar', onClick: closeModal },
      { label: novo ? 'Registrar admissão' : 'Salvar', cls: 'primary', onClick: async () => {
         const body = {};
-        const texto = ['tipo', 'matricula', 'admissao', 'cargo', 'nivel', 'departamento', 'centro_custo',
+        // Sem 'matricula': um campo desabilitado ainda tem `.value`, e mandá-lo
+        // faria o formulário parecer dono de um dado que quem grava é o servidor.
+        const texto = ['tipo', 'admissao', 'cargo', 'nivel', 'departamento', 'centro_custo',
           'unidade', 'regime', 'modelo_trabalho', 'cct', 'sindicato', 'observacao',
           'desligamento', 'desligamento_tipo', 'desligamento_motivo'];
         texto.forEach(k => { const e2 = $('#vc-' + k); if (e2) body[k] = e2.value; });

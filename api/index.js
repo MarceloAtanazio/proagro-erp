@@ -2299,7 +2299,11 @@ const RH_DESLIGAMENTO_TIPOS = ['sem_justa_causa', 'pedido', 'justa_causa', 'acor
   'experiencia_fim', 'experiencia_antes', 'aposentadoria', 'falecimento'];
 const RH_DESLIGAMENTO_AVISOS = ['trabalhado', 'indenizado', 'dispensado', 'nao_aplicavel'];
 
-const RH_CAMPOS_VINCULO = ['tipo', 'matricula', 'admissao', 'desligamento', 'desligamento_motivo',
+// `matricula` NÃO está aqui de propósito: ela é o ID do colaborador, gravada
+// pelo servidor quando o vínculo nasce. Fora desta lista, nenhum corpo de
+// requisição consegue alterá-la — nem o formulário, nem uma tela antiga em
+// cache, nem alguém chamando a API na mão.
+const RH_CAMPOS_VINCULO = ['tipo', 'admissao', 'desligamento', 'desligamento_motivo',
   'desligamento_tipo', 'desligamento_aviso', 'desligamento_aviso_em', 'desligamento_obs',
   'cargo', 'nivel', 'departamento', 'centro_custo', 'gestor_id', 'unidade',
   'regime', 'modelo_trabalho', 'controle_ponto', 'experiencia_fim', 'prorrogacao_fim', 'salario',
@@ -2615,7 +2619,13 @@ app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h
   const corpo = { ...req.body, ...rhDatasExperiencia(req.body.admissao) };
   const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
-  cols.push('colaborador_id', 'created_by'); vals.push(id, req.user.id);
+  // A matrícula é o ID do colaborador, e é o servidor que a escreve.
+  //
+    // Ela identifica a PESSOA, não o contrato: quem sai e volta reabre com a
+  // mesma matrícula, e é isso que se espera de um número de matrícula. Sai sem
+  // zeros à esquerda para ser idêntica à coluna ID da lista — número que
+  // aparece de dois jeitos diferentes deixa de servir para conferir.
+  cols.push('colaborador_id', 'matricula', 'created_by'); vals.push(id, String(id), req.user.id);
   const ph = cols.map((_, i) => D + (i + 1)).join(',');
   // RETURNING * e não só o id: a vigência é registrada a partir da LINHA
   // GRAVADA, não do corpo da requisição. O corpo é texto de formulário; a linha
@@ -3125,10 +3135,14 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
     if (!aberto.length) {
       const d = rhDatasExperiencia(String(adm.admissao_prevista).slice(0, 10));
       const v = await query(
-        `INSERT INTO erp_rh_vinculos (colaborador_id, tipo, admissao, cargo, nivel, departamento,
+        // A matrícula sai do ID do colaborador aqui também: o vínculo que nasce
+        // da admissão é tão vínculo quanto o criado à mão, e deixar um dos dois
+        // caminhos sem matrícula é como o desligamento tinha duas portas e só
+        // uma arquivava.
+        `INSERT INTO erp_rh_vinculos (colaborador_id, matricula, tipo, admissao, cargo, nivel, departamento,
             centro_custo, gestor_id, regime, modelo_trabalho, controle_ponto, experiencia_fim,
             prorrogacao_fim, salario, vr_dia, home_office_dia, created_by)
-         VALUES ($1,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+         VALUES ($1,$1::text,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
         [adm.colaborador_id, String(adm.admissao_prevista).slice(0, 10), adm.cargo_pretendido,
          adm.nivel_pretendido, adm.departamento, adm.centro_custo, adm.gestor_id,
          adm.regime, adm.modelo_trabalho, adm.modelo_trabalho !== 'externo' && adm.regime !== 'confianca',

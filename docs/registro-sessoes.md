@@ -5410,3 +5410,53 @@ fecha e limpa. A 375px não há corte nem rolagem lateral. As seis suítes rodad
 
 Migração `2026-09-17-rh-cargos-unissex.sql` aplicada, com guarda que falha se sobrar cargo com nome de
 gênero no catálogo ou cargo em uso fora dele.
+
+## 2026-09-17 — Sessão 111: a matrícula passa a ser o ID do colaborador
+
+**Solicitação:** *"Use esse ID gerado como número de matrícula do funcionário, deixe-o como padrão e sem
+possibilidade de alteração no momento de gerar o vínculo. Pode ser?"*
+
+Pode, e o campo estava ocioso: `matricula` era texto livre no formulário do vínculo e estava **nulo nos
+17 vínculos existentes** — ninguém preenchia, porque não havia de onde tirar o número.
+
+### Uma decisão que o pedido não fixava
+
+O ID apontado é o do **colaborador**, não o do vínculo. São coisas diferentes, e escolher errado só
+apareceria quando alguém saísse e voltasse.
+
+Ficou o do colaborador: a matrícula identifica a **pessoa**, não o contrato. Quem sai e volta reabre
+vínculo com a mesma matrícula, que é o que se espera de um número de matrícula. Se a intenção fosse
+identificar o contrato, o número mudaria a cada readmissão — e a conferência contra a folha deixaria de
+bater.
+
+Sem zeros à esquerda, de propósito: idêntica à coluna ID que a lista já mostra. Número que aparece de
+dois jeitos diferentes deixa de servir para conferir.
+
+### "Sem possibilidade de alteração" não é travar o campo na tela
+
+Deixar o input desabilitado e parar por aí seria fingir. Uma tela antiga em cache, uma chamada na mão ou
+um `PUT` posterior continuariam escrevendo — **e isso já aconteceu aqui**: o desligamento tinha duas
+portas, só uma arquivava, e o usuário entrou justamente pela que faltava, mandando um código que a tela
+nova nem oferecia mais.
+
+Então `matricula` **saiu de `RH_CAMPOS_VINCULO`**, a lista de campos que a API aceita do corpo da
+requisição. Fora dela, nenhum corpo a alcança — nem formulário, nem cache, nem chamada direta. Quem
+escreve é o servidor, nos **dois** caminhos que criam vínculo: o `POST` manual e o vínculo que nasce da
+admissão concluída. Deixar um dos dois de fora repetiria exatamente o erro das duas portas.
+
+Na tela o campo continua visível — o número interessa, é o que se confere contra a folha — mas travado.
+Campo que aceita digitação e descarta o que foi digitado é pior que campo travado.
+
+### Por que não uma coluna gerada pelo banco
+
+Seria a trava mais forte (`GENERATED ALWAYS AS`), e foi tentador. Não fiz: se um dia a folha ditar a
+matrícula de alguém, uma coluna gerada exigiria reconstruir a tabela, enquanto hoje é uma linha de
+código. A API é a única escritora do banco — essa é a garantia real neste sistema —, e a migração
+preenche com `WHERE matricula IS NULL`, que não sobrescreve nada que alguém tenha posto ali.
+
+### Verificação
+
+`verifica-matricula.js`, 9 asserções: nasce com o ID, sem zeros à esquerda, mandar `matricula: 'MAT-999'`
+na criação não muda nada **e o valor não entra em coluna nenhuma**, o `PUT` aceita os outros campos mas
+não reescreve a matrícula, uma edição que só traz matrícula responde 400 em vez de fingir que salvou, e
+dois vínculos da mesma pessoa saem com a mesma matrícula. As dez suítes passam.
