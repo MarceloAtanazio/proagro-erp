@@ -8745,12 +8745,98 @@ const RH_PARENTESCO = ['filho(a)', 'cônjuge', 'companheiro(a)', 'enteado(a)', '
 
 // O catálogo de cargos definido pela empresa. Analistas e Técnico de Campo têm
 // níveis; os demais, não — por isso a lista de níveis depende do cargo.
-const RH_CARGOS = ['CEO', 'Gerente de Campo', 'Gerente Administrativo', 'Gerente de Subscrição',
-  'Gerente Comercial', 'Coordenador de Campo', 'Coordenador Administrativo', 'Coordenador de Subscrição',
-  'Coordenador Comercial', 'Analista Administrativo', 'Analista de Subscrição', 'Analista de Riscos',
-  'Analista de Sinistros', 'Técnico de Campo'];
-const RH_CARGOS_COM_NIVEL = ['Analista Administrativo', 'Analista de Subscrição', 'Analista de Riscos',
-  'Analista de Sinistros', 'Técnico de Campo'];
+// Os cargos vêm do banco (erp_rh_cargos), não de uma constante: contratar
+// alguém num cargo novo não pode depender de um deploy — é o organograma da
+// empresa, não uma decisão de engenharia.
+//
+// A lista abaixo é só o ponto de partida enquanto a requisição não volta, e o
+// que sobra se ela falhar. Um select de cargo vazio trava o cadastro inteiro;
+// um select com a lista de ontem deixa trabalhar.
+let RH_CARGOS_CAT = [
+  { nome: 'CEO', tem_nivel: false }, { nome: 'Gerente de Campo', tem_nivel: false },
+  { nome: 'Gerente Administrativo', tem_nivel: false }, { nome: 'Gerente de Subscrição', tem_nivel: false },
+  { nome: 'Gerente Comercial', tem_nivel: false }, { nome: 'Coordenador de Campo', tem_nivel: false },
+  { nome: 'Coordenador Administrativo', tem_nivel: false }, { nome: 'Coordenador de Subscrição', tem_nivel: false },
+  { nome: 'Coordenador Comercial', tem_nivel: false }, { nome: 'Analista Administrativo', tem_nivel: true },
+  { nome: 'Analista de Subscrição', tem_nivel: true }, { nome: 'Analista de Riscos', tem_nivel: true },
+  { nome: 'Analista de Sinistros', tem_nivel: true }, { nome: 'Técnico de Campo', tem_nivel: true }
+].map(c => ({ ...c, ativo: true }));
+
+// Cargo inativo continua no catálogo para o histórico, mas some do select —
+// menos quando é o cargo que a pessoa JÁ tem: aí ele precisa aparecer, ou abrir
+// a ficha para mudar outra coisa apagaria o cargo dela sem ninguém pedir.
+const rhCargos = atual => RH_CARGOS_CAT
+  .filter(c => c.ativo || c.nome === atual)
+  .map(c => c.nome);
+const rhCargoTemNivel = nome => !!(RH_CARGOS_CAT.find(c => c.nome === nome) || {}).tem_nivel;
+
+const RH_CARGO_NOVO = '__novo_cargo__';
+const rhOpcoesCargo = (atual, podeCriar) => [
+  ...rhOpcoes(rhCargos(atual), '— selecione —'),
+  ...(podeCriar ? [{ v: RH_CARGO_NOVO, t: '+ Adicionar cargo…' }] : [])
+];
+
+async function rhCarregarCargos() {
+  try {
+    const lista = await api('/api/rh/cargos');
+    if (Array.isArray(lista) && lista.length) RH_CARGOS_CAT = lista;
+  } catch { /* fica a lista anterior: select vazio travaria o cadastro */ }
+}
+
+// Criar cargo SEM sair do formulário.
+//
+// A saída óbvia seria abrir um modal de "novo cargo", e ela é uma armadilha: o
+// select de cargo vive dentro de outro modal — o de admissão, o de vínculo —, e
+// abrir um segundo por cima destrói o primeiro com tudo o que já foi digitado.
+// Por isso o campo nasce embaixo do próprio select.
+function rhLigarSelectCargo(idSel, aoMudar) {
+  const sel = $('#' + idSel);
+  if (!sel) return;
+  const campo = sel.closest('.field') || sel.parentElement;
+  const cx = idSel + '-novo';
+  campo.insertAdjacentHTML('afterend', `<div class="rh-cargo-novo" id="${cx}" hidden>
+    <input type="text" id="${cx}-nome" placeholder="Nome do cargo" maxlength="80">
+    <label class="check-chip"><input type="checkbox" id="${cx}-nivel"> Tem Júnior/Pleno/Sênior</label>
+    <button type="button" class="btn sm primary" id="${cx}-ok">Adicionar</button>
+    <button type="button" class="btn sm" id="${cx}-cancela">Cancelar</button>
+    <div class="campo-aviso" id="${cx}-erro" hidden></div>
+  </div>`);
+
+  const caixa = $('#' + cx), erro = $('#' + cx + '-erro');
+  let anterior = sel.value;
+  const fechar = () => { caixa.hidden = true; erro.hidden = true; $('#' + cx + '-nome').value = ''; $('#' + cx + '-nivel').checked = false; };
+
+  sel.addEventListener('change', () => {
+    if (sel.value !== RH_CARGO_NOVO) { anterior = sel.value; fechar(); if (aoMudar) aoMudar(); return; }
+    // Volta o select ao que estava: se o usuário desistir, não fica com a opção
+    // sentinela selecionada e um cargo inválido no corpo da requisição.
+    //
+    // E reavisa o formulário. O `onchange` dele já rodou com o sentinela no
+    // valor — "__novo_cargo__" não tem níveis —, então o campo Nível ficou
+    // desabilitado por causa de uma opção que nem é um cargo.
+    sel.value = anterior;
+    if (aoMudar) aoMudar();
+    caixa.hidden = false;
+    $('#' + cx + '-nome').focus();
+  });
+  $('#' + cx + '-cancela').onclick = fechar;
+  $('#' + cx + '-ok').onclick = async () => {
+    const nome = $('#' + cx + '-nome').value.trim();
+    if (!nome) { erro.textContent = 'Informe o nome do cargo.'; erro.hidden = false; return; }
+    try {
+      const novo = await api('/api/rh/cargos', { method: 'POST',
+        body: { nome, tem_nivel: $('#' + cx + '-nivel').checked } });
+      RH_CARGOS_CAT = [...RH_CARGOS_CAT, novo].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      // Redesenha as opções e já deixa o cargo novo escolhido — é para isso que
+      // a pessoa veio; obrigá-la a procurá-lo na lista seria metade do caminho.
+      sel.innerHTML = rhOpcoesCargo(novo.nome, true)
+        .map(o => `<option value="${esc(o.v)}" ${o.v === novo.nome ? 'selected' : ''}>${esc(o.t)}</option>`).join('');
+      anterior = novo.nome;
+      fechar(); toast(`Cargo “${novo.nome}” adicionado.`);
+      if (aoMudar) aoMudar();
+    } catch (e) { erro.textContent = e.message; erro.hidden = false; }
+  };
+}
 const RH_NIVEIS = [{ v: '', t: '—' }, { v: 'junior', t: 'Júnior' }, { v: 'pleno', t: 'Pleno' }, { v: 'senior', t: 'Sênior' }];
 
 const RH_TIPO_VINCULO = [{ v: 'clt', t: 'CLT' }, { v: 'pj', t: 'PJ' }, { v: 'estagio', t: 'Estágio' },
@@ -9014,7 +9100,7 @@ async function rhAbrirCard(id) {
       </div></div>` : ''}
 
     <div class="rh-sec"><h4>Dados do processo</h4><div class="rh-grid">
-      ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), a.cargo_pretendido || '')}
+      ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoesCargo(a.cargo_pretendido, true), a.cargo_pretendido || '')}
       ${fldSel('ad-nivel_pretendido', 'Nível', RH_NIVEIS, a.nivel_pretendido || '')}
       ${fld('ad-departamento', 'Departamento', 'text', a.departamento || '')}
       ${fldSel('ad-regime', 'Regime', RH_REGIME, a.regime || 'regular')}
@@ -9051,6 +9137,7 @@ async function rhAbrirCard(id) {
   // Na Documentação os campos da pessoa estão no card: as mesmas máscaras e a
   // mesma busca de CEP da ficha valem aqui — os ids são os mesmos ("rh-…").
   if ($('#rh-cpf')) {
+    rhLigarSelectCargo('ad-cargo_pretendido');
     rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
     rhLigarCampo('rh-rg', rhMascaraRG, null, '');
     rhLigarCampo('rh-pis', rhMascaraPIS, null, '');
@@ -9556,7 +9643,7 @@ function rhFormNovoColaborador(comAdmissao = true) {
       ${fld('nc-cpf', 'CPF', 'text', '', 'placeholder="000.000.000-00"')}
     </div>
     <div class="form-row">
-      ${fldSel('nc-cargo', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), '')}
+      ${fldSel('nc-cargo', 'Cargo', rhOpcoesCargo('', true), '')}
       ${fldSel('nc-nivel', 'Nível', RH_NIVEIS, '')}
       ${fld('nc-departamento', 'Departamento', 'text', '')}
     </div>
@@ -9595,11 +9682,12 @@ function rhFormNovoColaborador(comAdmissao = true) {
   const sinc = () => {
     $('#nc-minuta').innerHTML = 'Minuta que será usada na emissão: <strong>' +
       esc(rhMinutaDe($('#nc-regime').value, $('#nc-modelo_trabalho').value)) + '</strong>';
-    const sel = $('#nc-nivel'), temNivel = RH_CARGOS_COM_NIVEL.includes($('#nc-cargo').value);
+    const sel = $('#nc-nivel'), temNivel = rhCargoTemNivel($('#nc-cargo').value);
     sel.disabled = !temNivel; if (!temNivel) sel.value = '';
     sel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
   };
   ['nc-cargo', 'nc-regime', 'nc-modelo_trabalho'].forEach(x => { $('#' + x).onchange = sinc; });
+  rhLigarSelectCargo('nc-cargo', sinc);
   rhLigarCampo('nc-cpf', rhMascaraCPF, v => !v || rhCPFValido(v), 'CPF inválido — confira os dígitos.');
   rhLigarCampo('nc-celular', rhMascaraTelefone, null, '');
   sinc();
@@ -10368,6 +10456,11 @@ function rhFormClima() {
 // dia; a lista completa e as minutas são consulta e configuração.
 async function renderRH() {
   const c = $('#content');
+  // O catálogo de cargos é buscado uma vez por entrada no módulo, e não a cada
+  // formulário: ele muda raramente e é usado em três telas. Sem `await` — a
+  // lista anterior serve enquanto a resposta não chega, e o cadastro não fica
+  // esperando uma requisição que só preenche um select.
+  rhCarregarCargos();
   if (RH_ABA === 'painel') return rhPainel(c);
   if (RH_ABA === 'quadro') return rhQuadro(c);
   if (RH_ABA === 'minutas') return rhMinutas(c);
@@ -11719,7 +11812,7 @@ function rhFormVinculo(colabId, v, d) {
   const novo = !v;
   v = v || {};
   const rem = d.pode.remuneracao;
-  const nivelHab = RH_CARGOS_COM_NIVEL.includes(v.cargo);
+  const nivelHab = rhCargoTemNivel(v.cargo);
   openModal(novo ? 'Registrar admissão' : 'Editar vínculo', `
     <div class="form-row">
       ${fldSel('vc-tipo', 'Tipo de vínculo', RH_TIPO_VINCULO, v.tipo || 'clt')}
@@ -11727,7 +11820,7 @@ function rhFormVinculo(colabId, v, d) {
       ${fld('vc-admissao', 'Admissão *', 'date', v.admissao ? String(v.admissao).slice(0, 10) : todayISO())}
     </div>
     <div class="form-row">
-      ${fldSel('vc-cargo', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), v.cargo || '')}
+      ${fldSel('vc-cargo', 'Cargo', rhOpcoesCargo(v.cargo, true), v.cargo || '')}
       ${fldSel('vc-nivel', 'Nível', RH_NIVEIS, v.nivel || '')}
     </div>
     <div class="form-row">
@@ -11791,13 +11884,14 @@ function rhFormVinculo(colabId, v, d) {
   const sincronizar = () => {
     const cargo = $('#vc-cargo').value, reg = $('#vc-regime').value, mod = $('#vc-modelo_trabalho').value;
     const selNivel = $('#vc-nivel');
-    const temNivel = RH_CARGOS_COM_NIVEL.includes(cargo);
+    const temNivel = rhCargoTemNivel(cargo);
     selNivel.disabled = !temNivel;
     if (!temNivel) selNivel.value = '';
     selNivel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
     $('#vc-minuta').innerHTML = `Minuta que será usada na emissão: <strong>${esc(rhMinutaDe(reg, mod))}</strong>`;
   };
   ['vc-cargo', 'vc-regime', 'vc-modelo_trabalho'].forEach(x => { const e2 = $('#' + x); if (e2) e2.onchange = sincronizar; });
+  rhLigarSelectCargo('vc-cargo', sincronizar);
   sincronizar();
   if (!nivelHab) { /* estado inicial já aplicado por sincronizar() */ }
 }

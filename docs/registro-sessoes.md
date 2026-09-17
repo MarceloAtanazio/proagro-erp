@@ -5287,3 +5287,69 @@ exatamente a confusão corrigida.
 Na tela, a 1780px: o cartão da experiência perdeu a tira de aviso, o da dispensa sem justa causa manteve
 os 36 dias, o sem motivo não mostra nenhuma, e nenhum deles tem mais a linha enigmática. Conferido
 também a 800 e 375, sem corte. As dez suítes passam.
+
+## 2026-09-17 — Sessão 109: os cargos saem do código e viram catálogo
+
+**Solicitação:** *"Estou adicionando um novo funcionário e o cargo não está disponível. Como podemos
+fazer pra adicionar um cargo rápido e ela já entrar como padrão para novos funcionários?"*
+
+### O diagnóstico
+
+A lista de cargos era uma constante dentro de `public/app.js`. Consequência prática: contratar alguém
+num cargo novo exigia um deploy. Isso não é decisão de engenharia — é o organograma da empresa, que muda
+quando a empresa muda.
+
+Havia ainda uma **segunda** constante, `RH_CARGOS_COM_NIVEL`, dizendo quais cargos aceitam
+Júnior/Pleno/Sênior. Duas listas paralelas: acrescentar um cargo analista exigia lembrar de mexer nas
+duas, e esquecer significava um cargo sem nível sem ninguém entender por quê.
+
+### O que foi feito
+
+**Tabela `erp_rh_cargos`** — nome, `tem_nivel`, `ativo`. Nome único **ignorando caixa**: "Analista de
+Riscos" e "analista de riscos" são o mesmo cargo, e dois deles no select é o começo de dois
+vocabulários, coisa que já custou caro aqui.
+
+Não é chave estrangeira, de propósito. O cargo continua gravado como texto no vínculo, no colaborador e
+na admissão. Fazer dele uma FK quebraria todo registro histórico cujo cargo a empresa depois extinguiu —
+e o histórico tem de continuar dizendo o cargo que a pessoa **de fato** ocupava.
+
+**"+ Adicionar cargo…" no próprio select.** A saída óbvia seria um modal de "novo cargo", e ela é uma
+armadilha: o select vive dentro de outro modal — o de admissão, o de vínculo —, e abrir um segundo por
+cima destrói o primeiro com tudo o que já foi digitado. O campo nasce embaixo do select, e ao salvar o
+cargo novo já entra na lista **e já fica selecionado** — é para isso que a pessoa veio.
+
+**Renomear arrasta quem usa.** Corrigir um cargo no catálogo sem corrigi-lo onde está escrito deixaria a
+ficha de todo mundo com o nome antigo e o select com o novo — e o antigo voltaria ao catálogo na próxima
+migração que recolhe "cargo em uso". O `PUT` reescreve vínculos, colaboradores e admissões, e responde
+quantos registros mudaram; o log de auditoria guarda o de-para.
+
+**Desativar não apaga.** Cargo extinto sai do select e continua no catálogo para o histórico poder
+nomeá-lo — e continua aparecendo no select **de quem já o tem**, senão abrir a ficha para mudar outra
+coisa apagaria o cargo da pessoa sem ninguém pedir.
+
+### Um dado que quase se perdia
+
+A migração recolhe todo cargo já em uso que não esteja na lista fixa. Apareceu um: **"Coordenadora de
+Campo"**, no cadastro de uma colaboradora — variante feminina que nunca esteve na constante. Sem esse
+passo, a primeira edição daquele vínculo abriria o select em branco e o cargo dela sumiria na primeira
+gravação. A tabela nova apagando um dado que existia antes dela seria o pior resultado possível.
+
+### O stub achou uma fragilidade real
+
+A asserção de renomeação falhou dizendo que nada foi renomeado. A causa não era o teste: o endpoint lia
+`atual[0].nome` **depois** de já ter gravado o nome novo. Funciona em produção só porque o driver devolve
+uma cópia da linha — e depender de um detalhe do driver para uma renomeação em cascata é frágil. O nome
+antigo passou a ser guardado antes do `UPDATE`, e o stub passou a devolver cópias, como o driver faz.
+
+### Verificação
+
+`verifica-cargos.js`, 20 asserções: permissão (ver RH lê o catálogo porque o select precisa dele, mas não
+cria), duplicata por caixa recusada com 409 **dizendo a grafia existente**, colisão com cargo desativado
+avisando que basta reativar, renomeação arrastando as três tabelas, mexer só no nível **não** reescrevendo
+ficha de ninguém, e desativar sem apagar o cargo de quem o ocupa.
+
+Na tela, com o CSS real: cargo inativo fora do select, a caixa abrindo sem deixar o sentinela
+selecionado, erro do servidor aparecendo dentro dela sem fechar o formulário, e o cargo criado entrando
+ordenado, selecionado e com o campo Nível já habilitado. Um defeito apareceu nessa medição e foi
+corrigido: ao abrir a caixa, o `onchange` do formulário já tinha rodado com `__novo_cargo__` no valor e
+desabilitado o campo Nível por causa de uma opção que nem é um cargo.

@@ -1,6 +1,6 @@
 {
   "_como_atualizar": "SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name ~ '^erp_' GROUP BY table_name ORDER BY table_name;",
-  "_conferido_em": "2026-09-16",
+  "_conferido_em": "2026-09-17",
   "erp_attachments": "id,entity_type,entity_id,kind,file_name,mime_type,byte_size,data,uploaded_by,created_at,doc_tipo",
   "erp_audit_log": "id,user_id,user_name,action,created_at",
   "erp_bank_transactions": "id,txn_date,description,amount,reconciled,matched_type,matched_id,imported_batch,created_at,auto_generated",
@@ -30,5 +30,6 @@
   "erp_viaticos_despesas": "id,solicitacao_id,categoria,data,valor,descricao,created_at",
   "erp_viaticos_km": "id,solicitacao_id,modelo,veiculo_placa,veiculo_modelo,km_inicial,km_final,km_rodado,km_previsto,taxa_km,valor_reembolso,justificativa,status,decisao_motivo,payable_id,enviado_por,enviado_em,decidido_por,decidido_em,created_at,created_by,updated_at",
   "erp_viaticos_solicitacoes": "id,colaborador_id,tier,categoria_local,destino,motivo,data_inicio,data_fim,data_expiracao_flash,valor_solicitado,valor_liberado,valor_devolvido,valor_pendencia,pendencia_resolvida,status,notes,created_by,created_at,ordem_trabalho,destinos,excessos_aprovados,excessos_status,status_manual,previsao_por_categoria,transporte_detalhes,objetivo,origem",
-  "erp_viaticos_tud": "id,tier,categoria_local,tipo_despesa,valor_diaria"
+  "erp_viaticos_tud": "id,tier,categoria_local,tipo_despesa,valor_diaria",
+  "erp_rh_cargos": "id,nome,tem_nivel,ativo,criado_em,criado_por"
 }

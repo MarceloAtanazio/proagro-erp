@@ -996,6 +996,15 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Um vínculo encerrado no histórico: cabeçalho com o período e o cargo, e
    abaixo como o contrato terminou. Vários vínculos empilhados precisam de
    separação visível, senão viram uma lista só e o leitor perde de quem é o quê. */
+/* Criar cargo sem sair do formulário. Nasce embaixo do select, destacada do
+   resto para ficar claro que é um desvio momentâneo e não mais um campo do
+   cadastro que está sendo preenchido. */
+.rh-cargo-novo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: var(--verde-050); border: 1px solid #CDE5D6; border-radius: 8px;
+  padding: 10px 12px; margin: -6px 0 14px; }
+.rh-cargo-novo input[type="text"] { flex: 1 1 200px; min-width: 160px; }
+.rh-cargo-novo .campo-aviso { flex-basis: 100%; }
+
 /* Tiras de métrica do vínculo: duração, fase, aviso. Quebram em linha em vez de
    encolher, porque número espremido some — e são a resposta rápida da tela. */
 .rh-tiras { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }

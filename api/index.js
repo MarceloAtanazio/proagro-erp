@@ -269,6 +269,12 @@ const AUDIT_MAP = {
   'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
   // Arquivar e excluir mexem em registro trabalhista: ficam nomeados no log.
+  'POST /api/rh/cargos': req => `Criou o cargo "${req.body.nome}"${req.body.tem_nivel ? ' (com níveis)' : ''}`,
+  // Renomear cargo reescreve o cargo de quem o ocupa: o log diz o de-para, senão
+  // não há como reconstruir por que a ficha de alguém mudou sozinha.
+  'PUT /api/rh/cargos/:id': (req, body) => `Editou o cargo ID ${req.params.id}${req.body.nome ? ` → "${req.body.nome}"` : ''}`
+    + (req.body.ativo === false ? ' (DESATIVADO)' : '')
+    + (body && body.renomeado_em ? ` — renomeado em ${body.renomeado_em} registro(s)` : ''),
   // Desligamento é registro trabalhista: o log diz a data e o motivo, não só que
   // alguém arquivou. É por ele que se reconstrói quem decidiu o quê e quando.
   'POST /api/rh/colaboradores/:id/arquivar': req => `DESLIGOU e arquivou o colaborador ID ${req.params.id}`
@@ -2706,6 +2712,70 @@ app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, re
 app.delete('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
   await query('DELETE FROM erp_rh_vinculos WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
+}));
+
+// ---- Cargos ----
+//
+// Catálogo, não chave estrangeira. O cargo continua gravado como texto no
+// vínculo: quem ocupou um cargo que a empresa depois extinguiu tem de continuar
+// aparecendo com aquele cargo no histórico.
+//
+// Ler exige só ver RH — o select precisa da lista para qualquer um que abra uma
+// ficha. Criar e editar exigem editar RH.
+app.get('/api/rh/cargos', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  res.json(await query('SELECT id, nome, tem_nivel, ativo FROM erp_rh_cargos ORDER BY ativo DESC, nome'));
+}));
+
+app.post('/api/rh/cargos', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const nome = sanitize(req.body.nome);
+  if (!nome) return res.status(400).json({ error: 'Informe o nome do cargo.' });
+  if (nome.length > 80) return res.status(400).json({ error: 'O nome do cargo é longo demais.' });
+  // O 409 DIZ qual é o cargo existente, e com a grafia dele: quem digitou
+  // "analista de riscos" precisa saber que já existe "Analista de Riscos", não
+  // levar um "já existe" e ficar procurando na lista.
+  const jaTem = await query('SELECT id, nome, ativo FROM erp_rh_cargos WHERE lower(nome)=lower($1)', [nome]);
+  if (jaTem.length) {
+    return res.status(409).json({ error: `Este cargo já existe como “${jaTem[0].nome}”` +
+      (jaTem[0].ativo ? '.' : ', mas está desativado — reative-o em Cargos.'), id: jaTem[0].id });
+  }
+  const ins = await query(
+    'INSERT INTO erp_rh_cargos (nome, tem_nivel, criado_por) VALUES ($1,$2,$3) RETURNING id, nome, tem_nivel, ativo',
+    [nome, req.body.tem_nivel === true, req.user.id]);
+  res.json(ins[0]);
+}));
+
+app.put('/api/rh/cargos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = await query('SELECT * FROM erp_rh_cargos WHERE id=$1', [id]);
+  if (!atual.length) return res.status(404).json({ error: 'Cargo não encontrado.' });
+
+  // O nome antigo é guardado ANTES do UPDATE. Lê-lo de `atual[0]` depois de
+  // gravar só funciona porque o driver devolve uma cópia da linha — e depender
+  // disso é depender de um detalhe do driver para uma renomeação em cascata.
+  const nomeAntigo = atual[0].nome;
+  const nome = req.body.nome !== undefined ? sanitize(req.body.nome) : nomeAntigo;
+  if (!nome) return res.status(400).json({ error: 'Informe o nome do cargo.' });
+  const outro = await query('SELECT id FROM erp_rh_cargos WHERE lower(nome)=lower($1) AND id<>$2', [nome, id]);
+  if (outro.length) return res.status(409).json({ error: 'Já existe outro cargo com esse nome.' });
+
+  await query(
+    `UPDATE erp_rh_cargos SET nome=$1, tem_nivel=$2, ativo=$3 WHERE id=$4`,
+    [nome, req.body.tem_nivel !== undefined ? req.body.tem_nivel === true : atual[0].tem_nivel,
+     req.body.ativo !== undefined ? req.body.ativo === true : atual[0].ativo, id]);
+
+  // Renomear o catálogo sem renomear quem o usa deixaria a ficha de todo mundo
+  // com o nome antigo e o select com o novo — e o antigo voltaria ao catálogo
+  // na próxima migração que recolhe "cargo em uso". Corrigir um cargo é
+  // corrigi-lo onde ele está escrito.
+  let atualizados = 0;
+  if (nome !== nomeAntigo) {
+    for (const [tabela, coluna] of [['erp_rh_vinculos', 'cargo'], ['erp_colaboradores', 'cargo'],
+                                    ['erp_rh_admissoes', 'cargo_pretendido']]) {
+      const r = await query(`UPDATE ${tabela} SET ${coluna}=$1 WHERE ${coluna}=$2 RETURNING 1`, [nome, nomeAntigo]);
+      atualizados += r.length;
+    }
+  }
+  res.json({ ok: true, renomeado_em: atualizados });
 }));
 
 // ---- Dependentes ----
