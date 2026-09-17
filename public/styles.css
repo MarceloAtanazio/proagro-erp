@@ -996,14 +996,22 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Um vínculo encerrado no histórico: cabeçalho com o período e o cargo, e
    abaixo como o contrato terminou. Vários vínculos empilhados precisam de
    separação visível, senão viram uma lista só e o leitor perde de quem é o quê. */
-/* Criar cargo sem sair do formulário. Nasce embaixo do select, destacada do
+/* Criar cargo sem sair do formulário. Nasce embaixo do select, destacado do
    resto para ficar claro que é um desvio momentâneo e não mais um campo do
-   cadastro que está sendo preenchido. */
-.rh-cargo-novo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  background: var(--verde-050); border: 1px solid #CDE5D6; border-radius: 8px;
-  padding: 10px 12px; margin: -6px 0 14px; }
-.rh-cargo-novo input[type="text"] { flex: 1 1 200px; min-width: 160px; }
-.rh-cargo-novo .campo-aviso { flex-basis: 100%; }
+   cadastro que está sendo preenchido.
+   `grid-column` porque o select vive numa .form-row de duas colunas: sem isto o
+   bloco virava a célula seguinte e aparecia ao lado do campo vizinho. */
+.rh-cargo-novo { grid-column: 1 / -1; background: var(--verde-050);
+  border: 1px solid #CDE5D6; border-radius: 10px; padding: 12px 14px; margin: -4px 0 14px; }
+.rh-cargo-novo-tit { font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--verde-700); margin-bottom: 8px; }
+/* O nome ocupa a linha toda: é o campo que a pessoa veio preencher, e dividi-lo
+   com caixa e botões dava um campo estreito para um texto que é longo. */
+.rh-cargo-novo input[type="text"] { width: 100%; }
+.rh-cargo-novo-pe { display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 10px; margin-top: 10px; }
+.rh-cargo-novo-acoes { display: flex; gap: 8px; margin-left: auto; }
+.rh-cargo-novo .campo-aviso { margin-top: 8px; }
 
 /* Tiras de métrica do vínculo: duração, fase, aviso. Quebram em linha em vez de
    encolher, porque número espremido some — e são a resposta rápida da tela. */

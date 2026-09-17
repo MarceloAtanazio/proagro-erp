@@ -8743,8 +8743,6 @@ const RH_INSTRUCAO = ['Fundamental incompleto', 'Fundamental completo', 'Médio 
 const RH_RACA = ['Branca', 'Preta', 'Parda', 'Amarela', 'Indígena', 'Não declarada'];
 const RH_PARENTESCO = ['filho(a)', 'cônjuge', 'companheiro(a)', 'enteado(a)', 'pai/mãe', 'tutelado(a)', 'outro'];
 
-// O catálogo de cargos definido pela empresa. Analistas e Técnico de Campo têm
-// níveis; os demais, não — por isso a lista de níveis depende do cargo.
 // Os cargos vêm do banco (erp_rh_cargos), não de uma constante: contratar
 // alguém num cargo novo não pode depender de um deploy — é o organograma da
 // empresa, não uma decisão de engenharia.
@@ -8752,14 +8750,20 @@ const RH_PARENTESCO = ['filho(a)', 'cônjuge', 'companheiro(a)', 'enteado(a)', '
 // A lista abaixo é só o ponto de partida enquanto a requisição não volta, e o
 // que sobra se ela falhar. Um select de cargo vazio trava o cadastro inteiro;
 // um select com a lista de ontem deixa trabalhar.
+// Os nomes são UNISSEX, com "(a)" em quem flexiona. Não é estética: o catálogo
+// já tinha nascido com "Coordenador de Campo" E "Coordenadora de Campo", duas
+// linhas para a mesma função. Enquanto o nome carregar gênero, isso se repete a
+// cada contratação — e o filtro por cargo passa a mostrar duas entradas que
+// parecem as duas certas. "Gerente" e "Analista" ficam como estão: já são
+// comuns de dois gêneros, e marcá-los seria ruído.
 let RH_CARGOS_CAT = [
   { nome: 'CEO', tem_nivel: false }, { nome: 'Gerente de Campo', tem_nivel: false },
   { nome: 'Gerente Administrativo', tem_nivel: false }, { nome: 'Gerente de Subscrição', tem_nivel: false },
-  { nome: 'Gerente Comercial', tem_nivel: false }, { nome: 'Coordenador de Campo', tem_nivel: false },
-  { nome: 'Coordenador Administrativo', tem_nivel: false }, { nome: 'Coordenador de Subscrição', tem_nivel: false },
-  { nome: 'Coordenador Comercial', tem_nivel: false }, { nome: 'Analista Administrativo', tem_nivel: true },
+  { nome: 'Gerente Comercial', tem_nivel: false }, { nome: 'Coordenador(a) de Campo', tem_nivel: false },
+  { nome: 'Coordenador(a) Administrativo(a)', tem_nivel: false }, { nome: 'Coordenador(a) de Subscrição', tem_nivel: false },
+  { nome: 'Coordenador(a) Comercial', tem_nivel: false }, { nome: 'Analista Administrativo', tem_nivel: true },
   { nome: 'Analista de Subscrição', tem_nivel: true }, { nome: 'Analista de Riscos', tem_nivel: true },
-  { nome: 'Analista de Sinistros', tem_nivel: true }, { nome: 'Técnico de Campo', tem_nivel: true }
+  { nome: 'Analista de Sinistros', tem_nivel: true }, { nome: 'Técnico(a) de Campo', tem_nivel: true }
 ].map(c => ({ ...c, ativo: true }));
 
 // Cargo inativo continua no catálogo para o histórico, mas some do select —
@@ -8794,13 +8798,32 @@ function rhLigarSelectCargo(idSel, aoMudar) {
   if (!sel) return;
   const campo = sel.closest('.field') || sel.parentElement;
   const cx = idSel + '-novo';
-  campo.insertAdjacentHTML('afterend', `<div class="rh-cargo-novo" id="${cx}" hidden>
-    <input type="text" id="${cx}-nome" placeholder="Nome do cargo" maxlength="80">
-    <label class="check-chip"><input type="checkbox" id="${cx}-nivel"> Tem Júnior/Pleno/Sênior</label>
-    <button type="button" class="btn sm primary" id="${cx}-ok">Adicionar</button>
-    <button type="button" class="btn sm" id="${cx}-cancela">Cancelar</button>
+  // Onde o bloco entra importa.
+  //
+  // O select costuma morar numa `.form-row`, que é uma grade de duas colunas.
+  // Solto logo depois do campo, ele virava a CÉLULA SEGUINTE — aparecia ao lado
+  // do CPF como se fosse mais um campo do cadastro. Forçado a ocupar a linha
+  // inteira, passava a empurrar o campo vizinho para baixo, e a tela inteira
+  // andava só por abrir uma caixa.
+  //
+  // Entrando no FIM da linha, nada se move: os campos ficam onde estavam e o
+  // bloco aparece embaixo deles, ocupando a largura toda.
+  const linha = sel.closest('.form-row');
+  const html = `<div class="rh-cargo-novo" id="${cx}" hidden>
+    <div class="rh-cargo-novo-tit">Novo cargo</div>
+    <input type="text" id="${cx}-nome" maxlength="80" autocomplete="off"
+      placeholder="Ex.: Coordenador(a) Comercial">
+    <div class="rh-cargo-novo-pe">
+      <label class="check-chip"><input type="checkbox" id="${cx}-nivel"> Tem Júnior/Pleno/Sênior</label>
+      <span class="rh-cargo-novo-acoes">
+        <button type="button" class="btn sm" id="${cx}-cancela">Cancelar</button>
+        <button type="button" class="btn sm primary" id="${cx}-ok">Adicionar</button>
+      </span>
+    </div>
     <div class="campo-aviso" id="${cx}-erro" hidden></div>
-  </div>`);
+  </div>`;
+  if (linha) linha.insertAdjacentHTML('beforeend', html);
+  else campo.insertAdjacentHTML('afterend', html);
 
   const caixa = $('#' + cx), erro = $('#' + cx + '-erro');
   let anterior = sel.value;
@@ -8820,9 +8843,16 @@ function rhLigarSelectCargo(idSel, aoMudar) {
     $('#' + cx + '-nome').focus();
   });
   $('#' + cx + '-cancela').onclick = fechar;
+  // Enter grava, Esc desiste. Quem está preenchendo um cadastro está com as
+  // mãos no teclado; obrigar a buscar o botão para escrever duas palavras é o
+  // tipo de atrito que faz a pessoa desistir do caminho certo.
+  $('#' + cx + '-nome').onkeydown = ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); $('#' + cx + '-ok').click(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); fechar(); sel.focus(); }
+  };
   $('#' + cx + '-ok').onclick = async () => {
     const nome = $('#' + cx + '-nome').value.trim();
-    if (!nome) { erro.textContent = 'Informe o nome do cargo.'; erro.hidden = false; return; }
+    if (!nome) { erro.textContent = 'Informe o nome do cargo.'; erro.hidden = false; $('#' + cx + '-nome').focus(); return; }
     try {
       const novo = await api('/api/rh/cargos', { method: 'POST',
         body: { nome, tem_nivel: $('#' + cx + '-nivel').checked } });

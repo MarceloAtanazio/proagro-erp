@@ -5353,3 +5353,60 @@ selecionado, erro do servidor aparecendo dentro dela sem fechar o formulário, e
 ordenado, selecionado e com o campo Nível já habilitado. Um defeito apareceu nessa medição e foi
 corrigido: ao abrir a caixa, o `onchange` do formulário já tinha rodado com `__novo_cargo__` no valor e
 desabilitado o campo Nível por causa de uma opção que nem é um cargo.
+
+## 2026-09-17 — Sessão 110: a caixa de novo cargo no lugar certo, e cargos unissex
+
+**Solicitação:** *"É mais ou menos isso que quero, porém de uma forma mais bonita e com uma boa
+qualidade de UX, deixe mais agradável. Sobre o cargo vamos trabalhar no modo 'unissex' usando o (a) pra
+não ter diferenciação, o que acha?"*
+
+### O bloco estava no lugar errado, e eu não tinha visto
+
+Na captura dele o bloco aparecia **ao lado do CPF**, como se fosse mais um campo do cadastro. A causa:
+o select mora numa `.form-row`, que é uma grade de duas colunas — inserido logo depois do campo, o bloco
+virava a **célula seguinte**.
+
+Testei a primeira versão numa página solta, com o select fora de qualquer grade. O defeito só existe
+dentro da grade, e a grade é o único lugar onde o componente de fato roda. **Medir o componente fora do
+contexto em que ele vive não é medir o componente** — é a mesma família de erro de ter medido o cartão do
+histórico só a 1180px.
+
+Duas tentativas até acertar:
+1. Forçar largura total (`grid-column: 1 / -1`) tirou o bloco de perto do CPF, mas ele passou a empurrar
+   o campo Nível para a linha de baixo — a tela inteira andava só por abrir uma caixa.
+2. Inserir no **fim da linha**: nada se move. Medido — as posições de Cargo e Nível são idênticas antes e
+   depois de abrir.
+
+### O que ficou mais agradável
+
+- Título "NOVO CARGO", para não parecer um campo a mais.
+- O nome ocupa a linha inteira; a caixa de níveis e os botões vão para uma segunda linha, com as ações à
+  direita. Antes eram quatro controles espremidos numa linha só.
+- **Enter grava, Esc desiste.** Quem está preenchendo um cadastro está com as mãos no teclado; obrigar a
+  caçar o botão para escrever duas palavras é o atrito que faz a pessoa desistir do caminho certo e
+  digitar o cargo errado no lugar.
+- Placeholder com exemplo real (`Ex.: Coordenador(a) Comercial`), que de quebra ensina o padrão novo.
+
+### Cargos unissex — concordo, e o motivo não é estético
+
+O catálogo já tinha nascido com **"Coordenador de Campo" E "Coordenadora de Campo"** — duas linhas para
+a mesma função, criadas em momentos diferentes. Enquanto o nome carregar gênero, isso se repete a cada
+contratação: quem cadastra uma mulher tende a flexionar, e nasce um cargo novo. Aí o filtro por cargo
+mostra duas entradas e o quadro conta duas funções, sem ninguém perceber — porque as duas parecem certas.
+
+Só flexiona quem flexiona: **"Gerente" e "Analista" já são comuns de dois gêneros** em português, e
+marcá-los seria ruído. Mudaram "Coordenador" e "Técnico". O catálogo caiu de 15 para 14 cargos, com a
+duplicata fundida e os 8 vínculos de Técnico(a) de Campo e o de Coordenador(a) de Campo arrastados junto.
+
+**Um nome ficou pesado:** "Coordenador(a) Administrativo(a)" — ali o adjetivo também flexiona, então a
+marca aparece duas vezes. Fica assim por coerência, e é um `UPDATE` para virar "Coordenador(a)
+Administrativo" se preferir.
+
+### Verificação
+
+Reproduzindo a grade real de duas colunas: o bloco cai abaixo dos dois campos, ocupando a largura
+inteira, e **nada se move** ao abrir. Enter envia o `POST` certo e já deixa o cargo selecionado; Esc
+fecha e limpa. A 375px não há corte nem rolagem lateral. As seis suítes rodadas passam.
+
+Migração `2026-09-17-rh-cargos-unissex.sql` aplicada, com guarda que falha se sobrar cargo com nome de
+gênero no catálogo ou cargo em uso fora dele.
