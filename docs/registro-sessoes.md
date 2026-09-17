@@ -5509,3 +5509,72 @@ para um valor pequeno não sumir.
 Na tela: a 1780px as barras medem 30px, o gráfico não rola e a página não transborda; a 375px o gráfico
 rola sozinho e a página fica intacta; a etiqueta aparece inteira, sem corte, e as dos meses das pontas
 ancoram pela borda para não sair do cartão.
+
+## 2026-09-17 — Sessão 113: vagas, e o recrutamento antes da carta oferta
+
+**Solicitação:** *"Acho que seria importante adicionar outras etapas de todo o processo, algo como vagas
+abertas, recebendo currículos, candidatos em entrevista, candidato escolhido e aí sim seguir para as que
+temos. O que você acha? Acha muita informação desnecessária?"*
+
+### A opinião que dei, e por quê
+
+Não era informação desnecessária — mas **duas das quatro sugestões não cabiam no quadro**, e a razão
+importa mais que a conclusão.
+
+O Quadro é um quadro de **pessoas**: cada card é alguém, com etapas que são tarefas sobre aquela pessoa e
+travas que cobram os dados dela. "Candidatos em entrevista" e "recebendo currículos" são por pessoa e
+encaixam. **"Vagas abertas" não**: uma vaga não é uma pessoa. Ao avançar de "recebendo currículos" para
+"entrevista" ela teria de se dividir em N cards, e coluna de kanban não faz isso. E **"candidato
+escolhido"** é, na prática, o mesmo instante da Carta Oferta — uma coluna que todo card atravessa em
+minutos só ocupa espaço.
+
+Levantei também dois custos que ele deveria pesar antes de decidir: a métrica de *tempo médio de
+admissão* passa a incluir o tempo de recrutamento e deixa de ser comparável com o histórico; e guardar
+candidato significa guardar dado pessoal de quem talvez não seja contratado — o que o próprio sistema já
+reconhece ao excluir candidato.
+
+Ele escolheu o escopo maior: as duas colunas **e** a aba Vagas.
+
+### O que foi feito
+
+**Duas etapas novas no quadro** — Triagem e Entrevista, antes da Carta Oferta. Elas cobram **contato**, não
+documento: sem celular ou e-mail não dá para chamar ninguém, mas CPF e comprovantes continuam sendo
+exigidos só na Documentação. Sair da Entrevista exige a data registrada — é o que transforma "vamos
+entrevistar" em registro.
+
+**Aba Vagas** (`erp_rh_vagas`): cargo, nível, departamento, número de posições, regime, modelo, salário
+previsto e situação. Cada vaga mostra posições, candidatos, contratados e a lista de quem está nela com a
+etapa de cada um. O botão **+ Candidato** abre o card já ligado à vaga, com cargo, departamento, regime e
+modelo herdados dela.
+
+Duas travas que uma tabela com filhos costuma errar:
+
+- **Fechar vaga com candidato em andamento é recusado** — senão fica gente no quadro sem origem viva.
+- **Excluir vaga que já teve candidato é recusado**, com a recusa explicando que fechar preserva o
+  histórico de por onde aquelas pessoas entraram. Excluir é para a vaga criada por engano.
+
+E `vaga_id` é `ON DELETE SET NULL`, não `CASCADE`: apagar uma vaga nunca pode apagar o processo de
+admissão de ninguém.
+
+### Detalhes que só aparecem fazendo
+
+- O card nasce na primeira etapa lida de `RH_ETAPAS[0]`, não escrita à mão — o card e o histórico têm de
+  nascer na mesma etapa, e hoje mesmo essa etapa mudou de `carta_oferta` para `triagem`.
+- O renderizador de marcos da etapa transformava em campo de **data** tudo o que não fosse `select`. O
+  primeiro marco de texto — "como foi a entrevista" — abriria um seletor de data para escrever uma frase.
+- A triagem **não** ganhou campo próprio de contato: ele já mora na aba Contato da ficha, e um segundo
+  lugar para o mesmo dado faria card e ficha discordarem.
+
+### Verificação
+
+`verifica-vagas.js`, 21 asserções: permissão, vaga sem cargo recusada, posições zero caindo para 1,
+a lista trazendo candidatos e contratados, fechar com candidato em andamento recusado **dizendo quantos
+são**, reabrir limpando a data de fechamento, e excluir vaga com histórico recusado.
+
+Uma asserção falhou acusando "2 candidatos" onde a API pedira 1 — e **a culpa era do stub**, não do
+endpoint: o ramo genérico da contagem vinha antes do específico e engolia a consulta. Corrigi a ordem em
+vez de "consertar" um código que estava certo.
+
+Na tela, com o CSS real: três vagas em grade que vai de 4 colunas a 1 conforme a largura, a fechada
+apagada mas presente, a lista de candidatos nomeando etapa e situação de cada um, e o quadro com as oito
+etapas na ordem. Sem corte a 375px.

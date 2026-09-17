@@ -996,6 +996,22 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Um vínculo encerrado no histórico: cabeçalho com o período e o cargo, e
    abaixo como o contrato terminou. Vários vínculos empilhados precisam de
    separação visível, senão viram uma lista só e o leitor perde de quem é o quê. */
+/* Vagas. Cartões em grade que se adapta: uma vaga é um bloco de informação
+   curto, e enfileirá-las verticalmente numa tela larga desperdiça a tela. */
+.rh-vagas { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px; margin-bottom: 16px; }
+.rh-vaga { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px 18px; }
+/* Vaga fechada continua na lista — é ela que explica por onde a pessoa entrou —
+   mas apagada, para não competir com as que ainda pedem trabalho. */
+.rh-vaga.fechada { opacity: .62; }
+.rh-vaga-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.rh-vaga-cab b { display: block; font-size: 14.5px; color: var(--ink); }
+.rh-vaga-cab span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.rh-vaga .rh-tiras { margin: 12px 0 0; }
+.rh-vaga-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid #EAF0EC; }
+
 /* Criar cargo sem sair do formulário. Nasce embaixo do select, destacado do
    resto para ficar claro que é um desvio momentâneo e não mais um campo do
    cadastro que está sendo preenchido.

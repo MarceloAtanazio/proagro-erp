@@ -269,6 +269,11 @@ const AUDIT_MAP = {
   'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
   // Arquivar e excluir mexem em registro trabalhista: ficam nomeados no log.
+  'POST /api/rh/vagas': req => `Abriu a vaga "${req.body.cargo}"${req.body.departamento ? ` — ${req.body.departamento}` : ''} (${req.body.posicoes || 1} posição/ões)`,
+  'PUT /api/rh/vagas/:id': req => `Editou a vaga ID ${req.params.id}`
+    + (req.body.situacao ? ` — situação: ${req.body.situacao.toUpperCase()}` : '')
+    + (req.body.fechamento_motivo ? ` (${req.body.fechamento_motivo})` : ''),
+  'DELETE /api/rh/vagas/:id': req => `Excluiu a vaga ID ${req.params.id}`,
   'POST /api/rh/cargos': req => `Criou o cargo "${req.body.nome}"${req.body.tem_nivel ? ' (com níveis)' : ''}`,
   // Renomear cargo reescreve o cargo de quem o ocupa: o log diz o de-para, senão
   // não há como reconstruir por que a ficha de alguém mudou sozinha.
@@ -2724,6 +2729,113 @@ app.delete('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req,
   res.json({ ok: true });
 }));
 
+// ---- Vagas ----
+//
+// A vaga é uma POSIÇÃO, não uma pessoa: tem cargo, departamento, número de
+// posições e vários candidatos. Por isso não é card de kanban — ao avançar de
+// "recebendo currículos" para "entrevista" ela teria de virar N cards, e coluna
+// de kanban não faz isso. A vaga aponta para os candidatos; o quadro continua
+// sendo um quadro de pessoas.
+const RH_VAGA_SITUACOES = ['aberta', 'pausada', 'fechada'];
+const RH_VAGA_CAMPOS = ['cargo', 'nivel', 'departamento', 'posicoes', 'regime', 'modelo_trabalho',
+  'salario_previsto', 'observacao'];
+
+// A contagem de candidatos vem junto com a lista: sem ela, "vaga aberta" não
+// diz se o processo está parado ou fervendo, que é a pergunta que se faz olhando
+// para uma lista de vagas.
+const RH_SQL_VAGAS = `
+  SELECT v.*,
+         (SELECT count(*)::int FROM erp_rh_admissoes a
+           WHERE a.vaga_id = v.id AND a.situacao = 'andamento') AS candidatos,
+         (SELECT count(*)::int FROM erp_rh_admissoes a
+           WHERE a.vaga_id = v.id AND a.situacao = 'concluida')    AS contratados
+    FROM erp_rh_vagas v`;
+
+app.get('/api/rh/vagas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  // Fechadas por último: a lista serve para trabalhar nas abertas.
+  res.json(await query(`${RH_SQL_VAGAS}
+     ORDER BY (v.situacao = 'fechada'), v.aberta_em DESC, v.id DESC`));
+}));
+
+app.get('/api/rh/vagas/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const v = await query(`${RH_SQL_VAGAS} WHERE v.id=$1`, [id]);
+  if (!v.length) return res.status(404).json({ error: 'Vaga não encontrada.' });
+  const candidatos = await query(
+    `SELECT a.id, a.etapa, a.situacao, a.entrevista_em, a.admissao_prevista,
+            c.id AS colaborador_id, c.name, c.celular, c.email_pessoal
+       FROM erp_rh_admissoes a JOIN erp_colaboradores c ON c.id = a.colaborador_id
+      WHERE a.vaga_id=$1 ORDER BY a.created_at`, [id]);
+  res.json({ ...v[0], candidatos, etapas: RH_ETAPAS });
+}));
+
+app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const cargo = sanitize(req.body.cargo);
+  if (!cargo) return res.status(400).json({ error: 'Informe o cargo da vaga.' });
+  const pos = Number(req.body.posicoes);
+  const ins = await query(
+    `INSERT INTO erp_rh_vagas (cargo, nivel, departamento, posicoes, regime, modelo_trabalho,
+        salario_previsto, observacao, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [cargo, sanitize(req.body.nivel) || null, sanitize(req.body.departamento) || null,
+     Number.isFinite(pos) && pos > 0 ? Math.round(pos) : 1,
+     sanitize(req.body.regime) || 'regular', sanitize(req.body.modelo_trabalho) || 'presencial',
+     req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
+     sanitize(req.body.observacao) || null, req.user.id]);
+  res.json(ins[0]);
+}));
+
+app.put('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = await query('SELECT * FROM erp_rh_vagas WHERE id=$1', [id]);
+  if (!atual.length) return res.status(404).json({ error: 'Vaga não encontrada.' });
+
+  const corpo = { ...req.body };
+  if (corpo.situacao !== undefined) {
+    if (!RH_VAGA_SITUACOES.includes(corpo.situacao)) {
+      return res.status(400).json({ error: 'Situação de vaga desconhecida.' });
+    }
+    // Fechar uma vaga com candidato em andamento deixaria gente no quadro sem
+    // vaga viva por trás — o processo continua, mas ninguém mais olha a origem.
+    if (corpo.situacao === 'fechada') {
+      const vivos = (await query(
+        `SELECT count(*)::int AS n FROM erp_rh_admissoes
+          WHERE vaga_id=$1 AND situacao='andamento'`, [id]))[0].n;
+      if (vivos && req.body.forcar !== true) {
+        return res.status(409).json({
+          error: `Esta vaga tem ${vivos} candidato(s) em andamento no quadro. ` +
+                 'Encerre ou conclua os processos antes de fechá-la.', candidatos: vivos });
+      }
+    }
+  }
+  const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, [], ['posicoes', 'salario_previsto'], []);
+  if (corpo.situacao !== undefined) { cols.push('situacao'); vals.push(corpo.situacao); }
+  if (corpo.fechamento_motivo !== undefined) { cols.push('fechamento_motivo'); vals.push(sanitize(corpo.fechamento_motivo) || null); }
+  // A data de fechamento acompanha a situação, e some ao reabrir: vaga aberta
+  // com data de fechamento no passado é o tipo de contradição que ninguém nota.
+  if (corpo.situacao === 'fechada') { cols.push('fechada_em'); vals.push(hojeISO()); }
+  else if (corpo.situacao) { cols.push('fechada_em'); vals.push(null); }
+  if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
+
+  const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
+  await query(`UPDATE erp_rh_vagas SET ${set} WHERE id=` + D + (cols.length + 1), [...vals, id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  // Vaga com candidato não se apaga: fechar preserva o histórico de por onde
+  // aquelas pessoas entraram. Excluir é para a vaga criada por engano.
+  const usada = (await query('SELECT count(*)::int AS n FROM erp_rh_admissoes WHERE vaga_id=$1', [id]))[0].n;
+  if (usada) {
+    return res.status(409).json({
+      error: `Esta vaga já teve ${usada} candidato(s). Feche-a em vez de excluir — ` +
+             'assim o histórico continua dizendo por onde essas pessoas entraram.' });
+  }
+  await query('DELETE FROM erp_rh_vagas WHERE id=$1', [id]);
+  res.json({ ok: true });
+}));
+
 // ---- Cargos ----
 //
 // Catálogo, não chave estrangeira. O cargo continua gravado como texto no
@@ -2849,6 +2961,13 @@ const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, inteiroEmTexto, 
 // resolvido para SAIR da etapa — é isso que impede o processo de avançar com
 // buraco atrás.
 const RH_ETAPAS = [
+  // Triagem e entrevista vêm antes da oferta porque o processo começa antes
+  // dela — e sem essas duas etapas quem foi entrevistado e não foi escolhido
+  // não deixava rastro nenhum. Elas cobram CONTATO, não documento: guardar CPF
+  // e comprovante de quem talvez não seja contratado é exatamente o que o
+  // sistema evita na exclusão de candidato.
+  { cod: 'triagem',           nome: 'Triagem' },
+  { cod: 'entrevista',        nome: 'Entrevista' },
   { cod: 'carta_oferta',      nome: 'Carta Oferta' },
   { cod: 'documentacao',      nome: 'Documentação' },
   { cod: 'exame_admissional', nome: 'Exame admissional' },
@@ -2894,6 +3013,15 @@ function rhDadosContratoFaltando(adm, colab, mapa) {
 // O que falta para sair da etapa atual. Devolve lista vazia quando está liberado.
 function rhPendencias(adm, colab, checklist, mapa) {
   switch (adm.etapa) {
+    // Sem contato não há como chamar ninguém para entrevista — é a única coisa
+    // que a triagem realmente precisa ter.
+    case 'triagem':
+      return colab && (colab.celular || colab.email_pessoal || colab.email_corporativo)
+        ? [] : ['Informe ao menos um contato do candidato (celular ou e-mail) na aba Contato.'];
+    // A data da entrevista é o que transforma "vamos entrevistar" em registro.
+    // Sem ela, o card avança e ninguém sabe se a conversa aconteceu.
+    case 'entrevista':
+      return adm.entrevista_em ? [] : ['Registre a data da entrevista.'];
     case 'carta_oferta':
       return adm.oferta_aceita_em ? [] : ['A carta oferta ainda não foi registrada como aceita.'];
     case 'documentacao': {
@@ -2933,13 +3061,14 @@ function rhPendencias(adm, colab, checklist, mapa) {
 const RH_ADM_CAMPOS = ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'centro_custo',
   'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia',
   'regime', 'modelo_trabalho', 'salario_previsto', 'admissao_prevista', 'gestor_id', 'responsavel_id',
+  'vaga_id', 'entrevista_em', 'entrevista_notas',
   'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para', 'exame_realizado_em', 'exame_resultado',
   'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em', 'acessos_concluidos_em',
   'onboarding_iniciado_em', 'onboarding_concluido_em', 'observacao'];
-const RH_ADM_DATA = ['admissao_prevista', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
+const RH_ADM_DATA = ['admissao_prevista', 'entrevista_em', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
   'exame_realizado_em', 'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em',
   'acessos_concluidos_em', 'onboarding_iniciado_em', 'onboarding_concluido_em'];
-const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id',
+const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id', 'vaga_id',
   'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia'];
 
 // Carrega a admissão com o colaborador e o checklist já resolvidos — as três
@@ -2993,17 +3122,25 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
   let admissaoId = null;
   if (abrirAdmissao) {
     const a = await query(
+      // `vaga_id` amarra o candidato à posição que o originou. É nulo quando
+      // alguém é cadastrado direto, sem vaga aberta — acontece, e forçar uma
+      // vaga fantasma só para ter o campo preenchido seria pior.
       `INSERT INTO erp_rh_admissoes (colaborador_id, cargo_pretendido, nivel_pretendido, departamento,
-         regime, modelo_trabalho, salario_previsto, admissao_prevista, responsavel_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`,
+         regime, modelo_trabalho, salario_previsto, admissao_prevista, vaga_id, responsavel_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING id`,
       [colabId, sanitize(req.body.cargo) || null, sanitize(req.body.nivel) || null,
        sanitize(req.body.departamento) || null, sanitize(req.body.regime) || 'regular',
        sanitize(req.body.modelo_trabalho) || 'presencial',
        req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
-       isDate(req.body.admissao_prevista) ? req.body.admissao_prevista : null, req.user.id]);
+       isDate(req.body.admissao_prevista) ? req.body.admissao_prevista : null,
+       Number(req.body.vaga_id) > 0 ? Number(req.body.vaga_id) : null, req.user.id]);
     admissaoId = a[0].id;
+    // A primeira etapa sai de RH_ETAPAS, não escrita à mão: o card e o histórico
+    // têm de nascer na MESMA etapa, e o dia em que a primeira mudar — como
+    // acabou de acontecer, de carta_oferta para triagem — os dois mudam juntos.
+    await query('UPDATE erp_rh_admissoes SET etapa=$1 WHERE id=$2', [RH_ETAPAS[0].cod, admissaoId]);
     await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, movido_por) VALUES ($1,NULL,$2,$3)',
-      [admissaoId, 'carta_oferta', req.user.id]);
+      [admissaoId, RH_ETAPAS[0].cod, req.user.id]);
   }
   res.json({ ok: true, id: colabId, admissao_id: admissaoId });
 }));
