@@ -5578,3 +5578,83 @@ vez de "consertar" um código que estava certo.
 Na tela, com o CSS real: três vagas em grade que vai de 4 colunas a 1 conforme a largura, a fechada
 apagada mas presente, a lista de candidatos nomeando etapa e situação de cada um, e o quadro com as oito
 etapas na ordem. Sem corte a 375px.
+
+## 2026-09-18 — Sessão 114: colaborador sem fornecedor, e a folha sem onde ser lançada
+
+**Solicitação:** *"Use o limite semanal final que temos de crédito pra buscar algum furo no nosso sistema
+ou algo que precisamos melhorar."*
+
+### O furo
+
+A folha é lançada em Contas a Pagar, um título por pessoa por mês, e a pessoa aparece lá como
+**fornecedor**. A aba Financeiro da ficha lê por `erp_suppliers.colaborador_id`.
+
+Essa coluna existe desde 15/09 — mas **nenhum endpoint jamais a escreveu**. A única ligação que existiu
+foi a semeadura por nome daquela migração, feita uma vez. `POST /api/suppliers` e `PUT` não aceitavam o
+campo, o formulário de fornecedor não o tinha, e cadastrar um colaborador não criava fornecedor nenhum.
+
+Consequência: **todo colaborador cadastrado depois de 15/09 ficava permanentemente desconectado do
+financeiro** — sem onde lançar o salário, e com a aba Financeiro mostrando *R$ 0,00 desde a admissão*
+como se estivesse certo.
+
+Quatro pessoas já estavam nesse estado — Leonardo Machado, Pablo de Sousa Catarina, Arthur Albani Dala
+Costa e Rodolpho Teixeira Mensato, todas cadastradas nos últimos dias. Sem correção, seriam também todas
+as próximas.
+
+É o pior formato de defeito deste sistema, e o mesmo que já apareceu três vezes esta semana: **silencioso,
+com aparência de correto, e em cima de dinheiro**.
+
+### Por onde eu cheguei
+
+Varri por consequência, não por arquivo. Primeiro os `DELETE` sem guarda (achei um: o de vínculo, abaixo);
+depois vazamento de dado sensível pelos endpoints novos (não havia — `celular` e `email_pessoal` não estão
+em `RH_SENSIVEIS`); depois o fluxo que o usuário ia executar nesta semana: lançar a rescisão do Gabriel em
+Contas a Pagar. A ficha do arquivado abre normalmente. Foi ao conferir a ponte título → fornecedor →
+colaborador que os quatro buracos apareceram.
+
+### O conserto, em quatro frentes
+
+1. **`rhGarantirFornecedor`** — idempotente e em três tempos: se já há fornecedor ligado não faz nada; se
+   há um de mesmo nome e sem dono, **adota** em vez de duplicar; só então cria. Duplicar partiria o
+   histórico da pessoa em dois.
+2. **Chamado nas DUAS portas** por onde alguém vira colaborador de fato: o cadastro direto de quem já é
+   funcionário, e a conclusão do contrato no Quadro. Candidato **não** ganha fornecedor — pode não ser
+   contratado, e fornecedor de quem nunca trabalhou é lixo em Contas a Pagar. Deixar só uma das portas
+   repetiria exatamente o erro do desligamento.
+3. **Ligação editável à mão**: `POST`/`PUT /api/suppliers` passam a aceitar `colaborador_id`, com um campo
+   novo no formulário e um endpoint enxuto (`/api/suppliers/colaboradores`, só id e nome, sob a permissão
+   de Fornecedores) que marca quem **já tem** fornecedor. Os dois verbos recusam ligar uma pessoa que já
+   tem outro fornecedor.
+4. **O Painel de RH passa a acusar**: alerta vermelho de "colaboradores ativos sem fornecedor", com os
+   nomes. O estado ficou dias invisível porque nada olhava para ele.
+
+Migração retroativa aplicada: os quatro ganharam fornecedor, com CPF e categoria "Folha de Pagamento", e
+a guarda falha se sobrar alguém sem — ou se alguém tiver dois.
+
+### Um susto no caminho, registrado como fato
+
+A migração aplicada pela ferramenta gravou `category`, `cnpj`, `pix_key` e `notes` **vazios**, enquanto
+`name`, `status` e `colaborador_id` foram corretamente. Um `UPDATE` seguinte, com os mesmos literais,
+gravou tudo certo. Não tenho explicação comprovada e não vou inventar uma — fica o fato observado e a
+prática que o pegou: **conferir com `SELECT` depois de toda migração que grava dado**. Conferi as outras
+seis migrações desta semana; nenhuma ficou com dado errado.
+
+### O outro furo, menor, que fica anotado
+
+`DELETE /api/rh/vinculos/:id` **não tem guarda nenhuma**. Apagar um vínculo leva junto todo o
+`erp_rh_salario_hist` daquela pessoa (`ON DELETE CASCADE`) — a tabela que existe justamente para um
+aumento não reescrever o passado — e deixa o colaborador ativo sem contrato. Todos os outros `DELETE` de
+RH recusam quando há história e mandam arquivar; este é o único que não. **Não há botão para ele na tela**,
+então é alcançável só pela API — por isso fica anotado em vez de corrigido junto: consertar merece commit
+próprio, e o risco imediato é baixo.
+
+### Verificação
+
+`verifica-fornecedor-colaborador.js`, 15 asserções: a lista marcando quem já tem fornecedor, candidato
+fora dela, criação ligada, recusa do segundo fornecedor pelos dois verbos, desfazer a ligação, o
+fornecedor nascendo junto no cadastro direto, candidato **não** ganhando um, e o órfão de mesmo nome sendo
+adotado em vez de duplicado.
+
+Uma asserção passou **por acidente** no primeiro run — "candidato não ganha fornecedor" passou porque o
+endpoint estourou antes de chegar lá, e a contagem não tinha mudado. Completei o stub e reexecutei; só
+então ela passou por mérito. As dez suítes passam.

@@ -1,6 +1,6 @@
 {
   "_como_atualizar": "SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name ~ '^erp_' GROUP BY table_name ORDER BY table_name;",
-  "_conferido_em": "2026-09-17",
+  "_conferido_em": "2026-09-18",
   "erp_attachments": "id,entity_type,entity_id,kind,file_name,mime_type,byte_size,data,uploaded_by,created_at,doc_tipo",
   "erp_audit_log": "id,user_id,user_name,action,created_at",
   "erp_bank_transactions": "id,txn_date,description,amount,reconciled,matched_type,matched_id,imported_batch,created_at,auto_generated",

@@ -2780,8 +2780,14 @@ async function renderFornecedores() {
   draw();
 }
 
-function formFornecedor(r) {
+async function formFornecedor(r) {
   const isEdit = !!r; r = r || {};
+  // Colaboradores que ainda não têm fornecedor ficam no topo, porque são
+  // exatamente os que precisam de um — e o que já é dono deste continua na
+  // lista para a ligação não se perder ao editar.
+  const colabs = await api('/api/suppliers/colaboradores').catch(() => []);
+  const opcoesColab = [...colabs].sort((a, b) =>
+    (!!a.fornecedor_id - !!b.fornecedor_id) || a.name.localeCompare(b.name, 'pt-BR'));
   openModal(isEdit ? 'Editar fornecedor' : 'Novo fornecedor', `
     ${fld('s-name', 'Razão social *', 'text', r.name || '')}
     <div class="form-row">
@@ -2798,13 +2804,27 @@ function formFornecedor(r) {
     </div>
     ${fld('s-pix', 'Chave PIX', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
     ${fldSel('s-status', 'Status', [{ v: 'ativo', t: 'Ativo' }, { v: 'inativo', t: 'Inativo' }], r.status || 'ativo')}
-    ${fld('s-notes', 'Observações', 'text', r.notes || '')}`,
+    ${fld('s-notes', 'Observações', 'text', r.notes || '')}
+    ${/* A ligação com o colaborador é o que faz a aba Financeiro da ficha achar
+          os títulos da pessoa. A coluna existia desde setembro, mas não havia
+          campo nenhum para preenchê-la: a única ligação possível tinha sido
+          uma semeadura por nome, e quem foi cadastrado depois ficou de fora
+          sem que nada avisasse. */''}
+    ${fldSel('s-colaborador', 'É um colaborador?',
+      [{ v: '', t: '— não é colaborador —' },
+       ...opcoesColab.map(c => ({ v: c.id,
+         t: c.name + (c.fornecedor_id && c.fornecedor_id !== r.id ? ' — já tem fornecedor' : '') }))],
+      r.colaborador_id || '')}
+    <p class="rh-custo-nota" style="margin-top:-8px">Ligando ao colaborador, os títulos deste fornecedor
+      passam a aparecer na aba <strong>Financeiro</strong> da ficha dele — é assim que a folha lançada
+      aqui vira histórico de pagamento lá.</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: isEdit ? 'Salvar alterações' : 'Cadastrar', cls: 'primary', onClick: async () => {
         const body = {
           name: $('#s-name').value, cnpj: $('#s-cnpj').value, category: $('#s-cat').value,
           contact_name: $('#s-contact').value, phone: $('#s-phone').value, email: $('#s-email').value,
-          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, status: $('#s-status').value, notes: $('#s-notes').value
+          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, status: $('#s-status').value, notes: $('#s-notes').value,
+          colaborador_id: $('#s-colaborador').value || null
         };
         try {
           if (isEdit) await api('/api/suppliers/' + r.id, { method: 'PUT', body });
@@ -10363,6 +10383,15 @@ async function rhPainel(c) {
       Custo de pessoal, tempo de casa e turnover são calculados a partir do vínculo — enquanto isso não
       for preenchido, estes números cobrem apenas ${co.com_vinculo} pessoa(s).
       <span class="rh-alerta-nomes">${esc(co.sem_vinculo_nomes.join(' · '))}</span>
+    </div>` : ''}
+
+    ${co.sem_fornecedor ? `<div class="rh-alerta">
+      <strong>${co.sem_fornecedor} de ${co.ativos} colaboradores ativos não têm fornecedor.</strong>
+      A folha é lançada em <strong>Contas a Pagar</strong> e a pessoa aparece lá como fornecedor —
+      sem ele, não há onde lançar o salário, e a aba <strong>Financeiro</strong> da ficha mostra
+      R$ 0,00 desde a admissão como se estivesse certo. Cadastre o fornecedor e ligue-o ao
+      colaborador em <strong>Fornecedores</strong>.
+      <span class="rh-alerta-nomes">${esc((co.sem_fornecedor_nomes || []).join(' · '))}</span>
     </div>` : ''}
 
     <div class="rh-painel-sec"><h3>Headcount</h3>

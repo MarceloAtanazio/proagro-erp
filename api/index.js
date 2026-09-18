@@ -497,22 +497,60 @@ app.get('/api/suppliers', requireAuth, requireViewAny(['fornecedores','pagar']),
   res.json(await query('SELECT * FROM erp_suppliers ORDER BY name'));
 }));
 
+// Só id e nome, e sob a permissão de FORNECEDORES: quem cadastra fornecedor
+// precisa dizer de quem ele é, e exigir a permissão de RH para isso deixaria o
+// campo inalcançável justamente para quem o usa. Nada além do nome sai daqui.
+app.get('/api/suppliers/colaboradores', requireAuth, requireViewAny(['fornecedores']), h(async (req, res) => {
+  res.json(await query(
+    `SELECT c.id, c.name,
+            (SELECT s.id FROM erp_suppliers s WHERE s.colaborador_id = c.id LIMIT 1) AS fornecedor_id
+       FROM erp_colaboradores c
+      WHERE c.ativo = true AND c.arquivado_em IS NULL
+      ORDER BY c.name`));
+}));
+
 app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+  // A mesma trava do PUT: dois fornecedores para a mesma pessoa partiriam o
+  // histórico financeiro dela em dois, e cada tela mostraria um pedaço.
+  if (Number(b.colaborador_id) > 0) {
+    const outro = await query('SELECT name FROM erp_suppliers WHERE colaborador_id=$1', [Number(b.colaborador_id)]);
+    if (outro.length) {
+      return res.status(409).json({
+        error: `Este colaborador já está ligado ao fornecedor “${outro[0].name}”. ` +
+               'Edite aquele em vez de criar outro — dois fornecedores para a mesma pessoa partem o histórico dela em dois.' });
+    }
+  }
+  // `colaborador_id` liga o fornecedor à PESSOA. A coluna existia desde 15/09,
+  // mas nenhum endpoint a escrevia: a única ligação possível era a semeadura por
+  // nome daquela migração, e quem foi cadastrado depois ficava fora para sempre.
+  // Sem essa ligação, a aba Financeiro da ficha não acha título nenhum.
+  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes, colaborador_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
     [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes),
+     Number(b.colaborador_id) > 0 ? Number(b.colaborador_id) : null]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
 app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10 WHERE id=$11`,
+  // Dois fornecedores apontando para a mesma pessoa partiriam o histórico
+  // financeiro dela em dois, e cada tela mostraria um pedaço.
+  const dono = Number(b.colaborador_id) > 0 ? Number(b.colaborador_id) : null;
+  if (dono) {
+    const outro = await query('SELECT id, name FROM erp_suppliers WHERE colaborador_id=$1 AND id<>$2', [dono, req.params.id]);
+    if (outro.length) {
+      return res.status(409).json({
+        error: `Este colaborador já está ligado ao fornecedor “${outro[0].name}”. ` +
+               'Desfaça a ligação lá antes de criar outra — dois fornecedores para a mesma pessoa partem o histórico dela em dois.' });
+    }
+  }
+  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10, colaborador_id=$11 WHERE id=$12`,
     [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), dono, req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -2729,6 +2767,55 @@ app.delete('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req,
   res.json({ ok: true });
 }));
 
+// O fornecedor de quem entra na folha.
+//
+// A folha é lançada em Contas a Pagar, um título por pessoa por mês, e a pessoa
+// aparece lá como FORNECEDOR. A aba Financeiro da ficha lê por essa ligação
+// (erp_suppliers.colaborador_id). Sem fornecedor, o título simplesmente não tem
+// onde ser lançado — e a aba Financeiro mostra R$ 0,00 desde a admissão, com
+// cara de certo, para sempre. Número com aparência de oficial e errado é pior
+// que número nenhum, e este some sem nem um aviso.
+//
+// A ligação só existia por causa da semeadura por nome da migração de 15/09.
+// Quem foi cadastrado DEPOIS dela ficava permanentemente fora — quatro pessoas
+// já estavam assim quando isto foi escrito, e seriam todas as próximas.
+//
+// Idempotente e em três tempos: se já há fornecedor ligado, não faz nada; se há
+// um com o mesmo nome e sem dono, ADOTA em vez de duplicar (é o fornecedor
+// criado à mão); só então cria.
+async function rhGarantirFornecedor(colabId, userId) {
+  const id = Number(colabId);
+  if (!id) return null;
+  const ja = await query('SELECT id FROM erp_suppliers WHERE colaborador_id=$1 LIMIT 1', [id]);
+  if (ja.length) return ja[0].id;
+
+  const c = (await query('SELECT id, name, cpf, pix_chave FROM erp_colaboradores WHERE id=$1', [id]))[0];
+  if (!c || !c.name) return null;
+
+  // Adoção só quando o nome bate INTEIRO e não há ambiguidade dos dois lados —
+  // a mesma regra conservadora da semeadura original. Na dúvida, cria novo:
+  // fornecedor duplicado se resolve editando; ligação errada contamina o
+  // histórico financeiro de duas pessoas.
+  const orfao = await query(
+    `SELECT id FROM erp_suppliers s
+      WHERE s.colaborador_id IS NULL
+        AND lower(btrim(s.name)) = lower(btrim($1))
+        AND (SELECT count(*) FROM erp_suppliers s2
+              WHERE s2.colaborador_id IS NULL AND lower(btrim(s2.name)) = lower(btrim($1))) = 1
+      LIMIT 1`, [c.name]);
+  if (orfao.length) {
+    await query('UPDATE erp_suppliers SET colaborador_id=$1 WHERE id=$2', [id, orfao[0].id]);
+    return orfao[0].id;
+  }
+
+  const ins = await query(
+    `INSERT INTO erp_suppliers (name, cnpj, category, status, pix_key, colaborador_id, notes)
+     VALUES ($1,$2,'Folha de Pagamento','ativo',$3,$4,$5) RETURNING id`,
+    [c.name, c.cpf || null, c.pix_chave || c.cpf || null, id,
+     'Criado junto com o cadastro do colaborador, para a folha poder ser lançada em Contas a Pagar.']);
+  return ins[0].id;
+}
+
 // ---- Vagas ----
 //
 // A vaga é uma POSIÇÃO, não uma pessoa: tem cargo, departamento, número de
@@ -3142,6 +3229,10 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
     await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, movido_por) VALUES ($1,NULL,$2,$3)',
       [admissaoId, RH_ETAPAS[0].cod, req.user.id]);
   }
+  // Quem entra JÁ como funcionário entra na folha agora. Candidato não ganha
+  // fornecedor: pode não ser contratado, e fornecedor de quem nunca trabalhou
+  // é lixo em Contas a Pagar. O dele nasce quando o contrato for assinado.
+  if (!abrirAdmissao) await rhGarantirFornecedor(colabId, req.user.id);
   res.json({ ok: true, id: colabId, admissao_id: admissaoId });
 }));
 
@@ -3293,6 +3384,10 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
     // sistema. Nada é copiado: a ficha preenchida na Documentação é a mesma
     // linha, só deixa de estar escondida.
     await query('UPDATE erp_colaboradores SET ativo=true WHERE id=$1', [adm.colaborador_id]);
+    // Entrou na folha: ganha o fornecedor por onde o salário será lançado. É a
+    // SEGUNDA porta por onde alguém vira colaborador — deixar só a outra
+    // repetiria o erro do desligamento, em que uma das duas não arquivava.
+    await rhGarantirFornecedor(adm.colaborador_id, req.user.id);
   }
   res.json({ ok: true, etapa: destino, vinculo_id: vinculoId });
 }));
@@ -3946,6 +4041,16 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
        AND NOT EXISTS (SELECT 1 FROM erp_attachments a
                         WHERE a.entity_type='rh_doc' AND a.entity_id=c.id AND a.doc_tipo='contrato_assinado')`);
 
+  // Colaborador ativo sem FORNECEDOR não tem por onde receber: a folha é
+  // lançada em Contas a Pagar e a pessoa aparece lá como fornecedor. Pior, a
+  // aba Financeiro dele mostra R$ 0,00 desde a admissão — e parece certo.
+  // Isso ficou meses invisível porque nada olhava para o estado; agora olha.
+  const semFornecedor = await query(`
+    SELECT c.id, c.name FROM erp_colaboradores c
+     WHERE ${RH_SQL_COLAB_ATIVO}
+       AND NOT EXISTS (SELECT 1 FROM erp_suppliers s WHERE s.colaborador_id = c.id)
+     ORDER BY c.name`);
+
   res.json({
     hoje,
     cobertura: {
@@ -3953,6 +4058,8 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
       com_vinculo: comVinculo.length,
       sem_vinculo: semVinculo.length,
       sem_vinculo_nomes: semVinculo.slice(0, 12).map(r => r.name),
+      sem_fornecedor: semFornecedor.length,
+      sem_fornecedor_nomes: semFornecedor.slice(0, 12).map(r => r.name),
       com_nascimento: ativos.filter(r => r.data_nascimento).length,
       com_sexo: ativos.filter(r => r.sexo).length,
       com_salario: comVinculo.filter(r => r.salario != null).length
