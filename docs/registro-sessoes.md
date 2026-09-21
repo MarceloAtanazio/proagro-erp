@@ -5898,3 +5898,47 @@ tabela de benefícios cabe em tela cheia (rola horizontalmente em telas estreita
 
 Nenhuma das duas abas tocou o que já existia: os três booleans do vínculo continuam lá, `custo_mensal`
 sem ninguém inscrito no catálogo bate exatamente com o valor de antes.
+
+## 2026-09-21 — Sessão 119: Lucila estava cadastrada duas vezes
+
+**Solicitação:** *"Essa colaboradora eu adicionei na última sexta mas agora percebi que o financeiro
+dela não 'puxou' o que foi registrado ao longo do ano no contas a pagar, pode verificar se tem algum
+vínculo quebrado?"*
+
+### O que era
+
+Não era o furo do fornecedor ausente (esse já está corrigido desde a sessão 114). Era outro: **Lucila
+Stoianov Rezende estava cadastrada duas vezes**.
+
+- **ID 5**, criada em 22/07, sem CPF, nunca passou pelo fluxo de admissão (sem vínculo nenhum) — mas era
+  dona do fornecedor que recebe a folha dela desde março: 11 títulos, R$ 83.843,67 pagos, mais 3 viagens
+  de viático reais.
+- **ID 26**, criada na sexta passada (18/09), com CPF, vínculo completo (admissão mar/2026, desligamento
+  ago/2026, Gerente Comercial), corretamente arquivada — mas com um fornecedor **novo e vazio**, criado
+  automaticamente no cadastro, sem nenhum título.
+
+A trava de CPF duplicado (`rhCPFValido` + a checagem em `POST /api/rh/colaboradores`) só compara contra
+quem **já tem** CPF cadastrado. A ficha de julho nunca teve CPF preenchido, então não havia o que
+comparar quando a segunda ficha foi criada em setembro — a trava existe, mas não tinha como pegar esse
+caso específico. Varri a base inteira por nome repetido: ela é o único caso hoje.
+
+### O conserto
+
+Três updates em produção, sem apagar histórico nenhum — só religar o que estava solto na ficha errada:
+
+1. `erp_suppliers.colaborador_id` do fornecedor com os 11 títulos passou a apontar para a ficha de
+   setembro (a completa e correta).
+2. As 3 viagens de viático (`erp_viaticos_solicitacoes.colaborador_id`) foram movidas junto.
+3. A ficha de julho e o fornecedor vazio foram removidos — conferi via `information_schema` todas as
+   tabelas com chave estrangeira para `erp_colaboradores` (fornecedores, viáticos, estoque, vínculos,
+   dependentes, admissões, treinamentos, clima, férias, benefícios, e os dois papéis de gestor) antes de
+   apagar; nenhuma outra tinha referência à ficha de julho.
+
+Confirmado depois: uma ficha só, com os 11 títulos e as 3 viagens ligados a ela.
+
+### O que fica de fora, por enquanto
+
+Este foi um conserto pontual de dado, não um conserto de código — não criei uma trava de duplicado por
+NOME (só existe por CPF hoje), porque uma trava por nome tem um jeito errado óbvio de fazer (bloquear
+homônimos de verdade) e um jeito certo que merece pensar com calma, não decidir no meio de um conserto
+urgente. Fica anotado como possível furo a revisitar, não como algo já resolvido.
