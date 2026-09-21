@@ -10595,6 +10595,21 @@ async function rhPainel(c) {
     </div>
 
     <div class="rh-painel-sec"><h3>Recrutamento</h3>
+      <h5>Vagas</h5>
+      <div class="kpis">
+        ${rhKpi('Vagas abertas', re.vagas.abertas, re.vagas.pausadas ? `${re.vagas.pausadas} pausada(s)` : 'nenhuma pausada')}
+        ${rhKpi('Posições em aberto', re.vagas.posicoes_abertas, 'somando as posições de cada vaga aberta')}
+        ${rhKpi('Tempo médio até preencher', rhDias(re.vagas.tempo_medio_preenchimento_dias), 'abertura da vaga → contrato assinado')}
+        ${rhKpi('Vagas paradas', re.vagas.paradas, `sem nenhum candidato há mais de 15 dias`, re.vagas.paradas ? 'aviso' : '')}
+      </div>
+      ${re.vagas.paradas ? `<div class="rh-alerta">
+        <strong>${re.vagas.paradas} vaga(s) aberta(s) sem nenhum candidato há mais de 15 dias.</strong>
+        Ninguém está olhando para elas — vale rever a divulgação ou pausar enquanto não há capacidade
+        de recrutar.
+        <span class="rh-alerta-nomes">${esc(re.vagas.paradas_nomes.join(' · '))}</span>
+      </div>` : ''}
+
+      <h5>Candidatos</h5>
       <div class="kpis">
         ${rhKpi('Processos abertos', re.em_andamento, 'no quadro de admissão')}
         ${rhKpi('Admissões previstas', re.previstas_30d, 'nos próximos 30 dias', re.previstas_30d ? 'aviso' : '')}

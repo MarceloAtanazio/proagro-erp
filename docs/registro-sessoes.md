@@ -6022,3 +6022,43 @@ mesma consulta desatualizada — esse card do Painel era o único.
 Estendi `verifica-rh-painel.js`: depois de confirmar que um ex-colaborador real soma 1 em "Arquivados",
 arquivei também um candidato puro (sem vínculo) e confirmei que o número **não muda** — sem a correção,
 essa asserção teria falhado (o candidato somaria junto). As vinte suítes continuam passando.
+
+## 2026-09-21 — Sessão 122: métricas da vaga em si, não só dos candidatos
+
+**Solicitação:** *"No mesmo painel em 'Recrutamento' coloque e melhore as métricas da vaga em sí sabe,
+não só dos candidatos."*
+
+### O que era
+
+Tudo em "Recrutamento" falava de **candidato**: processos abertos, admissões previstas, tempo médio de
+admissão, taxa de conclusão, onde cada um está no funil. A **vaga** — a posição em si, que é o ponto de
+partida de todo o fluxo (a sessão 116 até deixou isso explícito: "a vaga é o começo do processo") — não
+tinha nenhum número próprio no Painel. Só aparecia contando candidato.
+
+### O que entrou
+
+Uma subseção nova, "Vagas", antes da subseção "Candidatos" (renomeada para deixar a separação clara):
+
+- **Vagas abertas**, com as pausadas à parte na nota.
+- **Posições em aberto** — soma por POSIÇÃO, não por vaga: uma vaga de 3 posições com 1 já contratado
+  ainda tem 2 em aberto. É a unidade que o RH de fato precisa preencher.
+- **Tempo médio até preencher** — da abertura da VAGA ao contrato assinado. Diferente do "Tempo médio de
+  admissão" que já existia: aquele conta a partir do processo do candidato (existe até para quem entrou
+  sem vaga nenhuma); este conta a partir de quando a posição foi aberta — é a pergunta "quanto tempo uma
+  vaga leva para ser preenchida", não "quanto tempo um processo leva".
+- **Vagas paradas** — abertas há mais de 15 dias **sem nenhum candidato**. Isso é deliberadamente mais
+  estreito que "vaga demorando": uma vaga com candidato em processo está sendo trabalhada, mesmo que
+  devagar; uma vaga sem ninguém avaliando é a que realmente precisa de atenção. Ganhou alerta com o nome
+  de cada uma, no mesmo padrão dos alertas de "sem vínculo" e "sem fornecedor" que o Painel já tinha.
+
+### Verificação
+
+Estendi `verifica-rh-painel.js` com quatro vagas cobrindo os quatro estados (aberta com candidato, aberta
+parada, pausada, fechada com contratação) e uma admissão concluída ligada a uma vaga para medir o tempo de
+preenchimento. Sete asserções novas, incluindo uma que discrimina especificamente "tempo até preencher"
+(35 dias, contado da vaga) de "tempo médio de admissão" (30 dias, contado do processo) — os dois preexistem
+lado a lado e não podem virar o mesmo número por acidente. Ajustei uma asserção preexistente que dependia
+implicitamente de não haver nenhuma admissão concluída no fixture. Dezenove suítes passam.
+
+Medido na tela com o `styles.css` real: quatro KPIs para Vaga, quatro para Candidato, cada grupo com seu
+próprio `<h5>`, e o alerta de vagas paradas no mesmo estilo dos outros avisos do Painel.

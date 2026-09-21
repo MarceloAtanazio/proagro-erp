@@ -4402,6 +4402,35 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
     .map(a => (Date.parse(String(a.contrato_assinado_em).slice(0, 10)) - Date.parse(a.created_at)) / 86400000)
     .filter(x => isFinite(x) && x >= 0);
 
+  // ---------- vagas ----------
+  // Recrutamento não é só sobre quem está sendo avaliado — é também sobre a
+  // POSIÇÃO em si: quantas estão abertas, quanto tempo elas levam para fechar,
+  // e quais estão paradas sem ninguém sequer olhando. Sem isso, "Recrutamento"
+  // só respondia perguntas sobre candidatos.
+  const vagasRows = await query(`${RH_SQL_VAGAS} ORDER BY v.aberta_em`);
+  const vagasAbertas = vagasRows.filter(v => v.situacao === 'aberta');
+  const vagasPausadas = vagasRows.filter(v => v.situacao === 'pausada');
+  // Uma vaga de 3 posições com 1 contratado ainda tem 2 em aberto — a soma é
+  // por POSIÇÃO, não por vaga, que é a unidade que o RH realmente precisa
+  // preencher.
+  const posicoesAbertas = vagasAbertas.reduce((s, v) => s + Math.max(0, Number(v.posicoes) - v.contratados), 0);
+  // Parada é a vaga ABERTA sem NENHUM candidato há um tempo — é a que ninguém
+  // está sequer avaliando, diferente da que só está demorando a fechar.
+  const DIAS_VAGA_PARADA = 15;
+  const vagasParadas = vagasAbertas.filter(v =>
+    v.candidatos === 0 && String(v.aberta_em).slice(0, 10) <= rhSomaDiasISO(hoje, -DIAS_VAGA_PARADA));
+  // Tempo até preencher: da ABERTURA DA VAGA ao contrato assinado — diferente
+  // do "tempo médio de admissão" logo abaixo, que conta a partir do processo
+  // do CANDIDATO e existe mesmo para quem entrou sem vaga nenhuma.
+  const preenchimentos = await query(`
+    SELECT a.contrato_assinado_em, v.aberta_em
+      FROM erp_rh_admissoes a
+      JOIN erp_rh_vagas v ON v.id = a.vaga_id
+     WHERE a.situacao = 'concluida' AND a.contrato_assinado_em IS NOT NULL`);
+  const temposVaga = preenchimentos
+    .map(p => (Date.parse(String(p.contrato_assinado_em).slice(0, 10)) - Date.parse(String(p.aberta_em).slice(0, 10))) / 86400000)
+    .filter(x => isFinite(x) && x >= 0);
+
   // ---------- desenvolvimento ----------
   const trein = await query(`
     SELECT t.colaborador_id, t.carga_horaria, t.custo, t.obrigatorio, t.validade, t.concluido_em
@@ -4500,6 +4529,15 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
       movimentacao: mov.map(m => ({ mes: m.mes, admissoes: Number(m.admissoes), desligamentos: Number(m.desligamentos) }))
     },
     recrutamento: {
+      vagas: {
+        abertas: vagasAbertas.length,
+        pausadas: vagasPausadas.length,
+        posicoes_abertas: posicoesAbertas,
+        paradas: vagasParadas.length,
+        paradas_nomes: vagasParadas.map(v => v.cargo),
+        tempo_medio_preenchimento_dias: temposVaga.length
+          ? Math.round(temposVaga.reduce((a, b) => a + b, 0) / temposVaga.length) : null
+      },
       em_andamento: emAndamento.length,
       por_etapa: contarPor(emAndamento, 'etapa'),
       concluidas_12m: concluidas.length,
