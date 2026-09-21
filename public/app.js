@@ -11265,7 +11265,11 @@ async function rhInscritosBeneficio(beneficioId, nome) {
           <td class="venc-cell">${rhData(i.desde)}</td>
           <td class="venc-cell">${i.ate ? rhData(i.ate) : '<span class="badge ok">em vigor</span>'}</td>
           ${verValor ? `<td>${i.valor_colaborador != null ? brl(Number(i.valor_colaborador)) : '—'}</td>` : ''}
-          <td>${i.pendente ? '<span class="badge warn">Pendente</span>' : '<span class="badge ok">Confirmado</span>'}</td>
+          <td>${ed
+            ? `<button class="badge badge-toggle ${i.pendente ? 'warn' : 'ok'}" data-alternar-pendente="${i.id}"
+                 data-pendente="${i.pendente ? '1' : '0'}"
+                 title="Clique para marcar como ${i.pendente ? 'confirmado' : 'pendente'}">${i.pendente ? 'Pendente' : 'Confirmado'}</button>`
+            : `<span class="badge ${i.pendente ? 'warn' : 'ok'}">${i.pendente ? 'Pendente' : 'Confirmado'}</span>`}</td>
           <td class="actions">
             ${ed ? `<button class="btn-ic" data-editar-adesao="${i.id}" title="Editar" aria-label="Editar">✎</button>` : ''}
             ${ed && !i.ate ? `<button class="btn-ic perigo" data-encerrar-adesao="${i.id}" title="Encerrar" aria-label="Encerrar">✕</button>` : ''}
@@ -11276,6 +11280,19 @@ async function rhInscritosBeneficio(beneficioId, nome) {
 
     const bi = $('#rh-inscrever');
     if (bi) bi.onclick = () => rhFormInscrever(beneficioId, emVigor.map(i => i.colaborador_id), carregar);
+    // Alternar pendente/confirmado é a ação mais repetida desta tela — o RH
+    // cadastra um lote inteiro na plataforma do fornecedor e volta aqui só
+    // pra marcar "feito", um por um. Um clique no próprio badge resolve isso
+    // sem abrir o modal de editar inteiro pra mudar um campo só.
+    $('#modal-body').querySelectorAll('[data-alternar-pendente]').forEach(b => b.onclick = async () => {
+      const novo = b.dataset.pendente !== '1';
+      b.disabled = true;
+      try {
+        await api('/api/rh/beneficio_colab/' + b.dataset.alternarPendente, { method: 'PUT', body: { pendente: novo } });
+        toast(novo ? 'Marcado como pendente.' : 'Marcado como confirmado.');
+        carregar();
+      } catch (e) { toast(e.message); b.disabled = false; }
+    });
     $('#modal-body').querySelectorAll('[data-editar-adesao]').forEach(b => b.onclick = () =>
       rhFormEditarAdesao(inscritos.find(i => String(i.id) === b.dataset.editarAdesao), carregar));
     $('#modal-body').querySelectorAll('[data-encerrar-adesao]').forEach(b => b.onclick = async () => {

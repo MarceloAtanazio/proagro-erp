@@ -240,6 +240,12 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .badge.offline { background: #EEF1EF; color: var(--muted); }
 .badge.offline::before { background: var(--muted); }
 
+/* Badge que também é botão: alternar pendente/confirmado direto na lista de
+   inscritos, sem abrir o modal de editar só pra mudar um campo. */
+button.badge-toggle { border: none; font: inherit; cursor: pointer; transition: filter .1s; }
+button.badge-toggle:hover { filter: brightness(0.94); }
+button.badge-toggle:disabled { cursor: default; opacity: .6; }
+
 /* ---------- Formulários / modal ---------- */
 .field { position: relative; margin-bottom: 14px; }
 .via-addr-suggest {

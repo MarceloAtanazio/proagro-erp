@@ -6584,3 +6584,29 @@ mais as 62 das suítes anteriores de Benefícios/Custo/Organograma/Calculadora/F
 regressão. Testado no navegador reproduzindo as três telas com dados de exemplo.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 134: badge de pendente vira botão de alternar direto
+
+**Solicitação:** *"Coloque um botão rapido pra poder informar se o funcionario está cadastrado ou
+não no fornecedor."* (com print da lista de inscritos do TotalPass, cheia de "Pendente" — o caso de
+uso real: um lote grande cadastrado de uma vez na plataforma do fornecedor, e o RH precisa marcar
+"feito" pessoa por pessoa ao voltar aqui).
+
+O badge "Pendente"/"Confirmado" da sessão anterior era só leitura — pra mudar, tinha que abrir o
+modal de editar inteiro (dois cliques, quatro campos na tela) só pra mexer num checkbox. Virou botão:
+um clique no próprio badge alterna o status, sem abrir modal. O `PUT /api/rh/beneficio_colab/:id` já
+aceitava atualização parcial (manda só o que mudou, mantém o resto) — o endpoint não precisou mudar,
+só o front passou a mandar `{ pendente }` sozinho em vez de reabrir o formulário completo.
+
+### Verificação
+
+Adicionei ao `verifica-beneficios-adesao.js`: o PUT com só `{ pendente }` funciona e **não mexe**
+em desde/observação que já estavam gravados (a diferença entre um PATCH de verdade e um formulário
+que reenviaria tudo por engano); e checagem estática confirmando que quem edita vê um `<button>`
+clicável (quem não edita continua vendo só o texto), que o clique manda só o campo que mudou, e que
+o botão trava (`disabled`) durante a chamada e destrava se der erro. 32 verificações, todas
+passando — mais as 116 das suítes anteriores, sem regressão. Testado no navegador: visualmente
+idêntico ao badge de antes (mesma cor, mesmo formato), só que agora clicável.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
