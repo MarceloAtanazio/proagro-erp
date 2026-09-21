@@ -9009,7 +9009,7 @@ async function rhQuadro(c) {
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-quadro-topo">
       <span class="rh-quadro-dica">${encerrados
-        ? 'Processos que <strong>não viraram contratação</strong>. A pessoa fica arquivada — pode ser reaberta numa vaga futura ou excluída de vez.'
+        ? 'Processos que <strong>não viraram contratação</strong>. É aqui que o candidato fica arquivado — não em Colaboradores, que é só para quem já trabalhou aqui. Pode ser reaberto numa vaga futura ou excluído de vez.'
         : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'}</span>
       <div class="spacer"></div>
       <select id="rh-filtro-vaga">
@@ -9044,9 +9044,62 @@ async function rhQuadro(c) {
   $('#rh-vista').onchange = e => { RH_QUADRO_VISTA = e.target.value; renderRH(); };
   $('#rh-filtro-vaga').onchange = e => { RH_QUADRO_VAGA = e.target.value; renderRH(); };
   c.querySelectorAll('[data-card]').forEach(x => x.onclick = () => rhAbrirCard(Number(x.dataset.card)));
+  c.querySelectorAll('[data-historico]').forEach(x => x.onclick = () => rhHistoricoCandidato(Number(x.dataset.historico), x.dataset.nome));
   c.querySelectorAll('[data-reabrir]').forEach(x => x.onclick = () => rhReabrirProcesso(Number(x.dataset.reabrir), x.dataset.nome));
   c.querySelectorAll('[data-excluir-cand]').forEach(x => x.onclick = () =>
     rhConfirmarExcluir({ id: Number(x.dataset.excluirCand), name: x.dataset.nome, arquivado_em: true, candidato: true }));
+}
+
+// Todo processo que a pessoa já teve na empresa — não só o mais recente. Quem
+// tentou duas vagas em épocas diferentes tem duas linhas aqui, cada uma com o
+// passo a passo próprio; é o que faz "reabrir a vaga anterior" ser escolher a
+// linha certa em vez de adivinhar um ID.
+async function rhHistoricoCandidato(colabId, nome) {
+  openModal(`Histórico de ${nome}`, '<div class="rh-carregando">Carregando…</div>', [
+    { label: 'Fechar', onClick: closeModal }
+  ], { wide: true });
+  let d;
+  try { d = await api('/api/rh/colaboradores/' + colabId + '/candidaturas'); }
+  catch (e) { $('#modal-body').innerHTML = `<div class="form-msg err">${esc(e.message)}</div>`; return; }
+
+  const processos = d.processos || [];
+  if (!processos.length) {
+    $('#modal-body').innerHTML = '<div class="empty">Nenhum processo registrado para esta pessoa.</div>';
+    return;
+  }
+  $('#modal-body').innerHTML = processos.map(p => {
+    const vaga = p.vaga_cargo || p.cargo_pretendido;
+    const parte = p.parte === 'candidato' ? '<span class="badge pend">por ele</span>'
+      : p.parte === 'empresa' ? '<span class="badge late">por nós</span>' : '';
+    const situacao = p.situacao === 'andamento' ? '<span class="badge ok">em andamento</span>'
+      : p.situacao === 'concluida' ? '<span class="badge">contratado</span>'
+      : '<span class="badge late">encerrado</span>';
+    return `<div class="rh-sec rh-hist-proc">
+      <h4>${esc(rhTxt(vaga))}${p.vaga_departamento ? ' · ' + esc(p.vaga_departamento) : ''}
+        <span class="rh-hist-sit">${situacao}</span></h4>
+      <div class="rh-linhas">
+        <div class="rh-linha"><span>Aberto em</span><b>${rhData(p.created_at)}</b></div>
+        <div class="rh-linha"><span>Chegou até</span><b>${esc(RH_ETAPA_NOME[p.etapa] || p.etapa || '—')}</b></div>
+        ${p.situacao === 'cancelada' ? `
+          <div class="rh-linha"><span>Encerrado em</span><b>${rhData(p.encerrada_em)}</b></div>
+          <div class="rh-linha"><span>Motivo</span><b>${parte} ${esc(p.motivo_nome || '— não classificado —')}</b></div>` : ''}
+        ${p.responsavel_nome ? `<div class="rh-linha"><span>Responsável</span><b>${esc(p.responsavel_nome)}</b></div>` : ''}
+      </div>
+      ${p.cancelamento_motivo ? `<p class="rh-sub">${esc(p.cancelamento_motivo)}</p>` : ''}
+      ${p.historico.length ? `<div class="rh-hist-linha">
+        ${p.historico.map(h => `<div class="rh-hist-passo">
+          <span class="data">${rhData(h.movido_em)}</span>
+          <span>${esc(RH_ETAPA_NOME[h.de_etapa] || h.de_etapa || 'início')} → <b>${esc(RH_ETAPA_NOME[h.para_etapa] || h.para_etapa)}</b></span>
+          ${h.usuario ? `<span class="quem">${esc(h.usuario)}</span>` : ''}
+          ${h.observacao ? `<span class="obs">${esc(h.observacao)}</span>` : ''}
+        </div>`).join('')}
+      </div>` : ''}
+      ${p.situacao === 'cancelada' ? `<div class="rh-acoes">
+        <button class="btn sm" data-hist-reabrir="${p.id}">Reabrir este processo</button></div>` : ''}
+    </div>`;
+  }).join('');
+  $('#modal-body').querySelectorAll('[data-hist-reabrir]').forEach(x =>
+    x.onclick = () => rhReabrirProcesso(Number(x.dataset.histReabrir), nome));
 }
 
 // Encerrado não tem etapa que signifique alguma coisa — o card parou onde
@@ -9077,6 +9130,8 @@ function rhTabelaEncerrados(cards) {
         <td>${parte} ${esc(a.motivo_nome || '— não classificado —')}${
           a.cancelamento_motivo ? `<span class="rh-sub">${esc(a.cancelamento_motivo)}</span>` : ''}</td>
         <td class="actions">
+          <button class="btn-ic" data-historico="${a.colaborador_id}" data-nome="${esc(a.colaborador_nome)}"
+            title="Ver todos os processos desta pessoa na empresa" aria-label="Histórico">🕘</button>
           <button class="btn-ic" data-reabrir="${a.id}" data-nome="${esc(a.colaborador_nome)}"
             title="Reabrir o processo no quadro" aria-label="Reabrir">↩</button>
           <button class="btn-ic perigo" data-excluir-cand="${a.colaborador_id}" data-nome="${esc(a.colaborador_nome)}"

@@ -5755,3 +5755,59 @@ dezesseis suítes continuam passando.
 
 Medido na tela com o `styles.css` real: os dois seletores cabem lado a lado a 1600px sem quebrar, e o
 "+ Novo candidato" continua na borda direita.
+
+## 2026-09-21 — Sessão 117: candidato arquivado não é colaborador arquivado
+
+**Solicitação:** *"Acabei de encerrar o processo seletivo de um candidato e ele foi 'arquivado', o que
+está correto, porém ele foi arquivado na lista de 'Colaboradores' o que não acho correto (...) Queria
+montar um histórico do candidato (...) mostrando os processos que ele passou aqui dentro (...) Quero
+também após o arquivamento poder reabrir o candidato pra vaga que ele tava correndo atualmente ou
+anteriormente também."*
+
+### O defeito
+
+Encerrar uma candidatura já arquivava o candidato corretamente (`arquivado_em` em `erp_colaboradores`) —
+isso está certo desde a sessão que criou o fluxo de encerramento. O problema é que a lista
+**Colaboradores › Arquivados** mostrava esse arquivamento junto do de um **ex-funcionário real**, sem
+distinguir os dois. Um candidato que nunca trabalhou aqui aparecia ao lado de gente que trabalhou e saiu
+— no lugar errado, porque "Colaboradores" é, por definição, quem já foi da casa.
+
+A raiz: a condição SQL de `?arquivados=1` checava só `arquivado_em IS NOT NULL`, sem olhar se a pessoa
+teve vínculo alguma vez. O sistema já tinha o critério certo em outro lugar — `rhEhCandidato()`, usado no
+próprio encerramento — só não estava aplicado aqui.
+
+### O conserto
+
+**Uma condição a mais** na consulta: `arquivado_em IS NOT NULL AND v.id IS NOT NULL` — só entra quem já
+teve vínculo. Candidato fica só no Quadro de admissão, na aba "Encerrados sem contratação", que é onde
+sempre esteve (a aba já existia; o problema era a duplicidade em Colaboradores). O texto da tela passou a
+dizer isso explicitamente.
+
+**Histórico do candidato** — endpoint novo, `GET /api/rh/colaboradores/:id/candidaturas`, sem migração:
+tudo já estava nas tabelas existentes. Devolve **todos** os processos que a pessoa já teve na empresa (não
+só o mais recente), cada um com a vaga, até onde chegou, motivo de ter parado, e o passo a passo completo
+de `erp_rh_admissao_hist`. Um botão "🕘 Histórico" na linha de cada encerrado abre isso num modal — cada
+processo é uma seção com a linha do tempo embaixo.
+
+**Reabrir** já existia (`POST /api/rh/admissoes/:id/reabrir`) e já fazia exatamente o que foi pedido:
+devolve o processo à vaga que ele já tinha, na etapa em que parou, desarquivando a pessoa junto. Não
+precisou de nada novo — só ficou **acessível de dentro do histórico**, processo por processo, então
+"reabrir a vaga anterior" deixa de depender de lembrar um ID e vira escolher a linha certa.
+
+### Por que não criei uma segunda lista de "arquivados"
+
+O usuário sugeriu criar uma lista nova; o sistema já tinha uma — a aba "Encerrados sem contratação" do
+Quadro. Criar outra faria o candidato aparecer em dois lugares de novo, do jeito oposto. O ajuste ficou
+em consertar o filtro que estava errado, não em somar mais uma tela.
+
+### Verificação
+
+`verifica-historico-candidato.js`, 16 asserções: o candidato encerrado sumindo de Colaboradores e
+aparecendo no Quadro; um ex-funcionário arquivado pela rota de desligamento continuando em Colaboradores
+normalmente; o histórico juntando dois processos de vagas diferentes da mesma pessoa, mais recente
+primeiro, cada um com o passo a passo próprio (não misturado com o do outro processo) em ordem
+cronológica; pessoa inexistente dando 404; e a tela tendo o botão, chamando o endpoint certo e reabrindo
+pelo mesmo fluxo de sempre. As dezessete suítes passam.
+
+Medido na tela com o `styles.css` real: cada processo vira uma seção com a situação ao lado do título e a
+linha do tempo abaixo, legível mesmo com quatro passos.

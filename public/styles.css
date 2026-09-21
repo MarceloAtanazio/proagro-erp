@@ -991,6 +991,19 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-grid.curta { grid-template-columns: repeat(auto-fit, minmax(210px, 320px)); }
 .rh-acoes { display: flex; justify-content: flex-end; margin-top: 4px; }
 
+/* Histórico de candidaturas: um .rh-sec por processo, com a situação colada no
+   título (o h4 já é flex) e o passo a passo como uma lista compacta abaixo —
+   não é mais uma grade de campos, é uma linha do tempo, então o layout muda. */
+.rh-hist-proc h4 { justify-content: space-between; }
+.rh-hist-sit { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.rh-hist-linha { margin-top: 10px; border-top: 1px solid #EAF0EC; padding-top: 10px; }
+.rh-hist-passo { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  font-size: 12.5px; color: var(--ink-2); padding: 3px 0; }
+.rh-hist-passo .data { color: var(--muted); min-width: 74px; }
+.rh-hist-passo .quem { color: var(--muted); }
+.rh-hist-passo .obs { color: var(--muted); font-style: italic; }
+.rh-carregando { color: var(--muted); font-size: 13.5px; padding: 20px 0; text-align: center; }
+
 /* Leitura do vínculo: rótulo à esquerda, valor à direita, alinhados numa grade
    — mais legível que campos desabilitados, que parecem editáveis e não são. */
 .rh-linhas { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 28px; }

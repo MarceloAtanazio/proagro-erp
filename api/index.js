@@ -2405,8 +2405,13 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
      -- desativado continua aqui — tem vínculo, é histórico.
      -- Arquivado só aparece quando pedido: ?arquivados=1 mostra APENAS eles,
      -- que é como se consulta um ex-funcionário — não misturado à equipe atual.
+     -- E o MESMO "v.id IS NOT NULL" da outra vista vale aqui: candidato cuja
+     -- candidatura foi encerrada também fica com arquivado_em preenchido, mas
+     -- nunca teve vínculo — pertence ao Quadro (aba "Encerrados"), não a esta
+     -- lista de gente que já trabalhou aqui. Sem essa condição ele aparecia
+     -- nos dois lugares como se fosse ex-funcionário.
      WHERE ${req.query.arquivados === '1'
-       ? 'c.arquivado_em IS NOT NULL'
+       ? 'c.arquivado_em IS NOT NULL AND v.id IS NOT NULL'
        : 'c.arquivado_em IS NULL AND (c.ativo = true OR v.id IS NOT NULL)'}
      ORDER BY c.ativo DESC, c.name`);
   const out = rows.map(r => {
@@ -3445,6 +3450,47 @@ async function rhEhCandidato(colabId) {
   const a = await query(`SELECT 1 FROM erp_rh_admissoes WHERE colaborador_id=$1 AND situacao='concluida' LIMIT 1`, [colabId]);
   return !a.length;
 }
+
+// Histórico completo de um candidato na empresa: TODOS os processos que ele já
+// teve, não só o mais recente — quem tentou duas vagas em épocas diferentes
+// tem duas linhas aqui, cada uma com a vaga, até onde chegou e o motivo de ter
+// parado. Sem isso, reabrir "a vaga anterior" dependia de a pessoa lembrar o ID
+// do processo certo em vez de ver a lista.
+app.get('/api/rh/colaboradores/:id/candidaturas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const colab = (await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [id]))[0];
+  if (!colab) return res.status(404).json({ error: 'Não encontrado.' });
+
+  const admissoes = await query(`
+    SELECT a.id, a.etapa, a.situacao, a.cargo_pretendido, a.nivel_pretendido, a.departamento,
+           a.vaga_id, vg.cargo AS vaga_cargo, vg.departamento AS vaga_departamento,
+           a.admissao_prevista, a.created_at, a.encerrada_em, a.cancelamento_tipo,
+           a.cancelamento_motivo, a.vinculo_id, u.name AS responsavel_nome
+      FROM erp_rh_admissoes a
+      LEFT JOIN erp_rh_vagas vg ON vg.id = a.vaga_id
+      LEFT JOIN erp_users u ON u.id = a.responsavel_id
+     WHERE a.colaborador_id = $1
+     ORDER BY a.created_at DESC`, [id]);
+
+  // O passo a passo de cada processo, numa consulta só para todos eles — uma
+  // pessoa com quatro tentativas não vira quatro idas ao banco.
+  const ids = admissoes.map(a => a.id);
+  const hist = ids.length ? await query(`
+    SELECT h.admissao_id, h.de_etapa, h.para_etapa, h.observacao, h.movido_em, u.name AS usuario
+      FROM erp_rh_admissao_hist h
+      LEFT JOIN erp_users u ON u.id = h.movido_por
+     WHERE h.admissao_id = ANY($1::int[])
+     ORDER BY h.movido_em`, [ids]) : [];
+  const historicoPor = {};
+  hist.forEach(h => { (historicoPor[h.admissao_id] ||= []).push(h); });
+
+  const processos = admissoes.map(a => {
+    const mot = rhMotivoEncerrar(a.cancelamento_tipo);
+    return { ...a, motivo_nome: mot ? mot.nome : null, parte: mot ? mot.parte : null,
+             historico: historicoPor[a.id] || [] };
+  });
+  res.json({ colaborador: colab, processos });
+}));
 
 app.post('/api/rh/admissoes/:id/encerrar', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const id = Number(req.params.id);
