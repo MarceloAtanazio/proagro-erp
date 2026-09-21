@@ -985,7 +985,24 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   color: var(--danger); border: 1px solid #E3B4B0; border-radius: 3px; padding: 2px 5px; }
 .rh-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 16px; }
 .rh-grid .field { margin-bottom: 12px; }
+/* Dois campos sozinhos num modal de 1040px viravam duas caixas de ~500px para
+   um telefone e um e-mail. O teto de 320px mantém o par com cara de formulário
+   em vez de duas faixas atravessando a tela. */
+.rh-grid.curta { grid-template-columns: repeat(auto-fit, minmax(210px, 320px)); }
 .rh-acoes { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* Histórico de candidaturas: um .rh-sec por processo, com a situação colada no
+   título (o h4 já é flex) e o passo a passo como uma lista compacta abaixo —
+   não é mais uma grade de campos, é uma linha do tempo, então o layout muda. */
+.rh-hist-proc h4 { justify-content: space-between; }
+.rh-hist-sit { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.rh-hist-linha { margin-top: 10px; border-top: 1px solid #EAF0EC; padding-top: 10px; }
+.rh-hist-passo { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  font-size: 12.5px; color: var(--ink-2); padding: 3px 0; }
+.rh-hist-passo .data { color: var(--muted); min-width: 74px; }
+.rh-hist-passo .quem { color: var(--muted); }
+.rh-hist-passo .obs { color: var(--muted); font-style: italic; }
+.rh-carregando { color: var(--muted); font-size: 13.5px; padding: 20px 0; text-align: center; }
 
 /* Leitura do vínculo: rótulo à esquerda, valor à direita, alinhados numa grade
    — mais legível que campos desabilitados, que parecem editáveis e não são. */
@@ -996,6 +1013,39 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 /* Um vínculo encerrado no histórico: cabeçalho com o período e o cargo, e
    abaixo como o contrato terminou. Vários vínculos empilhados precisam de
    separação visível, senão viram uma lista só e o leitor perde de quem é o quê. */
+/* Vagas. Cartões em grade que se adapta: uma vaga é um bloco de informação
+   curto, e enfileirá-las verticalmente numa tela larga desperdiça a tela. */
+.rh-vagas { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px; margin-bottom: 16px; }
+.rh-vaga { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px 18px; }
+/* Vaga fechada continua na lista — é ela que explica por onde a pessoa entrou —
+   mas apagada, para não competir com as que ainda pedem trabalho. */
+.rh-vaga.fechada { opacity: .62; }
+.rh-vaga-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.rh-vaga-cab b { display: block; font-size: 14.5px; color: var(--ink); }
+.rh-vaga-cab span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.rh-vaga .rh-tiras { margin: 12px 0 0; }
+.rh-vaga-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid #EAF0EC; }
+
+/* Criar cargo sem sair do formulário. Nasce embaixo do select, destacado do
+   resto para ficar claro que é um desvio momentâneo e não mais um campo do
+   cadastro que está sendo preenchido.
+   `grid-column` porque o select vive numa .form-row de duas colunas: sem isto o
+   bloco virava a célula seguinte e aparecia ao lado do campo vizinho. */
+.rh-cargo-novo { grid-column: 1 / -1; background: var(--verde-050);
+  border: 1px solid #CDE5D6; border-radius: 10px; padding: 12px 14px; margin: -4px 0 14px; }
+.rh-cargo-novo-tit { font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--verde-700); margin-bottom: 8px; }
+/* O nome ocupa a linha toda: é o campo que a pessoa veio preencher, e dividi-lo
+   com caixa e botões dava um campo estreito para um texto que é longo. */
+.rh-cargo-novo input[type="text"] { width: 100%; }
+.rh-cargo-novo-pe { display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 10px; margin-top: 10px; }
+.rh-cargo-novo-acoes { display: flex; gap: 8px; margin-left: auto; }
+.rh-cargo-novo .campo-aviso { margin-top: 8px; }
+
 /* Tiras de métrica do vínculo: duração, fase, aviso. Quebram em linha em vez de
    encolher, porque número espremido some — e são a resposta rápida da tela. */
 .rh-tiras { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
@@ -1020,9 +1070,12 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-vinc-campo dt { font-size: 10.5px; color: var(--muted); text-transform: uppercase;
   letter-spacing: .04em; margin-bottom: 3px; }
 .rh-vinc-campo dd { font-size: 13.5px; color: var(--ink); font-weight: 600; line-height: 1.45; }
-/* Texto corrido ocupa a linha toda: motivo e observação são frases, não rótulos
-   curtos, e espremidos numa coluna de 300px viram uma escada de quebras. */
-.rh-vinc-campo.largo { grid-column: 1 / -1; max-width: 900px; }
+/* Texto corrido ocupa a linha toda, sem teto de largura: motivo e observação
+   são frases, e cortá-las em 900px fazia quebrar cedo com meia tela vazia à
+   direita. Em monitor muito largo a linha fica longa para os padrões
+   tipográficos — mas ler uma frase inteira de uma vez vale mais aqui do que a
+   medida ideal de coluna. */
+.rh-vinc-campo.largo { grid-column: 1 / -1; }
 .rh-vinc-campo.largo dd { font-weight: 500; color: var(--ink-2); }
 /* Complemento do valor — "por Fulano", "comunicado em" — pesa menos que o fato. */
 .rh-vinc-fraco { font-weight: 400; color: var(--muted); }
@@ -1100,6 +1153,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-kcard .chk { color: var(--muted); font-variant-numeric: tabular-nums; }
 .rh-kcard .lib { color: var(--verde-700); font-weight: 600; }
 .rh-kcard .pend { color: var(--danger); font-weight: 600; }
+.rh-kcard[draggable="true"] { cursor: grab; }
+/* O card some do lugar de origem enquanto arrasta (o navegador já desenha um
+   "fantasma" dele seguindo o cursor) — sem isto ficariam dois, um parado e um
+   arrastando. */
+.rh-kcard.arrastando { opacity: .35; }
+/* A coluna-alvo precisa ficar óbvia ANTES de soltar — senão "arrastar" vira
+   adivinhar se o navegador registrou o drop na coluna certa. */
+.rh-col.rh-col-alvo { background: var(--verde-050); border-color: var(--verde-500); }
 
 /* Trilha das etapas dentro do card aberto */
 .rh-trilha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
@@ -1189,7 +1250,9 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 
 /* Distribuição: rótulo, trilho, valor. O trilho tem largura fixa para as barras
    ficarem comparáveis entre si, que é o único motivo de existirem. */
-.rh-barras { display: flex; flex-direction: column; gap: 5px; }
+/* Sem isto, a barra que vem logo depois de um `.kpis` (sem `h5` entre os
+   dois, caso de "por parte de quem") colava direto na borda dos cartões. */
+.rh-barras { display: flex; flex-direction: column; gap: 5px; margin-top: 14px; }
 .rh-barra-linha { display: grid; grid-template-columns: minmax(80px, 1fr) 2.2fr auto; gap: 9px;
   align-items: center; font-size: 12.5px; }
 .rh-barra-linha .rot { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1202,14 +1265,51 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 
 /* Movimentação: 12 colunas de duas barras. Admissão sobe verde, desligamento
    sobe vermelho, lado a lado no mesmo mês. */
-.rh-mov { display: flex; align-items: flex-end; gap: 4px; height: 88px; }
-.rh-mov-mes { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+/* Movimentação mensal. Era 88px de altura com barras de 7px fixos: numa faixa
+   de 1700px cada mês ganhava ~140px de coluna e gastava 14 deles, então o
+   gráfico era quase todo espaço vazio e as alturas ficavam indistinguíveis.
+   Agora a barra cresce com a coluna (até um teto, para não virar bloco em
+   telas largas) e o gráfico tem altura para as diferenças aparecerem. */
+/* Em tela estreita, doze meses com o rótulo "out/25" não cabem: ou o gráfico
+   rola sozinho, ou empurra a página inteira para o lado. Rola aqui dentro, como
+   as tabelas largas fazem. O `padding-top` reserva o espaço da etiqueta, que
+   sobe acima da barra e seria cortada pelo `overflow`. */
+.rh-mov-rolagem { overflow-x: auto; overflow-y: visible; padding-top: 34px; margin-top: -34px; }
+.rh-mov { display: flex; align-items: flex-end; gap: 6px; height: 150px; min-width: 560px;
+  border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.rh-mov-mes { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  height: 100%; position: relative; border-radius: 6px 6px 0 0; }
+/* O mês inteiro reage ao mouse, não só a barra: em mês sem movimento não há
+   barra nenhuma para mirar, e é exatamente aí que se quer confirmar o zero. */
+.rh-mov-mes:hover { background: #F3F7F4; }
+/* A etiqueta sai na hora, com o mês por extenso e os dois números. O `title`
+   nativo demora quase um segundo e não dá para formatar. */
+.rh-mov-mes::after { content: attr(data-dica); position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%); background: var(--ink); color: #fff; font-size: 11.5px; font-weight: 500;
+  padding: 6px 10px; border-radius: 6px; white-space: nowrap; opacity: 0; pointer-events: none;
+  transition: opacity .12s; z-index: 5; box-shadow: var(--shadow); }
+.rh-mov-mes:hover::after { opacity: 1; }
+/* Nos dois primeiros e nos dois últimos a etiqueta encostaria na borda do
+   cartão; ancorar pela ponta a mantém dentro. */
+.rh-mov-mes:nth-child(-n+2)::after { left: 0; transform: none; }
+.rh-mov-mes:nth-last-child(-n+2)::after { left: auto; right: 0; transform: none; }
 .rh-mov-mes .col { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center;
-  gap: 2px; border-bottom: 1px solid var(--line); }
-.rh-mov-mes .col i { width: 7px; border-radius: 2px 2px 0 0; min-height: 1px; }
+  gap: 4px; padding: 0 6px; }
+/* `flex` com teto: a barra ocupa a coluna disponível e para de crescer em 30px,
+   para não virar um bloco em monitor largo. Sem `min-height`: mês sem
+   movimento não desenha barra (o HTML nem a cria), porque um risco de 1px onde
+   o valor é zero mostra atividade em mês parado. */
+.rh-mov-mes .col i { flex: 1 1 0; max-width: 30px; border-radius: 4px 4px 0 0;
+  position: relative; transition: filter .12s; }
+.rh-mov-mes:hover .col i { filter: brightness(1.12); }
+/* O número em cima da barra: dispensa o hover para quem só quer bater o olho. */
+.rh-mov-mes .col i b { position: absolute; bottom: calc(100% + 3px); left: 50%; transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .rh-mov-mes .col i.adm { background: var(--verde-700); }
+.rh-mov-mes .col i.adm b { color: var(--verde-700); }
 .rh-mov-mes .col i.des { background: var(--danger); }
-.rh-mov-mes .mes { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rh-mov-mes .col i.des b { color: var(--danger); }
+.rh-mov-mes .mes { font-size: 11px; color: var(--muted); }
 .rh-legenda { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); margin-top: 8px; }
 .rh-legenda .l { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .rh-legenda .l.adm { background: var(--verde-700); }
@@ -1227,6 +1327,28 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
   background: #fff; min-width: 220px;
 }
+
+/* Organograma: árvore por indentação, com uma linha vertical guiando cada
+   nível — o mesmo desenho de um explorador de arquivos. Um diagrama de caixas
+   ligadas por linhas horizontais fica mais bonito, mas quebra em telas
+   estreitas e em ciclos com muitos filhos; indentado é o que se mantém
+   legível em qualquer largura e com qualquer profundidade. */
+.rh-org { padding: 6px 0; overflow-x: auto; }
+.rh-org-no { position: relative; }
+.rh-org-cartao { display: inline-flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 14px; margin: 4px 0; font-size: 13px; transition: opacity .15s; }
+.rh-org-cartao b { color: var(--ink); font-weight: 700; white-space: nowrap; }
+.rh-org-cartao .cargo { color: var(--ink-2); white-space: nowrap; }
+.rh-org-cartao .depto { font-size: 11px; font-weight: 600; color: var(--verde-700);
+  background: var(--verde-050); border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
+.rh-org-cartao .qtd { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.rh-org-cartao.rh-org-fora { opacity: .28; }
+.rh-org-toggle { border: none; background: none; cursor: pointer; color: var(--muted);
+  font-size: 11px; padding: 0 2px; line-height: 1; }
+.rh-org-toggle:hover { color: var(--ink); }
+.rh-org-filhos { margin-left: 26px; padding-left: 16px; border-left: 2px solid var(--line); }
+.rh-org-filhos.rh-org-fechado { display: none; }
 
 /* Lista de processos encerrados. Grade própria: o motivo é o conteúdo da tela,
    então é ele que fica com a sobra — no gabarito da lista de colaboradores quem

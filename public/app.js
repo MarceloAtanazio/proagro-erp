@@ -2780,8 +2780,14 @@ async function renderFornecedores() {
   draw();
 }
 
-function formFornecedor(r) {
+async function formFornecedor(r) {
   const isEdit = !!r; r = r || {};
+  // Colaboradores que ainda não têm fornecedor ficam no topo, porque são
+  // exatamente os que precisam de um — e o que já é dono deste continua na
+  // lista para a ligação não se perder ao editar.
+  const colabs = await api('/api/suppliers/colaboradores').catch(() => []);
+  const opcoesColab = [...colabs].sort((a, b) =>
+    (!!a.fornecedor_id - !!b.fornecedor_id) || a.name.localeCompare(b.name, 'pt-BR'));
   openModal(isEdit ? 'Editar fornecedor' : 'Novo fornecedor', `
     ${fld('s-name', 'Razão social *', 'text', r.name || '')}
     <div class="form-row">
@@ -2798,13 +2804,27 @@ function formFornecedor(r) {
     </div>
     ${fld('s-pix', 'Chave PIX', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
     ${fldSel('s-status', 'Status', [{ v: 'ativo', t: 'Ativo' }, { v: 'inativo', t: 'Inativo' }], r.status || 'ativo')}
-    ${fld('s-notes', 'Observações', 'text', r.notes || '')}`,
+    ${fld('s-notes', 'Observações', 'text', r.notes || '')}
+    ${/* A ligação com o colaborador é o que faz a aba Financeiro da ficha achar
+          os títulos da pessoa. A coluna existia desde setembro, mas não havia
+          campo nenhum para preenchê-la: a única ligação possível tinha sido
+          uma semeadura por nome, e quem foi cadastrado depois ficou de fora
+          sem que nada avisasse. */''}
+    ${fldSel('s-colaborador', 'É um colaborador?',
+      [{ v: '', t: '— não é colaborador —' },
+       ...opcoesColab.map(c => ({ v: c.id,
+         t: c.name + (c.fornecedor_id && c.fornecedor_id !== r.id ? ' — já tem fornecedor' : '') }))],
+      r.colaborador_id || '')}
+    <p class="rh-custo-nota" style="margin-top:-8px">Ligando ao colaborador, os títulos deste fornecedor
+      passam a aparecer na aba <strong>Financeiro</strong> da ficha dele — é assim que a folha lançada
+      aqui vira histórico de pagamento lá.</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: isEdit ? 'Salvar alterações' : 'Cadastrar', cls: 'primary', onClick: async () => {
         const body = {
           name: $('#s-name').value, cnpj: $('#s-cnpj').value, category: $('#s-cat').value,
           contact_name: $('#s-contact').value, phone: $('#s-phone').value, email: $('#s-email').value,
-          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, status: $('#s-status').value, notes: $('#s-notes').value
+          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, status: $('#s-status').value, notes: $('#s-notes').value,
+          colaborador_id: $('#s-colaborador').value || null
         };
         try {
           if (isEdit) await api('/api/suppliers/' + r.id, { method: 'PUT', body });
@@ -8743,14 +8763,130 @@ const RH_INSTRUCAO = ['Fundamental incompleto', 'Fundamental completo', 'Médio 
 const RH_RACA = ['Branca', 'Preta', 'Parda', 'Amarela', 'Indígena', 'Não declarada'];
 const RH_PARENTESCO = ['filho(a)', 'cônjuge', 'companheiro(a)', 'enteado(a)', 'pai/mãe', 'tutelado(a)', 'outro'];
 
-// O catálogo de cargos definido pela empresa. Analistas e Técnico de Campo têm
-// níveis; os demais, não — por isso a lista de níveis depende do cargo.
-const RH_CARGOS = ['CEO', 'Gerente de Campo', 'Gerente Administrativo', 'Gerente de Subscrição',
-  'Gerente Comercial', 'Coordenador de Campo', 'Coordenador Administrativo', 'Coordenador de Subscrição',
-  'Coordenador Comercial', 'Analista Administrativo', 'Analista de Subscrição', 'Analista de Riscos',
-  'Analista de Sinistros', 'Técnico de Campo'];
-const RH_CARGOS_COM_NIVEL = ['Analista Administrativo', 'Analista de Subscrição', 'Analista de Riscos',
-  'Analista de Sinistros', 'Técnico de Campo'];
+// Os cargos vêm do banco (erp_rh_cargos), não de uma constante: contratar
+// alguém num cargo novo não pode depender de um deploy — é o organograma da
+// empresa, não uma decisão de engenharia.
+//
+// A lista abaixo é só o ponto de partida enquanto a requisição não volta, e o
+// que sobra se ela falhar. Um select de cargo vazio trava o cadastro inteiro;
+// um select com a lista de ontem deixa trabalhar.
+// Os nomes são UNISSEX, com "(a)" em quem flexiona. Não é estética: o catálogo
+// já tinha nascido com "Coordenador de Campo" E "Coordenadora de Campo", duas
+// linhas para a mesma função. Enquanto o nome carregar gênero, isso se repete a
+// cada contratação — e o filtro por cargo passa a mostrar duas entradas que
+// parecem as duas certas. "Gerente" e "Analista" ficam como estão: já são
+// comuns de dois gêneros, e marcá-los seria ruído.
+let RH_CARGOS_CAT = [
+  { nome: 'CEO', tem_nivel: false }, { nome: 'Gerente de Campo', tem_nivel: false },
+  { nome: 'Gerente Administrativo', tem_nivel: false }, { nome: 'Gerente de Subscrição', tem_nivel: false },
+  { nome: 'Gerente Comercial', tem_nivel: false }, { nome: 'Coordenador(a) de Campo', tem_nivel: false },
+  { nome: 'Coordenador(a) Administrativo(a)', tem_nivel: false }, { nome: 'Coordenador(a) de Subscrição', tem_nivel: false },
+  { nome: 'Coordenador(a) Comercial', tem_nivel: false }, { nome: 'Analista Administrativo', tem_nivel: true },
+  { nome: 'Analista de Subscrição', tem_nivel: true }, { nome: 'Analista de Riscos', tem_nivel: true },
+  { nome: 'Analista de Sinistros', tem_nivel: true }, { nome: 'Técnico(a) de Campo', tem_nivel: true }
+].map(c => ({ ...c, ativo: true }));
+
+// Cargo inativo continua no catálogo para o histórico, mas some do select —
+// menos quando é o cargo que a pessoa JÁ tem: aí ele precisa aparecer, ou abrir
+// a ficha para mudar outra coisa apagaria o cargo dela sem ninguém pedir.
+const rhCargos = atual => RH_CARGOS_CAT
+  .filter(c => c.ativo || c.nome === atual)
+  .map(c => c.nome);
+const rhCargoTemNivel = nome => !!(RH_CARGOS_CAT.find(c => c.nome === nome) || {}).tem_nivel;
+
+const RH_CARGO_NOVO = '__novo_cargo__';
+const rhOpcoesCargo = (atual, podeCriar) => [
+  ...rhOpcoes(rhCargos(atual), '— selecione —'),
+  ...(podeCriar ? [{ v: RH_CARGO_NOVO, t: '+ Adicionar cargo…' }] : [])
+];
+
+async function rhCarregarCargos() {
+  try {
+    const lista = await api('/api/rh/cargos');
+    if (Array.isArray(lista) && lista.length) RH_CARGOS_CAT = lista;
+  } catch { /* fica a lista anterior: select vazio travaria o cadastro */ }
+}
+
+// Criar cargo SEM sair do formulário.
+//
+// A saída óbvia seria abrir um modal de "novo cargo", e ela é uma armadilha: o
+// select de cargo vive dentro de outro modal — o de admissão, o de vínculo —, e
+// abrir um segundo por cima destrói o primeiro com tudo o que já foi digitado.
+// Por isso o campo nasce embaixo do próprio select.
+function rhLigarSelectCargo(idSel, aoMudar) {
+  const sel = $('#' + idSel);
+  if (!sel) return;
+  const campo = sel.closest('.field') || sel.parentElement;
+  const cx = idSel + '-novo';
+  // Onde o bloco entra importa.
+  //
+  // O select costuma morar numa `.form-row`, que é uma grade de duas colunas.
+  // Solto logo depois do campo, ele virava a CÉLULA SEGUINTE — aparecia ao lado
+  // do CPF como se fosse mais um campo do cadastro. Forçado a ocupar a linha
+  // inteira, passava a empurrar o campo vizinho para baixo, e a tela inteira
+  // andava só por abrir uma caixa.
+  //
+  // Entrando no FIM da linha, nada se move: os campos ficam onde estavam e o
+  // bloco aparece embaixo deles, ocupando a largura toda.
+  const linha = sel.closest('.form-row');
+  const html = `<div class="rh-cargo-novo" id="${cx}" hidden>
+    <div class="rh-cargo-novo-tit">Novo cargo</div>
+    <input type="text" id="${cx}-nome" maxlength="80" autocomplete="off"
+      placeholder="Ex.: Coordenador(a) Comercial">
+    <div class="rh-cargo-novo-pe">
+      <label class="check-chip"><input type="checkbox" id="${cx}-nivel"> Tem Júnior/Pleno/Sênior</label>
+      <span class="rh-cargo-novo-acoes">
+        <button type="button" class="btn sm" id="${cx}-cancela">Cancelar</button>
+        <button type="button" class="btn sm primary" id="${cx}-ok">Adicionar</button>
+      </span>
+    </div>
+    <div class="campo-aviso" id="${cx}-erro" hidden></div>
+  </div>`;
+  if (linha) linha.insertAdjacentHTML('beforeend', html);
+  else campo.insertAdjacentHTML('afterend', html);
+
+  const caixa = $('#' + cx), erro = $('#' + cx + '-erro');
+  let anterior = sel.value;
+  const fechar = () => { caixa.hidden = true; erro.hidden = true; $('#' + cx + '-nome').value = ''; $('#' + cx + '-nivel').checked = false; };
+
+  sel.addEventListener('change', () => {
+    if (sel.value !== RH_CARGO_NOVO) { anterior = sel.value; fechar(); if (aoMudar) aoMudar(); return; }
+    // Volta o select ao que estava: se o usuário desistir, não fica com a opção
+    // sentinela selecionada e um cargo inválido no corpo da requisição.
+    //
+    // E reavisa o formulário. O `onchange` dele já rodou com o sentinela no
+    // valor — "__novo_cargo__" não tem níveis —, então o campo Nível ficou
+    // desabilitado por causa de uma opção que nem é um cargo.
+    sel.value = anterior;
+    if (aoMudar) aoMudar();
+    caixa.hidden = false;
+    $('#' + cx + '-nome').focus();
+  });
+  $('#' + cx + '-cancela').onclick = fechar;
+  // Enter grava, Esc desiste. Quem está preenchendo um cadastro está com as
+  // mãos no teclado; obrigar a buscar o botão para escrever duas palavras é o
+  // tipo de atrito que faz a pessoa desistir do caminho certo.
+  $('#' + cx + '-nome').onkeydown = ev => {
+    if (ev.key === 'Enter') { ev.preventDefault(); $('#' + cx + '-ok').click(); }
+    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); fechar(); sel.focus(); }
+  };
+  $('#' + cx + '-ok').onclick = async () => {
+    const nome = $('#' + cx + '-nome').value.trim();
+    if (!nome) { erro.textContent = 'Informe o nome do cargo.'; erro.hidden = false; $('#' + cx + '-nome').focus(); return; }
+    try {
+      const novo = await api('/api/rh/cargos', { method: 'POST',
+        body: { nome, tem_nivel: $('#' + cx + '-nivel').checked } });
+      RH_CARGOS_CAT = [...RH_CARGOS_CAT, novo].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+      // Redesenha as opções e já deixa o cargo novo escolhido — é para isso que
+      // a pessoa veio; obrigá-la a procurá-lo na lista seria metade do caminho.
+      sel.innerHTML = rhOpcoesCargo(novo.nome, true)
+        .map(o => `<option value="${esc(o.v)}" ${o.v === novo.nome ? 'selected' : ''}>${esc(o.t)}</option>`).join('');
+      anterior = novo.nome;
+      fechar(); toast(`Cargo “${novo.nome}” adicionado.`);
+      if (aoMudar) aoMudar();
+    } catch (e) { erro.textContent = e.message; erro.hidden = false; }
+  };
+}
 const RH_NIVEIS = [{ v: '', t: '—' }, { v: 'junior', t: 'Júnior' }, { v: 'pleno', t: 'Pleno' }, { v: 'senior', t: 'Sênior' }];
 
 const RH_TIPO_VINCULO = [{ v: 'clt', t: 'CLT' }, { v: 'pj', t: 'PJ' }, { v: 'estagio', t: 'Estágio' },
@@ -8802,11 +8938,20 @@ const rhTxt = v => (v == null || v === '' ? '—' : String(v));
 // ============================================================
 
 const RH_ETAPA_ICONE = {
+  triagem: '🔎', entrevista: '💬',
   carta_oferta: '✉', documentacao: '📄', exame_admissional: '🩺',
   contrato: '✍', contas_acessos: '🔑', onboarding: '🎒'
 };
 // O que cada etapa pede para ser concluída — vira o formulário do card.
 const RH_ETAPA_CAMPOS = {
+  // A triagem não tem campo próprio: o que ela cobra é contato, que já mora na
+  // aba Contato da ficha. Campo repetido aqui seria um segundo lugar para o
+  // mesmo dado, e o card e a ficha começariam a discordar.
+  triagem: [],
+  entrevista: [
+    { c: 'entrevista_em', r: 'Entrevista em', t: 'date' },
+    { c: 'entrevista_notas', r: 'Como foi', t: 'text' }
+  ],
   carta_oferta: [
     { c: 'oferta_enviada_em', r: 'Carta oferta enviada em', t: 'date' },
     { c: 'oferta_aceita_em', r: 'Aceita em', t: 'date' }
@@ -8839,19 +8984,42 @@ let RH_ABA = 'painel';   // painel | pessoas | quadro | minutas
 // card simplesmente sumir, e não haveria onde responder "o que aconteceu com
 // aquele candidato?" — nem de onde reabrir o processo.
 let RH_QUADRO_VISTA = 'andamento';   // andamento | cancelada
+// '' = todas as vagas; 'sem' = só quem não tem vaga vinculada; ou o ID da vaga.
+// Fica em variável de módulo, como RH_QUADRO_VISTA, para sobreviver a um
+// re-render (abrir um card e voltar) sem perder o filtro que a pessoa escolheu.
+let RH_QUADRO_VAGA = '';
 
 async function rhQuadro(c) {
-  const d = await api('/api/rh/admissoes?situacao=' + RH_QUADRO_VISTA);
-  const cards = d.cards || [];
+  const ed = canEditPage('rh');
+  const [d, vagas] = await Promise.all([
+    api('/api/rh/admissoes?situacao=' + RH_QUADRO_VISTA),
+    api('/api/rh/vagas').catch(() => [])
+  ]);
+  const todosCards = d.cards || [];
   const n = d.contagem || { andamento: 0, cancelada: 0 };
   const encerrados = RH_QUADRO_VISTA === 'cancelada';
+
+  // Com 10 vagas abertas e 60 candidatos, cada coluna do kanban vira uma lista
+  // ilegível — o filtro existe para isolar "os candidatos desta vaga", que é a
+  // mesma pergunta que a tela de Vagas já responde com "Candidatos (N)".
+  const cards = RH_QUADRO_VAGA === '' ? todosCards
+    : RH_QUADRO_VAGA === 'sem' ? todosCards.filter(a => !a.vaga_id)
+    : todosCards.filter(a => String(a.vaga_id) === RH_QUADRO_VAGA);
+  const vagaAtual = vagas.find(v => String(v.id) === RH_QUADRO_VAGA);
 
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-quadro-topo">
       <span class="rh-quadro-dica">${encerrados
-        ? 'Processos que <strong>não viraram contratação</strong>. A pessoa fica arquivada — pode ser reaberta numa vaga futura ou excluída de vez.'
-        : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'}</span>
+        ? 'Processos que <strong>não viraram contratação</strong>. É aqui que o candidato fica arquivado — não em Colaboradores, que é só para quem já trabalhou aqui. Pode ser reaberto numa vaga futura ou excluído de vez.'
+        : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'
+          + (ed ? ' Arraste o card para mudar de etapa.' : '')}</span>
       <div class="spacer"></div>
+      <select id="rh-filtro-vaga">
+        <option value="">Todas as vagas</option>
+        ${vagas.map(v => `<option value="${v.id}" ${String(v.id) === RH_QUADRO_VAGA ? 'selected' : ''}>
+          ${esc(v.cargo)}${v.departamento ? ' · ' + esc(v.departamento) : ''}</option>`).join('')}
+        <option value="sem" ${RH_QUADRO_VAGA === 'sem' ? 'selected' : ''}>Sem vaga vinculada</option>
+      </select>
       <select id="rh-vista">
         <option value="andamento" ${encerrados ? '' : 'selected'}>Em andamento (${n.andamento || 0})</option>
         <option value="cancelada" ${encerrados ? 'selected' : ''}>Encerrados sem contratação (${n.cancelada || 0})</option>
@@ -8864,20 +9032,123 @@ async function rhQuadro(c) {
       return `<div class="rh-col" data-etapa="${e.cod}">
         <div class="rh-col-topo"><span class="ic">${RH_ETAPA_ICONE[e.cod] || ''}</span>
           <b>${esc(e.nome)}</b><span class="n">${meus.length}</span></div>
-        <div class="rh-col-corpo">${meus.map(rhKanbanCard).join('') ||
+        <div class="rh-col-corpo">${meus.map(x => rhKanbanCard(x, ed)).join('') ||
           '<div class="rh-col-vazia">—</div>'}</div>
       </div>`;
     }).join('')}</div>
     ${cards.length ? '' : `<div class="rh-vazio">
-      <p><strong>Nenhuma admissão em andamento.</strong> O quadro acompanha a entrada de cada
+      <p><strong>${todosCards.length && RH_QUADRO_VAGA
+          ? `Nenhum candidato ${RH_QUADRO_VAGA === 'sem' ? 'sem vaga vinculada' : `da vaga ${esc(vagaAtual ? vagaAtual.cargo : '')}`} nesta vista.`
+          : 'Nenhuma admissão em andamento.'}</strong> O quadro acompanha a entrada de cada
       candidato, da carta oferta ao onboarding. Use <strong>+ Novo candidato</strong> para abrir um card.</p></div>`}`}`;
   rhLigarAbas();
   const b = $('#rh-novo-candidato'); if (b) b.onclick = rhFormNovoColaborador;
   $('#rh-vista').onchange = e => { RH_QUADRO_VISTA = e.target.value; renderRH(); };
+  $('#rh-filtro-vaga').onchange = e => { RH_QUADRO_VAGA = e.target.value; renderRH(); };
   c.querySelectorAll('[data-card]').forEach(x => x.onclick = () => rhAbrirCard(Number(x.dataset.card)));
+  c.querySelectorAll('[data-historico]').forEach(x => x.onclick = () => rhHistoricoCandidato(Number(x.dataset.historico), x.dataset.nome));
   c.querySelectorAll('[data-reabrir]').forEach(x => x.onclick = () => rhReabrirProcesso(Number(x.dataset.reabrir), x.dataset.nome));
   c.querySelectorAll('[data-excluir-cand]').forEach(x => x.onclick = () =>
     rhConfirmarExcluir({ id: Number(x.dataset.excluirCand), name: x.dataset.nome, arquivado_em: true, candidato: true }));
+  if (!encerrados && ed) rhLigarArrastoQuadro(c);
+}
+
+// Arrastar o card para outra coluna é o mesmo "mover" que os botões ← → do
+// card já fazem — só entra por um caminho diferente. Pendência não desativa o
+// arrasto: solta o card, e se faltar algo a mesma confirmação com motivo do
+// card (rhConfirmarForcar) abre por cima do quadro. O card só "gruda" na
+// coluna nova depois que o servidor confirmar — por isso o efeito é sempre um
+// re-render, nunca mover o elemento na mão: um 400 no meio do caminho não pode
+// deixar o quadro mostrando uma etapa que o banco não tem.
+function rhLigarArrastoQuadro(c) {
+  let arrastando = null;
+  c.querySelectorAll('.rh-kcard[draggable="true"]').forEach(card => {
+    card.addEventListener('dragstart', () => {
+      arrastando = { id: Number(card.dataset.card), etapaAtual: card.dataset.etapaAtual };
+      card.classList.add('arrastando');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('arrastando'));
+  });
+  c.querySelectorAll('.rh-col').forEach(col => {
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('rh-col-alvo'); });
+    col.addEventListener('dragleave', () => col.classList.remove('rh-col-alvo'));
+    col.addEventListener('drop', e => {
+      e.preventDefault();
+      col.classList.remove('rh-col-alvo');
+      if (!arrastando) return;
+      const etapa = col.dataset.etapa;
+      if (etapa !== arrastando.etapaAtual) rhMoverCardArrastado(arrastando.id, etapa);
+      arrastando = null;
+    });
+  });
+}
+
+async function rhMoverCardArrastado(id, etapa) {
+  try {
+    await api(`/api/rh/admissoes/${id}/mover`, { method: 'POST', body: { etapa } });
+    toast('Etapa atualizada.');
+  } catch (e) {
+    const pend = (e.dados && e.dados.pendencias) || null;
+    // Sem pendência é regra estrutural (voltar demais, pular etapa) — só avisa.
+    // Com pendência, a mesma confirmação com motivo do card abre por cima do
+    // quadro: o re-render logo abaixo não atrapalha, o modal é uma camada à
+    // parte e continua ali depois que o quadro por baixo se atualizar.
+    if (!pend) toast(e.message);
+    else rhConfirmarForcar(id, etapa, pend);
+  }
+  renderRH();
+}
+
+// Todo processo que a pessoa já teve na empresa — não só o mais recente. Quem
+// tentou duas vagas em épocas diferentes tem duas linhas aqui, cada uma com o
+// passo a passo próprio; é o que faz "reabrir a vaga anterior" ser escolher a
+// linha certa em vez de adivinhar um ID.
+async function rhHistoricoCandidato(colabId, nome) {
+  openModal(`Histórico de ${nome}`, '<div class="rh-carregando">Carregando…</div>', [
+    { label: 'Fechar', onClick: closeModal }
+  ], { wide: true });
+  let d;
+  try { d = await api('/api/rh/colaboradores/' + colabId + '/candidaturas'); }
+  catch (e) { $('#modal-body').innerHTML = `<div class="form-msg err">${esc(e.message)}</div>`; return; }
+
+  const processos = d.processos || [];
+  if (!processos.length) {
+    $('#modal-body').innerHTML = '<div class="empty">Nenhum processo registrado para esta pessoa.</div>';
+    return;
+  }
+  $('#modal-body').innerHTML = processos.map(p => {
+    const vaga = p.vaga_cargo || p.cargo_pretendido;
+    const parte = p.parte === 'candidato' ? '<span class="badge pend">por ele</span>'
+      : p.parte === 'empresa' ? '<span class="badge late">por nós</span>' : '';
+    const situacao = p.situacao === 'andamento' ? '<span class="badge ok">em andamento</span>'
+      : p.situacao === 'concluida' ? '<span class="badge">contratado</span>'
+      : '<span class="badge late">encerrado</span>';
+    return `<div class="rh-sec rh-hist-proc">
+      <h4>${esc(rhTxt(vaga))}${p.vaga_departamento ? ' · ' + esc(p.vaga_departamento) : ''}
+        <span class="rh-hist-sit">${situacao}</span></h4>
+      <div class="rh-linhas">
+        <div class="rh-linha"><span>Aberto em</span><b>${rhData(p.created_at)}</b></div>
+        <div class="rh-linha"><span>Chegou até</span><b>${esc(RH_ETAPA_NOME[p.etapa] || p.etapa || '—')}</b></div>
+        ${p.situacao === 'cancelada' ? `
+          <div class="rh-linha"><span>Encerrado em</span><b>${rhData(p.encerrada_em)}</b></div>
+          <div class="rh-linha"><span>Motivo</span><b>${parte} ${esc(p.motivo_nome || '— não classificado —')}</b></div>` : ''}
+        ${p.responsavel_nome ? `<div class="rh-linha"><span>Responsável</span><b>${esc(p.responsavel_nome)}</b></div>` : ''}
+      </div>
+      ${p.cancelamento_motivo ? `<p class="rh-sub">${esc(p.cancelamento_motivo)}</p>` : ''}
+      ${p.historico.length ? `<div class="rh-hist-linha">
+        ${p.historico.map(h => `<div class="rh-hist-passo">
+          <span class="data">${rhData(h.movido_em)}</span>
+          <span>${esc(RH_ETAPA_NOME[h.de_etapa] || h.de_etapa || 'início')} → <b>${esc(RH_ETAPA_NOME[h.para_etapa] || h.para_etapa)}</b></span>
+          ${h.usuario ? `<span class="quem">${esc(h.usuario)}</span>` : ''}
+          ${h.observacao ? `<span class="obs">${esc(h.observacao)}</span>` : ''}
+        </div>`).join('')}
+      </div>` : ''}
+      ${p.situacao === 'cancelada' ? `<div class="rh-acoes">
+        <button class="btn sm" data-hist-reabrir="${p.id}">Reabrir este processo</button></div>` : ''}
+    </div>`;
+  }).join('');
+  $('#modal-body').querySelectorAll('[data-hist-reabrir]').forEach(x =>
+    x.onclick = () => rhReabrirProcesso(Number(x.dataset.histReabrir), nome));
 }
 
 // Encerrado não tem etapa que signifique alguma coisa — o card parou onde
@@ -8908,6 +9179,8 @@ function rhTabelaEncerrados(cards) {
         <td>${parte} ${esc(a.motivo_nome || '— não classificado —')}${
           a.cancelamento_motivo ? `<span class="rh-sub">${esc(a.cancelamento_motivo)}</span>` : ''}</td>
         <td class="actions">
+          <button class="btn-ic" data-historico="${a.colaborador_id}" data-nome="${esc(a.colaborador_nome)}"
+            title="Ver todos os processos desta pessoa na empresa" aria-label="Histórico">🕘</button>
           <button class="btn-ic" data-reabrir="${a.id}" data-nome="${esc(a.colaborador_nome)}"
             title="Reabrir o processo no quadro" aria-label="Reabrir">↩</button>
           <button class="btn-ic perigo" data-excluir-cand="${a.colaborador_id}" data-nome="${esc(a.colaborador_nome)}"
@@ -8920,12 +9193,13 @@ function rhTabelaEncerrados(cards) {
 
 // Nome distinto do rhCard() dos cartões de situação da lista: os dois viviam
 // no mesmo escopo global e a última definição apagava a primeira.
-function rhKanbanCard(a) {
+function rhKanbanCard(a, arrastavel) {
   const pct = a.checklist_total ? Math.round(100 * a.checklist_ok / a.checklist_total) : 0;
   const cargo = [a.cargo_pretendido, a.nivel_pretendido
     ? ({ junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' }[a.nivel_pretendido] || a.nivel_pretendido) : '']
     .filter(Boolean).join(' ');
-  return `<button class="rh-kcard ${a.liberado ? 'ok' : ''}" data-card="${a.id}">
+  return `<button class="rh-kcard ${a.liberado ? 'ok' : ''}" data-card="${a.id}"
+    data-etapa-atual="${a.etapa}" ${arrastavel ? 'draggable="true"' : ''}>
     <b>${esc(a.colaborador_nome)}</b>
     ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
     ${a.admissao_prevista ? `<span class="data">Admissão prevista ${rhData(a.admissao_prevista)}</span>` : ''}
@@ -8948,15 +9222,43 @@ async function rhAbrirCard(id) {
   // A ficha do candidato: é a MESMA linha de erp_colaboradores. O que se
   // preenche aqui na Documentação já é a ficha dele quando virar colaborador.
   const col = d.colaborador || {};
+  // `colaborador_nome` vem do JOIN da LISTAGEM do quadro; neste endpoint o nome
+  // chega em `colaborador`. Sem esta linha, tudo o que o card monta a partir de
+  // `a.colaborador_nome` sai "undefined" — o título do modal, o nome do arquivo
+  // do contrato emitido e o título do encerramento de candidatura. Normalizar
+  // aqui conserta os três de uma vez, e os próximos que vierem.
+  a.colaborador_nome = col.name || a.colaborador_nome;
 
   const trilha = d.etapas.map((e, i) => `<span class="rh-passo ${i < iAtual ? 'feito' : i === iAtual ? 'atual' : ''}">
     ${RH_ETAPA_ICONE[e.cod]} ${esc(e.nome)}</span>`).join('<i class="rh-seta">→</i>');
 
-  openModal(`${a.colaborador_nome} — ${d.etapas[iAtual].nome}`, `
+  // `a.colaborador_nome` só existe na LISTAGEM do quadro, onde há JOIN com o
+  // colaborador. Aqui o nome vem de `d.colaborador`, e o título saía literalmente
+  // "undefined — Triagem" desde que o card foi escrito: ninguém tinha aberto um,
+  // porque o quadro esteve vazio até agora.
+  openModal(`${esc(col.name || 'Candidato')} — ${d.etapas[iAtual].nome}`, `
     <div class="rh-trilha">${trilha}</div>
     ${d.pendencias.length
       ? `<div class="rh-nota aviso"><strong>Para sair desta etapa:</strong><ul>${d.pendencias.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`
       : '<div class="rh-nota">✔ Etapa concluída — pode avançar.</div>'}
+
+    ${/* Contato nas etapas de recrutamento.
+          A triagem exige um contato para avançar, e até aqui NÃO HAVIA ONDE
+          INFORMAR: os campos da pessoa só apareciam na Documentação, e a
+          mensagem mandava ir "na aba Contato" — que fica na ficha do
+          colaborador, e candidato não aparece em Colaboradores. Era uma
+          exigência impossível de cumprir pela tela.
+          Só celular e e-mail: documento continua sendo cobrado apenas na
+          Documentação, porque quem está em triagem pode não ser contratado. */''}
+    ${a.etapa === 'triagem' || a.etapa === 'entrevista' ? `
+      <div class="rh-sec"><h4>Contato do candidato</h4>
+        <p class="rh-min-nome">É por aqui que se chama a pessoa para a entrevista. Documento e endereço
+          só entram na etapa <strong>Documentação</strong> — quem está em triagem pode não ser contratado.</p>
+        <div class="rh-grid curta">
+          ${rhInp('celular', 'Celular', 'text', col.celular, 'placeholder="(00) 00000-0000" inputmode="numeric"')}
+          ${rhInp('email_pessoal', 'E-mail', 'email', col.email_pessoal)}
+        </div>
+      </div>` : ''}
 
     ${a.etapa === 'documentacao' ? `
       ${d.pode.sensivel ? `<div class="rh-sec"><h4>Dados para o contrato <span class="rh-lgpd">dado sensível</span></h4>
@@ -9008,13 +9310,16 @@ async function rhAbrirCard(id) {
       </div></div>` : ''}
 
     ${campos.length ? `<div class="rh-sec"><h4>Marcos desta etapa</h4><div class="rh-grid">
-      ${campos.map(f => f.t === 'sel'
-        ? fldSel('ad-' + f.c, f.r, f.o, a[f.c] || '')
+      ${/* O tipo sai do próprio campo. Antes tudo o que não era `sel` virava
+            `date`, e o primeiro marco de texto que aparecesse — "como foi a
+            entrevista" — abriria um seletor de data para escrever uma frase. */
+        campos.map(f => f.t === 'sel' ? fldSel('ad-' + f.c, f.r, f.o, a[f.c] || '')
+        : f.t === 'text' ? fld('ad-' + f.c, f.r, 'text', a[f.c] || '')
         : fld('ad-' + f.c, f.r, 'date', a[f.c] ? String(a[f.c]).slice(0, 10) : '')).join('')}
       </div></div>` : ''}
 
     <div class="rh-sec"><h4>Dados do processo</h4><div class="rh-grid">
-      ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), a.cargo_pretendido || '')}
+      ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoesCargo(a.cargo_pretendido, true), a.cargo_pretendido || '')}
       ${fldSel('ad-nivel_pretendido', 'Nível', RH_NIVEIS, a.nivel_pretendido || '')}
       ${fld('ad-departamento', 'Departamento', 'text', a.departamento || '')}
       ${fldSel('ad-regime', 'Regime', RH_REGIME, a.regime || 'regular')}
@@ -9048,13 +9353,19 @@ async function rhAbrirCard(id) {
       ...(ed && !proxima ? [{ label: 'Concluir admissão', cls: 'primary', onClick: () => rhConcluir(id) }] : [])
     ], { wide: true });
 
-  // Na Documentação os campos da pessoa estão no card: as mesmas máscaras e a
-  // mesma busca de CEP da ficha valem aqui — os ids são os mesmos ("rh-…").
+  // Cada ligação olha para o SEU campo, não para o CPF.
+  //
+  // Tudo isto vivia dentro de `if ($('#rh-cpf'))`, e o CPF só existe na
+  // Documentação. Duas consequências: o celular ficava sem máscara nas etapas
+  // novas, e — pior — o "+ Adicionar cargo" do select ficava sem handler fora
+  // da Documentação. Escolher a opção ali deixava o sentinela selecionado e
+  // gravava `__novo_cargo__` como cargo pretendido do candidato.
+  rhLigarSelectCargo('ad-cargo_pretendido');
+  if ($('#rh-celular')) rhLigarCampo('rh-celular', rhMascaraTelefone, null, '');
   if ($('#rh-cpf')) {
     rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
     rhLigarCampo('rh-rg', rhMascaraRG, null, '');
     rhLigarCampo('rh-pis', rhMascaraPIS, null, '');
-    rhLigarCampo('rh-celular', rhMascaraTelefone, null, '');
     rhLigarCampo('rh-cep', rhMascaraCEP, null, '');
     rhLigarCEP();
   }
@@ -9545,8 +9856,13 @@ function rhFormMinuta() {
 // `comAdmissao` distingue de onde se veio: pelo Quadro entra candidato (passa
 // pelas seis etapas); pela lista de Colaboradores entra quem JÁ é funcionário e
 // está sendo cadastrado depois do fato. É a mesma tela, com o padrão invertido.
-function rhFormNovoColaborador(comAdmissao = true) {
+// `vaga` chega quando o candidato vem de uma vaga aberta: o cargo, o regime e o
+// modelo já vêm dela, e o card nasce ligado à posição que o originou.
+function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
   openModal(comAdmissao ? 'Novo candidato' : 'Novo colaborador', `
+    ${vaga ? `<div class="rh-nota">Candidato da vaga <strong>${esc(vaga.cargo)}</strong>${
+      vaga.departamento ? ` · ${esc(vaga.departamento)}` : ''}. O card entra no Quadro em
+      <strong>Triagem</strong>, já ligado a esta vaga.</div>` : ''}
     <p style="font-size:13.5px;color:var(--ink-2)">${comAdmissao
       ? 'O candidato entra no <strong>Quadro de admissão</strong> e só passa a colaborador quando o contrato for assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos. Os dados do contrato são preenchidos na etapa <strong>Documentação</strong>.'
       : 'Cadastro direto de quem <strong>já é funcionário</strong>: entra ativo, sem passar pelo Quadro de admissão. Para uma contratação nova, use <strong>+ Novo candidato</strong> no Quadro.'}</p>
@@ -9556,18 +9872,24 @@ function rhFormNovoColaborador(comAdmissao = true) {
       ${fld('nc-cpf', 'CPF', 'text', '', 'placeholder="000.000.000-00"')}
     </div>
     <div class="form-row">
-      ${fldSel('nc-cargo', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), '')}
+      ${fldSel('nc-cargo', 'Cargo', rhOpcoesCargo(vaga ? vaga.cargo : '', true), vaga ? vaga.cargo : '')}
       ${fldSel('nc-nivel', 'Nível', RH_NIVEIS, '')}
-      ${fld('nc-departamento', 'Departamento', 'text', '')}
+      ${fld('nc-departamento', 'Departamento', 'text', (vaga && vaga.departamento) || '')}
     </div>
     <div class="form-row">
-      ${fldSel('nc-regime', 'Regime', RH_REGIME, 'regular')}
-      ${fldSel('nc-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, 'presencial')}
+      ${fldSel('nc-regime', 'Regime', RH_REGIME, (vaga && vaga.regime) || 'regular')}
+      ${fldSel('nc-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, (vaga && vaga.modelo_trabalho) || 'presencial')}
       ${fld('nc-admissao_prevista', 'Admissão prevista', 'date', '')}
     </div>
     <div class="form-row">
-      ${fld('nc-email_corporativo', 'E-mail corporativo', 'email', '')}
-      ${fld('nc-celular', 'Celular', 'text', '')}
+      ${/* Candidato não tem e-mail da empresa: pedir "corporativo" a ele é
+            pedir um dado que só existe depois da contratação, e o campo ficava
+            em branco — que é justamente o contato que falta para sair da
+            triagem. Para quem já é funcionário, o corporativo continua certo. */
+        comAdmissao
+          ? fld('nc-email_pessoal', 'E-mail do candidato', 'email', '', 'placeholder="para chamar para a entrevista"')
+          : fld('nc-email_corporativo', 'E-mail corporativo', 'email', '')}
+      ${fld('nc-celular', 'Celular', 'text', '', 'placeholder="(00) 00000-0000" inputmode="numeric"')}
     </div>
     <label class="check-chip"><input type="checkbox" id="nc-abrir" ${comAdmissao ? 'checked' : ''}> Passar pelo Quadro de admissão
       <span style="color:var(--muted);font-weight:400">— desmarque só para cadastrar alguém que já é funcionário</span></label>
@@ -9582,12 +9904,15 @@ function rhFormNovoColaborador(comAdmissao = true) {
           departamento: $('#nc-departamento').value, regime: $('#nc-regime').value,
           modelo_trabalho: $('#nc-modelo_trabalho').value,
           admissao_prevista: $('#nc-admissao_prevista').value,
-          email_corporativo: $('#nc-email_corporativo').value, celular: $('#nc-celular').value,
-          abrir_admissao: $('#nc-abrir').checked };
+          email_corporativo: comAdmissao ? '' : $('#nc-email_corporativo').value,
+          email_pessoal: comAdmissao ? $('#nc-email_pessoal').value : '',
+          celular: $('#nc-celular').value,
+          abrir_admissao: $('#nc-abrir').checked,
+          vaga_id: vaga ? vaga.id : null };
         try {
           const r = await api('/api/rh/colaboradores', { method: 'POST', body });
           closeModal();
-          toast(r.admissao_id ? 'Candidato no quadro, na etapa Carta Oferta.' : 'Colaborador cadastrado.');
+          toast(r.admissao_id ? 'Candidato no quadro, na etapa Triagem.' : 'Colaborador cadastrado.');
           if (r.admissao_id) { RH_ABA = 'quadro'; renderRH(); } else abrirFichaRH(r.id, 'ident');
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Cadastrar'; } }
      }}], { wide: true });
@@ -9595,11 +9920,12 @@ function rhFormNovoColaborador(comAdmissao = true) {
   const sinc = () => {
     $('#nc-minuta').innerHTML = 'Minuta que será usada na emissão: <strong>' +
       esc(rhMinutaDe($('#nc-regime').value, $('#nc-modelo_trabalho').value)) + '</strong>';
-    const sel = $('#nc-nivel'), temNivel = RH_CARGOS_COM_NIVEL.includes($('#nc-cargo').value);
+    const sel = $('#nc-nivel'), temNivel = rhCargoTemNivel($('#nc-cargo').value);
     sel.disabled = !temNivel; if (!temNivel) sel.value = '';
     sel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
   };
   ['nc-cargo', 'nc-regime', 'nc-modelo_trabalho'].forEach(x => { $('#' + x).onchange = sinc; });
+  rhLigarSelectCargo('nc-cargo', sinc);
   rhLigarCampo('nc-cpf', rhMascaraCPF, v => !v || rhCPFValido(v), 'CPF inválido — confira os dígitos.');
   rhLigarCampo('nc-celular', rhMascaraTelefone, null, '');
   sinc();
@@ -9609,7 +9935,15 @@ function rhFormNovoColaborador(comAdmissao = true) {
 function rhAbasTopo() {
   // O painel abre a seção; Colaboradores vem antes do Quadro porque é a lista
   // que se consulta todo dia, e o Quadro só tem movimento quando há contratação.
+  // Vagas vem ANTES do Quadro porque é onde o processo começa: abre-se a vaga,
+  // e dela saem os candidatos que viram card.
+  // Organograma vem logo depois de Colaboradores: é a MESMA equipe, só que
+  // por hierarquia em vez de lista — outra lente sobre quem já é da casa,
+  // antes das abas de processo (Férias, Benefícios, Vagas, Quadro, Minutas).
   const abas = [{ k: 'painel', t: 'Painel' }, { k: 'pessoas', t: 'Colaboradores' },
+                { k: 'organograma', t: 'Organograma' },
+                { k: 'ferias', t: 'Férias' }, { k: 'beneficios', t: 'Benefícios' },
+                { k: 'vagas', t: 'Vagas' },
                 { k: 'quadro', t: 'Quadro de admissão' }, { k: 'minutas', t: 'Minutas' }];
   return `<div class="rh-abas rh-abas-topo">${abas.map(a =>
     `<button class="rh-aba ${a.k === RH_ABA ? 'ativa' : ''}" data-secao="${a.k}">${a.t}</button>`).join('')}</div>`;
@@ -10141,6 +10475,35 @@ async function rhAbaDesenvolvimento(painel, d, id) {
 // de dado incompleto diz de quantos.
 
 const rhPct = (a, b) => (b ? Math.round(100 * a / b) : 0);
+
+// "2025-10" → "out/25" e "outubro de 2025".
+//
+// O eixo mostrava só o número do mês: "10, 11, 12, 01…". Doze meses assim não
+// dizem nem o ano, e a virada de dezembro para janeiro passa despercebida —
+// justamente o ponto em que ler o gráfico mais importa.
+const RH_MES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const RH_MES_NOME = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const rhMesPartes = iso => {
+  const [a, m] = String(iso || '').split('-');
+  const i = Number(m) - 1;
+  return i >= 0 && i < 12 && a ? { ano: a, i } : null;
+};
+const rhMesCurto = iso => { const p = rhMesPartes(iso); return p ? `${RH_MES_ABREV[p.i]}/${p.ano.slice(2)}` : String(iso || '—'); };
+const rhMesLongo = iso => { const p = rhMesPartes(iso); return p ? `${RH_MES_NOME[p.i]} de ${p.ano}` : String(iso || '—'); };
+
+// Uma barra do gráfico de movimentação.
+//
+// Mês sem movimento NÃO desenha barra. Antes havia `min-height: 1px`, e o
+// resultado era um risco visível onde o valor é zero — o gráfico mostrava
+// atividade em meses parados. Zero é uma informação, e a forma honesta de
+// mostrá-lo é o espaço vazio.
+//
+// O valor sai escrito em cima da barra: são no máximo dois dígitos, e poupam o
+// hover para quem só quer bater o olho.
+const rhMovBarra = (tipo, valor, max) => (valor > 0
+  ? `<i class="${tipo}" style="height:${Math.max(6, rhPct(valor, max))}%"><b>${valor}</b></i>`
+  : '');
 const rhDias = d => {
   if (d == null) return '—';
   if (d < 60) return `${d} dias`;
@@ -10169,7 +10532,8 @@ const rhBarras = (itens, total, cor) => {
     </div>`).join('')}</div>`;
 };
 
-const RH_ETAPA_NOME = { carta_oferta: 'Carta Oferta', documentacao: 'Documentação',
+const RH_ETAPA_NOME = { triagem: 'Triagem', entrevista: 'Entrevista',
+  carta_oferta: 'Carta Oferta', documentacao: 'Documentação',
   exame_admissional: 'Exame admissional', contrato: 'Contrato',
   contas_acessos: 'Contas e Acessos', onboarding: 'Onboarding' };
 const RH_MODELO_NOME = { presencial: 'Presencial', hibrido: 'Híbrido',
@@ -10196,10 +10560,19 @@ async function rhPainel(c) {
       <span class="rh-alerta-nomes">${esc(co.sem_vinculo_nomes.join(' · '))}</span>
     </div>` : ''}
 
+    ${co.sem_fornecedor ? `<div class="rh-alerta">
+      <strong>${co.sem_fornecedor} de ${co.ativos} colaboradores ativos não têm fornecedor.</strong>
+      A folha é lançada em <strong>Contas a Pagar</strong> e a pessoa aparece lá como fornecedor —
+      sem ele, não há onde lançar o salário, e a aba <strong>Financeiro</strong> da ficha mostra
+      R$ 0,00 desde a admissão como se estivesse certo. Cadastre o fornecedor e ligue-o ao
+      colaborador em <strong>Fornecedores</strong>.
+      <span class="rh-alerta-nomes">${esc((co.sem_fornecedor_nomes || []).join(' · '))}</span>
+    </div>` : ''}
+
     <div class="rh-painel-sec"><h3>Headcount</h3>
       <div class="kpis">
         ${rhKpi('Colaboradores ativos', hc.ativos, `${co.com_vinculo} com vínculo`)}
-        ${rhKpi('Em admissão', hc.candidatos, 'candidatos no quadro', hc.candidatos ? 'aviso' : '')}
+        ${rhKpi('Em admissão', hc.candidatos, 'já aceitaram a proposta', hc.candidatos ? 'aviso' : '')}
         ${rhKpi('Tempo médio de casa', rhDias(hc.tempo_casa_dias), `de ${co.com_vinculo} pessoa(s)`)}
         ${rhKpi('Idade média', hc.idade_media ? hc.idade_media + ' anos' : '—',
           `${co.com_nascimento} de ${co.ativos} com data de nascimento`)}
@@ -10212,18 +10585,35 @@ async function rhPainel(c) {
           ${rhBarras(traduzir(hc.por_sexo, RH_SEXO_NOME), co.ativos, '#5B8DEF')}</div>
       </div>
       <h5>Admissões e desligamentos — 12 meses</h5>
-      <div class="rh-mov">${hc.movimentacao.map(m => `
-        <div class="rh-mov-mes" title="${m.mes}: ${m.admissoes} admissão(ões), ${m.desligamentos} desligamento(s)">
+      <div class="rh-mov-rolagem"><div class="rh-mov">${hc.movimentacao.map(m => `
+        <div class="rh-mov-mes" data-dica="${esc(rhMesLongo(m.mes))} · ${m.admissoes} ${
+            m.admissoes === 1 ? 'admissão' : 'admissões'} · ${m.desligamentos} ${
+            m.desligamentos === 1 ? 'desligamento' : 'desligamentos'}">
           <span class="col">
-            <i class="adm" style="height:${rhPct(m.admissoes, maxMov)}%"></i>
-            <i class="des" style="height:${rhPct(m.desligamentos, maxMov)}%"></i>
+            ${rhMovBarra('adm', m.admissoes, maxMov)}
+            ${rhMovBarra('des', m.desligamentos, maxMov)}
           </span>
-          <span class="mes">${m.mes.slice(5)}</span>
-        </div>`).join('')}</div>
+          <span class="mes">${esc(rhMesCurto(m.mes))}</span>
+        </div>`).join('')}</div></div>
       <div class="rh-legenda"><span class="l adm"></span>admissões <span class="l des"></span>desligamentos</div>
     </div>
 
     <div class="rh-painel-sec"><h3>Recrutamento</h3>
+      <h5>Vagas</h5>
+      <div class="kpis">
+        ${rhKpi('Vagas abertas', re.vagas.abertas, re.vagas.pausadas ? `${re.vagas.pausadas} pausada(s)` : 'nenhuma pausada')}
+        ${rhKpi('Posições em aberto', re.vagas.posicoes_abertas, 'somando as posições de cada vaga aberta')}
+        ${rhKpi('Tempo médio até preencher', rhDias(re.vagas.tempo_medio_preenchimento_dias), 'abertura da vaga → contrato assinado')}
+        ${rhKpi('Vagas paradas', re.vagas.paradas, `sem nenhum candidato há mais de 15 dias`, re.vagas.paradas ? 'aviso' : '')}
+      </div>
+      ${re.vagas.paradas ? `<div class="rh-alerta">
+        <strong>${re.vagas.paradas} vaga(s) aberta(s) sem nenhum candidato há mais de 15 dias.</strong>
+        Ninguém está olhando para elas — vale rever a divulgação ou pausar enquanto não há capacidade
+        de recrutar.
+        <span class="rh-alerta-nomes">${esc(re.vagas.paradas_nomes.join(' · '))}</span>
+      </div>` : ''}
+
+      <h5>Candidatos</h5>
       <div class="kpis">
         ${rhKpi('Processos abertos', re.em_andamento, 'no quadro de admissão')}
         ${rhKpi('Admissões previstas', re.previstas_30d, 'nos próximos 30 dias', re.previstas_30d ? 'aviso' : '')}
@@ -10368,10 +10758,514 @@ function rhFormClima() {
 // dia; a lista completa e as minutas são consulta e configuração.
 async function renderRH() {
   const c = $('#content');
+  // O catálogo de cargos é buscado uma vez por entrada no módulo, e não a cada
+  // formulário: ele muda raramente e é usado em três telas. Sem `await` — a
+  // lista anterior serve enquanto a resposta não chega, e o cadastro não fica
+  // esperando uma requisição que só preenche um select.
+  rhCarregarCargos();
   if (RH_ABA === 'painel') return rhPainel(c);
+  if (RH_ABA === 'organograma') return rhOrganograma(c);
+  if (RH_ABA === 'ferias') return rhFerias(c);
+  if (RH_ABA === 'beneficios') return rhBeneficios(c);
+  if (RH_ABA === 'vagas') return rhVagas(c);
   if (RH_ABA === 'quadro') return rhQuadro(c);
   if (RH_ABA === 'minutas') return rhMinutas(c);
   return rhPessoas(c);
+}
+
+// ---------------- Organograma ----------------
+//
+// A árvore é montada AQUI, no cliente, a partir da lista plana que o servidor
+// devolve — o mesmo desenho que o resto do RH já usa. `gestor_id` já existia
+// em erp_rh_vinculos; só nunca teve pela onde ser preenchido.
+const RH_NIVEL_ABREV = { junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' };
+
+async function rhOrganograma(c) {
+  const d = await api('/api/rh/organograma');
+  const pessoas = d.pessoas || [];
+  const idsAtivos = new Set(pessoas.map(p => p.id));
+  // Raiz é quem não tem gestor OU cujo gestor saiu da lista (desligado,
+  // arquivado) sem ninguém atualizar quem a pessoa passou a reportar — os dois
+  // casos viram "topo", mas só o segundo entra no aviso.
+  const porGestor = {};
+  pessoas.forEach(p => { (porGestor[p.gestor_id] ||= []).push(p); });
+  const raizes = pessoas.filter(p => !p.gestor_id || !idsAtivos.has(p.gestor_id));
+  const departamentos = [...new Set(pessoas.map(p => p.departamento).filter(Boolean))].sort();
+
+  // Contagem recursiva de subordinados, com guarda contra ciclo: o servidor
+  // recusa criar um na gravação, mas um ciclo antigo feito direto no banco não
+  // pode travar a tela numa recursão infinita.
+  const contarAbaixo = (id, visitados) => {
+    if (visitados.has(id)) return 0;
+    visitados.add(id);
+    const filhos = porGestor[id] || [];
+    return filhos.reduce((s, f) => s + 1 + contarAbaixo(f.id, visitados), 0);
+  };
+
+  const noh = (p, visitados) => {
+    if (visitados.has(p.id)) return '';   // ciclo: já desenhado acima, não repete
+    const proprios = new Set(visitados); proprios.add(p.id);
+    const filhos = (porGestor[p.id] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    const totalAbaixo = contarAbaixo(p.id, new Set(visitados));
+    const cargo = [p.cargo, p.nivel ? (RH_NIVEL_ABREV[p.nivel] || p.nivel) : ''].filter(Boolean).join(' ');
+    return `<div class="rh-org-no">
+      <div class="rh-org-cartao" data-depto="${esc(p.departamento || '')}">
+        ${filhos.length ? '<button class="rh-org-toggle" aria-label="Recolher/expandir">▾</button>' : ''}
+        <b>${esc(p.name)}</b>
+        ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
+        ${p.departamento ? `<span class="depto">${esc(p.departamento)}</span>` : ''}
+        ${filhos.length ? `<span class="qtd">${filhos.length} direto(s) · ${totalAbaixo} no total</span>` : ''}
+      </div>
+      ${filhos.length ? `<div class="rh-org-filhos">${filhos.map(f => noh(f, proprios)).join('')}</div>` : ''}
+    </div>`;
+  };
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-topo">
+      <div class="rh-quadro-dica">Quem está aqui reporta para quem — defina em <strong>Colaboradores →
+        Vínculo → A quem reporta</strong>. Sem gestor definido, a pessoa aparece no topo.</div>
+      <div class="spacer"></div>
+      ${departamentos.length ? `<select id="rh-org-depto"><option value="">Todos os setores</option>
+        ${departamentos.map(dep => `<option value="${esc(dep)}">${esc(dep)}</option>`).join('')}</select>` : ''}
+    </div>
+    ${d.gestor_inativo && d.gestor_inativo.length ? `<div class="rh-alerta">
+      <strong>${d.gestor_inativo.length} pessoa(s) reportam para alguém que não está mais ativo.</strong>
+      O gestor saiu ou foi arquivado e ninguém atualizou para quem essa pessoa passou a reportar —
+      por ora aparecem no topo do organograma.
+      <span class="rh-alerta-nomes">${esc(d.gestor_inativo.map(p => p.name).join(' · '))}</span>
+    </div>` : ''}
+    ${pessoas.length ? `<div class="rh-org">${raizes.slice().sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => noh(p, new Set())).join('')}</div>`
+      : `<div class="rh-vazio"><p><strong>Ninguém com vínculo ativo ainda.</strong></p></div>`}`;
+
+  rhLigarAbas();
+  c.querySelectorAll('.rh-org-toggle').forEach(b => b.onclick = () => {
+    const filhos = b.closest('.rh-org-no').querySelector('.rh-org-filhos');
+    const fechado = filhos.classList.toggle('rh-org-fechado');
+    b.textContent = fechado ? '▸' : '▾';
+  });
+  const filtro = $('#rh-org-depto');
+  if (filtro) filtro.onchange = () => {
+    const alvo = filtro.value;
+    c.querySelectorAll('.rh-org-cartao').forEach(card => {
+      card.classList.toggle('rh-org-fora', !!alvo && card.dataset.depto !== alvo);
+    });
+  };
+}
+
+// ---------------- Férias ----------------
+//
+// Rastreia períodos aquisitivos e registra o gozo — não calcula o valor da
+// folha de férias. O valor a pagar continua vindo da contabilidade externa e
+// entrando em Contas a Pagar, do mesmo jeito que já é com a rescisão.
+const RH_FERIAS_AVISO_DIAS = 90;   // mesmo prazo do aviso no servidor (rhFeriasResumo)
+const RH_FERIAS_STATUS = {
+  vencido: { t: 'Vencido', cls: 'late' },
+  a_vencer: { t: 'A vencer', cls: 'warn' },
+  em_dia: { t: 'Em dia', cls: 'ok' },
+  em_aquisicao: { t: 'Em aquisição', cls: 'pend' },
+  quitado: { t: 'Quitado', cls: 'off' }
+};
+
+async function rhFerias(c) {
+  const d = await api('/api/rh/ferias');
+  const pessoas = d.pessoas || [];
+  const cont = d.contagem || { vencido: 0, a_vencer: 0 };
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-dica">Período aquisitivo de 12 meses; outros 12 meses depois disso é o prazo
+      para gozar (art. 134 CLT) — passar do prazo com saldo em aberto é férias vencidas, que a lei manda
+      pagar em dobro. Esta tela registra o que já foi tirado; o valor a pagar continua vindo da
+      contabilidade, como já é com a rescisão.</div>
+
+    ${cont.vencido ? `<div class="rh-alerta"><strong>${cont.vencido} período(s) de férias vencido(s)</strong>
+      — passaram do prazo de 12 meses para gozar com saldo em aberto.</div>` : ''}
+    ${cont.a_vencer ? `<div class="rh-alerta"><strong>${cont.a_vencer} período(s) vencem nos próximos
+      ${RH_FERIAS_AVISO_DIAS} dias.</strong> Vale agendar antes que virem vencidos.</div>` : ''}
+
+    ${pessoas.length ? `<div class="table-wrap"><table class="tbl-rh">
+      <thead><tr><th>Colaborador</th><th>Período em destaque</th><th>Situação</th><th>Saldo</th>
+        <th class="actions">Ações</th></tr></thead>
+      <tbody>${pessoas.map(p => {
+        const per = p.periodo_em_destaque;
+        const st = per ? RH_FERIAS_STATUS[per.status] : null;
+        return `<tr>
+          <td>${esc(p.colaborador_nome)}</td>
+          <td>${per ? `${rhData(per.periodo_inicio)} – ${rhData(per.periodo_fim)}` : '—'}</td>
+          <td>${st ? `<span class="badge ${st.cls}">${st.t}</span>` : '—'}</td>
+          <td>${per ? `${per.saldo} de ${per.dias_direito} dias` : '—'}</td>
+          <td class="actions"><button class="btn sm" data-ferias-colab="${p.colaborador_id}"
+            data-nome="${esc(p.colaborador_nome)}">Gerenciar${p.total_periodos > 1 ? ` (${p.total_periodos})` : ''}</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>` : `<div class="rh-vazio"><p><strong>Ninguém com vínculo ativo ainda.</strong>
+      Os períodos aparecem sozinhos, 12 meses depois da admissão de cada pessoa.</p></div>`}`;
+
+  rhLigarAbas();
+  c.querySelectorAll('[data-ferias-colab]').forEach(b =>
+    b.onclick = () => rhGerenciarFerias(Number(b.dataset.feriasColab), b.dataset.nome));
+}
+
+// Um período por seção, com o passo a passo dos gozos embaixo — mesmo desenho
+// do histórico de candidato, porque é o mesmo tipo de leitura: uma linha do
+// tempo por processo, aqui por ano de casa.
+async function rhGerenciarFerias(colabId, nome) {
+  const carregar = async () => {
+    const d = await api('/api/rh/colaboradores/' + colabId + '/ferias');
+    const periodos = d.periodos || [];
+    openModal(`Férias de ${nome}`, periodos.length ? periodos.map(p => {
+      const st = RH_FERIAS_STATUS[p.status];
+      return `<div class="rh-sec rh-hist-proc">
+        <h4>${rhData(p.periodo_inicio)} – ${rhData(p.periodo_fim)}
+          <span class="rh-hist-sit">
+            <span class="badge ${st.cls}">${st.t}</span>
+            ${p.status !== 'quitado' ? `<button class="btn-ic" data-editar-periodo="${p.id}"
+              data-dias="${p.dias_direito}" title="Ajustar dias de direito" aria-label="Editar">✎</button>` : ''}
+          </span></h4>
+        <div class="rh-linhas">
+          <div class="rh-linha"><span>Direito</span><b>${p.dias_direito} dias</b></div>
+          <div class="rh-linha"><span>Usados</span><b>${p.dias_usados} dia(s)${p.dias_abono ? ` (${p.dias_abono} em abono)` : ''}</b></div>
+          <div class="rh-linha"><span>Saldo</span><b>${p.saldo} dias</b></div>
+          <div class="rh-linha"><span>Prazo para gozar</span><b>${rhData(p.limite_gozo)}</b></div>
+        </div>
+        ${p.observacao ? `<p class="rh-sub">${esc(p.observacao)}</p>` : ''}
+        ${p.gozos.length ? `<div class="rh-hist-linha">${p.gozos.map(g => `<div class="rh-hist-passo">
+          <span class="data">${rhData(g.inicio)} – ${rhData(g.fim)}</span>
+          <span>${g.dias} dia(s)${g.abono_pecuniario ? ' · abono pecuniário' : ''}</span>
+          ${g.observacao ? `<span class="obs">${esc(g.observacao)}</span>` : ''}
+          <button class="btn-ic perigo" data-del-gozo="${g.id}" title="Excluir" aria-label="Excluir">🗑</button>
+        </div>`).join('')}</div>` : ''}
+        ${p.status !== 'em_aquisicao' && p.saldo > 0 ? `<div class="rh-acoes">
+          <button class="btn sm" data-add-gozo="${p.id}">+ Registrar gozo</button></div>` : ''}
+      </div>`;
+    }).join('') : '<div class="empty">Nenhum período ainda — nasce sozinho ao completar 12 meses de vínculo.</div>',
+    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+
+    $('#modal-body').querySelectorAll('[data-del-gozo]').forEach(b => b.onclick = async () => {
+      if (!confirm('Excluir este registro de férias?')) return;
+      try { await api('/api/rh/ferias/gozos/' + b.dataset.delGozo, { method: 'DELETE' }); toast('Removido.'); carregar(); }
+      catch (e) { toast(e.message); }
+    });
+    $('#modal-body').querySelectorAll('[data-add-gozo]').forEach(b =>
+      b.onclick = () => rhFormGozo(Number(b.dataset.addGozo), carregar));
+    $('#modal-body').querySelectorAll('[data-editar-periodo]').forEach(b =>
+      b.onclick = () => rhFormAjustarPeriodo(Number(b.dataset.editarPeriodo), Number(b.dataset.dias), carregar));
+  };
+  await carregar();
+}
+
+function rhFormGozo(periodoId, aoSalvar) {
+  openModal('Registrar férias', `
+    <div class="form-row">
+      ${fld('gz-inicio', 'Início', 'date', '')}
+      ${fld('gz-fim', 'Fim', 'date', '')}
+    </div>
+    <label class="check-chip"><input type="checkbox" id="gz-abono"> Abono pecuniário — converteu esta
+      parcela em dinheiro em vez de descanso (até 1/3 do período)</label>
+    ${fld('gz-obs', 'Observação', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/ferias/periodos/' + periodoId + '/gozos', { method: 'POST', body: {
+            inicio: $('#gz-inicio').value, fim: $('#gz-fim').value,
+            abono_pecuniario: $('#gz-abono').checked, observacao: $('#gz-obs').value } });
+          closeModal(); toast('Férias registradas.'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+function rhFormAjustarPeriodo(periodoId, diasAtual, aoSalvar) {
+  openModal('Ajustar dias de direito', `
+    <p class="rh-min-nome">O padrão são 30 dias. Reduzir só se cabível por falta (art. 130 CLT) — o
+      motivo fica registrado.</p>
+    ${fld('ap-dias', 'Dias de direito', 'number', diasAtual, 'min="0" max="30"')}
+    ${fld('ap-obs', 'Motivo', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/ferias/periodos/' + periodoId, { method: 'PUT', body: {
+            dias_direito: Number($('#ap-dias').value), observacao: $('#ap-obs').value } });
+          closeModal(); toast('Período atualizado.'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+// ---------------- Benefícios ----------------
+//
+// Catálogo (o que a empresa oferece, com o custo) e adesão (quem está
+// inscrito) — o mesmo desenho de Cargos: uma tabela que a própria tela
+// alimenta, sem precisar de deploy para cada benefício novo.
+const RH_BENEF_CATEGORIAS = [{ v: '', t: '—' }, { v: 'saude', t: 'Saúde' }, { v: 'odonto', t: 'Odontológico' },
+  { v: 'alimentacao', t: 'Alimentação' }, { v: 'transporte', t: 'Transporte' },
+  { v: 'bem_estar', t: 'Bem-estar' }, { v: 'outro', t: 'Outro' }];
+const RH_BENEF_CAT_NOME = Object.fromEntries(RH_BENEF_CATEGORIAS.map(o => [o.v, o.t]));
+
+async function rhBeneficios(c) {
+  const ed = canEditPage('rh');
+  const lista = await api('/api/rh/beneficios').catch(() => []);
+  const temCusto = lista.some(b => b.custo_empresa !== undefined);
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-topo">
+      <div class="rh-quadro-dica">Os benefícios que a empresa oferece, com quem está inscrito em cada
+        um. Desativar um benefício encerra as inscrições ativas — o histórico de quem já teve fica.</div>
+      ${ed ? '<button class="btn primary" id="rh-novo-beneficio">+ Novo benefício</button>' : ''}
+    </div>
+    ${lista.length ? `<div class="table-wrap"><table class="tbl-rh">
+      <thead><tr><th>Benefício</th><th>Categoria</th><th>Fornecedor</th>
+        ${temCusto ? '<th class="num">Custo/pessoa</th><th class="num">Custo total/mês</th>' : ''}
+        <th>Inscritos</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${lista.map(b => `<tr>
+        <td>${esc(b.nome)}</td>
+        <td>${esc(rhTxt(RH_BENEF_CAT_NOME[b.categoria]))}</td>
+        <td>${esc(rhTxt(b.fornecedor))}</td>
+        ${temCusto ? `<td class="num">${brl(Number(b.custo_empresa))}</td><td class="num">${brl(Number(b.custo_total_mensal))}</td>` : ''}
+        <td>${b.inscritos}</td>
+        <td>${b.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge off">Desativado</span>'}</td>
+        <td class="actions">
+          <button class="btn sm" data-inscritos="${b.id}" data-nome="${esc(b.nome)}">Inscritos (${b.inscritos})</button>
+          ${ed ? `<button class="btn-ic" data-editar-beneficio="${b.id}" title="Editar" aria-label="Editar">✎</button>` : ''}
+        </td></tr>`).join('')}</tbody>
+    </table></div>` : `<div class="rh-vazio"><p><strong>Nenhum benefício cadastrado ainda.</strong>
+      TotalPass, Clube Saúde e Seguro de vida continuam na aba Vínculo de cada ficha — este catálogo é
+      para o que vier além disso.</p></div>`}`;
+
+  rhLigarAbas();
+  const bn = $('#rh-novo-beneficio'); if (bn) bn.onclick = () => rhFormBeneficio(null);
+  c.querySelectorAll('[data-editar-beneficio]').forEach(b =>
+    b.onclick = () => rhFormBeneficio(lista.find(x => String(x.id) === b.dataset.editarBeneficio)));
+  c.querySelectorAll('[data-inscritos]').forEach(b =>
+    b.onclick = () => rhInscritosBeneficio(Number(b.dataset.inscritos), b.dataset.nome));
+}
+
+function rhFormBeneficio(b) {
+  const novo = !b;
+  b = b || {};
+  openModal(novo ? 'Novo benefício' : 'Editar benefício', `
+    ${fld('bn-nome', 'Nome *', 'text', b.nome || '')}
+    <div class="form-row">
+      ${fldSel('bn-categoria', 'Categoria', RH_BENEF_CATEGORIAS, b.categoria || '')}
+      ${fld('bn-fornecedor', 'Fornecedor', 'text', b.fornecedor || '')}
+    </div>
+    <div class="form-row">
+      ${fld('bn-custo_empresa', 'Custo para a empresa (por pessoa)', 'number', b.custo_empresa ?? '', 'min="0" step="0.01"')}
+      ${fld('bn-custo_colaborador', 'Desconto do colaborador', 'number', b.custo_colaborador ?? '', 'min="0" step="0.01"')}
+    </div>
+    ${fld('bn-observacao', 'Observação', 'text', b.observacao || '')}
+    ${!novo ? `<label class="check-chip"><input type="checkbox" id="bn-ativo" ${b.ativo !== false ? 'checked' : ''}>
+      Benefício ativo — desmarque para parar de oferecê-lo (encerra as inscrições em vigor)</label>` : ''}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: novo ? 'Cadastrar' : 'Salvar', cls: 'primary', onClick: async () => {
+        const body = {
+          nome: $('#bn-nome').value, categoria: $('#bn-categoria').value,
+          fornecedor: $('#bn-fornecedor').value,
+          custo_empresa: $('#bn-custo_empresa').value || 0, custo_colaborador: $('#bn-custo_colaborador').value || 0,
+          observacao: $('#bn-observacao').value
+        };
+        if (!novo) body.ativo = $('#bn-ativo').checked;
+        try {
+          await api(novo ? '/api/rh/beneficios' : '/api/rh/beneficios/' + b.id,
+            { method: novo ? 'POST' : 'PUT', body });
+          closeModal(); toast(novo ? 'Benefício cadastrado.' : 'Benefício atualizado.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+async function rhInscritosBeneficio(beneficioId, nome) {
+  const carregar = async () => {
+    const inscritos = await api('/api/rh/beneficios/' + beneficioId + '/colaboradores');
+    const emVigor = inscritos.filter(i => !i.ate);
+    const verValor = inscritos.some(i => 'valor_colaborador' in i);
+    openModal(`Inscritos em ${nome}`, `
+      ${canEditPage('rh') ? '<div class="rh-acoes"><button class="btn sm primary" id="rh-inscrever">+ Inscrever colaborador</button></div>' : ''}
+      ${inscritos.length ? `<div class="table-wrap"><table class="tbl-rh-dep">
+        <thead><tr><th>Colaborador</th><th>Desde</th><th>Até</th>
+          ${verValor ? '<th>Desconto</th>' : ''}<th></th></tr></thead>
+        <tbody>${inscritos.map(i => `<tr>
+          <td>${esc(i.colaborador_nome)}</td>
+          <td class="venc-cell">${rhData(i.desde)}</td>
+          <td class="venc-cell">${i.ate ? rhData(i.ate) : '<span class="badge ok">em vigor</span>'}</td>
+          ${verValor ? `<td>${i.valor_colaborador != null ? brl(Number(i.valor_colaborador)) : '—'}</td>` : ''}
+          <td>${!i.ate ? `<button class="btn-ic perigo" data-encerrar-adesao="${i.id}" title="Encerrar" aria-label="Encerrar">✕</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>` : '<div class="empty">Ninguém inscrito ainda.</div>'}`,
+      [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+
+    const bi = $('#rh-inscrever');
+    if (bi) bi.onclick = () => rhFormInscrever(beneficioId, emVigor.map(i => i.colaborador_id), carregar);
+    $('#modal-body').querySelectorAll('[data-encerrar-adesao]').forEach(b => b.onclick = async () => {
+      if (!confirm('Encerrar esta inscrição hoje?')) return;
+      try { await api('/api/rh/beneficio_colab/' + b.dataset.encerrarAdesao + '/encerrar', { method: 'POST', body: {} });
+        toast('Inscrição encerrada.'); carregar(); }
+      catch (e) { toast(e.message); }
+    });
+  };
+  await carregar();
+}
+
+async function rhFormInscrever(beneficioId, jaInscritos, aoSalvar) {
+  const todos = await api('/api/rh/colaboradores').catch(() => []);
+  const disponiveis = todos.filter(p => p.ativo && !jaInscritos.includes(p.id));
+  openModal('Inscrever colaborador', disponiveis.length ? `
+    ${fldSel('is-colaborador', 'Colaborador', disponiveis.map(p => ({ v: p.id, t: p.name })), '')}
+    ${fld('is-valor', 'Desconto para este colaborador (opcional)', 'number', '', 'min="0" step="0.01" placeholder="usa o valor do catálogo"')}
+    ${fld('is-obs', 'Observação', 'text', '')}`
+    : '<div class="empty">Todo mundo com vínculo ativo já está inscrito neste benefício.</div>',
+    disponiveis.length ? [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Inscrever', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/beneficios/' + beneficioId + '/colaboradores', { method: 'POST', body: {
+            colaborador_id: Number($('#is-colaborador').value),
+            valor_colaborador: $('#is-valor').value || undefined, observacao: $('#is-obs').value } });
+          closeModal(); toast('Inscrito(a).'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}] : [{ label: 'Fechar', onClick: closeModal }]);
+}
+
+// ---------------- Vagas ----------------
+//
+// Uma vaga é uma POSIÇÃO, não uma pessoa: tem cargo, departamento, número de
+// posições e vários candidatos. Por isso vive aqui e não como coluna do Quadro —
+// ao avançar de "recebendo currículos" para "entrevista" uma vaga teria de
+// virar N cards, e coluna de kanban não faz isso.
+const RH_VAGA_SIT = [{ v: 'aberta', t: 'Aberta' }, { v: 'pausada', t: 'Pausada' }, { v: 'fechada', t: 'Fechada' }];
+
+async function rhVagas(c) {
+  const ed = canEditPage('rh');
+  const lista = await api('/api/rh/vagas').catch(() => []);
+  const abertas = lista.filter(v => v.situacao !== 'fechada');
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-topo">
+      <div class="rh-quadro-dica">Uma <strong>vaga</strong> é a posição que se quer preencher — cargo,
+        departamento e quantas pessoas. Os candidatos dela viram card no
+        <strong>Quadro de admissão</strong>, começando pela Triagem.</div>
+      ${ed ? '<button class="btn primary" id="rh-nova-vaga">+ Nova vaga</button>' : ''}
+    </div>
+    ${lista.length ? `<div class="rh-vagas">${lista.map(v => {
+      const posicoes = Number(v.posicoes) || 1;
+      return `<div class="rh-vaga ${v.situacao}">
+        <div class="rh-vaga-cab">
+          <div>
+            <b>${esc(rhTxt(v.cargo))}${v.nivel ? ' · ' + esc(rhRotulo(RH_NIVEIS, v.nivel)) : ''}</b>
+            <span>${esc(rhTxt(v.departamento))} · aberta em ${rhData(v.aberta_em)}</span>
+          </div>
+          <span class="badge ${v.situacao === 'aberta' ? 'ok' : v.situacao === 'pausada' ? 'late' : ''}">${
+            esc(rhRotulo(RH_VAGA_SIT, v.situacao))}</span>
+        </div>
+        <div class="rh-tiras">
+          <div class="rh-tira"><span>Posições</span><b>${posicoes}</b></div>
+          <div class="rh-tira"><span>Candidatos</span><b>${v.candidatos}</b></div>
+          <div class="rh-tira" title="Candidatos desta vaga que já viraram colaborador"><span>Contratados</span><b>${v.contratados} de ${posicoes}</b></div>
+          ${v.salario_previsto ? `<div class="rh-tira"><span>Salário previsto</span><b>${brl(Number(v.salario_previsto))}</b></div>` : ''}
+        </div>
+        ${v.observacao ? `<p class="rh-custo-nota">${esc(v.observacao)}</p>` : ''}
+        ${v.situacao === 'fechada' && v.fechamento_motivo
+          ? `<p class="rh-custo-nota">Fechada em ${rhData(v.fechada_em)} — ${esc(v.fechamento_motivo)}</p>` : ''}
+        <div class="rh-vaga-acoes">
+          <button class="btn sm" data-vaga-ver="${v.id}">Candidatos (${v.candidatos})</button>
+          ${ed && v.situacao !== 'fechada' ? `<button class="btn sm primary" data-vaga-cand="${v.id}">+ Candidato</button>` : ''}
+          ${ed ? `<button class="btn sm" data-vaga-editar="${v.id}">Editar</button>` : ''}
+        </div>
+      </div>`;
+    }).join('')}</div>`
+    : `<div class="rh-vazio">
+        <p><strong>Nenhuma vaga cadastrada.</strong> A vaga é o começo do processo: abra uma, e os
+        candidatos dela entram no Quadro de admissão já ligados a ela.</p>
+        ${ed ? '<button class="btn primary" id="rh-nova-vaga-2">Abrir a primeira vaga</button>' : ''}
+      </div>`}
+    ${lista.length ? `<div class="rh-nota">${abertas.length} vaga(s) em aberto de ${lista.length} cadastrada(s).
+      Vaga fechada continua na lista porque é ela que explica por onde cada pessoa entrou.</div>` : ''}`;
+
+  rhLigarAbas();
+  ['rh-nova-vaga', 'rh-nova-vaga-2'].forEach(id => {
+    const b = c.querySelector('#' + id); if (b) b.onclick = () => rhFormVaga(null);
+  });
+  c.querySelectorAll('[data-vaga-editar]').forEach(b => b.onclick = () =>
+    rhFormVaga(lista.find(v => String(v.id) === b.dataset.vagaEditar)));
+  c.querySelectorAll('[data-vaga-ver]').forEach(b => b.onclick = () => rhVagaCandidatos(Number(b.dataset.vagaVer)));
+  c.querySelectorAll('[data-vaga-cand]').forEach(b => {
+    const v = lista.find(x => String(x.id) === b.dataset.vagaCand);
+    b.onclick = () => rhFormNovoColaborador(true, v);
+  });
+}
+
+function rhFormVaga(v) {
+  const novo = !v;
+  v = v || {};
+  openModal(novo ? 'Nova vaga' : 'Editar vaga', `
+    <div class="form-row">
+      ${fldSel('vg-cargo', 'Cargo *', rhOpcoesCargo(v.cargo, true), v.cargo || '')}
+      ${fldSel('vg-nivel', 'Nível', RH_NIVEIS, v.nivel || '')}
+    </div>
+    <div class="form-row">
+      ${fld('vg-departamento', 'Departamento', 'text', v.departamento || '')}
+      ${fld('vg-posicoes', 'Posições', 'number', v.posicoes != null ? v.posicoes : 1, 'min="1" step="1"')}
+    </div>
+    <div class="form-row">
+      ${fldSel('vg-regime', 'Regime', RH_REGIME, v.regime || 'regular')}
+      ${fldSel('vg-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, v.modelo_trabalho || 'presencial')}
+    </div>
+    ${fld('vg-salario_previsto', 'Salário previsto', 'number', v.salario_previsto || '', 'step="0.01" min="0"')}
+    ${fld('vg-observacao', 'Observações', 'text', v.observacao || '')}
+    ${novo ? '' : `<div class="form-row">
+      ${fldSel('vg-situacao', 'Situação', RH_VAGA_SIT, v.situacao || 'aberta')}
+      ${fld('vg-fechamento_motivo', 'Motivo do fechamento', 'text', v.fechamento_motivo || '')}
+    </div>
+    <p class="rh-custo-nota">Fechar a vaga não apaga nada: ela sai do foco da lista e continua
+      explicando por onde cada pessoa entrou. Não dá para fechar com candidato em andamento no Quadro.</p>`}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     ...(novo ? [] : [{ label: 'Excluir', cls: 'danger-ghost', onClick: async () => {
+        try {
+          await api('/api/rh/vagas/' + v.id, { method: 'DELETE' });
+          closeModal(); toast('Vaga excluída.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     } }]),
+     { label: novo ? 'Abrir vaga' : 'Salvar', cls: 'primary', onClick: async () => {
+        const body = {
+          cargo: $('#vg-cargo').value, nivel: $('#vg-nivel').value,
+          departamento: $('#vg-departamento').value, posicoes: $('#vg-posicoes').value,
+          regime: $('#vg-regime').value, modelo_trabalho: $('#vg-modelo_trabalho').value,
+          salario_previsto: $('#vg-salario_previsto').value, observacao: $('#vg-observacao').value
+        };
+        if (!body.cargo) return modalError('Escolha o cargo da vaga.');
+        if (!novo) { body.situacao = $('#vg-situacao').value; body.fechamento_motivo = $('#vg-fechamento_motivo').value; }
+        try {
+          if (novo) await api('/api/rh/vagas', { method: 'POST', body });
+          else await api('/api/rh/vagas/' + v.id, { method: 'PUT', body });
+          closeModal(); toast(novo ? 'Vaga aberta.' : 'Vaga atualizada.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     }}], { wide: true });
+  rhLigarSelectCargo('vg-cargo');
+}
+
+// Os candidatos de uma vaga, com a etapa em que cada um está. É a pergunta que
+// se faz olhando para uma vaga: quem está nela e onde cada um parou.
+async function rhVagaCandidatos(id) {
+  const v = await api('/api/rh/vagas/' + id).catch(e => ({ erro: e.message }));
+  if (v.erro) return toast(v.erro);
+  openModal(`Candidatos — ${v.cargo}`, v.candidatos.length
+    ? `<div class="table-wrap"><table class="tbl-rh-dep">
+        <thead><tr><th>Candidato</th><th>Etapa</th><th>Situação</th><th>Entrevista</th><th>Contato</th><th></th></tr></thead>
+        <tbody>${v.candidatos.map(a => `<tr>
+          <td>${esc(a.name)}</td>
+          <td>${esc(RH_ETAPA_NOME[a.etapa] || a.etapa)}</td>
+          <td>${a.situacao === 'andamento' ? '<span class="badge ok">em andamento</span>'
+              : a.situacao === 'concluida' ? '<span class="badge">contratado</span>'
+              : '<span class="badge late">encerrado</span>'}</td>
+          <td class="venc-cell">${rhData(a.entrevista_em)}</td>
+          <td>${a.celular || a.email_pessoal
+              ? esc(rhTxt(a.celular || a.email_pessoal))
+              : '<span class="badge late">sem contato</span>'}</td>
+          <td><button class="btn sm" data-cand-card="${a.id}">Abrir card</button></td>
+        </tr>`).join('')}</tbody></table></div>`
+    : '<div class="empty">Nenhum candidato nesta vaga ainda. Use <strong>+ Candidato</strong> para abrir o primeiro card no Quadro.</div>',
+    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+  // A lista da vaga era um beco: mostrava quem estava parado e não deixava
+  // agir. O card é onde o contato se preenche e a etapa avança.
+  document.querySelectorAll('[data-cand-card]').forEach(b => {
+    b.onclick = () => rhAbrirCard(Number(b.dataset.candCard));
+  });
 }
 
 // ---------------- Lista de colaboradores ----------------
@@ -11594,8 +12488,19 @@ function rhTirasVinculo(m, temAviso) {
           m.em_curso ? `Termo em ${rhData(m.termo_experiencia)}`
                      : `O contrato iria até ${rhData(m.termo_experiencia)} — art. 479 da CLT`)
       : ''}
-    ${tira(m.em_curso ? 'Aviso prévio hoje' : 'Aviso prévio devido', `${m.aviso_dias} dias`,
-        'Lei 12.506: 30 dias mais 3 por ano completo, limitado a 90')}
+    ${/* Aviso prévio é instituto do contrato por prazo indeterminado. No
+          contrato a termo que chega ao fim não há aviso — mostrar o
+          proporcional ali contradizia o comparativo de rescisão na mesma
+          ficha. Quem decide é o servidor, que lê do mesmo lugar que o cálculo. */
+      m.aviso_aplicavel
+        ? tira(m.em_curso ? 'Aviso se dispensar hoje'
+            : m.aviso_de_quem === 'colaborador' ? 'Aviso devido pelo colaborador' : 'Aviso prévio devido',
+            `${m.aviso_dias} dias`,
+            m.aviso_de_quem === 'colaborador'
+              ? 'No pedido de demissão o aviso é devido À empresa, e são 30 dias fixos — a proporcionalidade é direito do empregado'
+              : `Lei 12.506: 30 dias mais 3 por ano completo, limitado a 90${
+                  m.aviso_dias !== m.aviso_base_dias ? ` (proporcional cheio: ${m.aviso_base_dias} dias)` : ''}`)
+        : ''}
     ${m.aviso_antecedencia_dias && temAviso !== false
       ? tira('Aviso comunicado com', `${m.aviso_antecedencia_dias} dia(s)`, 'de antecedência em relação à saída')
       : ''}
@@ -11636,10 +12541,17 @@ function rhHistoricoVinculos(lista, rem, colabId, podeEditar) {
           (temAviso && v.desligamento_aviso_em
             ? ` <span class="rh-vinc-fraco">· comunicado em ${rhData(v.desligamento_aviso_em)}</span>` : '')
         : semRegistro;
+      // Sem carimbo de quem registrou, o campo simplesmente não aparece.
+      //
+      // Estava escrito "antes deste campo existir", que é verdade e não
+      // informa nada: é um detalhe da história do sistema, não do colaborador.
+      // "Não registrado" serve para o que ALGUÉM pode preencher — motivo,
+      // aviso; quem registrou um desligamento antigo não dá para saber, e
+      // linha que só diz "não sei" é ruído no meio do que se quer ler.
       const registro = v.desligamento_registrado_em
         ? `${rhData(v.desligamento_registrado_em)}${v.desligamento_registrado_nome
             ? ` <span class="rh-vinc-fraco">por ${esc(v.desligamento_registrado_nome)}</span>` : ''}`
-        : '<span class="rh-sem-registro">antes deste campo existir</span>';
+        : null;
       return `<div class="rh-vinc-hist">
         <div class="rh-vinc-cab">
           <div class="rh-vinc-id">
@@ -11654,7 +12566,7 @@ function rhHistoricoVinculos(lista, rem, colabId, podeEditar) {
           ${campo('Motivo do desligamento', v.desligamento_tipo
             ? esc(rhRotulo(RH_DESLIG_TIPO, v.desligamento_tipo)) : semRegistro)}
           ${campo('Aviso prévio', avisoTxt)}
-          ${campo('Registrado em', registro)}
+          ${registro ? campo('Registrado em', registro) : ''}
           ${v.desligamento_motivo ? campo('Motivo', esc(v.desligamento_motivo), true) : ''}
           ${v.desligamento_obs ? campo('Observações', esc(v.desligamento_obs), true) : ''}
         </dl></div>`;
@@ -11697,19 +12609,34 @@ function rhFormCorrigirDesligamento(colabId, v) {
      }}]);
 }
 
-function rhFormVinculo(colabId, v, d) {
+async function rhFormVinculo(colabId, v, d) {
   const novo = !v;
   v = v || {};
   const rem = d.pode.remuneracao;
-  const nivelHab = RH_CARGOS_COM_NIVEL.includes(v.cargo);
+  const nivelHab = rhCargoTemNivel(v.cargo);
+  // Quem pode ser gestor: gente ativa, com vínculo em aberto, e não a própria
+  // pessoa — reportar para si mesmo não é hierarquia, é um ciclo de um só.
+  // O servidor recusa os dois casos de qualquer forma; a lista já vem limpa
+  // pra não oferecer uma opção que vai ser rejeitada.
+  const todos = await api('/api/rh/colaboradores').catch(() => []);
+  const opcoesGestor = [{ v: '', t: '— ninguém (topo da hierarquia) —' },
+    ...todos.filter(p => p.ativo && !p.desligamento && p.id !== colabId)
+      .map(p => ({ v: p.id, t: p.name + (p.cargo ? ' · ' + p.cargo : '') }))];
   openModal(novo ? 'Registrar admissão' : 'Editar vínculo', `
     <div class="form-row">
       ${fldSel('vc-tipo', 'Tipo de vínculo', RH_TIPO_VINCULO, v.tipo || 'clt')}
-      ${fld('vc-matricula', 'Matrícula', 'text', v.matricula || '')}
+      ${/* A matrícula é o ID do colaborador e quem a escreve é o servidor. O
+            campo fica visível porque o número interessa — é ele que se confere
+            contra a folha —, mas travado: digitar aqui não mudaria nada, já que
+            `matricula` saiu da lista de campos que a API aceita do formulário.
+            Campo que aceita digitação e descarta o que foi digitado é pior que
+            campo travado. */
+        fld('vc-matricula', 'Matrícula', 'text', v.matricula || String(colabId),
+          'disabled title="Gerada a partir do ID do colaborador — não é editável"')}
       ${fld('vc-admissao', 'Admissão *', 'date', v.admissao ? String(v.admissao).slice(0, 10) : todayISO())}
     </div>
     <div class="form-row">
-      ${fldSel('vc-cargo', 'Cargo', rhOpcoes(RH_CARGOS, '— selecione —'), v.cargo || '')}
+      ${fldSel('vc-cargo', 'Cargo', rhOpcoesCargo(v.cargo, true), v.cargo || '')}
       ${fldSel('vc-nivel', 'Nível', RH_NIVEIS, v.nivel || '')}
     </div>
     <div class="form-row">
@@ -11717,6 +12644,7 @@ function rhFormVinculo(colabId, v, d) {
       ${fldSel('vc-centro_custo', 'Centro de custo', rhOpcoes(typeof CENTROS !== 'undefined' ? CENTROS : []), v.centro_custo || '')}
       ${fld('vc-unidade', 'Unidade', 'text', v.unidade || '', 'placeholder="São Paulo / Brasil"')}
     </div>
+    ${fldSel('vc-gestor_id', 'A quem reporta', opcoesGestor, v.gestor_id || '')}
     <div class="form-row">
       ${fldSel('vc-regime', 'Regime', RH_REGIME, v.regime || 'regular')}
       ${fldSel('vc-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, v.modelo_trabalho || 'presencial')}
@@ -11750,8 +12678,10 @@ function rhFormVinculo(colabId, v, d) {
     [{ label: 'Cancelar', onClick: closeModal },
      { label: novo ? 'Registrar admissão' : 'Salvar', cls: 'primary', onClick: async () => {
         const body = {};
-        const texto = ['tipo', 'matricula', 'admissao', 'cargo', 'nivel', 'departamento', 'centro_custo',
-          'unidade', 'regime', 'modelo_trabalho', 'cct', 'sindicato', 'observacao',
+        // Sem 'matricula': um campo desabilitado ainda tem `.value`, e mandá-lo
+        // faria o formulário parecer dono de um dado que quem grava é o servidor.
+        const texto = ['tipo', 'admissao', 'cargo', 'nivel', 'departamento', 'centro_custo',
+          'unidade', 'gestor_id', 'regime', 'modelo_trabalho', 'cct', 'sindicato', 'observacao',
           'desligamento', 'desligamento_tipo', 'desligamento_motivo'];
         texto.forEach(k => { const e2 = $('#vc-' + k); if (e2) body[k] = e2.value; });
         ['controle_ponto', 'totalpass', 'clube_saude', 'seguro_vida'].forEach(k => {
@@ -11773,13 +12703,14 @@ function rhFormVinculo(colabId, v, d) {
   const sincronizar = () => {
     const cargo = $('#vc-cargo').value, reg = $('#vc-regime').value, mod = $('#vc-modelo_trabalho').value;
     const selNivel = $('#vc-nivel');
-    const temNivel = RH_CARGOS_COM_NIVEL.includes(cargo);
+    const temNivel = rhCargoTemNivel(cargo);
     selNivel.disabled = !temNivel;
     if (!temNivel) selNivel.value = '';
     selNivel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
     $('#vc-minuta').innerHTML = `Minuta que será usada na emissão: <strong>${esc(rhMinutaDe(reg, mod))}</strong>`;
   };
   ['vc-cargo', 'vc-regime', 'vc-modelo_trabalho'].forEach(x => { const e2 = $('#' + x); if (e2) e2.onchange = sincronizar; });
+  rhLigarSelectCargo('vc-cargo', sincronizar);
   sincronizar();
   if (!nivelHab) { /* estado inicial já aplicado por sincronizar() */ }
 }
