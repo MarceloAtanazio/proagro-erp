@@ -5452,6 +5452,54 @@ app.get('/api/rh/encargos', requireAuth, requireViewAny(['rh']), h(async (req, r
     rat_pct: n(c.rat_pct), terceiros_pct: n(c.terceiros_pct) });
 }));
 
+// A calculadora recebe o líquido desejado; `rhCustoDoVinculo` só sabe ir de
+// bruto para líquido. As faixas de INSS/IRRF são em degrau, então não existe
+// fórmula fechada para inverter — mas o líquido cresce (nunca cai) conforme o
+// salário sobe, porque nenhuma alíquota chega a 100%. Isso garante que a busca
+// binária converge, e ela chama a MESMA `rhCustoDoVinculo` de sempre — não há
+// uma segunda conta de INSS/IRRF só para a calculadora.
+function rhBrutoAPartirDoLiquido(liquidoAlvo, cfg, nDependentes, periculosidadePct) {
+  const alvo = Math.max(0, Number(liquidoAlvo) || 0);
+  const custoDe = salario => rhCustoDoVinculo({ salario, periculosidade_pct: periculosidadePct }, cfg, nDependentes);
+  let lo = 0, hi = Math.max(alvo * 2, 1000);
+  for (let i = 0; i < 40 && custoDe(hi).liquido < alvo; i++) hi *= 2;
+  for (let i = 0; i < 60; i++) {
+    const meio = (lo + hi) / 2;
+    if (custoDe(meio).liquido < alvo) lo = meio; else hi = meio;
+  }
+  return custoDe(r2((lo + hi) / 2));
+}
+
+// ---- Calculadora salarial ----
+// Mesmo cálculo do "Custo do Vínculo" (mesma tabela de encargos, mesmas
+// faixas), só que sem exigir um colaborador cadastrado — para simular ANTES
+// de abrir uma vaga ou fazer uma proposta. Aceita `liquido` (acha o bruto por
+// aproximação) ou `salario` (calcula direto, como o Custo do Vínculo).
+app.get('/api/rh/calculadora-salarial', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  if (!rhVeRemuneracao(req.user)) return res.status(403).json({ error: 'Exige a permissão “RH · remuneração e benefícios”.' });
+  const cfg = await rhEncargos();
+  if (!cfg) return res.status(404).json({ error: 'Tabela de encargos não configurada.' });
+
+  const dependentes = Math.max(0, Math.trunc(n(req.query.dependentes)));
+  const periculosidade_pct = Math.max(0, n(req.query.periculosidade_pct));
+  const temLiquido = req.query.liquido !== undefined && req.query.liquido !== '';
+  const temSalario = req.query.salario !== undefined && req.query.salario !== '';
+  if (!temLiquido && !temSalario) return res.status(400).json({ error: 'Informe o salário líquido desejado ou o salário bruto (base).' });
+
+  let custo;
+  if (temLiquido) {
+    const liquido = Number(req.query.liquido);
+    if (!(liquido > 0)) return res.status(400).json({ error: 'Informe um salário líquido maior que zero.' });
+    custo = rhBrutoAPartirDoLiquido(liquido, cfg, dependentes, periculosidade_pct);
+    custo.liquido_alvo = r2(liquido);
+  } else {
+    const salario = Number(req.query.salario);
+    if (!(salario > 0)) return res.status(400).json({ error: 'Informe um salário maior que zero.' });
+    custo = rhCustoDoVinculo({ salario, periculosidade_pct }, cfg, dependentes);
+  }
+  res.json(custo);
+}));
+
 app.put('/api/rh/encargos', requireAuth, requireEdit('rh'), h(async (req, res) => {
   if (!rhVeRemuneracao(req.user)) return res.status(403).json({ error: 'Exige a permissão “RH · remuneração e benefícios”.' });
   const b = req.body;

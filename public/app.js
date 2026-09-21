@@ -45,6 +45,8 @@ function permLevel(page) {
 }
 const canViewPage = page => { const l = permLevel(page); return l === 'view' || l === 'edit'; };
 const canEditPage = page => permLevel(page) === 'edit';
+const rhTemRemuneracao = () => !!USER && (USER.role === 'admin' ||
+  ['view', 'edit'].includes((USER.permissions || {}).rh_remuneracao));
 
 // Busca categorias/centros de custo configurados e popula os arrays globais
 // usados em todos os formulários (Contas a Pagar/Receber, Fornecedores, Orçamento).
@@ -9940,11 +9942,14 @@ function rhAbasTopo() {
   // Organograma vem logo depois de Colaboradores: é a MESMA equipe, só que
   // por hierarquia em vez de lista — outra lente sobre quem já é da casa,
   // antes das abas de processo (Férias, Benefícios, Vagas, Quadro, Minutas).
+  // Calculadora salarial vem logo ANTES de Vagas: é a pergunta que se faz
+  // antes de abrir uma vaga ("quanto custa"), não depois.
   const abas = [{ k: 'painel', t: 'Painel' }, { k: 'pessoas', t: 'Colaboradores' },
                 { k: 'organograma', t: 'Organograma' },
-                { k: 'ferias', t: 'Férias' }, { k: 'beneficios', t: 'Benefícios' },
-                { k: 'vagas', t: 'Vagas' },
-                { k: 'quadro', t: 'Quadro de admissão' }, { k: 'minutas', t: 'Minutas' }];
+                { k: 'ferias', t: 'Férias' }, { k: 'beneficios', t: 'Benefícios' }];
+  if (rhTemRemuneracao()) abas.push({ k: 'calculadora', t: 'Calculadora salarial' });
+  abas.push({ k: 'vagas', t: 'Vagas' },
+             { k: 'quadro', t: 'Quadro de admissão' }, { k: 'minutas', t: 'Minutas' });
   return `<div class="rh-abas rh-abas-topo">${abas.map(a =>
     `<button class="rh-aba ${a.k === RH_ABA ? 'ativa' : ''}" data-secao="${a.k}">${a.t}</button>`).join('')}</div>`;
 }
@@ -10767,6 +10772,7 @@ async function renderRH() {
   if (RH_ABA === 'organograma') return rhOrganograma(c);
   if (RH_ABA === 'ferias') return rhFerias(c);
   if (RH_ABA === 'beneficios') return rhBeneficios(c);
+  if (RH_ABA === 'calculadora') return rhCalculadoraSalarial(c);
   if (RH_ABA === 'vagas') return rhVagas(c);
   if (RH_ABA === 'quadro') return rhQuadro(c);
   if (RH_ABA === 'minutas') return rhMinutas(c);
@@ -11209,6 +11215,88 @@ async function rhFormInscrever(beneficioId, jaInscritos, aoSalvar) {
           closeModal(); toast('Inscrito(a).'); aoSalvar();
         } catch (e) { modalError(e.message); }
      }}] : [{ label: 'Fechar', onClick: closeModal }]);
+}
+
+// ---------------- Calculadora salarial ----------------
+//
+// Simulação avulsa, sem exigir um colaborador cadastrado — para responder
+// "quanto custa" ANTES de abrir uma vaga. Usa a mesma tabela de encargos e a
+// mesma `rhQuadroCusto` que a ficha de um colaborador de verdade: o resultado
+// nunca diverge do que a pessoa veria depois de contratada.
+let RH_CALC_MODO = 'liquido';   // liquido | bruto
+
+async function rhCalculadoraSalarial(c) {
+  const cfg = await api('/api/rh/encargos').catch(() => null);
+  const vencida = cfg ? rhTabelaVencida(cfg.competencia) : null;
+  const anoAtual = new Date().getFullYear();
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-topo">
+      <div class="rh-quadro-dica">Simule o custo de uma vaga antes de abri-la — ou o líquido que
+        sobra num salário bruto. Usa as mesmas faixas de INSS/IRRF e os mesmos percentuais de
+        encargos do resto do sistema; nada aqui é uma conta à parte.</div>
+    </div>
+
+    ${!cfg ? `<div class="rh-nota alerta">Tabela de encargos não configurada. Configure em
+        <button class="rh-link" id="rh-calc-ir-encargos">Configurações de encargos</button> antes de simular.</div>`
+      : vencida ? `<div class="rh-nota alerta">A tabela de INSS/IRRF em uso é a de <strong>${vencida}</strong>
+        e estamos em <strong>${anoAtual}</strong>. O líquido calculado aqui vai sair <strong>errado</strong>
+        até ela ser atualizada em
+        <button class="rh-link" id="rh-calc-ir-encargos">Configurações de encargos</button>.</div>`
+      : !cfg.confirmada ? `<div class="rh-nota aviso">A tabela de INSS/IRRF em uso é a de
+        <strong>${esc(cfg.competencia)}</strong> e ainda não foi confirmada. O custo da empresa não
+        depende dela, mas o líquido sim — confira em
+        <button class="rh-link" id="rh-calc-ir-encargos">Configurações de encargos</button>.</div>` : ''}
+
+    <div class="rh-sec rh-calc-form">
+      <div class="rh-org-vistas">
+        <button class="rh-org-vista ${RH_CALC_MODO === 'liquido' ? 'ativa' : ''}" data-calc-modo="liquido">Sei o líquido</button>
+        <button class="rh-org-vista ${RH_CALC_MODO === 'bruto' ? 'ativa' : ''}" data-calc-modo="bruto">Sei o bruto</button>
+      </div>
+      <div class="form-row">
+        ${fld('calc-valor', RH_CALC_MODO === 'liquido' ? 'Salário líquido desejado (R$)' : 'Salário bruto — base (R$)',
+              'number', '', 'step="0.01" min="0" placeholder="0,00"')}
+        ${fld('calc-dependentes', 'Dependentes (IRRF)', 'number', 0, 'step="1" min="0"')}
+        ${fld('calc-pericul', 'Periculosidade (%)', 'number', 0, 'step="0.01" min="0" max="100"')}
+      </div>
+      <button class="btn primary" id="rh-calc-ir" ${cfg ? '' : 'disabled'}>Calcular</button>
+      <div class="form-msg err" id="rh-calc-erro" style="display:none"></div>
+    </div>
+
+    <div id="rh-calc-resultado"></div>`;
+
+  rhLigarAbas();
+  const irEnc = $('#rh-calc-ir-encargos');
+  if (irEnc) irEnc.onclick = () => rhFormEncargos(() => rhCalculadoraSalarial(c));
+  c.querySelectorAll('[data-calc-modo]').forEach(b => b.onclick = () => {
+    RH_CALC_MODO = b.dataset.calcModo; rhCalculadoraSalarial(c);
+  });
+
+  const btn = $('#rh-calc-ir');
+  if (!btn) return;
+  btn.onclick = async () => {
+    const erroEl = $('#rh-calc-erro'); erroEl.style.display = 'none';
+    const valor = Number($('#calc-valor').value);
+    if (!(valor > 0)) { erroEl.textContent = 'Informe um valor maior que zero.'; erroEl.style.display = ''; return; }
+    const dependentes = Math.max(0, Math.trunc(Number($('#calc-dependentes').value) || 0));
+    const pericul = Math.max(0, Number($('#calc-pericul').value) || 0);
+    const qs = new URLSearchParams({ dependentes: String(dependentes), periculosidade_pct: String(pericul) });
+    qs.set(RH_CALC_MODO === 'liquido' ? 'liquido' : 'salario', String(valor));
+
+    btn.disabled = true; btn.textContent = 'Calculando…';
+    try {
+      const custo = await api('/api/rh/calculadora-salarial?' + qs.toString());
+      const nota = custo.liquido_alvo != null ? `<p class="rh-custo-nota">Líquido desejado:
+        ${brl(custo.liquido_alvo)}. O bruto foi achado por aproximação (as faixas de INSS/IRRF são em
+        degrau, não dá pra isolar o bruto numa fórmula) — diferença de
+        ${brl(Math.abs(custo.liquido - custo.liquido_alvo))} por arredondamento de centavos.</p>` : '';
+      $('#rh-calc-resultado').innerHTML = rhQuadroCusto(custo, 'Resultado da simulação') + nota;
+    } catch (e) {
+      erroEl.textContent = e.message; erroEl.style.display = '';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Calcular';
+    }
+  };
 }
 
 // ---------------- Vagas ----------------
@@ -12064,12 +12152,12 @@ const rhTabelaVencida = comp => {
   return ano && ano < new Date().getFullYear() ? ano : null;
 };
 
-function rhQuadroCusto(c) {
+function rhQuadroCusto(c, titulo) {
   if (!c) return '';
   const l = (rot, val, cls) => `<div class="rh-custo-linha ${cls || ''}"><span>${rot}</span><b>${val}</b></div>`;
   const pct = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + '%';
   const vencida = rhTabelaVencida(c.competencia);
-  return `<div class="rh-sec rh-custo"><h4>Custo <span class="rh-lgpd">restrito</span></h4>
+  return `<div class="rh-sec rh-custo"><h4>${titulo ? esc(titulo) : 'Custo <span class="rh-lgpd">restrito</span>'}</h4>
 
     ${vencida ? `<div class="rh-nota alerta">A tabela de INSS/IRRF em uso é a de
       <strong>${vencida}</strong> e estamos em <strong>${new Date().getFullYear()}</strong>. As faixas

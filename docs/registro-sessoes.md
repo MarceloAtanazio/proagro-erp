@@ -6351,3 +6351,56 @@ real: o Fabrício aparece centralizado acima dos quatro diretos, e os demais ní
 continuam corretos.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 129: Calculadora salarial, o inverso do Custo do Vínculo
+
+**Solicitação:** *"Em recursos humanos eu gostaria de adicionar uma aba onde eu possa calcular o
+salario pra entender todos os custos inerentes. Por exemplo, futuramente quero ofertar uma vaga de
+analista administrativo que pague 6000 liquido ao funcionario, quero pode colocar esse valor e ela
+me trazer todos os custos e tal."*
+
+### O que já existia, e o que faltava
+
+O RH já calculava custo — mas só numa direção (bruto → líquido) e só para um colaborador já
+cadastrado (`rhCustoDoVinculo`, na aba "Vínculo" da ficha). Não existia simulação avulsa nem o
+caminho inverso: partir do líquido que se quer OFERECER numa vaga e achar o bruto e o custo total.
+As faixas de INSS e IRRF são em degrau — não dá pra isolar o bruto numa fórmula fechada.
+
+### A solução: busca binária em cima do mesmo cálculo de sempre
+
+`rhBrutoAPartirDoLiquido` não reimplementa INSS/IRRF — ela chama a mesma `rhCustoDoVinculo` de
+sempre por aproximação: tenta um bruto, olha o líquido que ele dá, ajusta, repete, até bater com o
+alvo ao centavo. Isso só funciona porque o líquido **nunca cai** conforme o bruto sobe (nenhuma
+alíquota chega a 100%) — sem essa garantia a busca poderia não convergir. Resultado: o número que a
+calculadora mostra nunca pode divergir do que a pessoa veria depois de contratada, porque é
+literalmente a mesma função por trás dos dois.
+
+Endpoint novo, `GET /api/rh/calculadora-salarial`, aceita `liquido` (busca o bruto) OU `salario`
+(calcula direto, sem busca) — mais `dependentes` e `periculosidade_pct`, opcionais. Mesma trava de
+permissão de `/api/rh/encargos` ("RH · remuneração e benefícios"), porque é o mesmo tipo de dado.
+
+### A tela
+
+Aba nova, "Calculadora salarial", posicionada logo ANTES de Vagas — é a pergunta que se faz antes
+de abrir uma vaga, não depois. Só aparece pra quem tem a permissão de remuneração (frontend E
+backend travam a mesma coisa). Um seletor "Sei o líquido" / "Sei o bruto" (o mesmo componente visual
+do Organograma) troca o rótulo do campo; o resultado é renderizado pela MESMA `rhQuadroCusto` que já
+existia — só ganhou um título opcional (`'Resultado da simulação'`, sem a etiqueta "restrito", que
+faz sentido pra dado real de alguém mas não pra uma simulação hipotética). Quando o modo é "líquido",
+uma notinha mostra o líquido pedido contra o achado, com a diferença de centavos explicada.
+
+### Verificação
+
+`verifica-calculadora-salarial.js`, duas camadas: (1) a função pura extraída do arquivo real —
+convergência num leque de R$ 1.800 a R$ 30.000, monotonicidade (líquido maior sempre pede bruto
+maior), dependentes e periculosidade entrando na busca (não só decorando o resultado), bordas
+(líquido zero/negativo não trava, líquido muito alto ainda converge); (2) o endpoint HTTP de
+verdade, com o app inteiro de pé — 403 sem a permissão de remuneração, 400 nas validações de
+entrada, e o caso da vaga de R$ 6.000 líquidos fim a fim. 28 verificações, todas passando. As
+suítes de Custo do Vínculo e Organograma, que dependem do mesmo trecho de código, continuam
+passando sem alteração. Testado no navegador reproduzindo a tela real, com os números de verdade do
+caso de R$ 6.000: o bruto encontrado foi R$ 7.934,82, líquido de R$ 5.999,99 (1 centavo de
+arredondamento) e custo total de R$ 12.226,25/mês.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

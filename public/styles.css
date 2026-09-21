@@ -1345,6 +1345,11 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-org-vista.ativa { background: var(--verde-700); color: #fff; }
 .rh-org-vista:not(.ativa):hover { background: var(--verde-050); }
 
+/* Calculadora salarial: mesmo seletor de vista do Organograma (Sei o
+   líquido / Sei o bruto), aqui sozinho num card em vez de numa topbar. */
+.rh-calc-form .rh-org-vistas { width: fit-content; margin-bottom: 14px; }
+.rh-calc-form .form-row { margin-bottom: 14px; }
+
 .rh-org { padding: 6px 0; overflow-x: auto; }
 .rh-org-no { position: relative; }
 .rh-org-cartao, .rh-org-caixa { background: var(--card); border: 1px solid var(--line);
