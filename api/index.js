@@ -2555,7 +2555,15 @@ app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(asyn
   const verRemunFicha = rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab);
   const vinculoVigente = vinculos.find(v => !v.desligamento) || null;
   const custo = verRemunFicha && vinculoVigente
-    ? rhCustoDoVinculo(vinculoVigente, await rhEncargos(),
+    ? rhCustoDoVinculo({
+        ...vinculoVigente,
+        // O catálogo de Benefícios não vem na SELECT de vínculos — é somado
+        // aqui, na mesma foto de "hoje" que o resto do custo já é.
+        beneficios_catalogo: ((await query(
+          `SELECT COALESCE(sum(b.custo_empresa), 0) AS n FROM erp_rh_beneficio_colab bc
+             JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
+            WHERE bc.colaborador_id=$1 AND bc.ate IS NULL AND b.ativo = true`, [id]))[0] || {}).n || 0
+      }, await rhEncargos(),
         // COUNT sempre devolve linha em Postgres, mas indexar [0] sem guarda faz
         // a ficha inteira responder 500 se algum dia nao devolver.
         ((await query('SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND irrf=true', [id]))[0] || {}).n || 0)
@@ -2990,6 +2998,346 @@ app.put('/api/rh/cargos/:id', requireAuth, requireEdit('rh'), h(async (req, res)
     }
   }
   res.json({ ok: true, renomeado_em: atualizados });
+}));
+
+// ---- Férias ----
+//
+// Controle, não folha: esta versão RASTREIA períodos e REGISTRA gozo, sem
+// calcular o valor a pagar — o mesmo desenho que a rescisão já tem, onde o
+// valor vem da contabilidade externa e entra em Contas a Pagar.
+//
+// O período aquisitivo nasce sozinho a cada 12 meses de vínculo — ninguém
+// "cria" um período, ele existe pelo simples fato de a pessoa ter completado o
+// ano. Por isso é GERADO sob demanda (idempotente), em vez de alguém precisar
+// lembrar de abrir um a cada aniversário de casa.
+function rhSomaAnoISO(iso, nAnos) {
+  const [a, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(a + nAnos, m - 1, d)).toISOString().slice(0, 10);
+}
+
+async function rhSincronizarFerias(vinculo) {
+  const existentes = await query(
+    'SELECT periodo_inicio FROM erp_rh_ferias_periodos WHERE vinculo_id=$1', [vinculo.id]);
+  const jaTem = new Set(existentes.map(p => String(p.periodo_inicio).slice(0, 10)));
+  // O período em aquisição (ainda não completou o ano) entra também — é o que
+  // deixa a tela mostrar "em aquisição", em vez de a pessoa só aparecer no
+  // sistema no dia seguinte ao aniversário de casa.
+  const limite = vinculo.desligamento ? String(vinculo.desligamento).slice(0, 10) : hojeISO();
+  let inicio = String(vinculo.admissao).slice(0, 10);
+  for (let guarda = 0; guarda < 60 && inicio <= limite; guarda++) {   // 60 anos: trava contra laço infinito
+    if (!jaTem.has(inicio)) {
+      const fim = rhSomaDiasISO(rhSomaAnoISO(inicio, 1), -1);
+      const limiteGozo = rhSomaAnoISO(fim, 1);
+      await query(
+        `INSERT INTO erp_rh_ferias_periodos (vinculo_id, colaborador_id, periodo_inicio, periodo_fim, limite_gozo)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (vinculo_id, periodo_inicio) DO NOTHING`,
+        [vinculo.id, vinculo.colaborador_id, inicio, fim, limiteGozo]);
+    }
+    inicio = rhSomaAnoISO(inicio, 1);
+  }
+}
+
+// Saldo e status de um período, a partir do que já foi registrado nele.
+const RH_FERIAS_AVISO_DIAS = 90;   // aviso prévio antes do prazo de gozo vencer
+function rhFeriasResumo(periodo, gozos, hoje) {
+  const usados = gozos.reduce((s, g) => s + Number(g.dias), 0);
+  const abono = gozos.filter(g => g.abono_pecuniario).reduce((s, g) => s + Number(g.dias), 0);
+  const saldo = Math.max(0, Number(periodo.dias_direito) - usados);
+  const completo = String(periodo.periodo_fim).slice(0, 10) <= hoje;
+  let status;
+  if (!completo) status = 'em_aquisicao';
+  else if (saldo === 0) status = 'quitado';
+  else if (String(periodo.limite_gozo).slice(0, 10) < hoje) status = 'vencido';
+  else if (String(periodo.limite_gozo).slice(0, 10) <= rhSomaDiasISO(hoje, RH_FERIAS_AVISO_DIAS)) status = 'a_vencer';
+  else status = 'em_dia';
+  return { ...periodo, dias_usados: usados, dias_abono: abono, saldo, status, gozos };
+}
+
+app.get('/api/rh/ferias', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const hoje = hojeISO();
+  const vinculos = await query(`
+    SELECT v.id, v.colaborador_id, v.admissao, v.desligamento, c.name AS colaborador_nome
+      FROM erp_rh_vinculos v
+      JOIN erp_colaboradores c ON c.id = v.colaborador_id
+     WHERE v.desligamento IS NULL AND c.ativo = true AND c.arquivado_em IS NULL
+     ORDER BY c.name`);
+  for (const v of vinculos) await rhSincronizarFerias(v);
+
+  const periodos = vinculos.length ? await query(
+    `SELECT * FROM erp_rh_ferias_periodos WHERE vinculo_id = ANY($1::int[]) ORDER BY periodo_inicio`,
+    [vinculos.map(v => v.id)]) : [];
+  const ids = periodos.map(p => p.id);
+  const gozos = ids.length ? await query(
+    `SELECT * FROM erp_rh_ferias_gozos WHERE periodo_id = ANY($1::int[]) ORDER BY inicio`, [ids]) : [];
+  const gozosPor = {};
+  gozos.forEach(g => { (gozosPor[g.periodo_id] ||= []).push(g); });
+
+  const resumos = periodos.map(p => rhFeriasResumo(p, gozosPor[p.id] || [], hoje));
+  const resumosPorColab = {};
+  resumos.forEach(r => { (resumosPorColab[r.colaborador_id] ||= []).push(r); });
+
+  // Uma linha por PESSOA na lista principal: o período que mais pede atenção
+  // (vencido antes de a_vencer, antes de em_dia, antes de em_aquisição) —
+  // porque é essa a pergunta que a tela responde: "quem eu preciso chamar pra
+  // tirar férias". Quem quiser ver os outros períodos abre o histórico.
+  const ORDEM = { vencido: 0, a_vencer: 1, em_dia: 2, em_aquisicao: 3, quitado: 4 };
+  const pessoas = vinculos.map(v => {
+    const meus = (resumosPorColab[v.colaborador_id] || []).slice()
+      .sort((a, b) => ORDEM[a.status] - ORDEM[b.status] || a.periodo_inicio.localeCompare(b.periodo_inicio));
+    return { colaborador_id: v.colaborador_id, colaborador_nome: v.colaborador_nome,
+             vinculo_id: v.id, periodo_em_destaque: meus[0] || null, total_periodos: meus.length };
+  });
+
+  res.json({
+    hoje, pessoas,
+    contagem: {
+      vencido: resumos.filter(r => r.status === 'vencido').length,
+      a_vencer: resumos.filter(r => r.status === 'a_vencer').length
+    }
+  });
+}));
+
+// O histórico completo de uma pessoa — todos os vínculos dela, não só o atual,
+// porque quem foi readmitido tem períodos de antes também.
+app.get('/api/rh/colaboradores/:id/ferias', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const vinculos = await query(
+    'SELECT id, colaborador_id, admissao, desligamento FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao', [id]);
+  if (!vinculos.length) return res.json({ periodos: [] });
+  for (const v of vinculos) await rhSincronizarFerias(v);
+
+  const hoje = hojeISO();
+  const periodos = await query(
+    `SELECT * FROM erp_rh_ferias_periodos WHERE vinculo_id = ANY($1::int[]) ORDER BY periodo_inicio DESC`,
+    [vinculos.map(v => v.id)]);
+  const ids = periodos.map(p => p.id);
+  const gozos = ids.length ? await query(
+    `SELECT * FROM erp_rh_ferias_gozos WHERE periodo_id = ANY($1::int[]) ORDER BY inicio`, [ids]) : [];
+  const gozosPor = {};
+  gozos.forEach(g => { (gozosPor[g.periodo_id] ||= []).push(g); });
+  res.json({ periodos: periodos.map(p => rhFeriasResumo(p, gozosPor[p.id] || [], hoje)) });
+}));
+
+app.put('/api/rh/ferias/periodos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = (await query('SELECT * FROM erp_rh_ferias_periodos WHERE id=$1', [id]))[0];
+  if (!atual) return res.status(404).json({ error: 'Período não encontrado.' });
+  const dias = req.body.dias_direito !== undefined ? Number(req.body.dias_direito) : atual.dias_direito;
+  if (!Number.isFinite(dias) || dias < 0 || dias > 30) {
+    return res.status(400).json({ error: 'Dias de direito deve estar entre 0 e 30.' });
+  }
+  // Reduzir o direito é sempre por um motivo legal (faltas do art. 130 CLT) —
+  // sem a justificativa escrita, ninguém vai saber por quê daqui a um ano.
+  if (dias !== atual.dias_direito && !sanitize(req.body.observacao)) {
+    return res.status(400).json({ error: 'Para mudar os dias de direito, explique o motivo.' });
+  }
+  await query('UPDATE erp_rh_ferias_periodos SET dias_direito=$1, observacao=$2 WHERE id=$3',
+    [dias, sanitize(req.body.observacao) || atual.observacao, id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/rh/ferias/periodos/:id/gozos', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const periodoId = Number(req.params.id);
+  const periodo = (await query('SELECT * FROM erp_rh_ferias_periodos WHERE id=$1', [periodoId]))[0];
+  if (!periodo) return res.status(404).json({ error: 'Período não encontrado.' });
+  const vinculo = (await query('SELECT * FROM erp_rh_vinculos WHERE id=$1', [periodo.vinculo_id]))[0];
+
+  if (!isDate(req.body.inicio) || !isDate(req.body.fim)) return res.status(400).json({ error: 'Informe início e fim.' });
+  const inicio = req.body.inicio, fim = req.body.fim;
+  if (fim < inicio) return res.status(400).json({ error: 'O fim não pode ser antes do início.' });
+  // O direito só existe depois de completar os 12 meses — férias antes disso
+  // não são férias, são acordo informal, e a lei não reconhece.
+  if (inicio < String(periodo.periodo_fim).slice(0, 10)) {
+    return res.status(400).json({ error: `Este período só completa em ${rhDataBR(periodo.periodo_fim)} — não dá para gozar antes.` });
+  }
+  if (vinculo && vinculo.desligamento && fim > String(vinculo.desligamento).slice(0, 10)) {
+    return res.status(400).json({ error: 'A pessoa já foi desligada — férias depois disso são indenizadas na rescisão, não gozadas.' });
+  }
+  const dias = Math.round((emDias(fim) - emDias(inicio)) / DIA_MS) + 1;
+  if (dias < 5) return res.status(400).json({ error: 'A menor parcela permitida é de 5 dias corridos.' });
+
+  const existentes = await query('SELECT * FROM erp_rh_ferias_gozos WHERE periodo_id=$1', [periodoId]);
+  const abono = req.body.abono_pecuniario === true;
+  const usados = existentes.reduce((s, g) => s + Number(g.dias), 0);
+  if (usados + dias > periodo.dias_direito) {
+    return res.status(409).json({ error: `Sobram só ${periodo.dias_direito - usados} dia(s) de saldo neste período.` });
+  }
+  const jaAbono = existentes.filter(g => g.abono_pecuniario).reduce((s, g) => s + Number(g.dias), 0);
+  const tetoAbono = Math.floor(periodo.dias_direito / 3);
+  if (abono && jaAbono + dias > tetoAbono) {
+    return res.status(400).json({ error: `Abono pecuniário não pode passar de 1/3 do período (${tetoAbono} dias).` });
+  }
+  const parcelasDeFerias = existentes.filter(g => !g.abono_pecuniario);
+  if (!abono && parcelasDeFerias.length >= 3) {
+    return res.status(400).json({ error: 'Este período já tem 3 parcelas de férias — o máximo permitido em lei.' });
+  }
+
+  // Duas parcelas não podem se sobrepor, nem no mesmo período nem entre
+  // períodos diferentes do mesmo vínculo — a pessoa não tira férias duas vezes
+  // ao mesmo tempo.
+  const doVinculo = await query(
+    `SELECT g.inicio, g.fim FROM erp_rh_ferias_gozos g
+       JOIN erp_rh_ferias_periodos p ON p.id = g.periodo_id
+      WHERE p.vinculo_id = $1`, [periodo.vinculo_id]);
+  const sobrepoe = doVinculo.some(g => inicio <= String(g.fim).slice(0, 10) && fim >= String(g.inicio).slice(0, 10));
+  if (sobrepoe) return res.status(409).json({ error: 'Já existe um gozo registrado que se sobrepõe a estas datas.' });
+
+  const ins = await query(
+    `INSERT INTO erp_rh_ferias_gozos (periodo_id, inicio, fim, dias, abono_pecuniario, observacao, registrado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [periodoId, inicio, fim, dias, abono, sanitize(req.body.observacao) || null, req.user.id]);
+  res.json({ ok: true, id: ins[0].id, dias });
+}));
+
+app.delete('/api/rh/ferias/gozos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const del = await query('DELETE FROM erp_rh_ferias_gozos WHERE id=$1 RETURNING id', [Number(req.params.id)]);
+  if (!del.length) return res.status(404).json({ error: 'Registro não encontrado.' });
+  res.json({ ok: true });
+}));
+
+// ---- Benefícios ----
+//
+// Catálogo (o que a empresa oferece, com o custo) mais adesão (quem está
+// inscrito). Substitui, para o que vier daqui pra frente, os três booleans
+// fixos que o vínculo já tinha (totalpass, clube_saude, seguro_vida) — que
+// continuam existindo e não são tocados por este bloco.
+//
+// `custo_empresa` é por PESSOA inscrita: o custo total do benefício é ele
+// multiplicado por quantos estão ativos, não um valor fixo do catálogo.
+// Dinheiro é dado sensível como salário — quem não vê remuneração não vê custo.
+app.get('/api/rh/beneficios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const verCusto = rhVeRemuneracao(req.user);
+  const rows = await query(`
+    SELECT b.*,
+           (SELECT count(*)::int FROM erp_rh_beneficio_colab bc
+             WHERE bc.beneficio_id=b.id AND bc.ate IS NULL) AS inscritos
+      FROM erp_rh_beneficios b
+     ORDER BY b.ativo DESC, b.nome`);
+  res.json(rows.map(b => {
+    const out = { ...b };
+    if (verCusto) out.custo_total_mensal = r2(Number(b.custo_empresa) * b.inscritos);
+    else { delete out.custo_empresa; delete out.custo_colaborador; }
+    return out;
+  }));
+}));
+
+app.post('/api/rh/beneficios', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const nome = sanitize(req.body.nome);
+  if (!nome) return res.status(400).json({ error: 'Informe o nome do benefício.' });
+  const custoEmpresa = Number(req.body.custo_empresa) || 0;
+  const custoColab = Number(req.body.custo_colaborador) || 0;
+  if (custoEmpresa < 0 || custoColab < 0) return res.status(400).json({ error: 'Custo não pode ser negativo.' });
+  const ins = await query(
+    `INSERT INTO erp_rh_beneficios (nome, categoria, fornecedor, custo_empresa, custo_colaborador, periodicidade, observacao, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [nome, sanitize(req.body.categoria) || null, sanitize(req.body.fornecedor) || null,
+     custoEmpresa, custoColab, sanitize(req.body.periodicidade) || 'mensal',
+     sanitize(req.body.observacao) || null, req.user.id]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/rh/beneficios/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = (await query('SELECT * FROM erp_rh_beneficios WHERE id=$1', [id]))[0];
+  if (!atual) return res.status(404).json({ error: 'Benefício não encontrado.' });
+  const nome = req.body.nome !== undefined ? sanitize(req.body.nome) : atual.nome;
+  if (!nome) return res.status(400).json({ error: 'Informe o nome do benefício.' });
+  const custoEmpresa = req.body.custo_empresa !== undefined ? Number(req.body.custo_empresa) : atual.custo_empresa;
+  const custoColab = req.body.custo_colaborador !== undefined ? Number(req.body.custo_colaborador) : atual.custo_colaborador;
+  if (custoEmpresa < 0 || custoColab < 0) return res.status(400).json({ error: 'Custo não pode ser negativo.' });
+  const ativo = req.body.ativo !== undefined ? req.body.ativo === true : atual.ativo;
+
+  await query(
+    `UPDATE erp_rh_beneficios SET nome=$1, categoria=$2, fornecedor=$3, custo_empresa=$4,
+        custo_colaborador=$5, periodicidade=$6, ativo=$7, observacao=$8 WHERE id=$9`,
+    [nome, req.body.categoria !== undefined ? sanitize(req.body.categoria) : atual.categoria,
+     req.body.fornecedor !== undefined ? sanitize(req.body.fornecedor) : atual.fornecedor,
+     custoEmpresa, custoColab,
+     req.body.periodicidade !== undefined ? sanitize(req.body.periodicidade) || 'mensal' : atual.periodicidade,
+     ativo, req.body.observacao !== undefined ? sanitize(req.body.observacao) : atual.observacao, id]);
+
+  // Desativar é a empresa dizendo "paramos de oferecer isto": quem estava
+  // inscrito sai, com a data de hoje — senão o benefício desativado
+  // continuaria contando no custo de pessoal para sempre.
+  let encerrados = 0;
+  if (atual.ativo && !ativo) {
+    const r = await query(
+      `UPDATE erp_rh_beneficio_colab SET ate=CURRENT_DATE WHERE beneficio_id=$1 AND ate IS NULL RETURNING id`, [id]);
+    encerrados = r.length;
+  }
+  res.json({ ok: true, adesoes_encerradas: encerrados });
+}));
+
+app.delete('/api/rh/beneficios/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const usado = await query('SELECT 1 FROM erp_rh_beneficio_colab WHERE beneficio_id=$1 LIMIT 1', [id]);
+  if (usado.length) {
+    return res.status(409).json({ error: 'Este benefício já teve gente inscrita — desative-o em vez de excluir, para preservar o histórico.' });
+  }
+  const del = await query('DELETE FROM erp_rh_beneficios WHERE id=$1 RETURNING id', [id]);
+  if (!del.length) return res.status(404).json({ error: 'Benefício não encontrado.' });
+  res.json({ ok: true });
+}));
+
+app.get('/api/rh/beneficios/:id/colaboradores', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query(`
+    SELECT bc.id, bc.colaborador_id, c.name AS colaborador_nome, bc.desde, bc.ate,
+           bc.valor_colaborador, bc.observacao
+      FROM erp_rh_beneficio_colab bc
+      JOIN erp_colaboradores c ON c.id = bc.colaborador_id
+     WHERE bc.beneficio_id=$1
+     ORDER BY (bc.ate IS NULL) DESC, bc.desde DESC`, [id]);
+  res.json(rhVeRemuneracao(req.user) ? rows : rows.map(r => { const { valor_colaborador, ...o } = r; return o; }));
+}));
+
+app.post('/api/rh/beneficios/:id/colaboradores', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const beneficioId = Number(req.params.id);
+  const beneficio = (await query('SELECT * FROM erp_rh_beneficios WHERE id=$1', [beneficioId]))[0];
+  if (!beneficio) return res.status(404).json({ error: 'Benefício não encontrado.' });
+  if (!beneficio.ativo) return res.status(400).json({ error: 'Este benefício está desativado — reative-o antes de inscrever alguém.' });
+  const colabId = Number(req.body.colaborador_id);
+  if (!colabId) return res.status(400).json({ error: 'Informe o colaborador.' });
+  const colab = (await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [colabId]))[0];
+  if (!colab) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+
+  const ativa = await query(
+    'SELECT id FROM erp_rh_beneficio_colab WHERE beneficio_id=$1 AND colaborador_id=$2 AND ate IS NULL',
+    [beneficioId, colabId]);
+  if (ativa.length) return res.status(409).json({ error: `${colab.name} já está inscrito(a) neste benefício.` });
+
+  const desde = isDate(req.body.desde) ? req.body.desde : hojeISO();
+  const ins = await query(
+    `INSERT INTO erp_rh_beneficio_colab (beneficio_id, colaborador_id, desde, valor_colaborador, observacao, registrado_por)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [beneficioId, colabId, desde,
+     req.body.valor_colaborador !== undefined && req.body.valor_colaborador !== '' ? Number(req.body.valor_colaborador) : null,
+     sanitize(req.body.observacao) || null, req.user.id]);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.post('/api/rh/beneficio_colab/:id/encerrar', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = (await query('SELECT * FROM erp_rh_beneficio_colab WHERE id=$1', [id]))[0];
+  if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada.' });
+  if (atual.ate) return res.status(409).json({ error: 'Esta inscrição já foi encerrada.' });
+  const ate = isDate(req.body.ate) ? req.body.ate : hojeISO();
+  if (ate < String(atual.desde).slice(0, 10)) return res.status(400).json({ error: 'O fim não pode ser antes do início.' });
+  await query('UPDATE erp_rh_beneficio_colab SET ate=$1 WHERE id=$2', [ate, id]);
+  res.json({ ok: true });
+}));
+
+// Para a ficha (e uma futura aba de benefícios nela): tudo que a pessoa já
+// teve, inscrição atual e histórico juntos.
+app.get('/api/rh/colaboradores/:id/beneficios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const rows = await query(`
+    SELECT bc.id, bc.beneficio_id, b.nome, b.categoria, bc.desde, bc.ate, bc.valor_colaborador
+      FROM erp_rh_beneficio_colab bc
+      JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
+     WHERE bc.colaborador_id=$1
+     ORDER BY (bc.ate IS NULL) DESC, bc.desde DESC`, [id]);
+  res.json(rhVeRemuneracao(req.user) ? rows : rows.map(r => { const { valor_colaborador, ...o } = r; return o; }));
 }));
 
 // ---- Dependentes ----
@@ -3942,7 +4290,12 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
            v.id AS vinculo_id, v.admissao, v.desligamento, v.departamento, v.cargo, v.nivel,
            v.modelo_trabalho, v.regime, v.tipo, v.salario, v.periculosidade_pct,
            v.vr_dia, v.home_office_dia,
-           v.experiencia_fim, v.prorrogacao_fim
+           v.experiencia_fim, v.prorrogacao_fim,
+           -- Soma do catálogo de benefícios em que a pessoa está inscrita hoje.
+           -- Junto com vr_dia/home_office_dia, é o que compõe "Benefícios/mês".
+           (SELECT COALESCE(sum(b.custo_empresa), 0) FROM erp_rh_beneficio_colab bc
+              JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
+             WHERE bc.colaborador_id = c.id AND bc.ate IS NULL AND b.ativo = true) AS beneficios_catalogo
       FROM erp_colaboradores c ${RH_SQL_VINCULO_ATUAL}
      WHERE c.arquivado_em IS NULL`);
 
@@ -4007,8 +4360,10 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   const periculosidade = comVinculo.reduce((s, r) =>
     s + Number(r.salario || 0) * (Number(r.periculosidade_pct || 0) / 100), 0);
   // VR e ajuda de custo são por DIA trabalhado: 22 dias úteis é a média usada
-  // em folha. É estimativa, e a tela diz isso.
-  const beneficios = comVinculo.reduce((s, r) => s + Number(r.vr_dia || 0) * 22 + Number(r.home_office_dia || 0) * 22, 0);
+  // em folha. É estimativa, e a tela diz isso. O catálogo de benefícios entra
+  // pelo valor mensal fixo de cada um — não tem "por dia trabalhado".
+  const beneficios = comVinculo.reduce((s, r) =>
+    s + Number(r.vr_dia || 0) * 22 + Number(r.home_office_dia || 0) * 22 + Number(r.beneficios_catalogo || 0), 0);
   const porDepto = {};
   comVinculo.forEach(r => {
     const k = r.departamento || '— não informado —';
@@ -4308,7 +4663,11 @@ function rhCustoDoVinculo(v, cfg, nDependentes) {
   const terceiros = r2(baseEncargos * n(cfg.terceiros_pct) / 100);
 
   // Benefícios não são encargo e não entram na base — são custo direto.
-  const beneficios = r2((n(v.vr_dia) + n(v.home_office_dia)) * 22);
+  // `beneficios_catalogo` (quando o chamador o preenche) é a soma do que a
+  // pessoa recebe do catálogo de Benefícios — não tem histórico de vigência
+  // como salário e vr_dia, então só entra na foto de HOJE, nunca em meses
+  // passados calculados por `rhFinanceiroDoVinculo`.
+  const beneficios = r2((n(v.vr_dia) + n(v.home_office_dia)) * 22 + n(v.beneficios_catalogo));
 
   const custoMensal = r2(bruto + ferias + terco + decimo + fgts + inssPatronal + rat + terceiros + beneficios);
 
@@ -4947,10 +5306,17 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
       certificacoes_vencidas: treinos.filter(t => t.validade && String(t.validade).slice(0, 10) < hoje).length
     },
     // O custo completo (liquido, provisoes e encargos) vem de rhCustoDoVinculo,
-    // a MESMA funcao que a aba Vinculo usa -- os dois nao podem divergir.
+    // a MESMA funcao que a aba Vinculo usa -- os dois nao podem divergir. O
+    // catalogo de beneficios entra do mesmo jeito que entra la, senao os dois
+    // custos "iguais" divergiriam bem aqui.
     custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento
-      ? rhCustoDoVinculo(vinculoAtual, await rhEncargos(),
-          dependentes.filter(d => d.irrf).length)
+      ? rhCustoDoVinculo({
+          ...vinculoAtual,
+          beneficios_catalogo: ((await query(
+            `SELECT COALESCE(sum(b.custo_empresa), 0) AS n FROM erp_rh_beneficio_colab bc
+               JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
+              WHERE bc.colaborador_id=$1 AND bc.ate IS NULL AND b.ativo = true`, [id]))[0] || {}).n || 0
+        }, await rhEncargos(), dependentes.filter(d => d.irrf).length)
       : null
   };
 

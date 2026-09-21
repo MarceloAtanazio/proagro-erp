@@ -1,6 +1,6 @@
 {
   "_como_atualizar": "SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name ~ '^erp_' GROUP BY table_name ORDER BY table_name;",
-  "_conferido_em": "2026-09-18",
+  "_conferido_em": "2026-09-21",
   "erp_attachments": "id,entity_type,entity_id,kind,file_name,mime_type,byte_size,data,uploaded_by,created_at,doc_tipo",
   "erp_audit_log": "id,user_id,user_name,action,created_at",
   "erp_bank_transactions": "id,txn_date,description,amount,reconciled,matched_type,matched_id,imported_batch,created_at,auto_generated",
@@ -32,5 +32,9 @@
   "erp_viaticos_solicitacoes": "id,colaborador_id,tier,categoria_local,destino,motivo,data_inicio,data_fim,data_expiracao_flash,valor_solicitado,valor_liberado,valor_devolvido,valor_pendencia,pendencia_resolvida,status,notes,created_by,created_at,ordem_trabalho,destinos,excessos_aprovados,excessos_status,status_manual,previsao_por_categoria,transporte_detalhes,objetivo,origem",
   "erp_viaticos_tud": "id,tier,categoria_local,tipo_despesa,valor_diaria",
   "erp_rh_cargos": "id,nome,tem_nivel,ativo,criado_em,criado_por",
-  "erp_rh_vagas": "id,cargo,nivel,departamento,posicoes,regime,modelo_trabalho,salario_previsto,situacao,fechamento_motivo,observacao,aberta_em,fechada_em,criado_em,criado_por"
+  "erp_rh_vagas": "id,cargo,nivel,departamento,posicoes,regime,modelo_trabalho,salario_previsto,situacao,fechamento_motivo,observacao,aberta_em,fechada_em,criado_em,criado_por",
+  "erp_rh_ferias_periodos": "id,vinculo_id,colaborador_id,periodo_inicio,periodo_fim,limite_gozo,dias_direito,observacao,created_at",
+  "erp_rh_ferias_gozos": "id,periodo_id,inicio,fim,dias,abono_pecuniario,observacao,registrado_em,registrado_por",
+  "erp_rh_beneficios": "id,nome,categoria,fornecedor,custo_empresa,custo_colaborador,periodicidade,ativo,observacao,criado_em,criado_por",
+  "erp_rh_beneficio_colab": "id,beneficio_id,colaborador_id,desde,ate,valor_colaborador,observacao,registrado_em,registrado_por"
 }

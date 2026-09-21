@@ -9888,6 +9888,7 @@ function rhAbasTopo() {
   // Vagas vem ANTES do Quadro porque é onde o processo começa: abre-se a vaga,
   // e dela saem os candidatos que viram card.
   const abas = [{ k: 'painel', t: 'Painel' }, { k: 'pessoas', t: 'Colaboradores' },
+                { k: 'ferias', t: 'Férias' }, { k: 'beneficios', t: 'Benefícios' },
                 { k: 'vagas', t: 'Vagas' },
                 { k: 'quadro', t: 'Quadro de admissão' }, { k: 'minutas', t: 'Minutas' }];
   return `<div class="rh-abas rh-abas-topo">${abas.map(a =>
@@ -10694,10 +10695,281 @@ async function renderRH() {
   // esperando uma requisição que só preenche um select.
   rhCarregarCargos();
   if (RH_ABA === 'painel') return rhPainel(c);
+  if (RH_ABA === 'ferias') return rhFerias(c);
+  if (RH_ABA === 'beneficios') return rhBeneficios(c);
   if (RH_ABA === 'vagas') return rhVagas(c);
   if (RH_ABA === 'quadro') return rhQuadro(c);
   if (RH_ABA === 'minutas') return rhMinutas(c);
   return rhPessoas(c);
+}
+
+// ---------------- Férias ----------------
+//
+// Rastreia períodos aquisitivos e registra o gozo — não calcula o valor da
+// folha de férias. O valor a pagar continua vindo da contabilidade externa e
+// entrando em Contas a Pagar, do mesmo jeito que já é com a rescisão.
+const RH_FERIAS_AVISO_DIAS = 90;   // mesmo prazo do aviso no servidor (rhFeriasResumo)
+const RH_FERIAS_STATUS = {
+  vencido: { t: 'Vencido', cls: 'late' },
+  a_vencer: { t: 'A vencer', cls: 'warn' },
+  em_dia: { t: 'Em dia', cls: 'ok' },
+  em_aquisicao: { t: 'Em aquisição', cls: 'pend' },
+  quitado: { t: 'Quitado', cls: 'off' }
+};
+
+async function rhFerias(c) {
+  const d = await api('/api/rh/ferias');
+  const pessoas = d.pessoas || [];
+  const cont = d.contagem || { vencido: 0, a_vencer: 0 };
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-dica">Período aquisitivo de 12 meses; outros 12 meses depois disso é o prazo
+      para gozar (art. 134 CLT) — passar do prazo com saldo em aberto é férias vencidas, que a lei manda
+      pagar em dobro. Esta tela registra o que já foi tirado; o valor a pagar continua vindo da
+      contabilidade, como já é com a rescisão.</div>
+
+    ${cont.vencido ? `<div class="rh-alerta"><strong>${cont.vencido} período(s) de férias vencido(s)</strong>
+      — passaram do prazo de 12 meses para gozar com saldo em aberto.</div>` : ''}
+    ${cont.a_vencer ? `<div class="rh-alerta"><strong>${cont.a_vencer} período(s) vencem nos próximos
+      ${RH_FERIAS_AVISO_DIAS} dias.</strong> Vale agendar antes que virem vencidos.</div>` : ''}
+
+    ${pessoas.length ? `<div class="table-wrap"><table class="tbl-rh">
+      <thead><tr><th>Colaborador</th><th>Período em destaque</th><th>Situação</th><th>Saldo</th>
+        <th class="actions">Ações</th></tr></thead>
+      <tbody>${pessoas.map(p => {
+        const per = p.periodo_em_destaque;
+        const st = per ? RH_FERIAS_STATUS[per.status] : null;
+        return `<tr>
+          <td>${esc(p.colaborador_nome)}</td>
+          <td>${per ? `${rhData(per.periodo_inicio)} – ${rhData(per.periodo_fim)}` : '—'}</td>
+          <td>${st ? `<span class="badge ${st.cls}">${st.t}</span>` : '—'}</td>
+          <td>${per ? `${per.saldo} de ${per.dias_direito} dias` : '—'}</td>
+          <td class="actions"><button class="btn sm" data-ferias-colab="${p.colaborador_id}"
+            data-nome="${esc(p.colaborador_nome)}">Gerenciar${p.total_periodos > 1 ? ` (${p.total_periodos})` : ''}</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>` : `<div class="rh-vazio"><p><strong>Ninguém com vínculo ativo ainda.</strong>
+      Os períodos aparecem sozinhos, 12 meses depois da admissão de cada pessoa.</p></div>`}`;
+
+  rhLigarAbas();
+  c.querySelectorAll('[data-ferias-colab]').forEach(b =>
+    b.onclick = () => rhGerenciarFerias(Number(b.dataset.feriasColab), b.dataset.nome));
+}
+
+// Um período por seção, com o passo a passo dos gozos embaixo — mesmo desenho
+// do histórico de candidato, porque é o mesmo tipo de leitura: uma linha do
+// tempo por processo, aqui por ano de casa.
+async function rhGerenciarFerias(colabId, nome) {
+  const carregar = async () => {
+    const d = await api('/api/rh/colaboradores/' + colabId + '/ferias');
+    const periodos = d.periodos || [];
+    openModal(`Férias de ${nome}`, periodos.length ? periodos.map(p => {
+      const st = RH_FERIAS_STATUS[p.status];
+      return `<div class="rh-sec rh-hist-proc">
+        <h4>${rhData(p.periodo_inicio)} – ${rhData(p.periodo_fim)}
+          <span class="rh-hist-sit">
+            <span class="badge ${st.cls}">${st.t}</span>
+            ${p.status !== 'quitado' ? `<button class="btn-ic" data-editar-periodo="${p.id}"
+              data-dias="${p.dias_direito}" title="Ajustar dias de direito" aria-label="Editar">✎</button>` : ''}
+          </span></h4>
+        <div class="rh-linhas">
+          <div class="rh-linha"><span>Direito</span><b>${p.dias_direito} dias</b></div>
+          <div class="rh-linha"><span>Usados</span><b>${p.dias_usados} dia(s)${p.dias_abono ? ` (${p.dias_abono} em abono)` : ''}</b></div>
+          <div class="rh-linha"><span>Saldo</span><b>${p.saldo} dias</b></div>
+          <div class="rh-linha"><span>Prazo para gozar</span><b>${rhData(p.limite_gozo)}</b></div>
+        </div>
+        ${p.observacao ? `<p class="rh-sub">${esc(p.observacao)}</p>` : ''}
+        ${p.gozos.length ? `<div class="rh-hist-linha">${p.gozos.map(g => `<div class="rh-hist-passo">
+          <span class="data">${rhData(g.inicio)} – ${rhData(g.fim)}</span>
+          <span>${g.dias} dia(s)${g.abono_pecuniario ? ' · abono pecuniário' : ''}</span>
+          ${g.observacao ? `<span class="obs">${esc(g.observacao)}</span>` : ''}
+          <button class="btn-ic perigo" data-del-gozo="${g.id}" title="Excluir" aria-label="Excluir">🗑</button>
+        </div>`).join('')}</div>` : ''}
+        ${p.status !== 'em_aquisicao' && p.saldo > 0 ? `<div class="rh-acoes">
+          <button class="btn sm" data-add-gozo="${p.id}">+ Registrar gozo</button></div>` : ''}
+      </div>`;
+    }).join('') : '<div class="empty">Nenhum período ainda — nasce sozinho ao completar 12 meses de vínculo.</div>',
+    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+
+    $('#modal-body').querySelectorAll('[data-del-gozo]').forEach(b => b.onclick = async () => {
+      if (!confirm('Excluir este registro de férias?')) return;
+      try { await api('/api/rh/ferias/gozos/' + b.dataset.delGozo, { method: 'DELETE' }); toast('Removido.'); carregar(); }
+      catch (e) { toast(e.message); }
+    });
+    $('#modal-body').querySelectorAll('[data-add-gozo]').forEach(b =>
+      b.onclick = () => rhFormGozo(Number(b.dataset.addGozo), carregar));
+    $('#modal-body').querySelectorAll('[data-editar-periodo]').forEach(b =>
+      b.onclick = () => rhFormAjustarPeriodo(Number(b.dataset.editarPeriodo), Number(b.dataset.dias), carregar));
+  };
+  await carregar();
+}
+
+function rhFormGozo(periodoId, aoSalvar) {
+  openModal('Registrar férias', `
+    <div class="form-row">
+      ${fld('gz-inicio', 'Início', 'date', '')}
+      ${fld('gz-fim', 'Fim', 'date', '')}
+    </div>
+    <label class="check-chip"><input type="checkbox" id="gz-abono"> Abono pecuniário — converteu esta
+      parcela em dinheiro em vez de descanso (até 1/3 do período)</label>
+    ${fld('gz-obs', 'Observação', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/ferias/periodos/' + periodoId + '/gozos', { method: 'POST', body: {
+            inicio: $('#gz-inicio').value, fim: $('#gz-fim').value,
+            abono_pecuniario: $('#gz-abono').checked, observacao: $('#gz-obs').value } });
+          closeModal(); toast('Férias registradas.'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+function rhFormAjustarPeriodo(periodoId, diasAtual, aoSalvar) {
+  openModal('Ajustar dias de direito', `
+    <p class="rh-min-nome">O padrão são 30 dias. Reduzir só se cabível por falta (art. 130 CLT) — o
+      motivo fica registrado.</p>
+    ${fld('ap-dias', 'Dias de direito', 'number', diasAtual, 'min="0" max="30"')}
+    ${fld('ap-obs', 'Motivo', 'text', '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/ferias/periodos/' + periodoId, { method: 'PUT', body: {
+            dias_direito: Number($('#ap-dias').value), observacao: $('#ap-obs').value } });
+          closeModal(); toast('Período atualizado.'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+// ---------------- Benefícios ----------------
+//
+// Catálogo (o que a empresa oferece, com o custo) e adesão (quem está
+// inscrito) — o mesmo desenho de Cargos: uma tabela que a própria tela
+// alimenta, sem precisar de deploy para cada benefício novo.
+const RH_BENEF_CATEGORIAS = [{ v: '', t: '—' }, { v: 'saude', t: 'Saúde' }, { v: 'odonto', t: 'Odontológico' },
+  { v: 'alimentacao', t: 'Alimentação' }, { v: 'transporte', t: 'Transporte' },
+  { v: 'bem_estar', t: 'Bem-estar' }, { v: 'outro', t: 'Outro' }];
+const RH_BENEF_CAT_NOME = Object.fromEntries(RH_BENEF_CATEGORIAS.map(o => [o.v, o.t]));
+
+async function rhBeneficios(c) {
+  const ed = canEditPage('rh');
+  const lista = await api('/api/rh/beneficios').catch(() => []);
+  const temCusto = lista.some(b => b.custo_empresa !== undefined);
+
+  c.innerHTML = rhAbasTopo() + `
+    <div class="rh-quadro-topo">
+      <div class="rh-quadro-dica">Os benefícios que a empresa oferece, com quem está inscrito em cada
+        um. Desativar um benefício encerra as inscrições ativas — o histórico de quem já teve fica.</div>
+      ${ed ? '<button class="btn primary" id="rh-novo-beneficio">+ Novo benefício</button>' : ''}
+    </div>
+    ${lista.length ? `<div class="table-wrap"><table class="tbl-rh">
+      <thead><tr><th>Benefício</th><th>Categoria</th><th>Fornecedor</th>
+        ${temCusto ? '<th class="num">Custo/pessoa</th><th class="num">Custo total/mês</th>' : ''}
+        <th>Inscritos</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${lista.map(b => `<tr>
+        <td>${esc(b.nome)}</td>
+        <td>${esc(rhTxt(RH_BENEF_CAT_NOME[b.categoria]))}</td>
+        <td>${esc(rhTxt(b.fornecedor))}</td>
+        ${temCusto ? `<td class="num">${brl(Number(b.custo_empresa))}</td><td class="num">${brl(Number(b.custo_total_mensal))}</td>` : ''}
+        <td>${b.inscritos}</td>
+        <td>${b.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge off">Desativado</span>'}</td>
+        <td class="actions">
+          <button class="btn sm" data-inscritos="${b.id}" data-nome="${esc(b.nome)}">Inscritos (${b.inscritos})</button>
+          ${ed ? `<button class="btn-ic" data-editar-beneficio="${b.id}" title="Editar" aria-label="Editar">✎</button>` : ''}
+        </td></tr>`).join('')}</tbody>
+    </table></div>` : `<div class="rh-vazio"><p><strong>Nenhum benefício cadastrado ainda.</strong>
+      TotalPass, Clube Saúde e Seguro de vida continuam na aba Vínculo de cada ficha — este catálogo é
+      para o que vier além disso.</p></div>`}`;
+
+  rhLigarAbas();
+  const bn = $('#rh-novo-beneficio'); if (bn) bn.onclick = () => rhFormBeneficio(null);
+  c.querySelectorAll('[data-editar-beneficio]').forEach(b =>
+    b.onclick = () => rhFormBeneficio(lista.find(x => String(x.id) === b.dataset.editarBeneficio)));
+  c.querySelectorAll('[data-inscritos]').forEach(b =>
+    b.onclick = () => rhInscritosBeneficio(Number(b.dataset.inscritos), b.dataset.nome));
+}
+
+function rhFormBeneficio(b) {
+  const novo = !b;
+  b = b || {};
+  openModal(novo ? 'Novo benefício' : 'Editar benefício', `
+    ${fld('bn-nome', 'Nome *', 'text', b.nome || '')}
+    <div class="form-row">
+      ${fldSel('bn-categoria', 'Categoria', RH_BENEF_CATEGORIAS, b.categoria || '')}
+      ${fld('bn-fornecedor', 'Fornecedor', 'text', b.fornecedor || '')}
+    </div>
+    <div class="form-row">
+      ${fld('bn-custo_empresa', 'Custo para a empresa (por pessoa)', 'number', b.custo_empresa ?? '', 'min="0" step="0.01"')}
+      ${fld('bn-custo_colaborador', 'Desconto do colaborador', 'number', b.custo_colaborador ?? '', 'min="0" step="0.01"')}
+    </div>
+    ${fld('bn-observacao', 'Observação', 'text', b.observacao || '')}
+    ${!novo ? `<label class="check-chip"><input type="checkbox" id="bn-ativo" ${b.ativo !== false ? 'checked' : ''}>
+      Benefício ativo — desmarque para parar de oferecê-lo (encerra as inscrições em vigor)</label>` : ''}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: novo ? 'Cadastrar' : 'Salvar', cls: 'primary', onClick: async () => {
+        const body = {
+          nome: $('#bn-nome').value, categoria: $('#bn-categoria').value,
+          fornecedor: $('#bn-fornecedor').value,
+          custo_empresa: $('#bn-custo_empresa').value || 0, custo_colaborador: $('#bn-custo_colaborador').value || 0,
+          observacao: $('#bn-observacao').value
+        };
+        if (!novo) body.ativo = $('#bn-ativo').checked;
+        try {
+          await api(novo ? '/api/rh/beneficios' : '/api/rh/beneficios/' + b.id,
+            { method: novo ? 'POST' : 'PUT', body });
+          closeModal(); toast(novo ? 'Benefício cadastrado.' : 'Benefício atualizado.'); renderRH();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+async function rhInscritosBeneficio(beneficioId, nome) {
+  const carregar = async () => {
+    const inscritos = await api('/api/rh/beneficios/' + beneficioId + '/colaboradores');
+    const emVigor = inscritos.filter(i => !i.ate);
+    const verValor = inscritos.some(i => 'valor_colaborador' in i);
+    openModal(`Inscritos em ${nome}`, `
+      ${canEditPage('rh') ? '<div class="rh-acoes"><button class="btn sm primary" id="rh-inscrever">+ Inscrever colaborador</button></div>' : ''}
+      ${inscritos.length ? `<div class="table-wrap"><table class="tbl-rh-dep">
+        <thead><tr><th>Colaborador</th><th>Desde</th><th>Até</th>
+          ${verValor ? '<th>Desconto</th>' : ''}<th></th></tr></thead>
+        <tbody>${inscritos.map(i => `<tr>
+          <td>${esc(i.colaborador_nome)}</td>
+          <td class="venc-cell">${rhData(i.desde)}</td>
+          <td class="venc-cell">${i.ate ? rhData(i.ate) : '<span class="badge ok">em vigor</span>'}</td>
+          ${verValor ? `<td>${i.valor_colaborador != null ? brl(Number(i.valor_colaborador)) : '—'}</td>` : ''}
+          <td>${!i.ate ? `<button class="btn-ic perigo" data-encerrar-adesao="${i.id}" title="Encerrar" aria-label="Encerrar">✕</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>` : '<div class="empty">Ninguém inscrito ainda.</div>'}`,
+      [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+
+    const bi = $('#rh-inscrever');
+    if (bi) bi.onclick = () => rhFormInscrever(beneficioId, emVigor.map(i => i.colaborador_id), carregar);
+    $('#modal-body').querySelectorAll('[data-encerrar-adesao]').forEach(b => b.onclick = async () => {
+      if (!confirm('Encerrar esta inscrição hoje?')) return;
+      try { await api('/api/rh/beneficio_colab/' + b.dataset.encerrarAdesao + '/encerrar', { method: 'POST', body: {} });
+        toast('Inscrição encerrada.'); carregar(); }
+      catch (e) { toast(e.message); }
+    });
+  };
+  await carregar();
+}
+
+async function rhFormInscrever(beneficioId, jaInscritos, aoSalvar) {
+  const todos = await api('/api/rh/colaboradores').catch(() => []);
+  const disponiveis = todos.filter(p => p.ativo && !jaInscritos.includes(p.id));
+  openModal('Inscrever colaborador', disponiveis.length ? `
+    ${fldSel('is-colaborador', 'Colaborador', disponiveis.map(p => ({ v: p.id, t: p.name })), '')}
+    ${fld('is-valor', 'Desconto para este colaborador (opcional)', 'number', '', 'min="0" step="0.01" placeholder="usa o valor do catálogo"')}
+    ${fld('is-obs', 'Observação', 'text', '')}`
+    : '<div class="empty">Todo mundo com vínculo ativo já está inscrito neste benefício.</div>',
+    disponiveis.length ? [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Inscrever', cls: 'primary', onClick: async () => {
+        try {
+          await api('/api/rh/beneficios/' + beneficioId + '/colaboradores', { method: 'POST', body: {
+            colaborador_id: Number($('#is-colaborador').value),
+            valor_colaborador: $('#is-valor').value || undefined, observacao: $('#is-obs').value } });
+          closeModal(); toast('Inscrito(a).'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}] : [{ label: 'Fechar', onClick: closeModal }]);
 }
 
 // ---------------- Vagas ----------------

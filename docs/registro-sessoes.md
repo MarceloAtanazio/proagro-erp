@@ -5811,3 +5811,90 @@ pelo mesmo fluxo de sempre. As dezessete suítes passam.
 
 Medido na tela com o `styles.css` real: cada processo vira uma seção com a situação ao lado do título e a
 linha do tempo abaixo, legível mesmo com quatro passos.
+
+## 2026-09-21 — Sessão 118: duas abas novas no RH — Férias e Benefícios
+
+**Solicitação:** *"Em 'Recursos Humanos' gostaria de criar mais duas abas, uma seria 'Férias' pra ter
+um controle das férias dos colaboradores e outra aba de 'Benefícios' onde quero cadastrar os benefícios
+disponíveis e oferecidos pela empresa pra ter um controle geral."*
+
+Antes de construir, confirmei o escopo de cada uma com o usuário — as duas tinham uma decisão que mudava
+bastante o tamanho do trabalho:
+
+- **Férias**: rastrear e registrar, sem calcular o valor da folha de férias (o valor continua vindo da
+  contabilidade externa e entrando em Contas a Pagar, como já é com a rescisão).
+- **Benefícios**: catálogo + adesão, **e** somar o custo no card "Benefícios/mês" do Painel de RH, que já
+  existia mas só somava VR e ajuda de custo.
+
+### Férias — o período nasce sozinho
+
+Duas tabelas novas: `erp_rh_ferias_periodos` (o período aquisitivo de 12 meses) e `erp_rh_ferias_gozos`
+(cada parcela tirada ou convertida em abono). A decisão de projeto central: **ninguém cria um período** —
+ele existe pelo simples fato de a pessoa ter completado (ou estar completando) 12 meses de vínculo. O
+servidor os **gera sob demanda**, de forma idempotente, toda vez que a tela é aberta — nada de cron, nada
+de alguém precisar lembrar de abrir um a cada aniversário de casa.
+
+As regras do art. 134 CLT viraram código, não boa vontade:
+- o direito só existe depois do período aquisitivo **completar** — gozar antes é recusado;
+- no máximo **3 parcelas**, cada uma com pelo menos 5 dias;
+- **abono pecuniário** (conversão em dinheiro) não pode passar de 1/3 do período, e não conta como parcela;
+- duas parcelas não podem se **sobrepor**, nem dentro do mesmo período nem entre períodos diferentes do
+  mesmo vínculo;
+- desligado não registra gozo depois da saída — isso vira férias **indenizadas** na rescisão, categoria
+  totalmente diferente;
+- reduzir os dias de direito (falta abusiva, art. 130) exige uma observação escrita — sem ela é recusado.
+
+Cada pessoa aparece uma vez na lista principal, com o período que **pede mais atenção** (vencido > a
+vencer > em dia > em aquisição) — é a pergunta que a tela responde: "quem eu preciso chamar pra tirar
+férias". Um botão "Gerenciar" abre o histórico completo, com o passo a passo de cada parcela — mesmo
+desenho do histórico de candidato da sessão passada, porque é o mesmo tipo de leitura: uma linha do tempo
+por processo, aqui por ano de casa.
+
+### Benefícios — catálogo extensível, como Cargos
+
+Hoje só existiam três benefícios possíveis, cada um uma coluna booleana fixa do vínculo (TotalPass, Clube
+Saúde, Seguro de vida) — adicionar um quarto exigiria migração e código novo toda vez. Virou catálogo:
+`erp_rh_beneficios` (nome, categoria, fornecedor, custo para a empresa e desconto do colaborador) e
+`erp_rh_beneficio_colab` (quem está inscrito, desde quando, até quando). As três colunas antigas continuam
+existindo — não foram tocadas.
+
+Uma decisão que vale registrar: **desativar um benefício encerra as adesões ativas**, com a data de hoje.
+Desativar é a empresa dizendo "paramos de oferecer isto" — deixar as adesões em vigor faria o custo de
+pessoal continuar contando um benefício que não existe mais, para sempre. Excluir (não desativar) é
+recusado sempre que o benefício já teve alguém inscrito, mesmo que hoje ninguém esteja — preserva o
+histórico, do mesmo jeito que já é com Vagas e Cargos.
+
+`custo_empresa` é **por pessoa inscrita**: o custo total do benefício é ele vezes quantos estão ativos, não
+um valor fixo do catálogo — testei explicitamente que inscrever uma segunda pessoa dobra o total.
+
+Dinheiro é dado sensível como salário: quem não vê remuneração vê o catálogo e quem está inscrito, mas não
+vê `custo_empresa`, `custo_colaborador` nem `valor_colaborador` — os campos vêm **ausentes** da resposta,
+não zerados.
+
+### O custo do catálogo entra no Painel e na ficha, sem virar encargo
+
+`rhCustoDoVinculo` (a função que calcula o custo mensal de um vínculo, usada na ficha, na rescisão e no
+Painel) ganhou um campo opcional, `beneficios_catalogo`, somado junto de VR e ajuda de custo. Ele **não**
+entra na base de encargos (FGTS, INSS patronal, RAT) — é custo direto, do mesmo jeito que já era VR.
+
+Uma decisão consciente: o catálogo **não** entra no cálculo histórico mês a mês (`rhFinanceiroDoVinculo`,
+usado na aba Financeiro da ficha) — diferente de salário e VR, a adesão a um benefício não tem histórico
+de vigência rastreado nesta versão, então aplicá-la a meses passados inventaria um custo que a pessoa pode
+não ter tido naquele mês. Fica só na foto de "hoje": a ficha, a rescisão e o Painel.
+
+### Verificação
+
+Três arquivos novos e uma extensão: `verifica-ferias.js` (32 asserções — geração idempotente dos períodos,
+os três estados vencido/em dia/em aquisição com contas conferidas à mão, as cinco regras do art. 134,
+edição do direito, exclusão de gozo devolvendo saldo, e o bloqueio para desligados), `verifica-beneficios.js`
+(24 asserções — catálogo, adesão, custo total escalando com o número de inscritos, a cascata de
+desativação, a trava de exclusão, e a redação por permissão), e uma extensão em `verifica-custo.js`
+confirmando que `beneficios_catalogo` soma ao custo sem virar base de encargo e sem quebrar nada de quem
+já existia. As dezenove suítes passam.
+
+Medido na tela com o `styles.css` real: os badges de situação (vencido/a vencer/em dia/em aquisição/quitado)
+ficam legíveis, a linha do tempo de gozos por período é a mesma leitura do histórico de candidato, e a
+tabela de benefícios cabe em tela cheia (rola horizontalmente em telas estreitas, como as outras do RH).
+
+Nenhuma das duas abas tocou o que já existia: os três booleans do vínculo continuam lá, `custo_mensal`
+sem ninguém inscrito no catálogo bate exatamente com o valor de antes.
