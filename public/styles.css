@@ -1375,14 +1375,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
    desenhariam uma linha ligando os dois topos como se fossem pares, e uma
    delas pode ser só alguém cujo gestor saiu, não uma diretoria gêmea. */
 .rh-org-diagramas { display: flex; flex-direction: column; gap: 20px; }
-/* Compacto de propósito: cartão largo e com nome em duas linhas era o que
-   forçava a rolagem horizontal com mais de 6 ou 7 irmãos na mesma fileira.
-   Nome truncado com reticências (o `title` no cartão mostra o nome inteiro ao
-   passar o mouse) e altura FIXA pra todo cartão ocupar o mesmo espaço,
-   folha ou chefia — é o que dá a "cara de organograma" que se pediu, em vez
-   de caixas de tamanhos desiguais. A rolagem continua existindo como rede de
-   segurança (uma chefia com muitos diretos ainda pode precisar dela), só que
-   agora é exceção, não a regra. */
+/* Cartão de tamanho fixo (mesma largura E altura pra todo mundo), mas com o
+   NOME em até duas linhas em vez de truncar cedo demais — a primeira versão
+   compacta escondia nome demais pra caber lado a lado, e isso pesou mais que
+   a rolagem que tentava evitar. Quem realmente força a tela a esticar na
+   horizontal não é o cartão ser largo — é uma chefia com MUITOS diretos
+   folha (8 técnicos, por exemplo) enfileirados lado a lado. Esse caso vira
+   agrupamento VERTICAL logo abaixo (`.rh-org-grupo`), e é isso que resolve
+   a largura, não apertar o cartão de todo mundo. */
 .rh-orgchart-wrap { overflow-x: auto; padding: 4px 4px 12px; }
 .rh-orgchart, .rh-orgchart ul { list-style: none; margin: 0; padding: 0; }
 .rh-orgchart { display: table; margin: 0 auto; }
@@ -1407,15 +1407,34 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-orgchart li > ul { position: relative; padding-top: 16px; }
 .rh-orgchart li > ul::before { content: ''; position: absolute; top: 0; left: 50%;
   width: 0; height: 16px; border-left: 2px solid var(--line); }
-.rh-org-caixa { display: flex; flex-direction: column; justify-content: center; gap: 2px;
-  width: 136px; height: 92px; box-sizing: border-box; padding: 8px 10px 8px 12px;
+.rh-org-caixa { display: flex; flex-direction: column; justify-content: center; gap: 3px;
+  width: 176px; height: 108px; box-sizing: border-box; padding: 8px 12px 8px 13px;
   text-align: left; position: relative; border-radius: 8px; border-left-width: 4px; border-left-style: solid; }
-.rh-org-caixa b, .rh-org-caixa .cargo, .rh-org-caixa .qtd {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* O nome quebra em até DUAS linhas (o navegador some com a 3ª, se existir,
+   trocando por reticências) — é o meio-termo entre "nunca corta" (cartões de
+   altura desigual) e "sempre uma linha" (nome quase sempre cortado). */
+.rh-org-caixa b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; line-height: 1.2; }
+.rh-org-caixa .cargo, .rh-org-caixa .qtd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rh-org-caixa .cargo { font-size: 11.5px; }
 .rh-org-caixa .depto { align-self: flex-start; max-width: 100%; }
 .rh-org-caixa .qtd { font-size: 10px; }
 .rh-org-caixa .rh-org-toggle { position: absolute; top: 4px; right: 4px; }
+
+/* O agrupamento vertical: em vez de 8 colunas lado a lado (a causa real da
+   rolagem horizontal), uma chefia com muitos diretos QUE NÃO TÊM subordinado
+   nenhum vira UMA caixa só, com cada pessoa numa linha — cresce pra baixo,
+   não pros lados, que é a direção que a página já rola sem incomodar. Só se
+   aplica quando os filhos são todos folha: quem tem subordinado próprio
+   precisa da própria coluna, pra desenhar a árvore dele embaixo. */
+.rh-org-grupo { display: inline-block; text-align: left; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; min-width: 208px; }
+.rh-org-grupo-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px;
+  border-left-width: 4px; border-left-style: solid; }
+.rh-org-grupo-item + .rh-org-grupo-item { border-top: 1px solid var(--line); }
+.rh-org-grupo-item b { flex: 1; font-size: 12px; font-weight: 700; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rh-org-grupo-item .cargo { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
 
 /* Lista de processos encerrados. Grade própria: o motivo é o conteúdo da tela,
    então é ele que fica com a sobra — no gabarito da lista de colaboradores quem

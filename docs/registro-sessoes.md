@@ -6273,3 +6273,49 @@ inteiro, e o CSS truncando com reticências e fixando largura e altura. Vinte su
 Medido na tela com o `styles.css` real, reproduzindo a estrutura real da empresa (CEO, 3 coordenadores,
 8 técnicos numa única fileira): a árvore inteira coube numa tela de 1900px de largura sem rolagem
 nenhuma, todos os cartões do mesmo tamanho, e o degradê de cor do nível visível do topo até as folhas.
+
+## 2026-09-21 — Sessão 127: nome legível de novo, e quem tem muita gente embaixo vira lista vertical
+
+**Solicitação:** *"Não gostei. Está escondendo muito os nomes das pessoas, não está agradável. O
+problema de 'esticar' a página está sendo a equipe de campo, pois possuem mais pessoas — e se
+tratarmos eles de maneira vertical e não horizontal?"*
+
+Diagnóstico correto do usuário, e a correção seguiu exatamente a ideia dele.
+
+### O que a versão anterior errou
+
+Pra caber 8 técnicos lado a lado sem rolar, o cartão tinha ficado estreito demais (136px) e o nome
+truncava numa linha só — "Fabricio Camar…", "Alcenir de Amo…". Resolvia a rolagem à custa de esconder
+a informação que mais importa num organograma: o nome de quem é quem.
+
+### O ajuste: o cartão volta a ser legível, e quem tem muita gente vira lista
+
+O cartão voltou a crescer (176×108px, ainda de tamanho fixo — isso continua valendo), com o nome
+quebrando em **até duas linhas** em vez de truncar na primeira. É o meio-termo: não esconde o nome de
+quase ninguém, e ainda assim todo cartão continua do mesmo tamanho.
+
+O que de fato causava a rolagem não era a largura do cartão — era uma chefia com **muitos diretos sem
+subordinado próprio** (8 técnicos) enfileirados lado a lado, cada um com sua própria coluna. Acima de 5
+diretos, **se todos forem folha** (ninguém tem gente embaixo), eles passam a virar uma **lista
+vertical única** — uma caixa só, uma linha por pessoa, ligada ao chefe por uma única linha de conexão em
+vez de uma por pessoa. Cresce para baixo, que é a direção que a página já rola sem incomodar ninguém —
+não para o lado.
+
+A condição é deliberadamente tudo-ou-nada: **só agrupa se NINGUÉM do grupo tiver subordinado próprio.**
+Misturar (alguns em coluna individual, um agrupado) confundiria mais do que ajuda, e quem tem gente
+embaixo precisa da própria coluna pra desenhar a árvore dele — agrupá-lo junto faria o subordinado dele
+sumir do diagrama.
+
+### Verificação
+
+Estendi `verifica-organograma.js` com 5 asserções novas: o limiar e a condição "todos folha" exatas, o
+agrupado virando uma única `<li>` (uma conexão, não várias), a regra de tudo-ou-nada preservando quem
+tem subordinado, o `title` com o nome inteiro mesmo na lista vertical, e o CSS crescendo em altura
+(`border-top`, não `display: table-cell`). Ajustei duas asserções da sessão anterior que hard-codavam o
+tamanho antigo do cartão (136×92 → 176×108) e a regra antiga de truncamento do nome (agora é
+`-webkit-line-clamp`, não `text-overflow: ellipsis`). As vinte suítes passam.
+
+Medido na tela reproduzindo a estrutura real: os 8 técnicos de Campo viraram uma lista vertical só, com
+nome completo em cada linha, e o diagrama inteiro (CEO, quatro coordenadores/gerentes, todo o resto)
+coube numa tela de notebook sem qualquer rolagem — a diferença contra a versão anterior é visível de
+cara.

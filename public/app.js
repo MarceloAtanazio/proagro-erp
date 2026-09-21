@@ -10789,6 +10789,12 @@ const RH_ORG_CORES = ['#1F4E78', '#00783F', '#A9741B', '#B23A2F', '#6B4FA0', '#0
 // pra dar pra distinguir "é chefia" de "é setor tal" com um olhar só.
 const RH_ORG_NIVEL_CORES = ['#1A2B22', '#43554B', '#74847B', '#A9B6AE', '#D3DAD5'];
 const rhOrgNivelCor = prof => RH_ORG_NIVEL_CORES[Math.min(prof, RH_ORG_NIVEL_CORES.length - 1)];
+// Acima disto, filhos QUE NÃO TÊM subordinado nenhum (folha) deixam de virar
+// uma coluna cada um e passam a ser uma lista vertical só — é a fileira de
+// técnicos embaixo de um coordenador que fazia a página esticar de lado, não
+// o tamanho do cartão. Quem tem subordinado próprio nunca agrupa: precisa da
+// própria coluna pra desenhar a árvore dele embaixo.
+const RH_ORG_LIMIAR_AGRUPAR = 5;
 // 'diagrama' é o padrão porque foi o que se pediu — "mais cara de
 // organograma"; 'lista' fica como alternativa pra quando a árvore tem muita
 // gente e o diagrama de caixas fica largo demais pra ler de uma vez.
@@ -10836,6 +10842,19 @@ async function rhOrganograma(c) {
   // aparecer inteiro em algum lugar — o `title` do próprio cartão resolve isso
   // sem gastar espaço nenhum: passa o mouse e o navegador mostra.
   const tituloDe = p => `${p.name}${p.cargo ? ' — ' + p.cargo : ''}`;
+  // Uma caixa só, com cada folha numa linha — o grupo inteiro se conecta ao
+  // pai por UMA linha, não uma por pessoa. `prof` aqui é a profundidade dos
+  // FILHOS (uma a mais que o pai), pra cor de nível continuar coerente com o
+  // resto da árvore.
+  const grupoVertical = (filhos, prof) => {
+    const corNivel = rhOrgNivelCor(prof);
+    return `<div class="rh-org-grupo">${filhos.map(f => {
+      const cargo = [f.cargo, f.nivel ? (RH_NIVEL_ABREV[f.nivel] || f.nivel) : ''].filter(Boolean).join(' ');
+      return `<div class="rh-org-grupo-item" title="${esc(tituloDe(f))}" style="border-left-color:${corNivel}">
+        <b>${esc(f.name)}</b>${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
+      </div>`;
+    }).join('')}</div>`;
+  };
 
   const nohLista = (p, visitados, prof) => {
     if (visitados.has(p.id)) return '';   // ciclo: já desenhado acima, não repete
@@ -10862,12 +10881,18 @@ async function rhOrganograma(c) {
     const proprios = new Set(visitados); proprios.add(p.id);
     const filhos = filhosDe(p);
     const cor = corDe(p.departamento);
+    // Agrupa se passar do limiar E ninguém do grupo tiver subordinado próprio
+    // — misturar os dois (alguns em coluna, um agrupado) confundiria mais do
+    // que ajuda; ou todos vão em coluna, ou todos entram no grupo vertical.
+    const agrupar = filhos.length > RH_ORG_LIMIAR_AGRUPAR && filhos.every(f => !filhosDe(f).length);
     return `<li>
       <div class="rh-org-caixa" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
         style="border-top-color:${cor || 'var(--line)'};border-left-color:${rhOrgNivelCor(prof)}">
         ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
-      ${filhos.length ? `<ul>${filhos.map(f => nohDiagrama(f, proprios, prof + 1)).join('')}</ul>` : ''}
+      ${filhos.length ? (agrupar
+          ? `<ul><li>${grupoVertical(filhos, prof + 1)}</li></ul>`
+          : `<ul>${filhos.map(f => nohDiagrama(f, proprios, prof + 1)).join('')}</ul>`) : ''}
     </li>`;
   };
 
