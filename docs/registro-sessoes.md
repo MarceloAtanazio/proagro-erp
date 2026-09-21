@@ -6465,3 +6465,59 @@ Assserção estática nova em `verifica-ficha-pdf-rodape.js` guardando que a cha
 da ficha não carrega `subtitulo`. 19 verificações, todas passando.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 132: Benefícios vira cards com logo, e "por dia" passa a valer de verdade
+
+**Solicitação:** *"Para a pagina de beneficios eu quero fazer algo legal. Vamos la, temos alguns
+beneficios que são calculados por dia, como refeição e home-office por exemplo.. Temos outros que
+são calculados por mês como o seguro de vida e afins.. Quero ter a opção de selecionar como será
+esse tipo de beneficios e gostaria de adicionar cards com os logos das empresas que fornecem esses
+beneficios pra ficar algo bem interativo e moderno quando ao clicar me da a listagem e detalhes de
+tal beneficio"*
+
+### O que já existia, escondido
+
+A coluna `periodicidade` (mensal/anual) já estava no banco desde que o catálogo foi criado — só
+nunca apareceu no formulário, e o cálculo de custo total sempre tratava tudo como mensal
+(comentário da própria migration original já admitia isso). Era enfeite de schema, não uma opção de
+verdade. Não existia nenhuma infraestrutura de logo/imagem em lugar nenhum do sistema — nem para
+fornecedor de benefício, nem para colaborador, nem em Contas a Pagar.
+
+### O ajuste
+
+**Periodicidade, valendo pra conta.** O domínio virou só `mensal | dia` (o "anual" nunca foi usado
+e não fazia sentido pro que foi pedido). "Por dia" usa a mesma conta que `vr_dia`/`home_office_dia`
+já fazem no vínculo — valor × 22 dias úteis — reaproveitada aqui, não uma fórmula nova. O rótulo da
+opção já avisa isso ("Por dia (× 22 dias úteis)"), pra não surpreender quem cadastra.
+
+**Logo do fornecedor.** Perguntei ao Marcelo se preferia upload de imagem ou link — upload, com
+inicial colorida como reserva quando não houver logo. Guardado direto no catálogo (`logo_mime` +
+`logo_data bytea`, migration nova e aditiva), mesmo padrão de `erp_attachments` — binário no
+próprio Postgres, sem S3 — mas como coluna do benefício em vez de anexo à parte: um card só
+precisa saber "tem logo ou não" sem uma query extra por card, e um benefício tem no máximo um
+logo. Upload aceita só JPG/PNG/WEBP até 512 KB, e o **tipo é conferido pela assinatura real do
+arquivo**, não pelo que o navegador informou — a mesma defesa contra SVG/conteúdo disfarçado que
+os outros anexos do sistema já usam.
+
+**Cards em vez de tabela.** O catálogo é pequeno (raramente passa de uma dúzia) e o que diferencia
+um benefício do outro no dia a dia é a marca, não uma linha de planilha. O card inteiro é clicável e
+abre a listagem de inscritos — era um botão de linha, virou o clique do card; editar continua um
+ícone à parte (com `stopPropagation`, senão clicar nele também abriria a listagem por baixo). Sem
+logo, o card mostra a inicial do fornecedor sobre uma cor determinística (mesma paleta do
+Organograma) — nunca cinza igual pra todo mundo.
+
+### Verificação
+
+`verifica-beneficios-cards.js`, duas frentes: (1) o endpoint de verdade, com o app inteiro de pé —
+o custo total respeitando a periodicidade (vale-refeição por dia × 22 × inscritos, seguro por mês
+sem multiplicar), os bytes do logo nunca vazando na listagem (só o booleano `tem_logo`), upload
+recusando MIME fora da whitelist, recusando conteúdo que não bate com o MIME alegado (a mesma
+defesa dos outros anexos), recusando acima de 512 KB, servindo a imagem com o Content-Type certo
+(não JSON com base64 dentro), 404 sem logo, remover funcionando, e as duas ações de escrita
+(upload/remover) exigindo edição de RH. (2) checagem estática confirmando a grade de cards, o
+clique do card abrindo Inscritos, o `stopPropagation` do editar, a cor determinística, e o form
+mandando `periodicidade` de fato (antes nunca era enviada). 28 verificações, todas passando.
+Testado no navegador reproduzindo cards com e sem logo, ativo e desativado.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

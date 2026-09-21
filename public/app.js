@@ -11114,48 +11114,88 @@ const RH_BENEF_CATEGORIAS = [{ v: '', t: '—' }, { v: 'saude', t: 'Saúde' }, {
   { v: 'bem_estar', t: 'Bem-estar' }, { v: 'outro', t: 'Outro' }];
 const RH_BENEF_CAT_NOME = Object.fromEntries(RH_BENEF_CATEGORIAS.map(o => [o.v, o.t]));
 
+// Cards em vez de tabela: o que diferencia um benefício do outro pro dia a
+// dia é o FORNECEDOR (a marca), não uma linha de planilha — TotalPass, um
+// plano de saúde, um seguro de vida têm cara própria, e um catálogo pequeno
+// (a lista de benefícios raramente passa de uma dúzia) cabe bem numa grade.
+// O card inteiro abre "Inscritos" (era um botão de linha; vira o clique
+// principal); editar continua um ícone à parte, para não competir com ele.
+const rhBenefPeriodicidadeTxt = p => p === 'dia' ? '/dia' : '/mês';
+// Cor determinística por nome (mesma paleta do Organograma) — sem logo, cada
+// fornecedor ainda tem uma cor própria em vez de todo card sair cinza igual.
+const rhBenefCor = txt => {
+  let h = 0;
+  for (let i = 0; i < txt.length; i++) h = (h * 31 + txt.charCodeAt(i)) >>> 0;
+  return RH_ORG_CORES[h % RH_ORG_CORES.length];
+};
+
 async function rhBeneficios(c) {
   const ed = canEditPage('rh');
   const lista = await api('/api/rh/beneficios').catch(() => []);
   const temCusto = lista.some(b => b.custo_empresa !== undefined);
 
+  const cartao = b => {
+    const inicial = esc((b.fornecedor || b.nome || '?').trim().slice(0, 1).toUpperCase());
+    const cor = rhBenefCor(b.fornecedor || b.nome || '');
+    return `<div class="rh-benef-card ${b.ativo ? '' : 'rh-benef-inativo'}" data-inscritos="${b.id}" data-nome="${esc(b.nome)}">
+      ${ed ? `<button class="btn-ic rh-benef-editar" data-editar-beneficio="${b.id}" title="Editar" aria-label="Editar">✎</button>` : ''}
+      <div class="rh-benef-logo" style="background:${b.tem_logo ? 'transparent' : cor}">${b.tem_logo
+        ? `<img src="/api/rh/beneficios/${b.id}/logo" alt="">` : `<span>${inicial}</span>`}</div>
+      <b class="rh-benef-nome">${esc(b.nome)}</b>
+      <span class="rh-benef-fornecedor">${esc(rhTxt(b.fornecedor))}</span>
+      <div class="rh-benef-tags">
+        ${b.categoria ? `<span class="badge">${esc(rhTxt(RH_BENEF_CAT_NOME[b.categoria]))}</span>` : ''}
+        ${b.ativo ? '' : '<span class="badge off">Desativado</span>'}
+      </div>
+      ${temCusto ? `<div class="rh-benef-custo">${brl(Number(b.custo_empresa))}<small>${rhBenefPeriodicidadeTxt(b.periodicidade)} / pessoa</small></div>` : ''}
+      <div class="rh-benef-rodape"><span>${b.inscritos} inscrito${b.inscritos === 1 ? '' : 's'}</span></div>
+    </div>`;
+  };
+
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-quadro-topo">
       <div class="rh-quadro-dica">Os benefícios que a empresa oferece, com quem está inscrito em cada
-        um. Desativar um benefício encerra as inscrições ativas — o histórico de quem já teve fica.</div>
+        um. Clique num card para ver quem está inscrito. Desativar um benefício encerra as inscrições
+        ativas — o histórico de quem já teve fica.</div>
       ${ed ? '<button class="btn primary" id="rh-novo-beneficio">+ Novo benefício</button>' : ''}
     </div>
-    ${lista.length ? `<div class="table-wrap"><table class="tbl-rh">
-      <thead><tr><th>Benefício</th><th>Categoria</th><th>Fornecedor</th>
-        ${temCusto ? '<th class="num">Custo/pessoa</th><th class="num">Custo total/mês</th>' : ''}
-        <th>Inscritos</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
-      <tbody>${lista.map(b => `<tr>
-        <td>${esc(b.nome)}</td>
-        <td>${esc(rhTxt(RH_BENEF_CAT_NOME[b.categoria]))}</td>
-        <td>${esc(rhTxt(b.fornecedor))}</td>
-        ${temCusto ? `<td class="num">${brl(Number(b.custo_empresa))}</td><td class="num">${brl(Number(b.custo_total_mensal))}</td>` : ''}
-        <td>${b.inscritos}</td>
-        <td>${b.ativo ? '<span class="badge ok">Ativo</span>' : '<span class="badge off">Desativado</span>'}</td>
-        <td class="actions">
-          <button class="btn sm" data-inscritos="${b.id}" data-nome="${esc(b.nome)}">Inscritos (${b.inscritos})</button>
-          ${ed ? `<button class="btn-ic" data-editar-beneficio="${b.id}" title="Editar" aria-label="Editar">✎</button>` : ''}
-        </td></tr>`).join('')}</tbody>
-    </table></div>` : `<div class="rh-vazio"><p><strong>Nenhum benefício cadastrado ainda.</strong>
+    ${lista.length ? `<div class="rh-benef-grid">${lista.map(cartao).join('')}</div>`
+      : `<div class="rh-vazio"><p><strong>Nenhum benefício cadastrado ainda.</strong>
       TotalPass, Clube Saúde e Seguro de vida continuam na aba Vínculo de cada ficha — este catálogo é
       para o que vier além disso.</p></div>`}`;
 
   rhLigarAbas();
   const bn = $('#rh-novo-beneficio'); if (bn) bn.onclick = () => rhFormBeneficio(null);
-  c.querySelectorAll('[data-editar-beneficio]').forEach(b =>
-    b.onclick = () => rhFormBeneficio(lista.find(x => String(x.id) === b.dataset.editarBeneficio)));
+  c.querySelectorAll('[data-editar-beneficio]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    rhFormBeneficio(lista.find(x => String(x.id) === b.dataset.editarBeneficio));
+  });
   c.querySelectorAll('[data-inscritos]').forEach(b =>
     b.onclick = () => rhInscritosBeneficio(Number(b.dataset.inscritos), b.dataset.nome));
 }
 
+const RH_BENEF_PERIODICIDADE = [{ v: 'mensal', t: 'Por mês' }, { v: 'dia', t: 'Por dia (× 22 dias úteis)' }];
+
 function rhFormBeneficio(b) {
   const novo = !b;
   b = b || {};
+  // O logo é uma etapa à parte do salvar (o benefício precisa ter um `id`
+  // antes de existir onde anexar a imagem) — guardado aqui e subido DEPOIS do
+  // POST/PUT, só se a pessoa de fato escolheu um arquivo ou pediu pra tirar.
+  let logoArquivo = null, logoRemover = false;
+
   openModal(novo ? 'Novo benefício' : 'Editar benefício', `
+    <div class="rh-benef-logo-campo">
+      <div class="rh-benef-logo-prev" id="bn-logo-prev">${!novo && b.tem_logo
+        ? `<img src="/api/rh/beneficios/${b.id}/logo" alt="">`
+        : `<span>${esc((b.fornecedor || b.nome || '?').trim().slice(0, 1).toUpperCase())}</span>`}</div>
+      <div>
+        <label class="btn sm" for="bn-logo-arquivo">Escolher logo do fornecedor</label>
+        <input type="file" id="bn-logo-arquivo" accept="image/png,image/jpeg,image/webp" style="display:none">
+        ${!novo && b.tem_logo ? '<button type="button" class="btn-ic" id="bn-logo-remover" title="Remover logo" aria-label="Remover logo">✕</button>' : ''}
+        <p class="rh-custo-nota">JPG, PNG ou WEBP, até 512 KB. Opcional — sem logo, o card mostra a inicial.</p>
+      </div>
+    </div>
     ${fld('bn-nome', 'Nome *', 'text', b.nome || '')}
     <div class="form-row">
       ${fldSel('bn-categoria', 'Categoria', RH_BENEF_CATEGORIAS, b.categoria || '')}
@@ -11165,6 +11205,7 @@ function rhFormBeneficio(b) {
       ${fld('bn-custo_empresa', 'Custo para a empresa (por pessoa)', 'number', b.custo_empresa ?? '', 'min="0" step="0.01"')}
       ${fld('bn-custo_colaborador', 'Desconto do colaborador', 'number', b.custo_colaborador ?? '', 'min="0" step="0.01"')}
     </div>
+    ${fldSel('bn-periodicidade', 'Como esse custo é calculado', RH_BENEF_PERIODICIDADE, b.periodicidade || 'mensal')}
     ${fld('bn-observacao', 'Observação', 'text', b.observacao || '')}
     ${!novo ? `<label class="check-chip"><input type="checkbox" id="bn-ativo" ${b.ativo !== false ? 'checked' : ''}>
       Benefício ativo — desmarque para parar de oferecê-lo (encerra as inscrições em vigor)</label>` : ''}`,
@@ -11174,15 +11215,38 @@ function rhFormBeneficio(b) {
           nome: $('#bn-nome').value, categoria: $('#bn-categoria').value,
           fornecedor: $('#bn-fornecedor').value,
           custo_empresa: $('#bn-custo_empresa').value || 0, custo_colaborador: $('#bn-custo_colaborador').value || 0,
-          observacao: $('#bn-observacao').value
+          periodicidade: $('#bn-periodicidade').value, observacao: $('#bn-observacao').value
         };
         if (!novo) body.ativo = $('#bn-ativo').checked;
         try {
-          await api(novo ? '/api/rh/beneficios' : '/api/rh/beneficios/' + b.id,
+          const r = await api(novo ? '/api/rh/beneficios' : '/api/rh/beneficios/' + b.id,
             { method: novo ? 'POST' : 'PUT', body });
+          const id = novo ? r.id : b.id;
+          if (logoArquivo) {
+            const data = await readFileAsBase64(logoArquivo);
+            await api(`/api/rh/beneficios/${id}/logo`, { method: 'POST',
+              body: { mime_type: logoArquivo.type, data } });
+          } else if (logoRemover) {
+            await api(`/api/rh/beneficios/${id}/logo`, { method: 'DELETE' });
+          }
           closeModal(); toast(novo ? 'Benefício cadastrado.' : 'Benefício atualizado.'); renderRH();
         } catch (e) { modalError(e.message); }
      }}]);
+
+  const prev = $('#bn-logo-prev');
+  $('#bn-logo-arquivo').onchange = e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 512 * 1024) { modalError('Imagem acima do limite de 512 KB.'); e.target.value = ''; return; }
+    logoArquivo = f; logoRemover = false;
+    prev.innerHTML = `<img src="${URL.createObjectURL(f)}" alt="">`;
+  };
+  const br = $('#bn-logo-remover');
+  if (br) br.onclick = () => {
+    logoArquivo = null; logoRemover = true;
+    prev.innerHTML = `<span>${esc((b.fornecedor || b.nome || '?').trim().slice(0, 1).toUpperCase())}</span>`;
+    br.remove();
+  };
 }
 
 async function rhInscritosBeneficio(beneficioId, nome) {

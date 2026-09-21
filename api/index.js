@@ -3258,20 +3258,74 @@ app.delete('/api/rh/ferias/gozos/:id', requireAuth, requireEdit('rh'), h(async (
 // `custo_empresa` é por PESSOA inscrita: o custo total do benefício é ele
 // multiplicado por quantos estão ativos, não um valor fixo do catálogo.
 // Dinheiro é dado sensível como salário — quem não vê remuneração não vê custo.
+//
+// `periodicidade`: "dia" é o mesmo padrão de vr_dia/home_office_dia no
+// vínculo (valor por dia útil × 22) — não um cálculo novo, só a mesma conta
+// aplicada aqui pra quem cadastra vale-refeição ou auxílio home office como
+// item de catálogo em vez de campo fixo do vínculo.
+const DIAS_UTEIS_MES = 22;
 app.get('/api/rh/beneficios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const verCusto = rhVeRemuneracao(req.user);
   const rows = await query(`
-    SELECT b.*,
+    SELECT b.*, (b.logo_data IS NOT NULL) AS tem_logo,
            (SELECT count(*)::int FROM erp_rh_beneficio_colab bc
              WHERE bc.beneficio_id=b.id AND bc.ate IS NULL) AS inscritos
       FROM erp_rh_beneficios b
      ORDER BY b.ativo DESC, b.nome`);
   res.json(rows.map(b => {
     const out = { ...b };
-    if (verCusto) out.custo_total_mensal = r2(Number(b.custo_empresa) * b.inscritos);
-    else { delete out.custo_empresa; delete out.custo_colaborador; }
+    delete out.logo_data; delete out.logo_mime;
+    if (verCusto) {
+      const fator = b.periodicidade === 'dia' ? DIAS_UTEIS_MES : 1;
+      out.custo_total_mensal = r2(Number(b.custo_empresa) * fator * b.inscritos);
+    } else { delete out.custo_empresa; delete out.custo_colaborador; }
     return out;
   }));
+}));
+
+// Logo do fornecedor: mesmo padrão de erp_attachments (binário no Postgres,
+// tipo conferido pela ASSINATURA do arquivo, não pelo MIME que o cliente
+// informou — SVG fica de fora de propósito, executa script na origem do ERP).
+const LOGO_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
+const MAX_LOGO_BYTES = 512 * 1024; // 512 KB — sobra pra um logo, e mantém a linha leve
+
+app.post('/api/rh/beneficios/:id/logo', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const existe = await query('SELECT id FROM erp_rh_beneficios WHERE id=$1', [id]);
+  if (!existe.length) return res.status(404).json({ error: 'Benefício não encontrado.' });
+
+  const mimeInformado = (sanitize(req.body.mime_type) || '').toLowerCase();
+  if (!LOGO_MIMES.includes(mimeInformado)) {
+    return res.status(415).json({ error: 'Formato não permitido. Envie uma imagem JPG, PNG ou WEBP.' });
+  }
+  const b64 = String(req.body.data || '');
+  if (!b64) return res.status(400).json({ error: 'Imagem vazia.' });
+  let buf;
+  try { buf = Buffer.from(b64, 'base64'); } catch { return res.status(400).json({ error: 'Imagem inválida.' }); }
+  if (!buf.length) return res.status(400).json({ error: 'Imagem vazia.' });
+  if (buf.length > MAX_LOGO_BYTES) return res.status(413).json({ error: 'Imagem acima do limite de 512 KB.' });
+
+  const mime = mimeDoConteudo(buf, mimeInformado);
+  if (!mime || !LOGO_MIMES.includes(mime)) {
+    return res.status(415).json({ error: 'O conteúdo do arquivo não corresponde a uma imagem JPG, PNG ou WEBP.' });
+  }
+  await query('UPDATE erp_rh_beneficios SET logo_mime=$1, logo_data=$2 WHERE id=$3', [mime, buf, id]);
+  res.json({ ok: true });
+}));
+
+app.get('/api/rh/beneficios/:id/logo', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const rows = await query('SELECT logo_mime, logo_data FROM erp_rh_beneficios WHERE id=$1', [Number(req.params.id)]);
+  const b = rows[0];
+  if (!b || !b.logo_data) return res.status(404).end();
+  res.set('Content-Type', b.logo_mime || 'application/octet-stream');
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.send(b.logo_data);
+}));
+
+app.delete('/api/rh/beneficios/:id/logo', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const r = await query('UPDATE erp_rh_beneficios SET logo_mime=NULL, logo_data=NULL WHERE id=$1 RETURNING id', [Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Benefício não encontrado.' });
+  res.json({ ok: true });
 }));
 
 app.post('/api/rh/beneficios', requireAuth, requireEdit('rh'), h(async (req, res) => {
