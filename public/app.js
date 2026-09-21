@@ -9992,9 +9992,11 @@ async function rhFichaPDF(id) {
   const c = d.colaborador, m = d.metricas, pode = d.pode || {};
   const v = (d.vinculos || []).find(x => !x.desligamento) || (d.vinculos || [])[0] || null;
 
+  // Sem subtítulo com o nome da pessoa embaixo do logo: fica repetido (a
+  // tabela de Identificação já mostra o nome, na primeira linha) e sem
+  // função ali — só o cabeçalho da empresa e o título do documento.
   const { doc, pageW, MARGIN, rodape } = relatorioPDF('Ficha do Colaborador', {
-    orientation: 'portrait', modulo: 'Recursos Humanos',
-    subtitulo: `${c.name}${c.cargo ? ' · ' + c.cargo : ''}`
+    orientation: 'portrait', modulo: 'Recursos Humanos'
   });
   const larg = pageW - MARGIN * 2;
   const pageH = doc.internal.pageSize.getHeight();

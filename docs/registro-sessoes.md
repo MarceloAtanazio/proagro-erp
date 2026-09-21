@@ -6445,3 +6445,23 @@ chamada nos oito pontos certos — e que **nenhum** `relatorioSecao()` da ficha 
 antes, pra um título novo não repetir o esquecimento. 18 verificações, todas passando.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 131: nome da pessoa duplicado embaixo do logo
+
+**Relato:** *"Outro ponto que me atentei somente agora é que abaixo do logo da empresa voce esta
+registrando o nome da pessoa, não é necessario e pode tirar"* (com print mostrando o nome sublinhado
+logo abaixo de "ERP Financeiro · Recursos Humanos").
+
+Era o `subtitulo` passado pro cabeçalho padrão (`relatorioPDF`), pensado originalmente pra dizer
+qual período um relatório resume (é assim que o Fechamento de Viáticos e o Orçamento usam, ex.:
+"Exercício de 2026"). Na Ficha do Colaborador virou o nome da pessoa — repetido, já que a primeira
+linha da tabela de Identificação, logo abaixo, já mostra "Nome". Removido: o cabeçalho volta a
+mostrar só a empresa e o título do documento.
+
+### Verificação
+
+Assserção estática nova em `verifica-ficha-pdf-rodape.js` guardando que a chamada de `relatorioPDF`
+da ficha não carrega `subtitulo`. 19 verificações, todas passando.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
