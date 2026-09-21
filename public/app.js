@@ -11120,7 +11120,7 @@ const RH_BENEF_CAT_NOME = Object.fromEntries(RH_BENEF_CATEGORIAS.map(o => [o.v, 
 // (a lista de benefícios raramente passa de uma dúzia) cabe bem numa grade.
 // O card inteiro abre "Inscritos" (era um botão de linha; vira o clique
 // principal); editar continua um ícone à parte, para não competir com ele.
-const rhBenefPeriodicidadeTxt = p => p === 'dia' ? '/dia' : '/mês';
+const rhBenefPeriodicidadeTxt = p => p === 'dia' ? '/dia' : p === 'ano' ? '/ano' : '/mês';
 // Cor determinística por nome (mesma paleta do Organograma) — sem logo, cada
 // fornecedor ainda tem uma cor própria em vez de todo card sair cinza igual.
 const rhBenefCor = txt => {
@@ -11174,7 +11174,8 @@ async function rhBeneficios(c) {
     b.onclick = () => rhInscritosBeneficio(Number(b.dataset.inscritos), b.dataset.nome));
 }
 
-const RH_BENEF_PERIODICIDADE = [{ v: 'mensal', t: 'Por mês' }, { v: 'dia', t: 'Por dia (× 22 dias úteis)' }];
+const RH_BENEF_PERIODICIDADE = [{ v: 'mensal', t: 'Por mês' }, { v: 'dia', t: 'Por dia (× 22 dias úteis)' },
+  { v: 'ano', t: 'Por ano — apólice (÷ 12 no custo mensal)' }];
 
 function rhFormBeneficio(b) {
   const novo = !b;

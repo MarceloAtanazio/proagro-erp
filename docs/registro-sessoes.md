@@ -6610,3 +6610,31 @@ passando — mais as 116 das suítes anteriores, sem regressão. Testado no nave
 idêntico ao badge de antes (mesma cor, mesmo formato), só que agora clicável.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 135: seguro de vida é apólice anual, não mensal nem diário
+
+**Relato:** *"Encontrei um gap, no caso do seguro de vida ele não é por mes nem por dia, é o valor
+da apólice, funciona por ano."*
+
+A periodicidade tinha só duas opções (`mensal`/`dia`) desde a sessão anterior. Faltava o caso da
+apólice anual: o valor cadastrado é o prêmio do ano inteiro, e o "custo total/mês" da listagem
+precisa dividir por 12 — sem isso, o valor da apólice do ano inteiro entraria na conta como se fosse
+o custo de um mês só, inflando o custo de pessoal.
+
+### O ajuste
+
+Terceira opção no select, "Por ano — apólice (÷ 12 no custo mensal)". O fator de conversão para
+mensal virou uma tabela pequena (`RH_BENEF_FATOR_MENSAL = { dia: 22, ano: 1/12, mensal: 1 }`) em vez
+de um `? :` — mais fácil de estender se aparecer uma quarta periodicidade no futuro. O card continua
+mostrando o valor cru cadastrado com o sufixo certo ("/ano"), só o "custo total/mês" por trás é que
+amortiza.
+
+### Verificação
+
+Estendi `verifica-beneficios-cards.js`: uma apólice de R$ 66,30/ano com 2 inscritos dá custo mensal
+de R$ 11,05 (66,30 × 2 ÷ 12), bem longe do valor cheio da apólice — que era exatamente a conta
+errada que o relato apontou. Mais a checagem estática do rótulo "/ano" no card e da opção no select.
+34 verificações, todas passando — mais as 116 das suítes anteriores, sem regressão.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

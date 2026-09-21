@@ -3262,8 +3262,12 @@ app.delete('/api/rh/ferias/gozos/:id', requireAuth, requireEdit('rh'), h(async (
 // `periodicidade`: "dia" é o mesmo padrão de vr_dia/home_office_dia no
 // vínculo (valor por dia útil × 22) — não um cálculo novo, só a mesma conta
 // aplicada aqui pra quem cadastra vale-refeição ou auxílio home office como
-// item de catálogo em vez de campo fixo do vínculo.
+// item de catálogo em vez de campo fixo do vínculo. "ano" é o caso do seguro
+// de vida: o valor cadastrado é o da APÓLICE anual, e vira mensal dividindo
+// por 12 — sem isso o "custo total/mês" contaria o valor do ano inteiro
+// como se fosse de um mês só.
 const DIAS_UTEIS_MES = 22;
+const RH_BENEF_FATOR_MENSAL = { dia: DIAS_UTEIS_MES, ano: 1 / 12, mensal: 1 };
 app.get('/api/rh/beneficios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const verCusto = rhVeRemuneracao(req.user);
   const rows = await query(`
@@ -3276,7 +3280,7 @@ app.get('/api/rh/beneficios', requireAuth, requireViewAny(['rh']), h(async (req,
     const out = { ...b };
     delete out.logo_data; delete out.logo_mime;
     if (verCusto) {
-      const fator = b.periodicidade === 'dia' ? DIAS_UTEIS_MES : 1;
+      const fator = RH_BENEF_FATOR_MENSAL[b.periodicidade] ?? 1;
       out.custo_total_mensal = r2(Number(b.custo_empresa) * fator * b.inscritos);
     } else { delete out.custo_empresa; delete out.custo_colaborador; }
     return out;
