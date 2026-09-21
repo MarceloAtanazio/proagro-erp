@@ -1328,27 +1328,78 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   background: #fff; min-width: 220px;
 }
 
-/* Organograma: árvore por indentação, com uma linha vertical guiando cada
-   nível — o mesmo desenho de um explorador de arquivos. Um diagrama de caixas
-   ligadas por linhas horizontais fica mais bonito, mas quebra em telas
-   estreitas e em ciclos com muitos filhos; indentado é o que se mantém
-   legível em qualquer largura e com qualquer profundidade. */
+/* Organograma — duas vistas do mesmo dado:
+   .rh-org (Lista) é árvore por indentação, o desenho de um explorador de
+   arquivos: some legível em qualquer largura e qualquer profundidade, mas não
+   "parece" organograma.
+   .rh-orgchart (Diagrama) é o desenho clássico — caixas ligadas por linha,
+   topo a topo — pra quando a cara importa mais que caber na tela; rola na
+   horizontal quando um nível tem muita gente.
+   O conteúdo de dentro da caixa (nome, cargo, setor, contagem) é IDÊNTICO nas
+   duas — só o que embrulha em volta muda — por isso as classes de texto
+   (b, .cargo, .depto, .qtd, .rh-org-toggle) são compartilhadas. */
+.rh-org-vistas { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.rh-org-vista { border: none; background: #fff; color: var(--ink-2); font-size: 12.5px;
+  font-weight: 600; padding: 8px 14px; cursor: pointer; }
+.rh-org-vista + .rh-org-vista { border-left: 1px solid var(--line); }
+.rh-org-vista.ativa { background: var(--verde-700); color: #fff; }
+.rh-org-vista:not(.ativa):hover { background: var(--verde-050); }
+
 .rh-org { padding: 6px 0; overflow-x: auto; }
 .rh-org-no { position: relative; }
-.rh-org-cartao { display: inline-flex; align-items: center; gap: 10px;
-  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-  padding: 8px 14px; margin: 4px 0; font-size: 13px; transition: opacity .15s; }
-.rh-org-cartao b { color: var(--ink); font-weight: 700; white-space: nowrap; }
-.rh-org-cartao .cargo { color: var(--ink-2); white-space: nowrap; }
-.rh-org-cartao .depto { font-size: 11px; font-weight: 600; color: var(--verde-700);
-  background: var(--verde-050); border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
-.rh-org-cartao .qtd { font-size: 11px; color: var(--muted); white-space: nowrap; }
-.rh-org-cartao.rh-org-fora { opacity: .28; }
+.rh-org-cartao, .rh-org-caixa { background: var(--card); border: 1px solid var(--line);
+  border-radius: 8px; font-size: 13px; transition: opacity .15s; }
+.rh-org-cartao { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; margin: 4px 0; }
+.rh-org-cartao b, .rh-org-caixa b { color: var(--ink); font-weight: 700; }
+.rh-org-cartao b { white-space: nowrap; }
+.rh-org-cartao .cargo, .rh-org-caixa .cargo { color: var(--ink-2); }
+.rh-org-cartao .cargo { white-space: nowrap; }
+.rh-org-cartao .depto, .rh-org-caixa .depto { display: inline-block; font-size: 10.5px; font-weight: 600;
+  border-radius: 4px; padding: 2px 7px; border: 1px solid; white-space: nowrap; }
+.rh-org-cartao .qtd, .rh-org-caixa .qtd { font-size: 11px; color: var(--muted); }
+.rh-org-cartao .qtd { white-space: nowrap; }
+.rh-org-cartao.rh-org-fora, .rh-org-caixa.rh-org-fora { opacity: .28; }
 .rh-org-toggle { border: none; background: none; cursor: pointer; color: var(--muted);
   font-size: 11px; padding: 0 2px; line-height: 1; }
 .rh-org-toggle:hover { color: var(--ink); }
 .rh-org-filhos { margin-left: 26px; padding-left: 16px; border-left: 2px solid var(--line); }
 .rh-org-filhos.rh-org-fechado { display: none; }
+
+/* Diagrama: uma raiz por bloco, empilhados — duas raízes na MESMA <ul>
+   desenhariam uma linha ligando os dois topos como se fossem pares, e uma
+   delas pode ser só alguém cujo gestor saiu, não uma diretoria gêmea. */
+.rh-org-diagramas { display: flex; flex-direction: column; gap: 24px; }
+.rh-orgchart-wrap { overflow-x: auto; padding: 8px 4px 16px; }
+.rh-orgchart, .rh-orgchart ul { list-style: none; margin: 0; padding: 0; }
+.rh-orgchart { display: table; margin: 0 auto; }
+.rh-orgchart ul { display: table; margin: 0 auto; }
+.rh-orgchart ul.rh-org-fechado { display: none; }
+.rh-orgchart li { display: table-cell; vertical-align: top; text-align: center;
+  padding: 24px 10px 0 10px; position: relative; }
+/* A caixa é o único filho direto do <li> antes da <ul> de netos — por isso os
+   seletores de linha miram `> .rh-org-caixa` e `> ul`, não qualquer um. */
+.rh-orgchart li::before, .rh-orgchart li::after {
+  content: ''; position: absolute; top: 0; width: 50%; height: 24px;
+  border-top: 2px solid var(--line); }
+.rh-orgchart li::before { right: 50%; border-right: 2px solid var(--line); }
+.rh-orgchart li::after { left: 50%; }
+.rh-orgchart li:only-child { padding-top: 0; }
+.rh-orgchart li:only-child::before, .rh-orgchart li:only-child::after { display: none; }
+.rh-orgchart li:first-child::before, .rh-orgchart li:last-child::after { border-top-color: transparent; }
+.rh-orgchart > li { padding-top: 0; }
+.rh-orgchart > li::before, .rh-orgchart > li::after { display: none; }
+/* A linha descendo da caixa até a fileira de filhos — só existe quando HÁ
+   filhos, e por isso mora no `ul`, não no `li` (que existe sempre). */
+.rh-orgchart li > ul { position: relative; padding-top: 24px; }
+.rh-orgchart li > ul::before { content: ''; position: absolute; top: 0; left: 50%;
+  width: 0; height: 24px; border-left: 2px solid var(--line); }
+.rh-org-caixa { display: inline-block; min-width: 172px; max-width: 210px;
+  padding: 10px 13px; text-align: left; white-space: normal; }
+.rh-org-caixa b { display: block; }
+.rh-org-caixa .cargo { display: block; margin-top: 2px; font-size: 12px; }
+.rh-org-caixa .depto { margin-top: 6px; }
+.rh-org-caixa .qtd { display: block; margin-top: 4px; }
+.rh-org-caixa .rh-org-toggle { float: right; margin-left: 6px; }
 
 /* Lista de processos encerrados. Grade própria: o motivo é o conteúdo da tela,
    então é ele que fica com a sobra — no gabarito da lista de colaboradores quem

@@ -10779,6 +10779,14 @@ async function renderRH() {
 // devolve — o mesmo desenho que o resto do RH já usa. `gestor_id` já existia
 // em erp_rh_vinculos; só nunca teve pela onde ser preenchido.
 const RH_NIVEL_ABREV = { junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' };
+// Seis cores fixas para os setores — não são um token de tema, são só uma
+// paleta categórica pequena, suficiente pra distinguir setores num relance
+// sem virar um arco-íris. Ciclam se houver mais de seis departamentos.
+const RH_ORG_CORES = ['#1F4E78', '#00783F', '#A9741B', '#B23A2F', '#6B4FA0', '#0E7C86'];
+// 'diagrama' é o padrão porque foi o que se pediu — "mais cara de
+// organograma"; 'lista' fica como alternativa pra quando a árvore tem muita
+// gente e o diagrama de caixas fica largo demais pra ler de uma vez.
+let RH_ORG_VISTA = 'diagrama';
 
 async function rhOrganograma(c) {
   const d = await api('/api/rh/organograma');
@@ -10789,8 +10797,10 @@ async function rhOrganograma(c) {
   // casos viram "topo", mas só o segundo entra no aviso.
   const porGestor = {};
   pessoas.forEach(p => { (porGestor[p.gestor_id] ||= []).push(p); });
-  const raizes = pessoas.filter(p => !p.gestor_id || !idsAtivos.has(p.gestor_id));
+  const raizes = pessoas.filter(p => !p.gestor_id || !idsAtivos.has(p.gestor_id))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const departamentos = [...new Set(pessoas.map(p => p.departamento).filter(Boolean))].sort();
+  const corDe = dep => dep ? RH_ORG_CORES[departamentos.indexOf(dep) % RH_ORG_CORES.length] : null;
 
   // Contagem recursiva de subordinados, com guarda contra ciclo: o servidor
   // recusa criar um na gravação, mas um ciclo antigo feito direto no banco não
@@ -10801,30 +10811,63 @@ async function rhOrganograma(c) {
     const filhos = porGestor[id] || [];
     return filhos.reduce((s, f) => s + 1 + contarAbaixo(f.id, visitados), 0);
   };
+  const filhosDe = p => (porGestor[p.id] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
 
-  const noh = (p, visitados) => {
+  // O CONTEÚDO da caixa é o mesmo nas duas vistas — só o que embrulha em volta
+  // (div indentada vs. li com conector) muda. Repetir o miolo seria a receita
+  // pra um dia as duas vistas mostrarem informações diferentes da mesma pessoa.
+  const miolo = (p, filhos, totalAbaixo) => {
+    const cargo = [p.cargo, p.nivel ? (RH_NIVEL_ABREV[p.nivel] || p.nivel) : ''].filter(Boolean).join(' ');
+    const cor = corDe(p.departamento);
+    return `${filhos.length ? '<button class="rh-org-toggle" aria-label="Recolher/expandir">▾</button>' : ''}
+      <b>${esc(p.name)}</b>
+      ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
+      ${p.departamento ? `<span class="depto" style="color:${cor};background:${cor}1A;border-color:${cor}55">${esc(p.departamento)}</span>` : ''}
+      ${filhos.length ? `<span class="qtd">${filhos.length} direto(s) · ${totalAbaixo} no total</span>` : ''}`;
+  };
+
+  const nohLista = (p, visitados) => {
     if (visitados.has(p.id)) return '';   // ciclo: já desenhado acima, não repete
     const proprios = new Set(visitados); proprios.add(p.id);
-    const filhos = (porGestor[p.id] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    const totalAbaixo = contarAbaixo(p.id, new Set(visitados));
-    const cargo = [p.cargo, p.nivel ? (RH_NIVEL_ABREV[p.nivel] || p.nivel) : ''].filter(Boolean).join(' ');
+    const filhos = filhosDe(p);
     return `<div class="rh-org-no">
       <div class="rh-org-cartao" data-depto="${esc(p.departamento || '')}">
-        ${filhos.length ? '<button class="rh-org-toggle" aria-label="Recolher/expandir">▾</button>' : ''}
-        <b>${esc(p.name)}</b>
-        ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
-        ${p.departamento ? `<span class="depto">${esc(p.departamento)}</span>` : ''}
-        ${filhos.length ? `<span class="qtd">${filhos.length} direto(s) · ${totalAbaixo} no total</span>` : ''}
+        ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)))}
       </div>
-      ${filhos.length ? `<div class="rh-org-filhos">${filhos.map(f => noh(f, proprios)).join('')}</div>` : ''}
+      ${filhos.length ? `<div class="rh-org-filhos">${filhos.map(f => nohLista(f, proprios)).join('')}</div>` : ''}
     </div>`;
   };
 
+  // O diagrama clássico (caixas ligadas por linha) é montado com uma técnica
+  // só de CSS: uma <ul> aninhada por nível, e as linhas saem de `::before` /
+  // `::after` em cima de cada <li> — nenhum canvas, nenhum SVG calculado à
+  // mão. Cada RAIZ vira o seu próprio diagrama independente, um embaixo do
+  // outro: colocar duas raízes na MESMA <ul> desenharia uma linha ligando os
+  // dois topos como se fossem irmãos — e um deles pode ser só alguém cujo
+  // gestor saiu, não um par de verdade do outro.
+  const nohDiagrama = (p, visitados) => {
+    if (visitados.has(p.id)) return '';
+    const proprios = new Set(visitados); proprios.add(p.id);
+    const filhos = filhosDe(p);
+    const cor = corDe(p.departamento);
+    return `<li>
+      <div class="rh-org-caixa" data-depto="${esc(p.departamento || '')}" style="border-top-color:${cor || 'var(--line)'}">
+        ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)))}
+      </div>
+      ${filhos.length ? `<ul>${filhos.map(f => nohDiagrama(f, proprios)).join('')}</ul>` : ''}
+    </li>`;
+  };
+
+  const vazio = !pessoas.length;
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-quadro-topo">
       <div class="rh-quadro-dica">Quem está aqui reporta para quem — defina em <strong>Colaboradores →
         Vínculo → A quem reporta</strong>. Sem gestor definido, a pessoa aparece no topo.</div>
       <div class="spacer"></div>
+      <div class="rh-org-vistas">
+        <button class="rh-org-vista ${RH_ORG_VISTA === 'diagrama' ? 'ativa' : ''}" data-org-vista="diagrama">Diagrama</button>
+        <button class="rh-org-vista ${RH_ORG_VISTA === 'lista' ? 'ativa' : ''}" data-org-vista="lista">Lista</button>
+      </div>
       ${departamentos.length ? `<select id="rh-org-depto"><option value="">Todos os setores</option>
         ${departamentos.map(dep => `<option value="${esc(dep)}">${esc(dep)}</option>`).join('')}</select>` : ''}
     </div>
@@ -10834,20 +10877,28 @@ async function rhOrganograma(c) {
       por ora aparecem no topo do organograma.
       <span class="rh-alerta-nomes">${esc(d.gestor_inativo.map(p => p.name).join(' · '))}</span>
     </div>` : ''}
-    ${pessoas.length ? `<div class="rh-org">${raizes.slice().sort((a, b) => a.name.localeCompare(b.name))
-        .map(p => noh(p, new Set())).join('')}</div>`
-      : `<div class="rh-vazio"><p><strong>Ninguém com vínculo ativo ainda.</strong></p></div>`}`;
+    ${vazio ? `<div class="rh-vazio"><p><strong>Ninguém com vínculo ativo ainda.</strong></p></div>`
+      : RH_ORG_VISTA === 'lista'
+        ? `<div class="rh-org">${raizes.map(p => nohLista(p, new Set())).join('')}</div>`
+        : `<div class="rh-org-diagramas">${raizes.map(p => `<div class="rh-orgchart-wrap">
+            <ul class="rh-orgchart">${nohDiagrama(p, new Set())}</ul></div>`).join('')}</div>`}`;
 
   rhLigarAbas();
+  c.querySelectorAll('[data-org-vista]').forEach(b => b.onclick = () => { RH_ORG_VISTA = b.dataset.orgVista; rhOrganograma(c); });
   c.querySelectorAll('.rh-org-toggle').forEach(b => b.onclick = () => {
-    const filhos = b.closest('.rh-org-no').querySelector('.rh-org-filhos');
+    // Lista: os filhos são o próximo IRMÃO do cartão (a div .rh-org-filhos).
+    // Diagrama: os filhos são a <ul> dentro do MESMO <li> do cartão.
+    const filhos = b.closest('.rh-org-no')
+      ? b.closest('.rh-org-no').querySelector('.rh-org-filhos')
+      : b.closest('li').querySelector(':scope > ul');
+    if (!filhos) return;
     const fechado = filhos.classList.toggle('rh-org-fechado');
     b.textContent = fechado ? '▸' : '▾';
   });
   const filtro = $('#rh-org-depto');
   if (filtro) filtro.onchange = () => {
     const alvo = filtro.value;
-    c.querySelectorAll('.rh-org-cartao').forEach(card => {
+    c.querySelectorAll('.rh-org-cartao, .rh-org-caixa').forEach(card => {
       card.classList.toggle('rh-org-fora', !!alvo && card.dataset.depto !== alvo);
     });
   };

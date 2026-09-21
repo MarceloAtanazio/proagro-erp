@@ -6173,3 +6173,53 @@ já tinha escrito para os commits originais.
 **mesma chamada de ferramenta**, sem hash transcrito entre chamadas separadas — e a verificação
 (`git diff-tree` contra o HEAD anterior, mais a comparação linha a linha com a árvore de trabalho) passa a
 ser feita **depois** do commit estar de fato criado, não só na etapa intermediária.
+
+## 2026-09-21 — Sessão 125: o organograma ganha cara de organograma
+
+**Solicitação:** *"Ficou legal, mas quero uma cara mais de organograma mesmo. Pode ter mais de uma
+versão pra escolher e tal."*
+
+A vista anterior (árvore por indentação, como um explorador de arquivos) era legível, mas não é o que
+alguém espera ao ouvir "organograma". Em vez de trocar uma coisa pela outra, virou **duas vistas do
+mesmo dado**, com um seletor no topo:
+
+- **Diagrama** (o padrão agora): o desenho clássico — caixas ligadas por linha, de cima para baixo.
+- **Lista**: a árvore indentada de antes, para quando um nível tem gente demais e o diagrama fica largo
+  demais para caber na tela de uma vez.
+
+### Como o diagrama é desenhado
+
+Sem canvas, sem SVG calculado à mão: é a técnica clássica só de CSS — uma `<ul>` aninhada por nível, e
+as linhas saem de `::before`/`::after` em cima de cada `<li>`. O trabalho novo foi de fato pouco no
+servidor (nada mudou lá) e concentrado em desenhar as linhas certas para o caso de várias raízes.
+
+Uma decisão que vale registrar: **cada raiz vira o seu próprio diagrama, empilhado, em vez de todas
+dividirem a mesma `<ul>` do topo.** Colocar duas raízes na mesma lista desenharia uma linha ligando os
+dois topos como se fossem irmãos — e no caso mais comum isso é enganoso: um dos "topos" costuma ser
+alguém cujo gestor saiu (o aviso já existente), não um par de verdade do outro.
+
+**Cores por setor**, nas duas vistas: seis cores fixas, escolhidas pela posição do departamento numa
+lista ordenada — determinístico, a mesma pessoa sempre com a mesma cor entre um render e outro, não
+sorteado.
+
+### O bug que o próprio teste pegou
+
+Ao testar na tela, o botão de recolher não fazia nada no Diagrama — trocava a seta, mas a lista de
+filhos continuava visível. A classe certa (`rh-org-fechado`) estava sendo aplicada no `<ul>` certo; só
+faltava a regra de CSS que esconde um `<ul>` com essa classe — eu tinha escrito a regra para a `<div>`
+da vista Lista e esquecido do `<ul>` da vista Diagrama. Corrigido antes de publicar, e a asserção que
+prova isso ficou no arquivo de verificação — para não voltar a quebrar silenciosamente se o CSS for
+mexido de novo.
+
+### Verificação
+
+Estendi `verifica-organograma.js` com 8 asserções: as duas vistas montando o mesmo miolo da caixa (não
+duas fontes de verdade sobre a mesma pessoa), cada raiz com o seu próprio diagrama, a troca de vista
+re-renderizando com o estado certo, o recolher sabendo achar os filhos nos dois formatos, a cor
+determinística, e as duas regras de CSS que escondem os filhos (lista e diagrama) — a segunda é
+exatamente a que faltava. As vinte suítes passam.
+
+Medido na tela com o `styles.css` real: três coordenadores ligados ao CEO por linha, cada um com seus
+subordinados abaixo, cores por setor legíveis (Campo em verde, Comercial em âmbar, Subscrição em
+vermelho, Administrativo em roxo), e o órfão (gestor que saiu) aparecendo como um diagrama próprio,
+visualmente separado — não como par do CEO.
