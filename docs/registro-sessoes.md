@@ -6638,3 +6638,37 @@ errada que o relato apontou. Mais a checagem estática do rótulo "/ano" no card
 34 verificações, todas passando — mais as 116 das suítes anteriores, sem regressão.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 136: modal do card de admissão ganha mais respiro
+
+**Solicitação:** *"Expanda um pouco mais essa tela e outras também nesse estilo para que fique
+visualmente melhor para o usuário e não quebre as informações."* (print do modal "Entrevista" com
+setas vermelhas nas duas bordas, pedindo mais largura).
+
+### O que estava acontecendo
+
+O modal do card de admissão — a mesma tela pra todas as etapas, Triagem até Onboarding — usava
+`wide` (900px). A grade de campos (`.rh-grid`, coluna mínima de 210px) cabe só **3** colunas nessa
+largura. "Dados do processo" tem 8 campos: viravam 3+3+**2**, a última linha com metade da largura
+vazia do lado — visualmente descompensado, mesmo sem nenhum campo literalmente cortado. A etapa de
+Documentação, com até 7 campos numa grade só (CPF/RG/CTPS/PIS), tinha o mesmo problema.
+
+### O ajuste
+
+Trocado pra `xwide` (1040px, classe que já existia no CSS, usada no cadastro de colaborador por
+motivo parecido). Medido de verdade no navegador antes de aplicar: a 900px a grade dava 3 colunas de
+260,8px; a 1040px dá **4** colunas de 226,6px. Com 4 colunas, os 8 campos de "Dados do processo"
+viram exatamente 4+4 — nenhuma linha sobra pela metade. Como é o MESMO modal pra toda etapa do
+processo (a "e outras telas nesse estilo" do pedido), o ajuste cobre a família inteira de uma vez —
+não precisou mexer tela por etapa.
+
+### Verificação
+
+`verifica-card-modal-largura.js`: confirma que o modal usa `xwide` (não sobrou `wide` solto ali) e
+que os 8 campos de "Dados do processo" continuam intactos (a mudança foi só a largura, não os
+campos). 3 verificações, todas passando — mais as 119 das suítes anteriores, sem regressão.
+Verificação visual no navegador com `getBoundingClientRect()` real: 900px → 3 colunas de 260,8px;
+1040px → 4 colunas de 226,6px, confirmando a mudança de 3→4 colunas antes de publicar.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

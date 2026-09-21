@@ -9353,7 +9353,11 @@ async function rhAbrirCard(id) {
       ...(ed && anterior ? [{ label: '← ' + anterior.nome, onClick: () => rhMoverCard(id, a.etapa, anterior.cod, false, a.colaborador_id) }] : []),
       ...(ed && proxima ? [{ label: proxima.nome + ' →', cls: 'primary', onClick: () => rhMoverCard(id, a.etapa, proxima.cod, true, a.colaborador_id) }] : []),
       ...(ed && !proxima ? [{ label: 'Concluir admissão', cls: 'primary', onClick: () => rhConcluir(id) }] : [])
-    ], { wide: true });
+    // xwide, não wide: a etapa de Documentação empilha grades de até 7 campos
+    // (CPF/RG/CTPS/PIS, depois endereço) — a 900px o `.rh-grid` cabia só 3
+    // colunas e cada linha ficava com 2-3 campos "sobrando" numa linha extra,
+    // apertados. A 1040px cabem 4, e a grade PARA de quebrar sozinha.
+    ], { xwide: true });
 
   // Cada ligação olha para o SEU campo, não para o CPF.
   //
