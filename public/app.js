@@ -9339,10 +9339,18 @@ async function rhAbrirCard(id) {
     </div>
     <div class="rh-minuta" id="ad-minuta-alvo"></div></div>
 
-    ${d.historico.length ? `<div class="rh-sec"><h4>Histórico</h4><div class="rh-linhas">
-      ${d.historico.map(x => `<div class="rh-linha">
-        <span>${rhData(x.movido_em)} · ${esc(x.usuario || 'sistema')}</span>
-        <b>${esc(x.de_etapa || 'início')} → ${esc(x.para_etapa)}${x.observacao ? ' · ' + esc(x.observacao) : ''}</b>
+    ${/* Mesmo padrão de "Histórico de candidaturas" (rhHistoricoCandidato):
+          nome da etapa, não o código cru (era "carta_oferta → entrevista",
+          ilegível pra quem não decorou os códigos do banco) — e uma lista
+          vertical de verdade, não a grade de 3 colunas usada pra pares
+          rótulo/valor, que aqui só embaralhava a ordem cronológica em
+          zigue-zague. */''}
+    ${d.historico.length ? `<div class="rh-sec"><h4>Histórico</h4><div class="rh-hist-linha">
+      ${d.historico.map(x => `<div class="rh-hist-passo">
+        <span class="data">${rhData(x.movido_em)}</span>
+        <span>${esc(RH_ETAPA_NOME[x.de_etapa] || x.de_etapa || 'início')} → <b>${esc(RH_ETAPA_NOME[x.para_etapa] || x.para_etapa)}</b></span>
+        <span class="quem">${esc(x.usuario || 'sistema')}</span>
+        ${x.observacao ? `<span class="obs">${esc(x.observacao)}</span>` : ''}
       </div>`).join('')}</div></div>` : ''}`,
     [
       { label: 'Fechar', onClick: closeModal },

@@ -6703,3 +6703,40 @@ que não sobrou o `1040px` antigo. 5 verificações no arquivo, todas passando �
 suítes anteriores, sem regressão.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 138: histórico do card de admissão vira lista de verdade
+
+**Solicitação:** *"Melhore um pouco o visual e o entendimento do historico dos processos pois quase
+não da pra entender. Quem não sabe nao consegue ler o que se passou.. Tente uma abordagem por lista
+ou algo do tipo"* (print mostrando "carta_oferta → entrevista", "entrevista → carta_oferta" etc.
+numa grade de 3 colunas).
+
+### O que estava errado, junto
+
+Dois problemas empilhados: (1) o histórico usava `.rh-linhas`, a grade de 3 colunas pensada pra
+pares rótulo/valor (tipo "Cargo: Técnico") — aplicada numa lista cronológica, ela quebra a ordem em
+zigue-zague (lê-se esquerda→direita por linha, não de cima pra baixo, então "o que veio antes"
+some); (2) as etapas apareciam pelo CÓDIGO cru do banco (`carta_oferta`, `entrevista`), nunca
+traduzidas — só quem decorou o schema entende.
+
+### O ajuste
+
+Trocado pro MESMO componente que "Histórico de candidaturas" (o botão 🕘 da ficha, acessível de
+outro lugar) já usa — `.rh-hist-linha`/`.rh-hist-passo`, pensado desde o início como "uma linha do
+tempo, não uma grade de campos" (é literalmente o que o comentário do CSS já dizia). Reaproveitar em
+vez de inventar um terceiro estilo de histórico. Etapas viram nome (`RH_ETAPA_NOME`): "Carta Oferta
+→ Entrevista" em vez de "carta_oferta → entrevista", com fallback pro código cru se algum dia
+aparecer uma etapa fora do mapa (nunca "undefined"). Data, etapas e responsável numa linha só,
+cronológica de cima pra baixo — sem grade, sem zigue-zague.
+
+### Verificação
+
+`verifica-historico-card.js`: confirma a troca de componente (nada do `rh-linhas` antigo sobrou ali),
+a tradução pelo nome com fallback seguro, e que "quem moveu" e a observação continuam aparecendo
+(nada se perdeu na troca de layout). 5 verificações, todas passando — mais as 127 das suítes
+anteriores, sem regressão. Testado no navegador reproduzindo os 4 movimentos reais do print do
+Marcelo: "Carta Oferta → Entrevista", "Entrevista → Carta Oferta", "Triagem → Entrevista", "início →
+Triagem" — uma linha por movimento, do mais recente pro mais antigo, legível de cima pra baixo.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
