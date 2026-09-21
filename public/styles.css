@@ -1153,6 +1153,14 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-kcard .chk { color: var(--muted); font-variant-numeric: tabular-nums; }
 .rh-kcard .lib { color: var(--verde-700); font-weight: 600; }
 .rh-kcard .pend { color: var(--danger); font-weight: 600; }
+.rh-kcard[draggable="true"] { cursor: grab; }
+/* O card some do lugar de origem enquanto arrasta (o navegador já desenha um
+   "fantasma" dele seguindo o cursor) — sem isto ficariam dois, um parado e um
+   arrastando. */
+.rh-kcard.arrastando { opacity: .35; }
+/* A coluna-alvo precisa ficar óbvia ANTES de soltar — senão "arrastar" vira
+   adivinhar se o navegador registrou o drop na coluna certa. */
+.rh-col.rh-col-alvo { background: var(--verde-050); border-color: var(--verde-500); }
 
 /* Trilha das etapas dentro do card aberto */
 .rh-trilha { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;

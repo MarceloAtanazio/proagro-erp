@@ -5942,3 +5942,55 @@ Este foi um conserto pontual de dado, não um conserto de código — não criei
 NOME (só existe por CPF hoje), porque uma trava por nome tem um jeito errado óbvio de fazer (bloquear
 homônimos de verdade) e um jeito certo que merece pensar com calma, não decidir no meio de um conserto
 urgente. Fica anotado como possível furo a revisitar, não como algo já resolvido.
+
+## 2026-09-21 — Sessão 120: "Em admissão" não é o funil inteiro, e o quadro passa a arrastar
+
+**Solicitação:** *"No painel principal está contando que esses dois candidatos estão em processo de
+admissão pela empresa, porém eles no meu ver só entrariam em 'admissão' quando estiverem na caixa
+'Documentação', porque aí sim já teriam aceito a proposta (...) permita mover os cards de candidatos
+nessa tela mesmo, arrastando (...) continue pontuando se algo estiver pendente e impossibilitando de
+mover, mas deixe essa opção."*
+
+### O card "Em admissão" concordo, estava contando a pergunta errada
+
+O usuário tem razão. Quem está em Triagem ou Entrevista pode nunca ser contratado — chamar isso de "em
+admissão pela empresa" no card do Headcount é dizer algo que ainda não é verdade. E havia uma duplicidade
+que essa observação deixou visível: o card "Processos abertos" (seção Recrutamento) e o card "Em admissão"
+(seção Headcount) mostravam **o mesmo número**, porque os dois liam a mesma contagem (`emAndamento.length`,
+todo processo em andamento, de Triagem a Onboarding).
+
+São perguntas diferentes. "Processos abertos" é sobre o funil inteiro — quantas pessoas estão sendo
+avaliadas, escolhidas erradas, entrevistadas. "Em admissão", no Headcount, é sobre quem está a caminho de
+virar colaborador de verdade. O corte ficou em **Documentação**, que é a etapa seguinte à Carta Oferta —
+por definição, quem chegou lá já aceitou a proposta.
+
+Usei o índice do catálogo de etapas (`rhEtapaIdx`) em vez de checar `oferta_aceita_em` diretamente: alguém
+pode ter avançado com pendência justificada sem o campo preenchido, e a etapa em que o card ESTÁ é o dado
+mais confiável de até onde o processo chegou — não depende de um campo específico ter sido preenchido no
+caminho.
+
+### Arrastar o card
+
+Mesmo endpoint de sempre (`POST /api/rh/admissoes/:id/mover`) — os botões ← → do card já existiam e já
+faziam essa chamada; arrastar só é outra porta para a mesma ação, não uma rota nova nem uma regra nova.
+
+O pedido explícito foi "continue pontuando se algo estiver pendente... mas deixe essa opção": arrastar
+para uma etapa à frente com pendência não é bloqueado no clique — o card é solto, a chamada tenta mover,
+e se o servidor recusar por pendência, abre a **mesma** confirmação "Avançar mesmo com pendência?" que já
+existia nos botões, com o motivo obrigatório. Nenhuma trava nova, nenhum atalho que pule a validação.
+
+Sem otimismo na tela: o card não pula visualmente para a coluna nova antes da confirmação do servidor. Se
+o movimento for recusado (por regra estrutural, como pular mais de uma etapa), a tela só avisa e o
+re-render devolve o card para onde ele realmente está — o quadro nunca mostra uma etapa que o banco não
+tem.
+
+### Verificação
+
+Estendi `verifica-rh-painel.js` com um segundo processo em andamento, parado em Triagem: confirma que o
+funil de recrutamento conta os dois, mas "Em admissão" do Headcount conta só o que já passou da carta
+oferta. `verifica-arrasto-quadro.js`, 12 asserções, confere estaticamente que a tela liga o arrasto ao
+mesmo fluxo dos botões — sem duplicar validação nem abrir uma porta nova sem pendência. Vinte suítes
+passam.
+
+Medido na tela com o `styles.css` real: o card de origem fica com opacidade reduzida enquanto arrasta, a
+coluna-alvo fica destacada em verde antes de soltar.

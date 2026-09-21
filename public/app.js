@@ -8990,6 +8990,7 @@ let RH_QUADRO_VISTA = 'andamento';   // andamento | cancelada
 let RH_QUADRO_VAGA = '';
 
 async function rhQuadro(c) {
+  const ed = canEditPage('rh');
   const [d, vagas] = await Promise.all([
     api('/api/rh/admissoes?situacao=' + RH_QUADRO_VISTA),
     api('/api/rh/vagas').catch(() => [])
@@ -9010,7 +9011,8 @@ async function rhQuadro(c) {
     <div class="rh-quadro-topo">
       <span class="rh-quadro-dica">${encerrados
         ? 'Processos que <strong>não viraram contratação</strong>. É aqui que o candidato fica arquivado — não em Colaboradores, que é só para quem já trabalhou aqui. Pode ser reaberto numa vaga futura ou excluído de vez.'
-        : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'}</span>
+        : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'
+          + (ed ? ' Arraste o card para mudar de etapa.' : '')}</span>
       <div class="spacer"></div>
       <select id="rh-filtro-vaga">
         <option value="">Todas as vagas</option>
@@ -9030,7 +9032,7 @@ async function rhQuadro(c) {
       return `<div class="rh-col" data-etapa="${e.cod}">
         <div class="rh-col-topo"><span class="ic">${RH_ETAPA_ICONE[e.cod] || ''}</span>
           <b>${esc(e.nome)}</b><span class="n">${meus.length}</span></div>
-        <div class="rh-col-corpo">${meus.map(rhKanbanCard).join('') ||
+        <div class="rh-col-corpo">${meus.map(x => rhKanbanCard(x, ed)).join('') ||
           '<div class="rh-col-vazia">—</div>'}</div>
       </div>`;
     }).join('')}</div>
@@ -9048,6 +9050,53 @@ async function rhQuadro(c) {
   c.querySelectorAll('[data-reabrir]').forEach(x => x.onclick = () => rhReabrirProcesso(Number(x.dataset.reabrir), x.dataset.nome));
   c.querySelectorAll('[data-excluir-cand]').forEach(x => x.onclick = () =>
     rhConfirmarExcluir({ id: Number(x.dataset.excluirCand), name: x.dataset.nome, arquivado_em: true, candidato: true }));
+  if (!encerrados && ed) rhLigarArrastoQuadro(c);
+}
+
+// Arrastar o card para outra coluna é o mesmo "mover" que os botões ← → do
+// card já fazem — só entra por um caminho diferente. Pendência não desativa o
+// arrasto: solta o card, e se faltar algo a mesma confirmação com motivo do
+// card (rhConfirmarForcar) abre por cima do quadro. O card só "gruda" na
+// coluna nova depois que o servidor confirmar — por isso o efeito é sempre um
+// re-render, nunca mover o elemento na mão: um 400 no meio do caminho não pode
+// deixar o quadro mostrando uma etapa que o banco não tem.
+function rhLigarArrastoQuadro(c) {
+  let arrastando = null;
+  c.querySelectorAll('.rh-kcard[draggable="true"]').forEach(card => {
+    card.addEventListener('dragstart', () => {
+      arrastando = { id: Number(card.dataset.card), etapaAtual: card.dataset.etapaAtual };
+      card.classList.add('arrastando');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('arrastando'));
+  });
+  c.querySelectorAll('.rh-col').forEach(col => {
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('rh-col-alvo'); });
+    col.addEventListener('dragleave', () => col.classList.remove('rh-col-alvo'));
+    col.addEventListener('drop', e => {
+      e.preventDefault();
+      col.classList.remove('rh-col-alvo');
+      if (!arrastando) return;
+      const etapa = col.dataset.etapa;
+      if (etapa !== arrastando.etapaAtual) rhMoverCardArrastado(arrastando.id, etapa);
+      arrastando = null;
+    });
+  });
+}
+
+async function rhMoverCardArrastado(id, etapa) {
+  try {
+    await api(`/api/rh/admissoes/${id}/mover`, { method: 'POST', body: { etapa } });
+    toast('Etapa atualizada.');
+  } catch (e) {
+    const pend = (e.dados && e.dados.pendencias) || null;
+    // Sem pendência é regra estrutural (voltar demais, pular etapa) — só avisa.
+    // Com pendência, a mesma confirmação com motivo do card abre por cima do
+    // quadro: o re-render logo abaixo não atrapalha, o modal é uma camada à
+    // parte e continua ali depois que o quadro por baixo se atualizar.
+    if (!pend) toast(e.message);
+    else rhConfirmarForcar(id, etapa, pend);
+  }
+  renderRH();
 }
 
 // Todo processo que a pessoa já teve na empresa — não só o mais recente. Quem
@@ -9144,12 +9193,13 @@ function rhTabelaEncerrados(cards) {
 
 // Nome distinto do rhCard() dos cartões de situação da lista: os dois viviam
 // no mesmo escopo global e a última definição apagava a primeira.
-function rhKanbanCard(a) {
+function rhKanbanCard(a, arrastavel) {
   const pct = a.checklist_total ? Math.round(100 * a.checklist_ok / a.checklist_total) : 0;
   const cargo = [a.cargo_pretendido, a.nivel_pretendido
     ? ({ junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' }[a.nivel_pretendido] || a.nivel_pretendido) : '']
     .filter(Boolean).join(' ');
-  return `<button class="rh-kcard ${a.liberado ? 'ok' : ''}" data-card="${a.id}">
+  return `<button class="rh-kcard ${a.liberado ? 'ok' : ''}" data-card="${a.id}"
+    data-etapa-atual="${a.etapa}" ${arrastavel ? 'draggable="true"' : ''}>
     <b>${esc(a.colaborador_nome)}</b>
     ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
     ${a.admissao_prevista ? `<span class="data">Admissão prevista ${rhData(a.admissao_prevista)}</span>` : ''}
@@ -10518,7 +10568,7 @@ async function rhPainel(c) {
     <div class="rh-painel-sec"><h3>Headcount</h3>
       <div class="kpis">
         ${rhKpi('Colaboradores ativos', hc.ativos, `${co.com_vinculo} com vínculo`)}
-        ${rhKpi('Em admissão', hc.candidatos, 'candidatos no quadro', hc.candidatos ? 'aviso' : '')}
+        ${rhKpi('Em admissão', hc.candidatos, 'já aceitaram a proposta', hc.candidatos ? 'aviso' : '')}
         ${rhKpi('Tempo médio de casa', rhDias(hc.tempo_casa_dias), `de ${co.com_vinculo} pessoa(s)`)}
         ${rhKpi('Idade média', hc.idade_media ? hc.idade_media + ' anos' : '—',
           `${co.com_nascimento} de ${co.ativos} com data de nascimento`)}

@@ -4378,6 +4378,12 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
            a.cancelamento_tipo, a.encerrada_em
       FROM erp_rh_admissoes a`);
   const emAndamento = adms.filter(a => a.situacao === 'andamento');
+  // Quem ainda está em Triagem ou Entrevista pode nunca ser contratado — não é
+  // gente "a caminho de virar colaborador", é candidato sendo avaliado. O card
+  // de Headcount conta só quem já aceitou a proposta (chegou em Documentação
+  // ou adiante); o funil inteiro, da Triagem em diante, continua em
+  // recrutamento.em_andamento — as duas coisas não são a mesma pergunta.
+  const emFormalizacao = emAndamento.filter(a => rhEtapaIdx(a.etapa) >= rhEtapaIdx('documentacao'));
   const concluidas = adms.filter(a => a.situacao === 'concluida');
   const canceladas = adms.filter(a => a.situacao === 'cancelada');
   // Quem encerrou muda o diagnóstico: perder candidatos é problema de proposta,
@@ -4477,7 +4483,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
     headcount: {
       ativos: ativos.length,
       arquivados: (await query('SELECT count(*)::int AS n FROM erp_colaboradores WHERE arquivado_em IS NOT NULL'))[0].n,
-      candidatos: emAndamento.length,
+      candidatos: emFormalizacao.length,
       por_departamento: contarPor(comVinculo, 'departamento'),
       por_cargo: contarPor(comVinculo, 'cargo'),
       por_modelo: contarPor(comVinculo, 'modelo_trabalho'),
