@@ -6404,3 +6404,44 @@ caso de R$ 6.000: o bruto encontrado foi R$ 7.934,82, líquido de R$ 5.999,99 (1
 arredondamento) e custo total de R$ 12.226,25/mês.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 130: rodapé da Ficha em PDF sobrepondo o "Dossiê"
+
+**Relato:** *"De uma olhada, pois algumas fichas dos colaboradores estão saindo com informações
+sobrepostas no rodapé. Deixe ajustadinho certinho pra não ter problemas visuais"* (com print mostrando
+o título "Dossiê" e a razão social da empresa embaralhados por cima um do outro, no fim da página).
+
+### O que estava acontecendo
+
+A ficha em PDF mistura dois jeitos de desenhar conteúdo: tabelas (`autoTable`), que **paginam
+sozinhas** quando não cabem mais na folha, e texto solto — título de seção (`relatorioSecao`) e
+avisos como "Nenhum registro.", "Documentos faltando" ou a nota final de dados omitidos — desenhado
+direto com `doc.text()`, que **não sabe que existe um rodapé fixo** colado a 18mm do fim da página.
+Quando a soma dos blocos anteriores (Indicadores, Dependentes, Desenvolvimento, Viagens) empurrava o
+cursor `y` pra perto do fim da folha, a seção seguinte — no print, "Dossiê" vazio — desenhava seu
+título exatamente em cima de onde o rodapé (razão social, "Documento de uso interno...", número da
+página) já tinha sido pintado. As outras telas de PDF do sistema (Orçamento, Fechamento de Viáticos)
+já tinham essa trava; só a Ficha do Colaborador, por ter uma estrutura de seções mais variada
+(algumas condicionais, algumas com texto solto no meio), tinha ficado sem ela.
+
+### O ajuste
+
+Uma trava só, `novaPaginaSeNecessario(minimo)`: antes de desenhar qualquer coisa fora de uma
+`autoTable`, confere se o que vem a seguir cabe antes do rodapé — se não cabe, pula de página,
+**redesenha o rodapé na página nova** (senão ela ficaria sem) e volta o cursor pro topo. Aplicada nos
+oito pontos da ficha que desenham título de seção ou texto solto: as quatro "grades" (Identificação,
+Documentos, Contato, Vínculo atual), as quatro "tabelas" com seção vazia possível (Dependentes,
+Desenvolvimento, Viagens, Dossiê), Composição do custo, Indicadores do colaborador, e as notas de
+Documentos faltando, "(mostrando as 25 mais recentes...)" e a de dados omitidos por permissão.
+
+### Verificação
+
+`verifica-ficha-pdf-rodape.js`: a lógica da trava extraída do arquivo real e testada com um `doc`
+de mentira — não pagina perto do topo, pagina exatamente um milímetro além do limite (e não antes),
+redesenha o rodapé na página nova, volta o cursor pro topo, e usa o "mínimo" certo (um título de
+24mm não cabe onde uma nota de 10mm cabe). Depois, checagem estática confirmando que a trava foi
+chamada nos oito pontos certos — e que **nenhum** `relatorioSecao()` da ficha ficou sem ela logo
+antes, pra um título novo não repetir o esquecimento. 18 verificações, todas passando.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

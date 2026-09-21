@@ -9997,7 +9997,16 @@ async function rhFichaPDF(id) {
     subtitulo: `${c.name}${c.cargo ? ' · ' + c.cargo : ''}`
   });
   const larg = pageW - MARGIN * 2;
+  const pageH = doc.internal.pageSize.getHeight();
   let y = 30;
+
+  // Uma autoTable pagina sozinha; título de seção e texto solto (nota,
+  // "Nenhum registro.") não — desenhavam direto em cima do rodapé quando a
+  // página já estava quase cheia. É o que saía sobreposto no PDF: título
+  // "Dossiê" por cima da razão social e do "Documento de uso interno...".
+  const novaPaginaSeNecessario = (minimo = 24) => {
+    if (y + minimo > pageH - 18) { doc.addPage(); rodape(); y = 22; }
+  };
 
   // Faixa de resumo: o que alguém quer saber de relance sobre a pessoa.
   const resumo = [
@@ -10012,6 +10021,7 @@ async function rhFichaPDF(id) {
   const grade = (titulo, pares) => {
     const linhas = pares.filter(p => p);
     if (!linhas.length) return;
+    novaPaginaSeNecessario();
     y = relatorioSecao(doc, y, titulo) + 1;
     const corpo = [];
     for (let i = 0; i < linhas.length; i += 2) {
@@ -10036,6 +10046,7 @@ async function rhFichaPDF(id) {
   };
 
   const tabela = (titulo, cabecas, linhas, extra = {}) => {
+    novaPaginaSeNecessario();
     y = relatorioSecao(doc, y, titulo) + 1;
     if (!linhas.length) {
       doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(110, 120, 114);
@@ -10111,6 +10122,7 @@ async function rhFichaPDF(id) {
   // duas colunas lado a lado ficaria estreita demais no A4 retrato.
   const cst = m.custo_mensal;
   if (cst) {
+    novaPaginaSeNecessario();
     y = relatorioSecao(doc, y, 'Composição do custo') + 1;
     const pct = v => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }) + '%';
     // Hifen ASCII, nao o sinal de menos tipografico: a Helvetica embutida do
@@ -10155,6 +10167,7 @@ async function rhFichaPDF(id) {
       }
     }));
     y = doc.lastAutoTable.finalY + 3;
+    novaPaginaSeNecessario(14);
     doc.setFont('helvetica', 'italic'); doc.setFontSize(7);
     // Vermelho tambem quando a tabela e de um ano que ja passou: nesse caso o
     // numero nao esta so' pendente, esta errado.
@@ -10168,6 +10181,7 @@ async function rhFichaPDF(id) {
   }
 
   // ---- o raio-x ----
+  novaPaginaSeNecessario();
   y = relatorioSecao(doc, y, 'Indicadores do colaborador') + 1;
   const ind = [
     ['Tempo de casa', rhPdfDuracao(m.tempo_casa_dias) + (m.passagens > 1 ? ` (${m.passagens} passagens)` : '')],
@@ -10195,6 +10209,7 @@ async function rhFichaPDF(id) {
   y = doc.lastAutoTable.finalY + 7;
 
   if (m.documentacao.faltantes.length) {
+    novaPaginaSeNecessario(16);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(178, 58, 47);
     const txt = doc.splitTextToSize('Documentos faltando: ' + m.documentacao.faltantes.join(', '), larg);
     txt.forEach((l, i) => doc.text(l, MARGIN, y + i * 4));
@@ -10218,6 +10233,7 @@ async function rhFichaPDF(id) {
       brl(x.valor_liberado), brl(x.comprovado), rhPdfTxt(VIA_STATUS_LABEL[x.status] || x.status)]),
     { columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } } });
   if ((d.viagens || []).length > 25) {
+    novaPaginaSeNecessario(10);
     doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(110, 120, 114);
     doc.text(`(mostrando as 25 mais recentes de ${d.viagens.length})`, MARGIN, y); y += 6;
   }
@@ -10233,6 +10249,7 @@ async function rhFichaPDF(id) {
                    !pode.remuneracao ? 'remuneração' : null,
                    !pode.dossie ? 'dossiê' : null].filter(Boolean);
   if (omitido.length) {
+    novaPaginaSeNecessario(10);
     doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(110, 120, 114);
     doc.text(`Esta ficha foi gerada sem ${omitido.join(', ')} — seu usuário não tem essa permissão.`, MARGIN, y);
   }
