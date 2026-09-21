@@ -1348,8 +1348,9 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-org { padding: 6px 0; overflow-x: auto; }
 .rh-org-no { position: relative; }
 .rh-org-cartao, .rh-org-caixa { background: var(--card); border: 1px solid var(--line);
-  border-radius: 8px; font-size: 13px; transition: opacity .15s; }
-.rh-org-cartao { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; margin: 4px 0; }
+  font-size: 13px; transition: opacity .15s; }
+.rh-org-cartao { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px 8px 12px;
+  margin: 4px 0; border-radius: 8px; }
 .rh-org-cartao b, .rh-org-caixa b { color: var(--ink); font-weight: 700; }
 .rh-org-cartao b { white-space: nowrap; }
 .rh-org-cartao .cargo, .rh-org-caixa .cargo { color: var(--ink-2); }
@@ -1364,22 +1365,35 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-org-toggle:hover { color: var(--ink); }
 .rh-org-filhos { margin-left: 26px; padding-left: 16px; border-left: 2px solid var(--line); }
 .rh-org-filhos.rh-org-fechado { display: none; }
+/* O nível hierárquico (profundidade na árvore) ganha a borda ESQUERDA, numa
+   escala neutra que escurece quanto mais perto do topo — um segundo canal
+   visual, separado da cor de setor (borda de cima / fundo da etiqueta), pra
+   "nível de cargo" e "setor" não competirem pela mesma cor. */
+.rh-org-cartao { border-left-width: 4px; border-left-style: solid; }
 
 /* Diagrama: uma raiz por bloco, empilhados — duas raízes na MESMA <ul>
    desenhariam uma linha ligando os dois topos como se fossem pares, e uma
    delas pode ser só alguém cujo gestor saiu, não uma diretoria gêmea. */
-.rh-org-diagramas { display: flex; flex-direction: column; gap: 24px; }
-.rh-orgchart-wrap { overflow-x: auto; padding: 8px 4px 16px; }
+.rh-org-diagramas { display: flex; flex-direction: column; gap: 20px; }
+/* Compacto de propósito: cartão largo e com nome em duas linhas era o que
+   forçava a rolagem horizontal com mais de 6 ou 7 irmãos na mesma fileira.
+   Nome truncado com reticências (o `title` no cartão mostra o nome inteiro ao
+   passar o mouse) e altura FIXA pra todo cartão ocupar o mesmo espaço,
+   folha ou chefia — é o que dá a "cara de organograma" que se pediu, em vez
+   de caixas de tamanhos desiguais. A rolagem continua existindo como rede de
+   segurança (uma chefia com muitos diretos ainda pode precisar dela), só que
+   agora é exceção, não a regra. */
+.rh-orgchart-wrap { overflow-x: auto; padding: 4px 4px 12px; }
 .rh-orgchart, .rh-orgchart ul { list-style: none; margin: 0; padding: 0; }
 .rh-orgchart { display: table; margin: 0 auto; }
 .rh-orgchart ul { display: table; margin: 0 auto; }
 .rh-orgchart ul.rh-org-fechado { display: none; }
 .rh-orgchart li { display: table-cell; vertical-align: top; text-align: center;
-  padding: 24px 10px 0 10px; position: relative; }
+  padding: 16px 5px 0 5px; position: relative; }
 /* A caixa é o único filho direto do <li> antes da <ul> de netos — por isso os
    seletores de linha miram `> .rh-org-caixa` e `> ul`, não qualquer um. */
 .rh-orgchart li::before, .rh-orgchart li::after {
-  content: ''; position: absolute; top: 0; width: 50%; height: 24px;
+  content: ''; position: absolute; top: 0; width: 50%; height: 16px;
   border-top: 2px solid var(--line); }
 .rh-orgchart li::before { right: 50%; border-right: 2px solid var(--line); }
 .rh-orgchart li::after { left: 50%; }
@@ -1390,16 +1404,18 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .rh-orgchart > li::before, .rh-orgchart > li::after { display: none; }
 /* A linha descendo da caixa até a fileira de filhos — só existe quando HÁ
    filhos, e por isso mora no `ul`, não no `li` (que existe sempre). */
-.rh-orgchart li > ul { position: relative; padding-top: 24px; }
+.rh-orgchart li > ul { position: relative; padding-top: 16px; }
 .rh-orgchart li > ul::before { content: ''; position: absolute; top: 0; left: 50%;
-  width: 0; height: 24px; border-left: 2px solid var(--line); }
-.rh-org-caixa { display: inline-block; min-width: 172px; max-width: 210px;
-  padding: 10px 13px; text-align: left; white-space: normal; }
-.rh-org-caixa b { display: block; }
-.rh-org-caixa .cargo { display: block; margin-top: 2px; font-size: 12px; }
-.rh-org-caixa .depto { margin-top: 6px; }
-.rh-org-caixa .qtd { display: block; margin-top: 4px; }
-.rh-org-caixa .rh-org-toggle { float: right; margin-left: 6px; }
+  width: 0; height: 16px; border-left: 2px solid var(--line); }
+.rh-org-caixa { display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  width: 136px; height: 92px; box-sizing: border-box; padding: 8px 10px 8px 12px;
+  text-align: left; position: relative; border-radius: 8px; border-left-width: 4px; border-left-style: solid; }
+.rh-org-caixa b, .rh-org-caixa .cargo, .rh-org-caixa .qtd {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rh-org-caixa .cargo { font-size: 11.5px; }
+.rh-org-caixa .depto { align-self: flex-start; max-width: 100%; }
+.rh-org-caixa .qtd { font-size: 10px; }
+.rh-org-caixa .rh-org-toggle { position: absolute; top: 4px; right: 4px; }
 
 /* Lista de processos encerrados. Grade própria: o motivo é o conteúdo da tela,
    então é ele que fica com a sobra — no gabarito da lista de colaboradores quem

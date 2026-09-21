@@ -6223,3 +6223,53 @@ Medido na tela com o `styles.css` real: três coordenadores ligados ao CEO por l
 subordinados abaixo, cores por setor legíveis (Campo em verde, Comercial em âmbar, Subscrição em
 vermelho, Administrativo em roxo), e o órfão (gestor que saiu) aparecendo como um diagrama próprio,
 visualmente separado — não como par do CEO.
+
+## 2026-09-21 — Sessão 126: cartão padronizado, e nível de cargo também vira cor
+
+**Solicitação:** *"Essa barra de rolagem me incomoda, adapte de uma maneira que caiba tudo em uma
+página só e use os cards de maneira padronizada, mesmo tamanho e tudo. Use cores pra separar também
+nível de cargo."*
+
+### Cartão de tamanho fixo
+
+O cartão do diagrama tinha largura mínima/máxima mas altura livre — um nome que quebrava em duas linhas
+("Fabricio Camargo de Lima") deixava aquele cartão mais alto que os vizinhos, e a fileira toda ficava
+desalinhada. Agora é **largura e altura fixas** (136×92px): nome e cargo truncam com reticências, e o
+nome inteiro continua disponível — no `title` do próprio cartão, aparece passando o mouse, sem gastar
+espaço nenhum da tela.
+
+### A rolagem horizontal
+
+Reduzi o espaço que cada nível do conector ocupa (de 24px para 16px de altura, de 10px para 5px de
+respiro lateral por caixa) e, principalmente, o cartão ficou bem mais estreito (de ~172–210px para
+136px fixos). Testei o pior caso real da base — um coordenador com 8 técnicos diretos, três outros
+coordenadores ao lado, tudo sob o mesmo CEO — e a árvore inteira passou a caber numa tela de notebook
+comum sem precisar rolar.
+
+Isto não é uma promessa de que a rolagem nunca mais vai aparecer: um diagrama de caixas ligadas por
+linha cresce em largura conforme os galhos crescem, e uma chefia com muitos diretos algum dia pode
+voltar a precisar dela. Por isso a rolagem continua ali como rede de segurança, só que agora é exceção,
+não a regra — para os dados de hoje, some.
+
+### Nível de cargo, também por cor
+
+Um segundo canal visual, deliberadamente separado da cor de setor: a **profundidade na árvore** (0 no
+topo, crescendo a cada geração) ganhou uma escala neutra própria — escuro perto do topo, clareando
+descendo — aplicada como a borda esquerda do cartão. A cor de setor continua na borda de cima e na
+etiqueta. As duas não competem pela mesma cor porque usam paletas diferentes: hues (setor) vs. tons de
+cinza (nível).
+
+Vale uma nota: "nível" aqui é a posição na hierarquia (quem manda em quem), não o Júnior/Pleno/Sênior —
+esse já aparece escrito ao lado do cargo, como sempre apareceu. São perguntas diferentes, e tentar usar
+a mesma palavra "nível" para as duas teria juntado duas informações que não se substituem.
+
+### Verificação
+
+Estendi `verifica-organograma.js` com 6 asserções: a profundidade nascendo em 0 e incrementando por
+geração (sem isso todo mundo teria a mesma cor de nível), a paleta de nível separada da de setor, a
+saturação no fim da escala (profundidade sem limite não estoura o índice), o `title` guardando o nome
+inteiro, e o CSS truncando com reticências e fixando largura e altura. Vinte suítes passam.
+
+Medido na tela com o `styles.css` real, reproduzindo a estrutura real da empresa (CEO, 3 coordenadores,
+8 técnicos numa única fileira): a árvore inteira coube numa tela de 1900px de largura sem rolagem
+nenhuma, todos os cartões do mesmo tamanho, e o degradê de cor do nível visível do topo até as folhas.

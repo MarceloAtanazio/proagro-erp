@@ -10783,6 +10783,12 @@ const RH_NIVEL_ABREV = { junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' };
 // paleta categórica pequena, suficiente pra distinguir setores num relance
 // sem virar um arco-íris. Ciclam se houver mais de seis departamentos.
 const RH_ORG_CORES = ['#1F4E78', '#00783F', '#A9741B', '#B23A2F', '#6B4FA0', '#0E7C86'];
+// Nível de cargo (a PROFUNDIDADE na árvore, não o Júnior/Pleno/Sênior — esse já
+// aparece no texto do cargo) ganha uma escala neutra própria: escurece perto do
+// topo, clareia descendo. É um segundo canal visual, separado da cor de setor,
+// pra dar pra distinguir "é chefia" de "é setor tal" com um olhar só.
+const RH_ORG_NIVEL_CORES = ['#1A2B22', '#43554B', '#74847B', '#A9B6AE', '#D3DAD5'];
+const rhOrgNivelCor = prof => RH_ORG_NIVEL_CORES[Math.min(prof, RH_ORG_NIVEL_CORES.length - 1)];
 // 'diagrama' é o padrão porque foi o que se pediu — "mais cara de
 // organograma"; 'lista' fica como alternativa pra quando a árvore tem muita
 // gente e o diagrama de caixas fica largo demais pra ler de uma vez.
@@ -10816,7 +10822,8 @@ async function rhOrganograma(c) {
   // O CONTEÚDO da caixa é o mesmo nas duas vistas — só o que embrulha em volta
   // (div indentada vs. li com conector) muda. Repetir o miolo seria a receita
   // pra um dia as duas vistas mostrarem informações diferentes da mesma pessoa.
-  const miolo = (p, filhos, totalAbaixo) => {
+  // `prof` é a profundidade na árvore (0 = raiz) — o "nível de cargo" visual.
+  const miolo = (p, filhos, totalAbaixo, prof) => {
     const cargo = [p.cargo, p.nivel ? (RH_NIVEL_ABREV[p.nivel] || p.nivel) : ''].filter(Boolean).join(' ');
     const cor = corDe(p.departamento);
     return `${filhos.length ? '<button class="rh-org-toggle" aria-label="Recolher/expandir">▾</button>' : ''}
@@ -10825,16 +10832,21 @@ async function rhOrganograma(c) {
       ${p.departamento ? `<span class="depto" style="color:${cor};background:${cor}1A;border-color:${cor}55">${esc(p.departamento)}</span>` : ''}
       ${filhos.length ? `<span class="qtd">${filhos.length} direto(s) · ${totalAbaixo} no total</span>` : ''}`;
   };
+  // O nome truncado com reticências (pra caixa ter tamanho fixo) ainda precisa
+  // aparecer inteiro em algum lugar — o `title` do próprio cartão resolve isso
+  // sem gastar espaço nenhum: passa o mouse e o navegador mostra.
+  const tituloDe = p => `${p.name}${p.cargo ? ' — ' + p.cargo : ''}`;
 
-  const nohLista = (p, visitados) => {
+  const nohLista = (p, visitados, prof) => {
     if (visitados.has(p.id)) return '';   // ciclo: já desenhado acima, não repete
     const proprios = new Set(visitados); proprios.add(p.id);
     const filhos = filhosDe(p);
     return `<div class="rh-org-no">
-      <div class="rh-org-cartao" data-depto="${esc(p.departamento || '')}">
-        ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)))}
+      <div class="rh-org-cartao" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
+        style="border-left-color:${rhOrgNivelCor(prof)}">
+        ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
-      ${filhos.length ? `<div class="rh-org-filhos">${filhos.map(f => nohLista(f, proprios)).join('')}</div>` : ''}
+      ${filhos.length ? `<div class="rh-org-filhos">${filhos.map(f => nohLista(f, proprios, prof + 1)).join('')}</div>` : ''}
     </div>`;
   };
 
@@ -10845,16 +10857,17 @@ async function rhOrganograma(c) {
   // outro: colocar duas raízes na MESMA <ul> desenharia uma linha ligando os
   // dois topos como se fossem irmãos — e um deles pode ser só alguém cujo
   // gestor saiu, não um par de verdade do outro.
-  const nohDiagrama = (p, visitados) => {
+  const nohDiagrama = (p, visitados, prof) => {
     if (visitados.has(p.id)) return '';
     const proprios = new Set(visitados); proprios.add(p.id);
     const filhos = filhosDe(p);
     const cor = corDe(p.departamento);
     return `<li>
-      <div class="rh-org-caixa" data-depto="${esc(p.departamento || '')}" style="border-top-color:${cor || 'var(--line)'}">
-        ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)))}
+      <div class="rh-org-caixa" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
+        style="border-top-color:${cor || 'var(--line)'};border-left-color:${rhOrgNivelCor(prof)}">
+        ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
-      ${filhos.length ? `<ul>${filhos.map(f => nohDiagrama(f, proprios)).join('')}</ul>` : ''}
+      ${filhos.length ? `<ul>${filhos.map(f => nohDiagrama(f, proprios, prof + 1)).join('')}</ul>` : ''}
     </li>`;
   };
 
@@ -10879,9 +10892,9 @@ async function rhOrganograma(c) {
     </div>` : ''}
     ${vazio ? `<div class="rh-vazio"><p><strong>Ninguém com vínculo ativo ainda.</strong></p></div>`
       : RH_ORG_VISTA === 'lista'
-        ? `<div class="rh-org">${raizes.map(p => nohLista(p, new Set())).join('')}</div>`
+        ? `<div class="rh-org">${raizes.map(p => nohLista(p, new Set(), 0)).join('')}</div>`
         : `<div class="rh-org-diagramas">${raizes.map(p => `<div class="rh-orgchart-wrap">
-            <ul class="rh-orgchart">${nohDiagrama(p, new Set())}</ul></div>`).join('')}</div>`}`;
+            <ul class="rh-orgchart">${nohDiagrama(p, new Set(), 0)}</ul></div>`).join('')}</div>`}`;
 
   rhLigarAbas();
   c.querySelectorAll('[data-org-vista]').forEach(b => b.onclick = () => { RH_ORG_VISTA = b.dataset.orgVista; rhOrganograma(c); });
