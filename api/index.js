@@ -3103,8 +3103,12 @@ function rhPendencias(adm, colab, checklist, mapa) {
     // Sem contato não há como chamar ninguém para entrevista — é a única coisa
     // que a triagem realmente precisa ter.
     case 'triagem':
+      // A mensagem diz onde resolver, e o lugar tem de EXISTIR: mandava ir "na
+      // aba Contato", que fica na ficha do colaborador — e candidato não
+      // aparece em Colaboradores. Era uma exigência impossível de cumprir pela
+      // tela. Agora os campos estão no próprio card, e a frase aponta para lá.
       return colab && (colab.celular || colab.email_pessoal || colab.email_corporativo)
-        ? [] : ['Informe ao menos um contato do candidato (celular ou e-mail) na aba Contato.'];
+        ? [] : ['Informe o celular ou o e-mail do candidato no quadro “Contato do candidato”, aqui mesmo.'];
     // A data da entrevista é o que transforma "vamos entrevistar" em registro.
     // Sem ela, o card avança e ninguém sabe se a conversa aconteceu.
     case 'entrevista':
@@ -3193,13 +3197,18 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
   // usam para filtrar — então o candidato fica fora dessas telas sem que
   // nenhuma delas precise saber o que é uma admissão.
   const abrirAdmissao = req.body.abrir_admissao !== false;
+  // O e-mail do candidato é o PESSOAL: o corporativo só existe depois da
+  // contratação, e era o que a tela pedia — por isso o contato chegava vazio e a
+  // triagem travava logo depois. O cadastro direto de quem já é funcionário
+  // continua gravando o corporativo.
   const ins = await query(
-    `INSERT INTO erp_colaboradores (name, cargo, tier, ativo, sexo, cpf, email_corporativo, celular)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    `INSERT INTO erp_colaboradores (name, cargo, tier, ativo, sexo, cpf, email_corporativo, email_pessoal, celular)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [nome, sanitize(req.body.cargo) || null, ['A', 'B'].includes(req.body.tier) ? req.body.tier : 'B',
      !abrirAdmissao,
      ['M', 'F', 'O'].includes(req.body.sexo) ? req.body.sexo : null, cpf,
-     sanitize(req.body.email_corporativo) || null, rhFormatarTelefone(sanitize(req.body.celular)) || null]);
+     sanitize(req.body.email_corporativo) || null, sanitize(req.body.email_pessoal) || null,
+     rhFormatarTelefone(sanitize(req.body.celular)) || null]);
   const colabId = ins[0].id;
 
   // Abrir o processo de admissão junto é o caminho normal: quem cadastra uma

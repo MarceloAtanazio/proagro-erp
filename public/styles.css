@@ -985,6 +985,10 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
   color: var(--danger); border: 1px solid #E3B4B0; border-radius: 3px; padding: 2px 5px; }
 .rh-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 16px; }
 .rh-grid .field { margin-bottom: 12px; }
+/* Dois campos sozinhos num modal de 1040px viravam duas caixas de ~500px para
+   um telefone e um e-mail. O teto de 320px mantém o par com cara de formulário
+   em vez de duas faixas atravessando a tela. */
+.rh-grid.curta { grid-template-columns: repeat(auto-fit, minmax(210px, 320px)); }
 .rh-acoes { display: flex; justify-content: flex-end; margin-top: 4px; }
 
 /* Leitura do vínculo: rótulo à esquerda, valor à direita, alinhados numa grade

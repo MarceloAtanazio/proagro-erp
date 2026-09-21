@@ -5658,3 +5658,74 @@ adotado em vez de duplicado.
 Uma asserção passou **por acidente** no primeiro run — "candidato não ganha fornecedor" passou porque o
 endpoint estourou antes de chegar lá, e a contagem não tinha mudado. Completei o stub e reexecutei; só
 então ela passou por mérito. As dez suítes passam.
+
+## 2026-09-21 — Sessão 115: a triagem pedia um contato que a tela não deixava informar
+
+**Solicitação:** *"Aqui na página do quadro de admissão na etapa de triagem me dá um erro que necessito
+informar um contato do candidato pra avançar com a etapa, porém nessa tela não deixa eu informar nenhum
+contato. Pode verificar todo esse fluxo desde o anúncio da vaga?"*
+
+### O defeito
+
+A triagem exigia celular ou e-mail do candidato para o card avançar. Os campos de contato só existiam na
+etapa **Documentação** — quatro etapas adiante — e a mensagem mandava resolver "na aba Contato", que fica
+na ficha do colaborador. Candidato não aparece em Colaboradores. Não havia caminho nenhum: o card ficava
+preso, e a única saída era avançar com pendência justificada.
+
+É um formato de erro diferente dos desta semana e pior de perceber: nada está calculado errado e nada
+está silencioso — a regra é certa, a mensagem é clara, e ainda assim **é impossível de cumprir**. Os três
+candidatos que já estavam no quadro (Jeferson, Luan e Leandro, todos da vaga "Técnico(a) de Campo")
+estavam os três em triagem, os três sem contato nenhum.
+
+### O que a varredura do fluxo achou, do anúncio da vaga até a triagem
+
+Cinco defeitos no mesmo caminho. Quatro deles ninguém tinha visto ainda:
+
+1. **Não havia por onde informar o contato.** Os campos passam a aparecer no próprio card em Triagem e
+   Entrevista, num quadro "Contato do candidato" — só o celular e o e-mail, com a nota de que documento e
+   endereço continuam na Documentação, porque quem está em triagem pode não ser contratado. A mensagem da
+   pendência aponta para esse quadro em vez de para uma aba que candidato não tem.
+2. **O título do modal saía "undefined — Triagem".** O nome do candidato chega em `colaborador.name` neste
+   endpoint e em `colaborador_nome` na listagem do quadro; o card lia só o segundo. O mesmo `undefined`
+   iria para o nome do arquivo do contrato emitido e para o título do encerramento de candidatura.
+3. **O "+ Adicionar cargo" do select ficava sem handler fora da Documentação** — escolher a opção deixava
+   o sentinela selecionado e gravaria `__novo_cargo__` como cargo pretendido do candidato.
+4. **A máscara de telefone não era ligada fora da Documentação**, então o campo novo aceitaria qualquer
+   coisa. As duas coisas viviam dentro do `if ($('#rh-cpf'))`, e o CPF só existe na Documentação.
+5. **O formulário de novo candidato pedia "E-mail corporativo"** — um dado que só passa a existir depois da
+   contratação. Quem cadastrava um candidato preenchia o campo errado ou deixava em branco, e o que ficava
+   em branco era justamente o contato que a triagem ia cobrar quatro telas adiante. Para candidato o campo
+   passa a ser o **e-mail pessoal**; para quem já é funcionário, o corporativo continua.
+
+E uma sexta, de caminho: a lista de candidatos de uma vaga era um beco — mostrava quem estava parado e não
+deixava agir. Cada linha ganhou "Abrir card", e quem está sem contato aparece marcado, porque é quem vai
+travar.
+
+### Uma decisão de projeto que vale registrar
+
+O contato foi para o card, não para a ficha. São a mesma linha no banco e o mesmo `PUT` — mas a ficha é o
+lugar de quem **é** colaborador, e candidato não é. Pôr o campo onde a exigência é cobrada é o que torna a
+regra cumprível; a alternativa (abrir a ficha para candidatos) desfaria a separação que mantém candidato
+fora de Viáticos, Suprimentos e autosserviço.
+
+### Verificação
+
+`verifica-triagem.js`, 25 asserções, cobrindo o caminho inteiro: o candidato nascendo da vaga, inativo, na
+primeira etapa do catálogo e sem fornecedor; a pendência aparecendo sem contato e o `mover` recusando;
+o contato entrando pelo mesmo `PUT` que a tela usa, já formatado, e a pendência sumindo; o e-mail sozinho
+bastando; o cadastro direto de quem já é funcionário seguindo com o corporativo, ativo e com fornecedor.
+Seis delas leem o `app.js` e afirmam que o campo existe onde a pendência é cobrada — é o que faltava, e não
+dava para afirmar só pela API.
+
+Duas asserções acusaram o código por uma falha que era do arreio: o recorte do `app.js` parava antes do
+trecho medido porque o marcador de fim não existia, e uma terceira casou com um **comentário** que citava a
+linha procurada. O recorte agora estoura quando o marcador não existe, em vez de devolver um pedaço curto.
+
+Duas asserções antigas do `verifica-rh-admissao` estavam vencidas desde mudanças anteriores — "as 6 etapas"
+(são 8 desde que Triagem e Entrevista entraram na frente) e "os 18 campos" da prévia (a contagem fixa morreu
+junto com o mapa fixo). Passaram a afirmar o que o desenho diz hoje: a etapa em que o card nasce, e um valor
+por slot da minuta. As dezesseis suítes passam.
+
+Medido também na tela: no modal de 1040px os dois campos sozinhos viravam duas caixas de ~500px para um
+telefone e um e-mail. Com o teto de 320px o par fica com cara de formulário — 320x38 cada, lado a lado, a
+1800px de largura.

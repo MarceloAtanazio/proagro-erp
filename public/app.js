@@ -9093,15 +9093,43 @@ async function rhAbrirCard(id) {
   // A ficha do candidato: é a MESMA linha de erp_colaboradores. O que se
   // preenche aqui na Documentação já é a ficha dele quando virar colaborador.
   const col = d.colaborador || {};
+  // `colaborador_nome` vem do JOIN da LISTAGEM do quadro; neste endpoint o nome
+  // chega em `colaborador`. Sem esta linha, tudo o que o card monta a partir de
+  // `a.colaborador_nome` sai "undefined" — o título do modal, o nome do arquivo
+  // do contrato emitido e o título do encerramento de candidatura. Normalizar
+  // aqui conserta os três de uma vez, e os próximos que vierem.
+  a.colaborador_nome = col.name || a.colaborador_nome;
 
   const trilha = d.etapas.map((e, i) => `<span class="rh-passo ${i < iAtual ? 'feito' : i === iAtual ? 'atual' : ''}">
     ${RH_ETAPA_ICONE[e.cod]} ${esc(e.nome)}</span>`).join('<i class="rh-seta">→</i>');
 
-  openModal(`${a.colaborador_nome} — ${d.etapas[iAtual].nome}`, `
+  // `a.colaborador_nome` só existe na LISTAGEM do quadro, onde há JOIN com o
+  // colaborador. Aqui o nome vem de `d.colaborador`, e o título saía literalmente
+  // "undefined — Triagem" desde que o card foi escrito: ninguém tinha aberto um,
+  // porque o quadro esteve vazio até agora.
+  openModal(`${esc(col.name || 'Candidato')} — ${d.etapas[iAtual].nome}`, `
     <div class="rh-trilha">${trilha}</div>
     ${d.pendencias.length
       ? `<div class="rh-nota aviso"><strong>Para sair desta etapa:</strong><ul>${d.pendencias.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`
       : '<div class="rh-nota">✔ Etapa concluída — pode avançar.</div>'}
+
+    ${/* Contato nas etapas de recrutamento.
+          A triagem exige um contato para avançar, e até aqui NÃO HAVIA ONDE
+          INFORMAR: os campos da pessoa só apareciam na Documentação, e a
+          mensagem mandava ir "na aba Contato" — que fica na ficha do
+          colaborador, e candidato não aparece em Colaboradores. Era uma
+          exigência impossível de cumprir pela tela.
+          Só celular e e-mail: documento continua sendo cobrado apenas na
+          Documentação, porque quem está em triagem pode não ser contratado. */''}
+    ${a.etapa === 'triagem' || a.etapa === 'entrevista' ? `
+      <div class="rh-sec"><h4>Contato do candidato</h4>
+        <p class="rh-min-nome">É por aqui que se chama a pessoa para a entrevista. Documento e endereço
+          só entram na etapa <strong>Documentação</strong> — quem está em triagem pode não ser contratado.</p>
+        <div class="rh-grid curta">
+          ${rhInp('celular', 'Celular', 'text', col.celular, 'placeholder="(00) 00000-0000" inputmode="numeric"')}
+          ${rhInp('email_pessoal', 'E-mail', 'email', col.email_pessoal)}
+        </div>
+      </div>` : ''}
 
     ${a.etapa === 'documentacao' ? `
       ${d.pode.sensivel ? `<div class="rh-sec"><h4>Dados para o contrato <span class="rh-lgpd">dado sensível</span></h4>
@@ -9196,14 +9224,19 @@ async function rhAbrirCard(id) {
       ...(ed && !proxima ? [{ label: 'Concluir admissão', cls: 'primary', onClick: () => rhConcluir(id) }] : [])
     ], { wide: true });
 
-  // Na Documentação os campos da pessoa estão no card: as mesmas máscaras e a
-  // mesma busca de CEP da ficha valem aqui — os ids são os mesmos ("rh-…").
+  // Cada ligação olha para o SEU campo, não para o CPF.
+  //
+  // Tudo isto vivia dentro de `if ($('#rh-cpf'))`, e o CPF só existe na
+  // Documentação. Duas consequências: o celular ficava sem máscara nas etapas
+  // novas, e — pior — o "+ Adicionar cargo" do select ficava sem handler fora
+  // da Documentação. Escolher a opção ali deixava o sentinela selecionado e
+  // gravava `__novo_cargo__` como cargo pretendido do candidato.
+  rhLigarSelectCargo('ad-cargo_pretendido');
+  if ($('#rh-celular')) rhLigarCampo('rh-celular', rhMascaraTelefone, null, '');
   if ($('#rh-cpf')) {
-    rhLigarSelectCargo('ad-cargo_pretendido');
     rhLigarCampo('rh-cpf', rhMascaraCPF, rhCPFValido, 'CPF inválido — confira os dígitos.');
     rhLigarCampo('rh-rg', rhMascaraRG, null, '');
     rhLigarCampo('rh-pis', rhMascaraPIS, null, '');
-    rhLigarCampo('rh-celular', rhMascaraTelefone, null, '');
     rhLigarCampo('rh-cep', rhMascaraCEP, null, '');
     rhLigarCEP();
   }
@@ -9720,8 +9753,14 @@ function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
       ${fld('nc-admissao_prevista', 'Admissão prevista', 'date', '')}
     </div>
     <div class="form-row">
-      ${fld('nc-email_corporativo', 'E-mail corporativo', 'email', '')}
-      ${fld('nc-celular', 'Celular', 'text', '')}
+      ${/* Candidato não tem e-mail da empresa: pedir "corporativo" a ele é
+            pedir um dado que só existe depois da contratação, e o campo ficava
+            em branco — que é justamente o contato que falta para sair da
+            triagem. Para quem já é funcionário, o corporativo continua certo. */
+        comAdmissao
+          ? fld('nc-email_pessoal', 'E-mail do candidato', 'email', '', 'placeholder="para chamar para a entrevista"')
+          : fld('nc-email_corporativo', 'E-mail corporativo', 'email', '')}
+      ${fld('nc-celular', 'Celular', 'text', '', 'placeholder="(00) 00000-0000" inputmode="numeric"')}
     </div>
     <label class="check-chip"><input type="checkbox" id="nc-abrir" ${comAdmissao ? 'checked' : ''}> Passar pelo Quadro de admissão
       <span style="color:var(--muted);font-weight:400">— desmarque só para cadastrar alguém que já é funcionário</span></label>
@@ -9736,7 +9775,9 @@ function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
           departamento: $('#nc-departamento').value, regime: $('#nc-regime').value,
           modelo_trabalho: $('#nc-modelo_trabalho').value,
           admissao_prevista: $('#nc-admissao_prevista').value,
-          email_corporativo: $('#nc-email_corporativo').value, celular: $('#nc-celular').value,
+          email_corporativo: comAdmissao ? '' : $('#nc-email_corporativo').value,
+          email_pessoal: comAdmissao ? $('#nc-email_pessoal').value : '',
+          celular: $('#nc-celular').value,
           abrir_admissao: $('#nc-abrir').checked,
           vaga_id: vaga ? vaga.id : null };
         try {
@@ -10704,7 +10745,7 @@ async function rhVagaCandidatos(id) {
   if (v.erro) return toast(v.erro);
   openModal(`Candidatos — ${v.cargo}`, v.candidatos.length
     ? `<div class="table-wrap"><table class="tbl-rh-dep">
-        <thead><tr><th>Candidato</th><th>Etapa</th><th>Situação</th><th>Entrevista</th><th>Contato</th></tr></thead>
+        <thead><tr><th>Candidato</th><th>Etapa</th><th>Situação</th><th>Entrevista</th><th>Contato</th><th></th></tr></thead>
         <tbody>${v.candidatos.map(a => `<tr>
           <td>${esc(a.name)}</td>
           <td>${esc(RH_ETAPA_NOME[a.etapa] || a.etapa)}</td>
@@ -10712,10 +10753,18 @@ async function rhVagaCandidatos(id) {
               : a.situacao === 'concluida' ? '<span class="badge">contratado</span>'
               : '<span class="badge late">encerrado</span>'}</td>
           <td class="venc-cell">${rhData(a.entrevista_em)}</td>
-          <td>${esc(rhTxt(a.celular || a.email_pessoal))}</td>
+          <td>${a.celular || a.email_pessoal
+              ? esc(rhTxt(a.celular || a.email_pessoal))
+              : '<span class="badge late">sem contato</span>'}</td>
+          <td><button class="btn sm" data-cand-card="${a.id}">Abrir card</button></td>
         </tr>`).join('')}</tbody></table></div>`
     : '<div class="empty">Nenhum candidato nesta vaga ainda. Use <strong>+ Candidato</strong> para abrir o primeiro card no Quadro.</div>',
     [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+  // A lista da vaga era um beco: mostrava quem estava parado e não deixava
+  // agir. O card é onde o contato se preenche e a etapa avança.
+  document.querySelectorAll('[data-cand-card]').forEach(b => {
+    b.onclick = () => rhAbrirCard(Number(b.dataset.candCard));
+  });
 }
 
 // ---------------- Lista de colaboradores ----------------
