@@ -5994,3 +5994,31 @@ passam.
 
 Medido na tela com o `styles.css` real: o card de origem fica com opacidade reduzida enquanto arrasta, a
 coluna-alvo fica destacada em verde antes de soltar.
+
+## 2026-09-21 — Sessão 121: o card "Arquivados" do Painel tinha o mesmo furo da lista
+
+**Solicitação:** *"Porque em 'Headcount' está marcando 4 arquivados se só tenho 3? Está buscando o
+dado de algum outro lugar ou é erro?"*
+
+### O que era
+
+Era o mesmo furo da Sessão 117 ("Candidato arquivado não é colaborador arquivado") — só que num segundo
+lugar que ficou de fora daquele conserto. A lista **Colaboradores › Arquivados** já tinha sido corrigida
+para só contar quem teve vínculo; o card **Arquivados** do Painel de RH continuava com a consulta antiga,
+`arquivado_em IS NOT NULL` sozinho, sem essa condição.
+
+Conferi no banco: 4 registros com `arquivado_em` preenchido, mas só 3 com vínculo de verdade — Gabriel,
+Rodrigo e Lucila. O quarto é o Leandro Bassi Moreno, cuja candidatura foi encerrada hoje mesmo ("Desistiu
+do processo") e que nunca foi colaborador. A lista já mostrava certo (3); o card do Painel mentia (4).
+
+### O conserto
+
+Uma condição a mais na mesma consulta, igual à que a lista já usa: `AND EXISTS (SELECT 1 FROM
+erp_rh_vinculos v WHERE v.colaborador_id = c.id)`. Verifiquei que não havia outro lugar no sistema com a
+mesma consulta desatualizada — esse card do Painel era o único.
+
+### Verificação
+
+Estendi `verifica-rh-painel.js`: depois de confirmar que um ex-colaborador real soma 1 em "Arquivados",
+arquivei também um candidato puro (sem vínculo) e confirmei que o número **não muda** — sem a correção,
+essa asserção teria falhado (o candidato somaria junto). As vinte suítes continuam passando.

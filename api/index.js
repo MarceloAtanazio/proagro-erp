@@ -4482,7 +4482,14 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
     },
     headcount: {
       ativos: ativos.length,
-      arquivados: (await query('SELECT count(*)::int AS n FROM erp_colaboradores WHERE arquivado_em IS NOT NULL'))[0].n,
+      // A MESMA condição de Colaboradores > Arquivados (v.id IS NOT NULL): um
+      // candidato cuja candidatura foi encerrada também ganha arquivado_em,
+      // mas nunca foi colaborador. Contar os dois juntos aqui reabriria o
+      // mesmo furo que a lista já corrigiu — só que escondido num número.
+      arquivados: (await query(
+        `SELECT count(*)::int AS n FROM erp_colaboradores c
+          WHERE c.arquivado_em IS NOT NULL
+            AND EXISTS (SELECT 1 FROM erp_rh_vinculos v WHERE v.colaborador_id = c.id)`))[0].n,
       candidatos: emFormalizacao.length,
       por_departamento: contarPor(comVinculo, 'departamento'),
       por_cargo: contarPor(comVinculo, 'cargo'),
