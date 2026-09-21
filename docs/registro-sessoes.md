@@ -6672,3 +6672,34 @@ Verificação visual no navegador com `getBoundingClientRect()` real: 900px → 
 1040px → 4 colunas de 226,6px, confirmando a mudança de 3→4 colunas antes de publicar.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 137: trilha de etapas ainda quebrava — faltava pouco
+
+**Solicitação:** *"Expanda um pouco mais para que todas as etapas do processo ali pra cima fique na
+mesma linha também."* (print com a trilha Triagem→...→Onboarding quebrando: 7 etapas numa linha,
+"Onboarding" sozinho na de baixo — depois de já ter alargado o modal pra xwide na sessão anterior).
+
+### Quanto faltava, medido de verdade
+
+Antes de mudar qualquer número, medi no navegador: a trilha inteira (8 etapas + 7 setas, cada uma
+com ícone e nome) soma **~1000px** de largura. O miolo do modal xwide (1040px menos os 22px de
+padding de cada lado) sobra **~996px** — só uns 4px a menos do que precisava, por isso a última
+etapa pulava pra uma linha sozinha. Não era um exagero de espaço faltando, era quase lá.
+
+### O ajuste
+
+`.modal-xwide` de 1040px para **1100px** — folga de verdade (996→1056px de miolo, ~56px sobrando
+além do que a trilha precisa), não só o suficiente pra passar raspando. Essa classe é compartilhada
+com o cadastro de colaborador (outro modal que já usava xwide pelo mesmo motivo — grades de campo
+apertadas); a mudança beneficia os dois, não só o card de admissão.
+
+### Verificação
+
+Medido no navegador antes de publicar: os 15 elementos da trilha (8 badges + 7 setas) ficam todos na
+mesma linha (mesmo `top`) a 1100px — testado com `getBoundingClientRect()` de verdade, não só
+CSS teórico. `verifica-card-modal-largura.js` ganhou 2 asserções guardando o valor exato (1100px) e
+que não sobrou o `1040px` antigo. 5 verificações no arquivo, todas passando — mais as 122 das
+suítes anteriores, sem regressão.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

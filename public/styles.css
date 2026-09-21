@@ -281,8 +281,11 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 }
 .modal.modal-wide { max-width: 900px; }
 /* Cadastro de colaborador: 3 seções com campos, validadores e anexos — 900px
-   ainda apertava as linhas de 4 campos. */
-.modal.modal-xwide { max-width: 1040px; }
+   ainda apertava as linhas de 4 campos. 1040 tinha a mesma folga que faltou
+   depois pro card de admissão: a trilha de 8 etapas (Triagem..Onboarding)
+   soma ~1000px e o miolo do modal a 1040 sobra só ~996px — a última etapa
+   quebrava pra uma segunda linha sozinha. 1100 dá folga de verdade. */
+.modal.modal-xwide { max-width: 1100px; }
 @keyframes pop { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
 .modal header {
   padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;
