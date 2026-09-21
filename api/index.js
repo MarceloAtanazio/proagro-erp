@@ -269,17 +269,6 @@ const AUDIT_MAP = {
   'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
   // Arquivar e excluir mexem em registro trabalhista: ficam nomeados no log.
-  'POST /api/rh/vagas': req => `Abriu a vaga "${req.body.cargo}"${req.body.departamento ? ` — ${req.body.departamento}` : ''} (${req.body.posicoes || 1} posição/ões)`,
-  'PUT /api/rh/vagas/:id': req => `Editou a vaga ID ${req.params.id}`
-    + (req.body.situacao ? ` — situação: ${req.body.situacao.toUpperCase()}` : '')
-    + (req.body.fechamento_motivo ? ` (${req.body.fechamento_motivo})` : ''),
-  'DELETE /api/rh/vagas/:id': req => `Excluiu a vaga ID ${req.params.id}`,
-  'POST /api/rh/cargos': req => `Criou o cargo "${req.body.nome}"${req.body.tem_nivel ? ' (com níveis)' : ''}`,
-  // Renomear cargo reescreve o cargo de quem o ocupa: o log diz o de-para, senão
-  // não há como reconstruir por que a ficha de alguém mudou sozinha.
-  'PUT /api/rh/cargos/:id': (req, body) => `Editou o cargo ID ${req.params.id}${req.body.nome ? ` → "${req.body.nome}"` : ''}`
-    + (req.body.ativo === false ? ' (DESATIVADO)' : '')
-    + (body && body.renomeado_em ? ` — renomeado em ${body.renomeado_em} registro(s)` : ''),
   // Desligamento é registro trabalhista: o log diz a data e o motivo, não só que
   // alguém arquivou. É por ele que se reconstrói quem decidiu o quê e quando.
   'POST /api/rh/colaboradores/:id/arquivar': req => `DESLIGOU e arquivou o colaborador ID ${req.params.id}`
@@ -497,60 +486,22 @@ app.get('/api/suppliers', requireAuth, requireViewAny(['fornecedores','pagar']),
   res.json(await query('SELECT * FROM erp_suppliers ORDER BY name'));
 }));
 
-// Só id e nome, e sob a permissão de FORNECEDORES: quem cadastra fornecedor
-// precisa dizer de quem ele é, e exigir a permissão de RH para isso deixaria o
-// campo inalcançável justamente para quem o usa. Nada além do nome sai daqui.
-app.get('/api/suppliers/colaboradores', requireAuth, requireViewAny(['fornecedores']), h(async (req, res) => {
-  res.json(await query(
-    `SELECT c.id, c.name,
-            (SELECT s.id FROM erp_suppliers s WHERE s.colaborador_id = c.id LIMIT 1) AS fornecedor_id
-       FROM erp_colaboradores c
-      WHERE c.ativo = true AND c.arquivado_em IS NULL
-      ORDER BY c.name`));
-}));
-
 app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  // A mesma trava do PUT: dois fornecedores para a mesma pessoa partiriam o
-  // histórico financeiro dela em dois, e cada tela mostraria um pedaço.
-  if (Number(b.colaborador_id) > 0) {
-    const outro = await query('SELECT name FROM erp_suppliers WHERE colaborador_id=$1', [Number(b.colaborador_id)]);
-    if (outro.length) {
-      return res.status(409).json({
-        error: `Este colaborador já está ligado ao fornecedor “${outro[0].name}”. ` +
-               'Edite aquele em vez de criar outro — dois fornecedores para a mesma pessoa partem o histórico dela em dois.' });
-    }
-  }
-  // `colaborador_id` liga o fornecedor à PESSOA. A coluna existia desde 15/09,
-  // mas nenhum endpoint a escrevia: a única ligação possível era a semeadura por
-  // nome daquela migração, e quem foi cadastrado depois ficava fora para sempre.
-  // Sem essa ligação, a aba Financeiro da ficha não acha título nenhum.
-  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes, colaborador_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
     [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes),
-     Number(b.colaborador_id) > 0 ? Number(b.colaborador_id) : null]);
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes)]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
 app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
-  // Dois fornecedores apontando para a mesma pessoa partiriam o histórico
-  // financeiro dela em dois, e cada tela mostraria um pedaço.
-  const dono = Number(b.colaborador_id) > 0 ? Number(b.colaborador_id) : null;
-  if (dono) {
-    const outro = await query('SELECT id, name FROM erp_suppliers WHERE colaborador_id=$1 AND id<>$2', [dono, req.params.id]);
-    if (outro.length) {
-      return res.status(409).json({
-        error: `Este colaborador já está ligado ao fornecedor “${outro[0].name}”. ` +
-               'Desfaça a ligação lá antes de criar outra — dois fornecedores para a mesma pessoa partem o histórico dela em dois.' });
-    }
-  }
-  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10, colaborador_id=$11 WHERE id=$12`,
+  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10 WHERE id=$11`,
     [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), dono, req.params.id]);
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -2342,11 +2293,7 @@ const RH_DESLIGAMENTO_TIPOS = ['sem_justa_causa', 'pedido', 'justa_causa', 'acor
   'experiencia_fim', 'experiencia_antes', 'aposentadoria', 'falecimento'];
 const RH_DESLIGAMENTO_AVISOS = ['trabalhado', 'indenizado', 'dispensado', 'nao_aplicavel'];
 
-// `matricula` NÃO está aqui de propósito: ela é o ID do colaborador, gravada
-// pelo servidor quando o vínculo nasce. Fora desta lista, nenhum corpo de
-// requisição consegue alterá-la — nem o formulário, nem uma tela antiga em
-// cache, nem alguém chamando a API na mão.
-const RH_CAMPOS_VINCULO = ['tipo', 'admissao', 'desligamento', 'desligamento_motivo',
+const RH_CAMPOS_VINCULO = ['tipo', 'matricula', 'admissao', 'desligamento', 'desligamento_motivo',
   'desligamento_tipo', 'desligamento_aviso', 'desligamento_aviso_em', 'desligamento_obs',
   'cargo', 'nivel', 'departamento', 'centro_custo', 'gestor_id', 'unidade',
   'regime', 'modelo_trabalho', 'controle_ponto', 'experiencia_fim', 'prorrogacao_fim', 'salario',
@@ -2405,13 +2352,8 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
      -- desativado continua aqui — tem vínculo, é histórico.
      -- Arquivado só aparece quando pedido: ?arquivados=1 mostra APENAS eles,
      -- que é como se consulta um ex-funcionário — não misturado à equipe atual.
-     -- E o MESMO "v.id IS NOT NULL" da outra vista vale aqui: candidato cuja
-     -- candidatura foi encerrada também fica com arquivado_em preenchido, mas
-     -- nunca teve vínculo — pertence ao Quadro (aba "Encerrados"), não a esta
-     -- lista de gente que já trabalhou aqui. Sem essa condição ele aparecia
-     -- nos dois lugares como se fosse ex-funcionário.
      WHERE ${req.query.arquivados === '1'
-       ? 'c.arquivado_em IS NOT NULL AND v.id IS NOT NULL'
+       ? 'c.arquivado_em IS NOT NULL'
        : 'c.arquivado_em IS NULL AND (c.ativo = true OR v.id IS NOT NULL)'}
      ORDER BY c.ativo DESC, c.name`);
   const out = rows.map(r => {
@@ -2555,15 +2497,7 @@ app.get('/api/rh/colaboradores/:id', requireAuth, requireViewAny(['rh']), h(asyn
   const verRemunFicha = rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab);
   const vinculoVigente = vinculos.find(v => !v.desligamento) || null;
   const custo = verRemunFicha && vinculoVigente
-    ? rhCustoDoVinculo({
-        ...vinculoVigente,
-        // O catálogo de Benefícios não vem na SELECT de vínculos — é somado
-        // aqui, na mesma foto de "hoje" que o resto do custo já é.
-        beneficios_catalogo: ((await query(
-          `SELECT COALESCE(sum(b.custo_empresa), 0) AS n FROM erp_rh_beneficio_colab bc
-             JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
-            WHERE bc.colaborador_id=$1 AND bc.ate IS NULL AND b.ativo = true`, [id]))[0] || {}).n || 0
-      }, await rhEncargos(),
+    ? rhCustoDoVinculo(vinculoVigente, await rhEncargos(),
         // COUNT sempre devolve linha em Postgres, mas indexar [0] sem guarda faz
         // a ficha inteira responder 500 se algum dia nao devolver.
         ((await query('SELECT count(*)::int AS n FROM erp_rh_dependentes WHERE colaborador_id=$1 AND irrf=true', [id]))[0] || {}).n || 0)
@@ -2675,13 +2609,7 @@ app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h
   const corpo = { ...req.body, ...rhDatasExperiencia(req.body.admissao) };
   const permitidos = RH_CAMPOS_VINCULO.filter(c => rhVeRemuneracao(req.user) || !RH_REMUNERACAO.includes(c));
   const { cols, vals } = rhMontarSet(corpo, permitidos, RH_VINC_DATA, RH_VINC_NUM, RH_VINC_BOOL);
-  // A matrícula é o ID do colaborador, e é o servidor que a escreve.
-  //
-    // Ela identifica a PESSOA, não o contrato: quem sai e volta reabre com a
-  // mesma matrícula, e é isso que se espera de um número de matrícula. Sai sem
-  // zeros à esquerda para ser idêntica à coluna ID da lista — número que
-  // aparece de dois jeitos diferentes deixa de servir para conferir.
-  cols.push('colaborador_id', 'matricula', 'created_by'); vals.push(id, String(id), req.user.id);
+  cols.push('colaborador_id', 'created_by'); vals.push(id, req.user.id);
   const ph = cols.map((_, i) => D + (i + 1)).join(',');
   // RETURNING * e não só o id: a vigência é registrada a partir da LINHA
   // GRAVADA, não do corpo da requisição. O corpo é texto de formulário; a linha
@@ -2780,566 +2708,6 @@ app.delete('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req,
   res.json({ ok: true });
 }));
 
-// O fornecedor de quem entra na folha.
-//
-// A folha é lançada em Contas a Pagar, um título por pessoa por mês, e a pessoa
-// aparece lá como FORNECEDOR. A aba Financeiro da ficha lê por essa ligação
-// (erp_suppliers.colaborador_id). Sem fornecedor, o título simplesmente não tem
-// onde ser lançado — e a aba Financeiro mostra R$ 0,00 desde a admissão, com
-// cara de certo, para sempre. Número com aparência de oficial e errado é pior
-// que número nenhum, e este some sem nem um aviso.
-//
-// A ligação só existia por causa da semeadura por nome da migração de 15/09.
-// Quem foi cadastrado DEPOIS dela ficava permanentemente fora — quatro pessoas
-// já estavam assim quando isto foi escrito, e seriam todas as próximas.
-//
-// Idempotente e em três tempos: se já há fornecedor ligado, não faz nada; se há
-// um com o mesmo nome e sem dono, ADOTA em vez de duplicar (é o fornecedor
-// criado à mão); só então cria.
-async function rhGarantirFornecedor(colabId, userId) {
-  const id = Number(colabId);
-  if (!id) return null;
-  const ja = await query('SELECT id FROM erp_suppliers WHERE colaborador_id=$1 LIMIT 1', [id]);
-  if (ja.length) return ja[0].id;
-
-  const c = (await query('SELECT id, name, cpf, pix_chave FROM erp_colaboradores WHERE id=$1', [id]))[0];
-  if (!c || !c.name) return null;
-
-  // Adoção só quando o nome bate INTEIRO e não há ambiguidade dos dois lados —
-  // a mesma regra conservadora da semeadura original. Na dúvida, cria novo:
-  // fornecedor duplicado se resolve editando; ligação errada contamina o
-  // histórico financeiro de duas pessoas.
-  const orfao = await query(
-    `SELECT id FROM erp_suppliers s
-      WHERE s.colaborador_id IS NULL
-        AND lower(btrim(s.name)) = lower(btrim($1))
-        AND (SELECT count(*) FROM erp_suppliers s2
-              WHERE s2.colaborador_id IS NULL AND lower(btrim(s2.name)) = lower(btrim($1))) = 1
-      LIMIT 1`, [c.name]);
-  if (orfao.length) {
-    await query('UPDATE erp_suppliers SET colaborador_id=$1 WHERE id=$2', [id, orfao[0].id]);
-    return orfao[0].id;
-  }
-
-  const ins = await query(
-    `INSERT INTO erp_suppliers (name, cnpj, category, status, pix_key, colaborador_id, notes)
-     VALUES ($1,$2,'Folha de Pagamento','ativo',$3,$4,$5) RETURNING id`,
-    [c.name, c.cpf || null, c.pix_chave || c.cpf || null, id,
-     'Criado junto com o cadastro do colaborador, para a folha poder ser lançada em Contas a Pagar.']);
-  return ins[0].id;
-}
-
-// ---- Vagas ----
-//
-// A vaga é uma POSIÇÃO, não uma pessoa: tem cargo, departamento, número de
-// posições e vários candidatos. Por isso não é card de kanban — ao avançar de
-// "recebendo currículos" para "entrevista" ela teria de virar N cards, e coluna
-// de kanban não faz isso. A vaga aponta para os candidatos; o quadro continua
-// sendo um quadro de pessoas.
-const RH_VAGA_SITUACOES = ['aberta', 'pausada', 'fechada'];
-const RH_VAGA_CAMPOS = ['cargo', 'nivel', 'departamento', 'posicoes', 'regime', 'modelo_trabalho',
-  'salario_previsto', 'observacao'];
-
-// A contagem de candidatos vem junto com a lista: sem ela, "vaga aberta" não
-// diz se o processo está parado ou fervendo, que é a pergunta que se faz olhando
-// para uma lista de vagas.
-const RH_SQL_VAGAS = `
-  SELECT v.*,
-         (SELECT count(*)::int FROM erp_rh_admissoes a
-           WHERE a.vaga_id = v.id AND a.situacao = 'andamento') AS candidatos,
-         (SELECT count(*)::int FROM erp_rh_admissoes a
-           WHERE a.vaga_id = v.id AND a.situacao = 'concluida')    AS contratados
-    FROM erp_rh_vagas v`;
-
-app.get('/api/rh/vagas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  // Fechadas por último: a lista serve para trabalhar nas abertas.
-  res.json(await query(`${RH_SQL_VAGAS}
-     ORDER BY (v.situacao = 'fechada'), v.aberta_em DESC, v.id DESC`));
-}));
-
-app.get('/api/rh/vagas/:id', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const v = await query(`${RH_SQL_VAGAS} WHERE v.id=$1`, [id]);
-  if (!v.length) return res.status(404).json({ error: 'Vaga não encontrada.' });
-  const candidatos = await query(
-    `SELECT a.id, a.etapa, a.situacao, a.entrevista_em, a.admissao_prevista,
-            c.id AS colaborador_id, c.name, c.celular, c.email_pessoal
-       FROM erp_rh_admissoes a JOIN erp_colaboradores c ON c.id = a.colaborador_id
-      WHERE a.vaga_id=$1 ORDER BY a.created_at`, [id]);
-  res.json({ ...v[0], candidatos, etapas: RH_ETAPAS });
-}));
-
-app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const cargo = sanitize(req.body.cargo);
-  if (!cargo) return res.status(400).json({ error: 'Informe o cargo da vaga.' });
-  const pos = Number(req.body.posicoes);
-  const ins = await query(
-    `INSERT INTO erp_rh_vagas (cargo, nivel, departamento, posicoes, regime, modelo_trabalho,
-        salario_previsto, observacao, criado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [cargo, sanitize(req.body.nivel) || null, sanitize(req.body.departamento) || null,
-     Number.isFinite(pos) && pos > 0 ? Math.round(pos) : 1,
-     sanitize(req.body.regime) || 'regular', sanitize(req.body.modelo_trabalho) || 'presencial',
-     req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
-     sanitize(req.body.observacao) || null, req.user.id]);
-  res.json(ins[0]);
-}));
-
-app.put('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const atual = await query('SELECT * FROM erp_rh_vagas WHERE id=$1', [id]);
-  if (!atual.length) return res.status(404).json({ error: 'Vaga não encontrada.' });
-
-  const corpo = { ...req.body };
-  if (corpo.situacao !== undefined) {
-    if (!RH_VAGA_SITUACOES.includes(corpo.situacao)) {
-      return res.status(400).json({ error: 'Situação de vaga desconhecida.' });
-    }
-    // Fechar uma vaga com candidato em andamento deixaria gente no quadro sem
-    // vaga viva por trás — o processo continua, mas ninguém mais olha a origem.
-    if (corpo.situacao === 'fechada') {
-      const vivos = (await query(
-        `SELECT count(*)::int AS n FROM erp_rh_admissoes
-          WHERE vaga_id=$1 AND situacao='andamento'`, [id]))[0].n;
-      if (vivos && req.body.forcar !== true) {
-        return res.status(409).json({
-          error: `Esta vaga tem ${vivos} candidato(s) em andamento no quadro. ` +
-                 'Encerre ou conclua os processos antes de fechá-la.', candidatos: vivos });
-      }
-    }
-  }
-  const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, [], ['posicoes', 'salario_previsto'], []);
-  if (corpo.situacao !== undefined) { cols.push('situacao'); vals.push(corpo.situacao); }
-  if (corpo.fechamento_motivo !== undefined) { cols.push('fechamento_motivo'); vals.push(sanitize(corpo.fechamento_motivo) || null); }
-  // A data de fechamento acompanha a situação, e some ao reabrir: vaga aberta
-  // com data de fechamento no passado é o tipo de contradição que ninguém nota.
-  if (corpo.situacao === 'fechada') { cols.push('fechada_em'); vals.push(hojeISO()); }
-  else if (corpo.situacao) { cols.push('fechada_em'); vals.push(null); }
-  if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
-
-  const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
-  await query(`UPDATE erp_rh_vagas SET ${set} WHERE id=` + D + (cols.length + 1), [...vals, id]);
-  res.json({ ok: true });
-}));
-
-app.delete('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  // Vaga com candidato não se apaga: fechar preserva o histórico de por onde
-  // aquelas pessoas entraram. Excluir é para a vaga criada por engano.
-  const usada = (await query('SELECT count(*)::int AS n FROM erp_rh_admissoes WHERE vaga_id=$1', [id]))[0].n;
-  if (usada) {
-    return res.status(409).json({
-      error: `Esta vaga já teve ${usada} candidato(s). Feche-a em vez de excluir — ` +
-             'assim o histórico continua dizendo por onde essas pessoas entraram.' });
-  }
-  await query('DELETE FROM erp_rh_vagas WHERE id=$1', [id]);
-  res.json({ ok: true });
-}));
-
-// ---- Cargos ----
-//
-// Catálogo, não chave estrangeira. O cargo continua gravado como texto no
-// vínculo: quem ocupou um cargo que a empresa depois extinguiu tem de continuar
-// aparecendo com aquele cargo no histórico.
-//
-// Ler exige só ver RH — o select precisa da lista para qualquer um que abra uma
-// ficha. Criar e editar exigem editar RH.
-app.get('/api/rh/cargos', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  res.json(await query('SELECT id, nome, tem_nivel, ativo FROM erp_rh_cargos ORDER BY ativo DESC, nome'));
-}));
-
-app.post('/api/rh/cargos', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const nome = sanitize(req.body.nome);
-  if (!nome) return res.status(400).json({ error: 'Informe o nome do cargo.' });
-  if (nome.length > 80) return res.status(400).json({ error: 'O nome do cargo é longo demais.' });
-  // O 409 DIZ qual é o cargo existente, e com a grafia dele: quem digitou
-  // "analista de riscos" precisa saber que já existe "Analista de Riscos", não
-  // levar um "já existe" e ficar procurando na lista.
-  const jaTem = await query('SELECT id, nome, ativo FROM erp_rh_cargos WHERE lower(nome)=lower($1)', [nome]);
-  if (jaTem.length) {
-    return res.status(409).json({ error: `Este cargo já existe como “${jaTem[0].nome}”` +
-      (jaTem[0].ativo ? '.' : ', mas está desativado — reative-o em Cargos.'), id: jaTem[0].id });
-  }
-  const ins = await query(
-    'INSERT INTO erp_rh_cargos (nome, tem_nivel, criado_por) VALUES ($1,$2,$3) RETURNING id, nome, tem_nivel, ativo',
-    [nome, req.body.tem_nivel === true, req.user.id]);
-  res.json(ins[0]);
-}));
-
-app.put('/api/rh/cargos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const atual = await query('SELECT * FROM erp_rh_cargos WHERE id=$1', [id]);
-  if (!atual.length) return res.status(404).json({ error: 'Cargo não encontrado.' });
-
-  // O nome antigo é guardado ANTES do UPDATE. Lê-lo de `atual[0]` depois de
-  // gravar só funciona porque o driver devolve uma cópia da linha — e depender
-  // disso é depender de um detalhe do driver para uma renomeação em cascata.
-  const nomeAntigo = atual[0].nome;
-  const nome = req.body.nome !== undefined ? sanitize(req.body.nome) : nomeAntigo;
-  if (!nome) return res.status(400).json({ error: 'Informe o nome do cargo.' });
-  const outro = await query('SELECT id FROM erp_rh_cargos WHERE lower(nome)=lower($1) AND id<>$2', [nome, id]);
-  if (outro.length) return res.status(409).json({ error: 'Já existe outro cargo com esse nome.' });
-
-  await query(
-    `UPDATE erp_rh_cargos SET nome=$1, tem_nivel=$2, ativo=$3 WHERE id=$4`,
-    [nome, req.body.tem_nivel !== undefined ? req.body.tem_nivel === true : atual[0].tem_nivel,
-     req.body.ativo !== undefined ? req.body.ativo === true : atual[0].ativo, id]);
-
-  // Renomear o catálogo sem renomear quem o usa deixaria a ficha de todo mundo
-  // com o nome antigo e o select com o novo — e o antigo voltaria ao catálogo
-  // na próxima migração que recolhe "cargo em uso". Corrigir um cargo é
-  // corrigi-lo onde ele está escrito.
-  let atualizados = 0;
-  if (nome !== nomeAntigo) {
-    for (const [tabela, coluna] of [['erp_rh_vinculos', 'cargo'], ['erp_colaboradores', 'cargo'],
-                                    ['erp_rh_admissoes', 'cargo_pretendido']]) {
-      const r = await query(`UPDATE ${tabela} SET ${coluna}=$1 WHERE ${coluna}=$2 RETURNING 1`, [nome, nomeAntigo]);
-      atualizados += r.length;
-    }
-  }
-  res.json({ ok: true, renomeado_em: atualizados });
-}));
-
-// ---- Férias ----
-//
-// Controle, não folha: esta versão RASTREIA períodos e REGISTRA gozo, sem
-// calcular o valor a pagar — o mesmo desenho que a rescisão já tem, onde o
-// valor vem da contabilidade externa e entra em Contas a Pagar.
-//
-// O período aquisitivo nasce sozinho a cada 12 meses de vínculo — ninguém
-// "cria" um período, ele existe pelo simples fato de a pessoa ter completado o
-// ano. Por isso é GERADO sob demanda (idempotente), em vez de alguém precisar
-// lembrar de abrir um a cada aniversário de casa.
-function rhSomaAnoISO(iso, nAnos) {
-  const [a, m, d] = String(iso).slice(0, 10).split('-').map(Number);
-  return new Date(Date.UTC(a + nAnos, m - 1, d)).toISOString().slice(0, 10);
-}
-
-async function rhSincronizarFerias(vinculo) {
-  const existentes = await query(
-    'SELECT periodo_inicio FROM erp_rh_ferias_periodos WHERE vinculo_id=$1', [vinculo.id]);
-  const jaTem = new Set(existentes.map(p => String(p.periodo_inicio).slice(0, 10)));
-  // O período em aquisição (ainda não completou o ano) entra também — é o que
-  // deixa a tela mostrar "em aquisição", em vez de a pessoa só aparecer no
-  // sistema no dia seguinte ao aniversário de casa.
-  const limite = vinculo.desligamento ? String(vinculo.desligamento).slice(0, 10) : hojeISO();
-  let inicio = String(vinculo.admissao).slice(0, 10);
-  for (let guarda = 0; guarda < 60 && inicio <= limite; guarda++) {   // 60 anos: trava contra laço infinito
-    if (!jaTem.has(inicio)) {
-      const fim = rhSomaDiasISO(rhSomaAnoISO(inicio, 1), -1);
-      const limiteGozo = rhSomaAnoISO(fim, 1);
-      await query(
-        `INSERT INTO erp_rh_ferias_periodos (vinculo_id, colaborador_id, periodo_inicio, periodo_fim, limite_gozo)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (vinculo_id, periodo_inicio) DO NOTHING`,
-        [vinculo.id, vinculo.colaborador_id, inicio, fim, limiteGozo]);
-    }
-    inicio = rhSomaAnoISO(inicio, 1);
-  }
-}
-
-// Saldo e status de um período, a partir do que já foi registrado nele.
-const RH_FERIAS_AVISO_DIAS = 90;   // aviso prévio antes do prazo de gozo vencer
-function rhFeriasResumo(periodo, gozos, hoje) {
-  const usados = gozos.reduce((s, g) => s + Number(g.dias), 0);
-  const abono = gozos.filter(g => g.abono_pecuniario).reduce((s, g) => s + Number(g.dias), 0);
-  const saldo = Math.max(0, Number(periodo.dias_direito) - usados);
-  const completo = String(periodo.periodo_fim).slice(0, 10) <= hoje;
-  let status;
-  if (!completo) status = 'em_aquisicao';
-  else if (saldo === 0) status = 'quitado';
-  else if (String(periodo.limite_gozo).slice(0, 10) < hoje) status = 'vencido';
-  else if (String(periodo.limite_gozo).slice(0, 10) <= rhSomaDiasISO(hoje, RH_FERIAS_AVISO_DIAS)) status = 'a_vencer';
-  else status = 'em_dia';
-  return { ...periodo, dias_usados: usados, dias_abono: abono, saldo, status, gozos };
-}
-
-app.get('/api/rh/ferias', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const hoje = hojeISO();
-  const vinculos = await query(`
-    SELECT v.id, v.colaborador_id, v.admissao, v.desligamento, c.name AS colaborador_nome
-      FROM erp_rh_vinculos v
-      JOIN erp_colaboradores c ON c.id = v.colaborador_id
-     WHERE v.desligamento IS NULL AND c.ativo = true AND c.arquivado_em IS NULL
-     ORDER BY c.name`);
-  for (const v of vinculos) await rhSincronizarFerias(v);
-
-  const periodos = vinculos.length ? await query(
-    `SELECT * FROM erp_rh_ferias_periodos WHERE vinculo_id = ANY($1::int[]) ORDER BY periodo_inicio`,
-    [vinculos.map(v => v.id)]) : [];
-  const ids = periodos.map(p => p.id);
-  const gozos = ids.length ? await query(
-    `SELECT * FROM erp_rh_ferias_gozos WHERE periodo_id = ANY($1::int[]) ORDER BY inicio`, [ids]) : [];
-  const gozosPor = {};
-  gozos.forEach(g => { (gozosPor[g.periodo_id] ||= []).push(g); });
-
-  const resumos = periodos.map(p => rhFeriasResumo(p, gozosPor[p.id] || [], hoje));
-  const resumosPorColab = {};
-  resumos.forEach(r => { (resumosPorColab[r.colaborador_id] ||= []).push(r); });
-
-  // Uma linha por PESSOA na lista principal: o período que mais pede atenção
-  // (vencido antes de a_vencer, antes de em_dia, antes de em_aquisição) —
-  // porque é essa a pergunta que a tela responde: "quem eu preciso chamar pra
-  // tirar férias". Quem quiser ver os outros períodos abre o histórico.
-  const ORDEM = { vencido: 0, a_vencer: 1, em_dia: 2, em_aquisicao: 3, quitado: 4 };
-  const pessoas = vinculos.map(v => {
-    const meus = (resumosPorColab[v.colaborador_id] || []).slice()
-      .sort((a, b) => ORDEM[a.status] - ORDEM[b.status] || a.periodo_inicio.localeCompare(b.periodo_inicio));
-    return { colaborador_id: v.colaborador_id, colaborador_nome: v.colaborador_nome,
-             vinculo_id: v.id, periodo_em_destaque: meus[0] || null, total_periodos: meus.length };
-  });
-
-  res.json({
-    hoje, pessoas,
-    contagem: {
-      vencido: resumos.filter(r => r.status === 'vencido').length,
-      a_vencer: resumos.filter(r => r.status === 'a_vencer').length
-    }
-  });
-}));
-
-// O histórico completo de uma pessoa — todos os vínculos dela, não só o atual,
-// porque quem foi readmitido tem períodos de antes também.
-app.get('/api/rh/colaboradores/:id/ferias', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const vinculos = await query(
-    'SELECT id, colaborador_id, admissao, desligamento FROM erp_rh_vinculos WHERE colaborador_id=$1 ORDER BY admissao', [id]);
-  if (!vinculos.length) return res.json({ periodos: [] });
-  for (const v of vinculos) await rhSincronizarFerias(v);
-
-  const hoje = hojeISO();
-  const periodos = await query(
-    `SELECT * FROM erp_rh_ferias_periodos WHERE vinculo_id = ANY($1::int[]) ORDER BY periodo_inicio DESC`,
-    [vinculos.map(v => v.id)]);
-  const ids = periodos.map(p => p.id);
-  const gozos = ids.length ? await query(
-    `SELECT * FROM erp_rh_ferias_gozos WHERE periodo_id = ANY($1::int[]) ORDER BY inicio`, [ids]) : [];
-  const gozosPor = {};
-  gozos.forEach(g => { (gozosPor[g.periodo_id] ||= []).push(g); });
-  res.json({ periodos: periodos.map(p => rhFeriasResumo(p, gozosPor[p.id] || [], hoje)) });
-}));
-
-app.put('/api/rh/ferias/periodos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const atual = (await query('SELECT * FROM erp_rh_ferias_periodos WHERE id=$1', [id]))[0];
-  if (!atual) return res.status(404).json({ error: 'Período não encontrado.' });
-  const dias = req.body.dias_direito !== undefined ? Number(req.body.dias_direito) : atual.dias_direito;
-  if (!Number.isFinite(dias) || dias < 0 || dias > 30) {
-    return res.status(400).json({ error: 'Dias de direito deve estar entre 0 e 30.' });
-  }
-  // Reduzir o direito é sempre por um motivo legal (faltas do art. 130 CLT) —
-  // sem a justificativa escrita, ninguém vai saber por quê daqui a um ano.
-  if (dias !== atual.dias_direito && !sanitize(req.body.observacao)) {
-    return res.status(400).json({ error: 'Para mudar os dias de direito, explique o motivo.' });
-  }
-  await query('UPDATE erp_rh_ferias_periodos SET dias_direito=$1, observacao=$2 WHERE id=$3',
-    [dias, sanitize(req.body.observacao) || atual.observacao, id]);
-  res.json({ ok: true });
-}));
-
-app.post('/api/rh/ferias/periodos/:id/gozos', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const periodoId = Number(req.params.id);
-  const periodo = (await query('SELECT * FROM erp_rh_ferias_periodos WHERE id=$1', [periodoId]))[0];
-  if (!periodo) return res.status(404).json({ error: 'Período não encontrado.' });
-  const vinculo = (await query('SELECT * FROM erp_rh_vinculos WHERE id=$1', [periodo.vinculo_id]))[0];
-
-  if (!isDate(req.body.inicio) || !isDate(req.body.fim)) return res.status(400).json({ error: 'Informe início e fim.' });
-  const inicio = req.body.inicio, fim = req.body.fim;
-  if (fim < inicio) return res.status(400).json({ error: 'O fim não pode ser antes do início.' });
-  // O direito só existe depois de completar os 12 meses — férias antes disso
-  // não são férias, são acordo informal, e a lei não reconhece.
-  if (inicio < String(periodo.periodo_fim).slice(0, 10)) {
-    return res.status(400).json({ error: `Este período só completa em ${rhDataBR(periodo.periodo_fim)} — não dá para gozar antes.` });
-  }
-  if (vinculo && vinculo.desligamento && fim > String(vinculo.desligamento).slice(0, 10)) {
-    return res.status(400).json({ error: 'A pessoa já foi desligada — férias depois disso são indenizadas na rescisão, não gozadas.' });
-  }
-  const dias = Math.round((emDias(fim) - emDias(inicio)) / DIA_MS) + 1;
-  if (dias < 5) return res.status(400).json({ error: 'A menor parcela permitida é de 5 dias corridos.' });
-
-  const existentes = await query('SELECT * FROM erp_rh_ferias_gozos WHERE periodo_id=$1', [periodoId]);
-  const abono = req.body.abono_pecuniario === true;
-  const usados = existentes.reduce((s, g) => s + Number(g.dias), 0);
-  if (usados + dias > periodo.dias_direito) {
-    return res.status(409).json({ error: `Sobram só ${periodo.dias_direito - usados} dia(s) de saldo neste período.` });
-  }
-  const jaAbono = existentes.filter(g => g.abono_pecuniario).reduce((s, g) => s + Number(g.dias), 0);
-  const tetoAbono = Math.floor(periodo.dias_direito / 3);
-  if (abono && jaAbono + dias > tetoAbono) {
-    return res.status(400).json({ error: `Abono pecuniário não pode passar de 1/3 do período (${tetoAbono} dias).` });
-  }
-  const parcelasDeFerias = existentes.filter(g => !g.abono_pecuniario);
-  if (!abono && parcelasDeFerias.length >= 3) {
-    return res.status(400).json({ error: 'Este período já tem 3 parcelas de férias — o máximo permitido em lei.' });
-  }
-
-  // Duas parcelas não podem se sobrepor, nem no mesmo período nem entre
-  // períodos diferentes do mesmo vínculo — a pessoa não tira férias duas vezes
-  // ao mesmo tempo.
-  const doVinculo = await query(
-    `SELECT g.inicio, g.fim FROM erp_rh_ferias_gozos g
-       JOIN erp_rh_ferias_periodos p ON p.id = g.periodo_id
-      WHERE p.vinculo_id = $1`, [periodo.vinculo_id]);
-  const sobrepoe = doVinculo.some(g => inicio <= String(g.fim).slice(0, 10) && fim >= String(g.inicio).slice(0, 10));
-  if (sobrepoe) return res.status(409).json({ error: 'Já existe um gozo registrado que se sobrepõe a estas datas.' });
-
-  const ins = await query(
-    `INSERT INTO erp_rh_ferias_gozos (periodo_id, inicio, fim, dias, abono_pecuniario, observacao, registrado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [periodoId, inicio, fim, dias, abono, sanitize(req.body.observacao) || null, req.user.id]);
-  res.json({ ok: true, id: ins[0].id, dias });
-}));
-
-app.delete('/api/rh/ferias/gozos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const del = await query('DELETE FROM erp_rh_ferias_gozos WHERE id=$1 RETURNING id', [Number(req.params.id)]);
-  if (!del.length) return res.status(404).json({ error: 'Registro não encontrado.' });
-  res.json({ ok: true });
-}));
-
-// ---- Benefícios ----
-//
-// Catálogo (o que a empresa oferece, com o custo) mais adesão (quem está
-// inscrito). Substitui, para o que vier daqui pra frente, os três booleans
-// fixos que o vínculo já tinha (totalpass, clube_saude, seguro_vida) — que
-// continuam existindo e não são tocados por este bloco.
-//
-// `custo_empresa` é por PESSOA inscrita: o custo total do benefício é ele
-// multiplicado por quantos estão ativos, não um valor fixo do catálogo.
-// Dinheiro é dado sensível como salário — quem não vê remuneração não vê custo.
-app.get('/api/rh/beneficios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const verCusto = rhVeRemuneracao(req.user);
-  const rows = await query(`
-    SELECT b.*,
-           (SELECT count(*)::int FROM erp_rh_beneficio_colab bc
-             WHERE bc.beneficio_id=b.id AND bc.ate IS NULL) AS inscritos
-      FROM erp_rh_beneficios b
-     ORDER BY b.ativo DESC, b.nome`);
-  res.json(rows.map(b => {
-    const out = { ...b };
-    if (verCusto) out.custo_total_mensal = r2(Number(b.custo_empresa) * b.inscritos);
-    else { delete out.custo_empresa; delete out.custo_colaborador; }
-    return out;
-  }));
-}));
-
-app.post('/api/rh/beneficios', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const nome = sanitize(req.body.nome);
-  if (!nome) return res.status(400).json({ error: 'Informe o nome do benefício.' });
-  const custoEmpresa = Number(req.body.custo_empresa) || 0;
-  const custoColab = Number(req.body.custo_colaborador) || 0;
-  if (custoEmpresa < 0 || custoColab < 0) return res.status(400).json({ error: 'Custo não pode ser negativo.' });
-  const ins = await query(
-    `INSERT INTO erp_rh_beneficios (nome, categoria, fornecedor, custo_empresa, custo_colaborador, periodicidade, observacao, criado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [nome, sanitize(req.body.categoria) || null, sanitize(req.body.fornecedor) || null,
-     custoEmpresa, custoColab, sanitize(req.body.periodicidade) || 'mensal',
-     sanitize(req.body.observacao) || null, req.user.id]);
-  res.json({ ok: true, id: ins[0].id });
-}));
-
-app.put('/api/rh/beneficios/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const atual = (await query('SELECT * FROM erp_rh_beneficios WHERE id=$1', [id]))[0];
-  if (!atual) return res.status(404).json({ error: 'Benefício não encontrado.' });
-  const nome = req.body.nome !== undefined ? sanitize(req.body.nome) : atual.nome;
-  if (!nome) return res.status(400).json({ error: 'Informe o nome do benefício.' });
-  const custoEmpresa = req.body.custo_empresa !== undefined ? Number(req.body.custo_empresa) : atual.custo_empresa;
-  const custoColab = req.body.custo_colaborador !== undefined ? Number(req.body.custo_colaborador) : atual.custo_colaborador;
-  if (custoEmpresa < 0 || custoColab < 0) return res.status(400).json({ error: 'Custo não pode ser negativo.' });
-  const ativo = req.body.ativo !== undefined ? req.body.ativo === true : atual.ativo;
-
-  await query(
-    `UPDATE erp_rh_beneficios SET nome=$1, categoria=$2, fornecedor=$3, custo_empresa=$4,
-        custo_colaborador=$5, periodicidade=$6, ativo=$7, observacao=$8 WHERE id=$9`,
-    [nome, req.body.categoria !== undefined ? sanitize(req.body.categoria) : atual.categoria,
-     req.body.fornecedor !== undefined ? sanitize(req.body.fornecedor) : atual.fornecedor,
-     custoEmpresa, custoColab,
-     req.body.periodicidade !== undefined ? sanitize(req.body.periodicidade) || 'mensal' : atual.periodicidade,
-     ativo, req.body.observacao !== undefined ? sanitize(req.body.observacao) : atual.observacao, id]);
-
-  // Desativar é a empresa dizendo "paramos de oferecer isto": quem estava
-  // inscrito sai, com a data de hoje — senão o benefício desativado
-  // continuaria contando no custo de pessoal para sempre.
-  let encerrados = 0;
-  if (atual.ativo && !ativo) {
-    const r = await query(
-      `UPDATE erp_rh_beneficio_colab SET ate=CURRENT_DATE WHERE beneficio_id=$1 AND ate IS NULL RETURNING id`, [id]);
-    encerrados = r.length;
-  }
-  res.json({ ok: true, adesoes_encerradas: encerrados });
-}));
-
-app.delete('/api/rh/beneficios/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const usado = await query('SELECT 1 FROM erp_rh_beneficio_colab WHERE beneficio_id=$1 LIMIT 1', [id]);
-  if (usado.length) {
-    return res.status(409).json({ error: 'Este benefício já teve gente inscrita — desative-o em vez de excluir, para preservar o histórico.' });
-  }
-  const del = await query('DELETE FROM erp_rh_beneficios WHERE id=$1 RETURNING id', [id]);
-  if (!del.length) return res.status(404).json({ error: 'Benefício não encontrado.' });
-  res.json({ ok: true });
-}));
-
-app.get('/api/rh/beneficios/:id/colaboradores', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const rows = await query(`
-    SELECT bc.id, bc.colaborador_id, c.name AS colaborador_nome, bc.desde, bc.ate,
-           bc.valor_colaborador, bc.observacao
-      FROM erp_rh_beneficio_colab bc
-      JOIN erp_colaboradores c ON c.id = bc.colaborador_id
-     WHERE bc.beneficio_id=$1
-     ORDER BY (bc.ate IS NULL) DESC, bc.desde DESC`, [id]);
-  res.json(rhVeRemuneracao(req.user) ? rows : rows.map(r => { const { valor_colaborador, ...o } = r; return o; }));
-}));
-
-app.post('/api/rh/beneficios/:id/colaboradores', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const beneficioId = Number(req.params.id);
-  const beneficio = (await query('SELECT * FROM erp_rh_beneficios WHERE id=$1', [beneficioId]))[0];
-  if (!beneficio) return res.status(404).json({ error: 'Benefício não encontrado.' });
-  if (!beneficio.ativo) return res.status(400).json({ error: 'Este benefício está desativado — reative-o antes de inscrever alguém.' });
-  const colabId = Number(req.body.colaborador_id);
-  if (!colabId) return res.status(400).json({ error: 'Informe o colaborador.' });
-  const colab = (await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [colabId]))[0];
-  if (!colab) return res.status(404).json({ error: 'Colaborador não encontrado.' });
-
-  const ativa = await query(
-    'SELECT id FROM erp_rh_beneficio_colab WHERE beneficio_id=$1 AND colaborador_id=$2 AND ate IS NULL',
-    [beneficioId, colabId]);
-  if (ativa.length) return res.status(409).json({ error: `${colab.name} já está inscrito(a) neste benefício.` });
-
-  const desde = isDate(req.body.desde) ? req.body.desde : hojeISO();
-  const ins = await query(
-    `INSERT INTO erp_rh_beneficio_colab (beneficio_id, colaborador_id, desde, valor_colaborador, observacao, registrado_por)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [beneficioId, colabId, desde,
-     req.body.valor_colaborador !== undefined && req.body.valor_colaborador !== '' ? Number(req.body.valor_colaborador) : null,
-     sanitize(req.body.observacao) || null, req.user.id]);
-  res.json({ ok: true, id: ins[0].id });
-}));
-
-app.post('/api/rh/beneficio_colab/:id/encerrar', requireAuth, requireEdit('rh'), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const atual = (await query('SELECT * FROM erp_rh_beneficio_colab WHERE id=$1', [id]))[0];
-  if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada.' });
-  if (atual.ate) return res.status(409).json({ error: 'Esta inscrição já foi encerrada.' });
-  const ate = isDate(req.body.ate) ? req.body.ate : hojeISO();
-  if (ate < String(atual.desde).slice(0, 10)) return res.status(400).json({ error: 'O fim não pode ser antes do início.' });
-  await query('UPDATE erp_rh_beneficio_colab SET ate=$1 WHERE id=$2', [ate, id]);
-  res.json({ ok: true });
-}));
-
-// Para a ficha (e uma futura aba de benefícios nela): tudo que a pessoa já
-// teve, inscrição atual e histórico juntos.
-app.get('/api/rh/colaboradores/:id/beneficios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const rows = await query(`
-    SELECT bc.id, bc.beneficio_id, b.nome, b.categoria, bc.desde, bc.ate, bc.valor_colaborador
-      FROM erp_rh_beneficio_colab bc
-      JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
-     WHERE bc.colaborador_id=$1
-     ORDER BY (bc.ate IS NULL) DESC, bc.desde DESC`, [id]);
-  res.json(rhVeRemuneracao(req.user) ? rows : rows.map(r => { const { valor_colaborador, ...o } = r; return o; }));
-}));
-
 // ---- Dependentes ----
 app.post('/api/rh/colaboradores/:id/dependentes', requireAuth, requireEdit('rh'), h(async (req, res) => {
   if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'Dependentes são dado pessoal sensível.' });
@@ -3401,13 +2769,6 @@ const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, inteiroEmTexto, 
 // resolvido para SAIR da etapa — é isso que impede o processo de avançar com
 // buraco atrás.
 const RH_ETAPAS = [
-  // Triagem e entrevista vêm antes da oferta porque o processo começa antes
-  // dela — e sem essas duas etapas quem foi entrevistado e não foi escolhido
-  // não deixava rastro nenhum. Elas cobram CONTATO, não documento: guardar CPF
-  // e comprovante de quem talvez não seja contratado é exatamente o que o
-  // sistema evita na exclusão de candidato.
-  { cod: 'triagem',           nome: 'Triagem' },
-  { cod: 'entrevista',        nome: 'Entrevista' },
   { cod: 'carta_oferta',      nome: 'Carta Oferta' },
   { cod: 'documentacao',      nome: 'Documentação' },
   { cod: 'exame_admissional', nome: 'Exame admissional' },
@@ -3453,19 +2814,6 @@ function rhDadosContratoFaltando(adm, colab, mapa) {
 // O que falta para sair da etapa atual. Devolve lista vazia quando está liberado.
 function rhPendencias(adm, colab, checklist, mapa) {
   switch (adm.etapa) {
-    // Sem contato não há como chamar ninguém para entrevista — é a única coisa
-    // que a triagem realmente precisa ter.
-    case 'triagem':
-      // A mensagem diz onde resolver, e o lugar tem de EXISTIR: mandava ir "na
-      // aba Contato", que fica na ficha do colaborador — e candidato não
-      // aparece em Colaboradores. Era uma exigência impossível de cumprir pela
-      // tela. Agora os campos estão no próprio card, e a frase aponta para lá.
-      return colab && (colab.celular || colab.email_pessoal || colab.email_corporativo)
-        ? [] : ['Informe o celular ou o e-mail do candidato no quadro “Contato do candidato”, aqui mesmo.'];
-    // A data da entrevista é o que transforma "vamos entrevistar" em registro.
-    // Sem ela, o card avança e ninguém sabe se a conversa aconteceu.
-    case 'entrevista':
-      return adm.entrevista_em ? [] : ['Registre a data da entrevista.'];
     case 'carta_oferta':
       return adm.oferta_aceita_em ? [] : ['A carta oferta ainda não foi registrada como aceita.'];
     case 'documentacao': {
@@ -3505,14 +2853,13 @@ function rhPendencias(adm, colab, checklist, mapa) {
 const RH_ADM_CAMPOS = ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'centro_custo',
   'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia',
   'regime', 'modelo_trabalho', 'salario_previsto', 'admissao_prevista', 'gestor_id', 'responsavel_id',
-  'vaga_id', 'entrevista_em', 'entrevista_notas',
   'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para', 'exame_realizado_em', 'exame_resultado',
   'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em', 'acessos_concluidos_em',
   'onboarding_iniciado_em', 'onboarding_concluido_em', 'observacao'];
-const RH_ADM_DATA = ['admissao_prevista', 'entrevista_em', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
+const RH_ADM_DATA = ['admissao_prevista', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
   'exame_realizado_em', 'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em',
   'acessos_concluidos_em', 'onboarding_iniciado_em', 'onboarding_concluido_em'];
-const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id', 'vaga_id',
+const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id',
   'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia'];
 
 // Carrega a admissão com o colaborador e o checklist já resolvidos — as três
@@ -3550,18 +2897,13 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
   // usam para filtrar — então o candidato fica fora dessas telas sem que
   // nenhuma delas precise saber o que é uma admissão.
   const abrirAdmissao = req.body.abrir_admissao !== false;
-  // O e-mail do candidato é o PESSOAL: o corporativo só existe depois da
-  // contratação, e era o que a tela pedia — por isso o contato chegava vazio e a
-  // triagem travava logo depois. O cadastro direto de quem já é funcionário
-  // continua gravando o corporativo.
   const ins = await query(
-    `INSERT INTO erp_colaboradores (name, cargo, tier, ativo, sexo, cpf, email_corporativo, email_pessoal, celular)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+    `INSERT INTO erp_colaboradores (name, cargo, tier, ativo, sexo, cpf, email_corporativo, celular)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
     [nome, sanitize(req.body.cargo) || null, ['A', 'B'].includes(req.body.tier) ? req.body.tier : 'B',
      !abrirAdmissao,
      ['M', 'F', 'O'].includes(req.body.sexo) ? req.body.sexo : null, cpf,
-     sanitize(req.body.email_corporativo) || null, sanitize(req.body.email_pessoal) || null,
-     rhFormatarTelefone(sanitize(req.body.celular)) || null]);
+     sanitize(req.body.email_corporativo) || null, rhFormatarTelefone(sanitize(req.body.celular)) || null]);
   const colabId = ins[0].id;
 
   // Abrir o processo de admissão junto é o caminho normal: quem cadastra uma
@@ -3571,30 +2913,18 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
   let admissaoId = null;
   if (abrirAdmissao) {
     const a = await query(
-      // `vaga_id` amarra o candidato à posição que o originou. É nulo quando
-      // alguém é cadastrado direto, sem vaga aberta — acontece, e forçar uma
-      // vaga fantasma só para ter o campo preenchido seria pior.
       `INSERT INTO erp_rh_admissoes (colaborador_id, cargo_pretendido, nivel_pretendido, departamento,
-         regime, modelo_trabalho, salario_previsto, admissao_prevista, vaga_id, responsavel_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING id`,
+         regime, modelo_trabalho, salario_previsto, admissao_prevista, responsavel_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id`,
       [colabId, sanitize(req.body.cargo) || null, sanitize(req.body.nivel) || null,
        sanitize(req.body.departamento) || null, sanitize(req.body.regime) || 'regular',
        sanitize(req.body.modelo_trabalho) || 'presencial',
        req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
-       isDate(req.body.admissao_prevista) ? req.body.admissao_prevista : null,
-       Number(req.body.vaga_id) > 0 ? Number(req.body.vaga_id) : null, req.user.id]);
+       isDate(req.body.admissao_prevista) ? req.body.admissao_prevista : null, req.user.id]);
     admissaoId = a[0].id;
-    // A primeira etapa sai de RH_ETAPAS, não escrita à mão: o card e o histórico
-    // têm de nascer na MESMA etapa, e o dia em que a primeira mudar — como
-    // acabou de acontecer, de carta_oferta para triagem — os dois mudam juntos.
-    await query('UPDATE erp_rh_admissoes SET etapa=$1 WHERE id=$2', [RH_ETAPAS[0].cod, admissaoId]);
     await query('INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, movido_por) VALUES ($1,NULL,$2,$3)',
-      [admissaoId, RH_ETAPAS[0].cod, req.user.id]);
+      [admissaoId, 'carta_oferta', req.user.id]);
   }
-  // Quem entra JÁ como funcionário entra na folha agora. Candidato não ganha
-  // fornecedor: pode não ser contratado, e fornecedor de quem nunca trabalhou
-  // é lixo em Contas a Pagar. O dele nasce quando o contrato for assinado.
-  if (!abrirAdmissao) await rhGarantirFornecedor(colabId, req.user.id);
   res.json({ ok: true, id: colabId, admissao_id: admissaoId });
 }));
 
@@ -3725,14 +3055,10 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
     if (!aberto.length) {
       const d = rhDatasExperiencia(String(adm.admissao_prevista).slice(0, 10));
       const v = await query(
-        // A matrícula sai do ID do colaborador aqui também: o vínculo que nasce
-        // da admissão é tão vínculo quanto o criado à mão, e deixar um dos dois
-        // caminhos sem matrícula é como o desligamento tinha duas portas e só
-        // uma arquivava.
-        `INSERT INTO erp_rh_vinculos (colaborador_id, matricula, tipo, admissao, cargo, nivel, departamento,
+        `INSERT INTO erp_rh_vinculos (colaborador_id, tipo, admissao, cargo, nivel, departamento,
             centro_custo, gestor_id, regime, modelo_trabalho, controle_ponto, experiencia_fim,
             prorrogacao_fim, salario, vr_dia, home_office_dia, created_by)
-         VALUES ($1,$1::text,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+         VALUES ($1,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
         [adm.colaborador_id, String(adm.admissao_prevista).slice(0, 10), adm.cargo_pretendido,
          adm.nivel_pretendido, adm.departamento, adm.centro_custo, adm.gestor_id,
          adm.regime, adm.modelo_trabalho, adm.modelo_trabalho !== 'externo' && adm.regime !== 'confianca',
@@ -3746,10 +3072,6 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
     // sistema. Nada é copiado: a ficha preenchida na Documentação é a mesma
     // linha, só deixa de estar escondida.
     await query('UPDATE erp_colaboradores SET ativo=true WHERE id=$1', [adm.colaborador_id]);
-    // Entrou na folha: ganha o fornecedor por onde o salário será lançado. É a
-    // SEGUNDA porta por onde alguém vira colaborador — deixar só a outra
-    // repetiria o erro do desligamento, em que uma das duas não arquivava.
-    await rhGarantirFornecedor(adm.colaborador_id, req.user.id);
   }
   res.json({ ok: true, etapa: destino, vinculo_id: vinculoId });
 }));
@@ -3798,47 +3120,6 @@ async function rhEhCandidato(colabId) {
   const a = await query(`SELECT 1 FROM erp_rh_admissoes WHERE colaborador_id=$1 AND situacao='concluida' LIMIT 1`, [colabId]);
   return !a.length;
 }
-
-// Histórico completo de um candidato na empresa: TODOS os processos que ele já
-// teve, não só o mais recente — quem tentou duas vagas em épocas diferentes
-// tem duas linhas aqui, cada uma com a vaga, até onde chegou e o motivo de ter
-// parado. Sem isso, reabrir "a vaga anterior" dependia de a pessoa lembrar o ID
-// do processo certo em vez de ver a lista.
-app.get('/api/rh/colaboradores/:id/candidaturas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
-  const id = Number(req.params.id);
-  const colab = (await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [id]))[0];
-  if (!colab) return res.status(404).json({ error: 'Não encontrado.' });
-
-  const admissoes = await query(`
-    SELECT a.id, a.etapa, a.situacao, a.cargo_pretendido, a.nivel_pretendido, a.departamento,
-           a.vaga_id, vg.cargo AS vaga_cargo, vg.departamento AS vaga_departamento,
-           a.admissao_prevista, a.created_at, a.encerrada_em, a.cancelamento_tipo,
-           a.cancelamento_motivo, a.vinculo_id, u.name AS responsavel_nome
-      FROM erp_rh_admissoes a
-      LEFT JOIN erp_rh_vagas vg ON vg.id = a.vaga_id
-      LEFT JOIN erp_users u ON u.id = a.responsavel_id
-     WHERE a.colaborador_id = $1
-     ORDER BY a.created_at DESC`, [id]);
-
-  // O passo a passo de cada processo, numa consulta só para todos eles — uma
-  // pessoa com quatro tentativas não vira quatro idas ao banco.
-  const ids = admissoes.map(a => a.id);
-  const hist = ids.length ? await query(`
-    SELECT h.admissao_id, h.de_etapa, h.para_etapa, h.observacao, h.movido_em, u.name AS usuario
-      FROM erp_rh_admissao_hist h
-      LEFT JOIN erp_users u ON u.id = h.movido_por
-     WHERE h.admissao_id = ANY($1::int[])
-     ORDER BY h.movido_em`, [ids]) : [];
-  const historicoPor = {};
-  hist.forEach(h => { (historicoPor[h.admissao_id] ||= []).push(h); });
-
-  const processos = admissoes.map(a => {
-    const mot = rhMotivoEncerrar(a.cancelamento_tipo);
-    return { ...a, motivo_nome: mot ? mot.nome : null, parte: mot ? mot.parte : null,
-             historico: historicoPor[a.id] || [] };
-  });
-  res.json({ colaborador: colab, processos });
-}));
 
 app.post('/api/rh/admissoes/:id/encerrar', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const id = Number(req.params.id);
@@ -4290,12 +3571,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
            v.id AS vinculo_id, v.admissao, v.desligamento, v.departamento, v.cargo, v.nivel,
            v.modelo_trabalho, v.regime, v.tipo, v.salario, v.periculosidade_pct,
            v.vr_dia, v.home_office_dia,
-           v.experiencia_fim, v.prorrogacao_fim,
-           -- Soma do catálogo de benefícios em que a pessoa está inscrita hoje.
-           -- Junto com vr_dia/home_office_dia, é o que compõe "Benefícios/mês".
-           (SELECT COALESCE(sum(b.custo_empresa), 0) FROM erp_rh_beneficio_colab bc
-              JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
-             WHERE bc.colaborador_id = c.id AND bc.ate IS NULL AND b.ativo = true) AS beneficios_catalogo
+           v.experiencia_fim, v.prorrogacao_fim
       FROM erp_colaboradores c ${RH_SQL_VINCULO_ATUAL}
      WHERE c.arquivado_em IS NULL`);
 
@@ -4360,10 +3636,8 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   const periculosidade = comVinculo.reduce((s, r) =>
     s + Number(r.salario || 0) * (Number(r.periculosidade_pct || 0) / 100), 0);
   // VR e ajuda de custo são por DIA trabalhado: 22 dias úteis é a média usada
-  // em folha. É estimativa, e a tela diz isso. O catálogo de benefícios entra
-  // pelo valor mensal fixo de cada um — não tem "por dia trabalhado".
-  const beneficios = comVinculo.reduce((s, r) =>
-    s + Number(r.vr_dia || 0) * 22 + Number(r.home_office_dia || 0) * 22 + Number(r.beneficios_catalogo || 0), 0);
+  // em folha. É estimativa, e a tela diz isso.
+  const beneficios = comVinculo.reduce((s, r) => s + Number(r.vr_dia || 0) * 22 + Number(r.home_office_dia || 0) * 22, 0);
   const porDepto = {};
   comVinculo.forEach(r => {
     const k = r.departamento || '— não informado —';
@@ -4378,12 +3652,6 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
            a.cancelamento_tipo, a.encerrada_em
       FROM erp_rh_admissoes a`);
   const emAndamento = adms.filter(a => a.situacao === 'andamento');
-  // Quem ainda está em Triagem ou Entrevista pode nunca ser contratado — não é
-  // gente "a caminho de virar colaborador", é candidato sendo avaliado. O card
-  // de Headcount conta só quem já aceitou a proposta (chegou em Documentação
-  // ou adiante); o funil inteiro, da Triagem em diante, continua em
-  // recrutamento.em_andamento — as duas coisas não são a mesma pergunta.
-  const emFormalizacao = emAndamento.filter(a => rhEtapaIdx(a.etapa) >= rhEtapaIdx('documentacao'));
   const concluidas = adms.filter(a => a.situacao === 'concluida');
   const canceladas = adms.filter(a => a.situacao === 'cancelada');
   // Quem encerrou muda o diagnóstico: perder candidatos é problema de proposta,
@@ -4400,35 +3668,6 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   // Tempo de admissão: da abertura do processo até o contrato assinado.
   const tempos = adms.filter(a => a.contrato_assinado_em)
     .map(a => (Date.parse(String(a.contrato_assinado_em).slice(0, 10)) - Date.parse(a.created_at)) / 86400000)
-    .filter(x => isFinite(x) && x >= 0);
-
-  // ---------- vagas ----------
-  // Recrutamento não é só sobre quem está sendo avaliado — é também sobre a
-  // POSIÇÃO em si: quantas estão abertas, quanto tempo elas levam para fechar,
-  // e quais estão paradas sem ninguém sequer olhando. Sem isso, "Recrutamento"
-  // só respondia perguntas sobre candidatos.
-  const vagasRows = await query(`${RH_SQL_VAGAS} ORDER BY v.aberta_em`);
-  const vagasAbertas = vagasRows.filter(v => v.situacao === 'aberta');
-  const vagasPausadas = vagasRows.filter(v => v.situacao === 'pausada');
-  // Uma vaga de 3 posições com 1 contratado ainda tem 2 em aberto — a soma é
-  // por POSIÇÃO, não por vaga, que é a unidade que o RH realmente precisa
-  // preencher.
-  const posicoesAbertas = vagasAbertas.reduce((s, v) => s + Math.max(0, Number(v.posicoes) - v.contratados), 0);
-  // Parada é a vaga ABERTA sem NENHUM candidato há um tempo — é a que ninguém
-  // está sequer avaliando, diferente da que só está demorando a fechar.
-  const DIAS_VAGA_PARADA = 15;
-  const vagasParadas = vagasAbertas.filter(v =>
-    v.candidatos === 0 && String(v.aberta_em).slice(0, 10) <= rhSomaDiasISO(hoje, -DIAS_VAGA_PARADA));
-  // Tempo até preencher: da ABERTURA DA VAGA ao contrato assinado — diferente
-  // do "tempo médio de admissão" logo abaixo, que conta a partir do processo
-  // do CANDIDATO e existe mesmo para quem entrou sem vaga nenhuma.
-  const preenchimentos = await query(`
-    SELECT a.contrato_assinado_em, v.aberta_em
-      FROM erp_rh_admissoes a
-      JOIN erp_rh_vagas v ON v.id = a.vaga_id
-     WHERE a.situacao = 'concluida' AND a.contrato_assinado_em IS NOT NULL`);
-  const temposVaga = preenchimentos
-    .map(p => (Date.parse(String(p.contrato_assinado_em).slice(0, 10)) - Date.parse(String(p.aberta_em).slice(0, 10))) / 86400000)
     .filter(x => isFinite(x) && x >= 0);
 
   // ---------- desenvolvimento ----------
@@ -4486,16 +3725,6 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
        AND NOT EXISTS (SELECT 1 FROM erp_attachments a
                         WHERE a.entity_type='rh_doc' AND a.entity_id=c.id AND a.doc_tipo='contrato_assinado')`);
 
-  // Colaborador ativo sem FORNECEDOR não tem por onde receber: a folha é
-  // lançada em Contas a Pagar e a pessoa aparece lá como fornecedor. Pior, a
-  // aba Financeiro dele mostra R$ 0,00 desde a admissão — e parece certo.
-  // Isso ficou meses invisível porque nada olhava para o estado; agora olha.
-  const semFornecedor = await query(`
-    SELECT c.id, c.name FROM erp_colaboradores c
-     WHERE ${RH_SQL_COLAB_ATIVO}
-       AND NOT EXISTS (SELECT 1 FROM erp_suppliers s WHERE s.colaborador_id = c.id)
-     ORDER BY c.name`);
-
   res.json({
     hoje,
     cobertura: {
@@ -4503,23 +3732,14 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
       com_vinculo: comVinculo.length,
       sem_vinculo: semVinculo.length,
       sem_vinculo_nomes: semVinculo.slice(0, 12).map(r => r.name),
-      sem_fornecedor: semFornecedor.length,
-      sem_fornecedor_nomes: semFornecedor.slice(0, 12).map(r => r.name),
       com_nascimento: ativos.filter(r => r.data_nascimento).length,
       com_sexo: ativos.filter(r => r.sexo).length,
       com_salario: comVinculo.filter(r => r.salario != null).length
     },
     headcount: {
       ativos: ativos.length,
-      // A MESMA condição de Colaboradores > Arquivados (v.id IS NOT NULL): um
-      // candidato cuja candidatura foi encerrada também ganha arquivado_em,
-      // mas nunca foi colaborador. Contar os dois juntos aqui reabriria o
-      // mesmo furo que a lista já corrigiu — só que escondido num número.
-      arquivados: (await query(
-        `SELECT count(*)::int AS n FROM erp_colaboradores c
-          WHERE c.arquivado_em IS NOT NULL
-            AND EXISTS (SELECT 1 FROM erp_rh_vinculos v WHERE v.colaborador_id = c.id)`))[0].n,
-      candidatos: emFormalizacao.length,
+      arquivados: (await query('SELECT count(*)::int AS n FROM erp_colaboradores WHERE arquivado_em IS NOT NULL'))[0].n,
+      candidatos: emAndamento.length,
       por_departamento: contarPor(comVinculo, 'departamento'),
       por_cargo: contarPor(comVinculo, 'cargo'),
       por_modelo: contarPor(comVinculo, 'modelo_trabalho'),
@@ -4529,15 +3749,6 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
       movimentacao: mov.map(m => ({ mes: m.mes, admissoes: Number(m.admissoes), desligamentos: Number(m.desligamentos) }))
     },
     recrutamento: {
-      vagas: {
-        abertas: vagasAbertas.length,
-        pausadas: vagasPausadas.length,
-        posicoes_abertas: posicoesAbertas,
-        paradas: vagasParadas.length,
-        paradas_nomes: vagasParadas.map(v => v.cargo),
-        tempo_medio_preenchimento_dias: temposVaga.length
-          ? Math.round(temposVaga.reduce((a, b) => a + b, 0) / temposVaga.length) : null
-      },
       em_andamento: emAndamento.length,
       por_etapa: contarPor(emAndamento, 'etapa'),
       concluidas_12m: concluidas.length,
@@ -4714,11 +3925,7 @@ function rhCustoDoVinculo(v, cfg, nDependentes) {
   const terceiros = r2(baseEncargos * n(cfg.terceiros_pct) / 100);
 
   // Benefícios não são encargo e não entram na base — são custo direto.
-  // `beneficios_catalogo` (quando o chamador o preenche) é a soma do que a
-  // pessoa recebe do catálogo de Benefícios — não tem histórico de vigência
-  // como salário e vr_dia, então só entra na foto de HOJE, nunca em meses
-  // passados calculados por `rhFinanceiroDoVinculo`.
-  const beneficios = r2((n(v.vr_dia) + n(v.home_office_dia)) * 22 + n(v.beneficios_catalogo));
+  const beneficios = r2((n(v.vr_dia) + n(v.home_office_dia)) * 22);
 
   const custoMensal = r2(bruto + ferias + terco + decimo + fgts + inssPatronal + rat + terceiros + beneficios);
 
@@ -4797,35 +4004,12 @@ function rhMetricasVinculo(v) {
   const dias = Math.max(0, dia(ate) - dia(adm)) + (saida ? 1 : 0);
   const emExperiencia = !!(termoISO && ate <= termoISO);
 
-  // O aviso prévio sai do MOTIVO, lido de RH_RESCISAO_MOTIVOS — a mesma tabela
-  // que o quadro comparativo usa.
-  //
-  // Eu tinha exibido o proporcional da Lei 12.506 direto, e num contrato de
-  // experiência encerrado no termo isso mostrava "aviso prévio devido: 30 dias"
-  // ao lado de um comparativo que dizia zero, na mesma ficha. Aviso prévio é
-  // instituto do contrato por prazo INDETERMINADO: no contrato a termo que
-  // chega ao fim não há aviso, e na rescisão antecipada o que existe é o art.
-  // 479, não aviso. Terceira vez que recalcular o que já existia produziu
-  // contradição — a regra mora num lugar só, e este código lê de lá.
-  const mot = saida ? RH_RESCISAO_MOTIVOS.find(m => m.cod === v.desligamento_tipo) : null;
-  const base = rhAvisoDias(adm, ate);
-  // Contrato ainda a termo não tem aviso a projetar: o que importa nele é o
-  // termo, e o aviso só passa a existir quando vira prazo indeterminado.
-  const avisoVale = saida ? !!(mot && mot.aviso !== 0) : !emExperiencia;
-
   return {
     admissao: adm, saida, referencia: ate, em_curso: !saida,
     dias, anos_completos: rhAnosDeCasa(adm, ate),
-    aviso_aplicavel: avisoVale,
-    // Proporcional cheio da Lei 12.506, antes da fração do motivo.
-    aviso_base_dias: base,
-    // O devido de fato: integral, metade no acordo, 30 dias fixos quando é o
-    // colaborador que deve à empresa (pedido de demissão não é proporcional).
-    aviso_dias: !avisoVale ? 0
-      : !mot ? base
-      : mot.aviso < 0 ? 30
-      : Math.round(base * mot.aviso),
-    aviso_de_quem: !avisoVale ? null : (mot && mot.aviso < 0 ? 'colaborador' : 'empresa'),
+    // Quanto a empresa deveria de aviso se o contrato acabasse na data de
+    // referência. No contrato aberto é a pergunta "e se for hoje?".
+    aviso_dias: rhAvisoDias(adm, ate),
     fase: emExperiencia ? (v.prorrogacao_fim && termoISO === String(v.prorrogacao_fim).slice(0, 10)
       && v.experiencia_fim && ate > String(v.experiencia_fim).slice(0, 10) ? 'prorrogacao' : 'experiencia') : 'efetivo',
     termo_experiencia: termoISO,
@@ -5357,17 +4541,10 @@ app.get('/api/rh/colaboradores/:id/ficha', requireAuth, requireViewAny(['rh']), 
       certificacoes_vencidas: treinos.filter(t => t.validade && String(t.validade).slice(0, 10) < hoje).length
     },
     // O custo completo (liquido, provisoes e encargos) vem de rhCustoDoVinculo,
-    // a MESMA funcao que a aba Vinculo usa -- os dois nao podem divergir. O
-    // catalogo de beneficios entra do mesmo jeito que entra la, senao os dois
-    // custos "iguais" divergiriam bem aqui.
+    // a MESMA funcao que a aba Vinculo usa -- os dois nao podem divergir.
     custo_mensal: verRemun && vinculoAtual && !vinculoAtual.desligamento
-      ? rhCustoDoVinculo({
-          ...vinculoAtual,
-          beneficios_catalogo: ((await query(
-            `SELECT COALESCE(sum(b.custo_empresa), 0) AS n FROM erp_rh_beneficio_colab bc
-               JOIN erp_rh_beneficios b ON b.id = bc.beneficio_id
-              WHERE bc.colaborador_id=$1 AND bc.ate IS NULL AND b.ativo = true`, [id]))[0] || {}).n || 0
-        }, await rhEncargos(), dependentes.filter(d => d.irrf).length)
+      ? rhCustoDoVinculo(vinculoAtual, await rhEncargos(),
+          dependentes.filter(d => d.irrf).length)
       : null
   };
 
