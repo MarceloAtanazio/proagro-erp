@@ -6319,3 +6319,35 @@ Medido na tela reproduzindo a estrutura real: os 8 técnicos de Campo viraram um
 nome completo em cada linha, e o diagrama inteiro (CEO, quatro coordenadores/gerentes, todo o resto)
 coube numa tela de notebook sem qualquer rolagem — a diferença contra a versão anterior é visível de
 cara.
+
+
+## 2026-09-21 — Sessão 128: o Fabrício estava desalinhado, não centralizado
+
+**Solicitação:** *"Acho que faltou só o Fabricio estar mais centralizado, já que ele é o topo da
+pirâmide."*
+
+### O que estava acontecendo
+
+O cartão de cada pessoa (`.rh-org-caixa`) era `display: flex` — um bloco. A célula da tabela que
+o envolve (`<li>` do diagrama) tem `text-align: center`, mas essa regra só centraliza conteúdo
+**inline**; um bloco flex ignora completamente. Passava despercebido em quase todo mundo porque
+cada subordinado costuma ser filho único na própria célula, do mesmo tamanho do cartão — não
+sobra espaço para a diferença aparecer. Só ficava visível em quem tem uma fileira larga de filhos
+embaixo, como o Fabrício: a célula dele acompanha a largura de toda aquela fileira, e o cartão,
+por ser bloco, ficava grudado na borda esquerda em vez de centralizado por cima.
+
+### O ajuste
+
+Uma linha: `.rh-org-caixa` passa de `display: flex` para `display: inline-flex`. Vira inline-level,
+o `text-align: center` do `<li>` passa a valer, e todo cartão que tem filhos — não só o do topo —
+fica centralizado por cima da própria fileira, que é o comportamento certo de um organograma
+clássico.
+
+### Verificação
+
+Adicionei uma asserção em `verifica-organograma.js` guardando o `inline-flex` (evita reintroduzir
+o bug por engano). As vinte e uma suítes passam. Testado no navegador reproduzindo a estrutura
+real: o Fabrício aparece centralizado acima dos quatro diretos, e os demais níveis do diagrama
+continuam corretos.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
