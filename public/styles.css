@@ -432,6 +432,21 @@ tfoot td { padding: 11px 14px; font-weight: 700; border-top: 2px solid var(--lin
 .check-chip { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; cursor:pointer; font-size:13.5px; background:#fff; }
 .check-chip input { width:auto; margin:0; }
 
+/* Inscrever vários de uma vez: lista com checkbox, em vez de um select por
+   pessoa. Quem já está inscrito continua na lista (não some), só travado. */
+.rh-check-lista { max-height: 320px; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: 8px; }
+.rh-check-linha { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  cursor: pointer; font-size: 13.5px; border-bottom: 1px solid var(--line); }
+.rh-check-linha:last-child { border-bottom: none; }
+.rh-check-linha:hover { background: var(--verde-050, #EAF5EC); }
+.rh-check-linha input { width: auto; margin: 0; flex: 0 0 auto; }
+.rh-check-nome { flex: 1; }
+.rh-check-nome small { color: var(--muted); font-weight: 400; }
+.rh-check-linha.rh-check-travado { cursor: default; opacity: .6; }
+.rh-check-linha.rh-check-travado:hover { background: none; }
+.rh-check-linha .badge { flex: 0 0 auto; }
+
 /* ---- Etapa Transporte: cartões selecionáveis ---- */
 .via-transport-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(118px, 1fr)); gap:10px; margin-bottom:16px; }
 .via-transport-tile {

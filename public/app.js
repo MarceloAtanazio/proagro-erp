@@ -11254,23 +11254,30 @@ async function rhInscritosBeneficio(beneficioId, nome) {
     const inscritos = await api('/api/rh/beneficios/' + beneficioId + '/colaboradores');
     const emVigor = inscritos.filter(i => !i.ate);
     const verValor = inscritos.some(i => 'valor_colaborador' in i);
+    const ed = canEditPage('rh');
     openModal(`Inscritos em ${nome}`, `
-      ${canEditPage('rh') ? '<div class="rh-acoes"><button class="btn sm primary" id="rh-inscrever">+ Inscrever colaborador</button></div>' : ''}
+      ${ed ? '<div class="rh-acoes"><button class="btn sm primary" id="rh-inscrever">+ Inscrever colaboradores</button></div>' : ''}
       ${inscritos.length ? `<div class="table-wrap"><table class="tbl-rh-dep">
         <thead><tr><th>Colaborador</th><th>Desde</th><th>Até</th>
-          ${verValor ? '<th>Desconto</th>' : ''}<th></th></tr></thead>
+          ${verValor ? '<th>Desconto</th>' : ''}<th>Cadastro no fornecedor</th><th></th></tr></thead>
         <tbody>${inscritos.map(i => `<tr>
           <td>${esc(i.colaborador_nome)}</td>
           <td class="venc-cell">${rhData(i.desde)}</td>
           <td class="venc-cell">${i.ate ? rhData(i.ate) : '<span class="badge ok">em vigor</span>'}</td>
           ${verValor ? `<td>${i.valor_colaborador != null ? brl(Number(i.valor_colaborador)) : '—'}</td>` : ''}
-          <td>${!i.ate ? `<button class="btn-ic perigo" data-encerrar-adesao="${i.id}" title="Encerrar" aria-label="Encerrar">✕</button>` : ''}</td>
+          <td>${i.pendente ? '<span class="badge warn">Pendente</span>' : '<span class="badge ok">Confirmado</span>'}</td>
+          <td class="actions">
+            ${ed ? `<button class="btn-ic" data-editar-adesao="${i.id}" title="Editar" aria-label="Editar">✎</button>` : ''}
+            ${ed && !i.ate ? `<button class="btn-ic perigo" data-encerrar-adesao="${i.id}" title="Encerrar" aria-label="Encerrar">✕</button>` : ''}
+          </td>
         </tr>`).join('')}</tbody>
       </table></div>` : '<div class="empty">Ninguém inscrito ainda.</div>'}`,
       [{ label: 'Fechar', onClick: closeModal }], { wide: true });
 
     const bi = $('#rh-inscrever');
     if (bi) bi.onclick = () => rhFormInscrever(beneficioId, emVigor.map(i => i.colaborador_id), carregar);
+    $('#modal-body').querySelectorAll('[data-editar-adesao]').forEach(b => b.onclick = () =>
+      rhFormEditarAdesao(inscritos.find(i => String(i.id) === b.dataset.editarAdesao), carregar));
     $('#modal-body').querySelectorAll('[data-encerrar-adesao]').forEach(b => b.onclick = async () => {
       if (!confirm('Encerrar esta inscrição hoje?')) return;
       try { await api('/api/rh/beneficio_colab/' + b.dataset.encerrarAdesao + '/encerrar', { method: 'POST', body: {} });
@@ -11281,23 +11288,79 @@ async function rhInscritosBeneficio(beneficioId, nome) {
   await carregar();
 }
 
+// Editar uma adesão já existente — corrigir a data (ela nasce atrelada à
+// admissão, mas pode ter sido cadastrada errada, como aconteceu na prática:
+// "desde" saindo igual a "hoje" em vez da entrada de verdade da pessoa),
+// reabrir/fechar, e marcar se o cadastro na plataforma do fornecedor já foi
+// feito ou ainda está pendente.
+function rhFormEditarAdesao(a, aoSalvar) {
+  if (!a) return;
+  const temValor = 'valor_colaborador' in a;
+  openModal(`Editar adesão — ${a.colaborador_nome}`, `
+    <div class="form-row">
+      ${fld('ea-desde', 'Desde', 'date', String(a.desde).slice(0, 10))}
+      ${fld('ea-ate', 'Até (deixe vazio para "em vigor")', 'date', a.ate ? String(a.ate).slice(0, 10) : '')}
+    </div>
+    ${temValor ? fld('ea-valor', 'Desconto para este colaborador', 'number', a.valor_colaborador ?? '', 'min="0" step="0.01" placeholder="usa o valor do catálogo"') : ''}
+    ${fld('ea-obs', 'Observação', 'text', a.observacao || '')}
+    <label class="check-chip"><input type="checkbox" id="ea-pendente" ${a.pendente ? 'checked' : ''}>
+      Ainda falta cadastrar na plataforma do fornecedor
+      <span style="color:var(--muted);font-weight:400">— desmarque quando confirmar lá fora.</span></label>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        const body = {
+          desde: $('#ea-desde').value, ate: $('#ea-ate').value,
+          observacao: $('#ea-obs').value, pendente: $('#ea-pendente').checked
+        };
+        const ev = $('#ea-valor'); if (ev) body.valor_colaborador = ev.value;
+        try {
+          await api('/api/rh/beneficio_colab/' + a.id, { method: 'PUT', body });
+          closeModal(); toast('Adesão atualizada.'); aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}]);
+}
+
+// Inscrever vários de uma vez: lista com checkbox em vez de um select por
+// pessoa. Quem já está inscrito aparece na lista (não some) mas TRAVADO — dá
+// pra ver o time inteiro de uma olhada, sem se perguntar "cadê fulano". Cada
+// um entra com a PRÓPRIA data de admissão (não uma data única do lote).
 async function rhFormInscrever(beneficioId, jaInscritos, aoSalvar) {
   const todos = await api('/api/rh/colaboradores').catch(() => []);
-  const disponiveis = todos.filter(p => p.ativo && !jaInscritos.includes(p.id));
-  openModal('Inscrever colaborador', disponiveis.length ? `
-    ${fldSel('is-colaborador', 'Colaborador', disponiveis.map(p => ({ v: p.id, t: p.name })), '')}
-    ${fld('is-valor', 'Desconto para este colaborador (opcional)', 'number', '', 'min="0" step="0.01" placeholder="usa o valor do catálogo"')}
-    ${fld('is-obs', 'Observação', 'text', '')}`
-    : '<div class="empty">Todo mundo com vínculo ativo já está inscrito neste benefício.</div>',
-    disponiveis.length ? [{ label: 'Cancelar', onClick: closeModal },
+  const elegiveis = todos.filter(p => p.ativo && !p.desligamento && p.admissao)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!elegiveis.length) {
+    openModal('Inscrever colaboradores', '<div class="empty">Nenhum colaborador com vínculo ativo.</div>',
+      [{ label: 'Fechar', onClick: closeModal }]);
+    return;
+  }
+  openModal('Inscrever colaboradores', `
+    <div class="rh-nota">Cada pessoa entra com a própria data de admissão. Quem já está inscrito
+      aparece desmarcado e travado.</div>
+    <div class="rh-check-lista">${elegiveis.map(p => {
+      const ja = jaInscritos.includes(p.id);
+      return `<label class="rh-check-linha ${ja ? 'rh-check-travado' : ''}">
+        <input type="checkbox" data-colab="${p.id}" ${ja ? 'checked disabled' : ''}>
+        <span class="rh-check-nome">${esc(p.name)}${p.cargo ? ` <small>${esc(p.cargo)}</small>` : ''}</span>
+        ${ja ? '<span class="badge ok">já inscrito</span>' : ''}
+      </label>`;
+    }).join('')}</div>
+    <div class="form-row" style="margin-top:14px">
+      ${fld('is-valor', 'Desconto (opcional, vale pro lote inteiro)', 'number', '', 'min="0" step="0.01" placeholder="usa o valor do catálogo"')}
+      ${fld('is-obs', 'Observação (opcional, vale pro lote inteiro)', 'text', '')}
+    </div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Inscrever', cls: 'primary', onClick: async () => {
+        const ids = [...document.querySelectorAll('#modal-body [data-colab]:not(:disabled):checked')]
+          .map(el => Number(el.dataset.colab));
+        if (!ids.length) return modalError('Selecione ao menos um colaborador.');
         try {
-          await api('/api/rh/beneficios/' + beneficioId + '/colaboradores', { method: 'POST', body: {
-            colaborador_id: Number($('#is-colaborador').value),
-            valor_colaborador: $('#is-valor').value || undefined, observacao: $('#is-obs').value } });
-          closeModal(); toast('Inscrito(a).'); aoSalvar();
+          const r = await api('/api/rh/beneficios/' + beneficioId + '/colaboradores/bulk', { method: 'POST', body: {
+            colaborador_ids: ids, valor_colaborador: $('#is-valor').value || undefined, observacao: $('#is-obs').value } });
+          closeModal();
+          toast(r.inscritos === 1 ? '1 colaborador inscrito.' : `${r.inscritos} colaboradores inscritos.`);
+          aoSalvar();
         } catch (e) { modalError(e.message); }
-     }}] : [{ label: 'Fechar', onClick: closeModal }]);
+     }}]);
 }
 
 // ---------------- Calculadora salarial ----------------

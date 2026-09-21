@@ -3390,13 +3390,23 @@ app.get('/api/rh/beneficios/:id/colaboradores', requireAuth, requireViewAny(['rh
   const id = Number(req.params.id);
   const rows = await query(`
     SELECT bc.id, bc.colaborador_id, c.name AS colaborador_nome, bc.desde, bc.ate,
-           bc.valor_colaborador, bc.observacao
+           bc.valor_colaborador, bc.observacao, bc.pendente
       FROM erp_rh_beneficio_colab bc
       JOIN erp_colaboradores c ON c.id = bc.colaborador_id
      WHERE bc.beneficio_id=$1
      ORDER BY (bc.ate IS NULL) DESC, bc.desde DESC`, [id]);
   res.json(rhVeRemuneracao(req.user) ? rows : rows.map(r => { const { valor_colaborador, ...o } = r; return o; }));
 }));
+
+// A data de início da adesão é atrelada à ENTRADA da pessoa na empresa —
+// inscrever alguém desde antes da admissão não faz sentido, e o padrão (sem
+// `desde` informado) é a própria admissão, não hoje: a pessoa pode estar
+// sendo inscrita num benefício que já tinha desde que ela chegou, só o
+// cadastro no ERP é que está sendo feito agora.
+async function rhVinculoAbertoDe(colabId) {
+  const r = await query('SELECT admissao FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL', [colabId]);
+  return r[0] ? String(r[0].admissao).slice(0, 10) : null;
+}
 
 app.post('/api/rh/beneficios/:id/colaboradores', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const beneficioId = Number(req.params.id);
@@ -3413,14 +3423,86 @@ app.post('/api/rh/beneficios/:id/colaboradores', requireAuth, requireEdit('rh'),
     [beneficioId, colabId]);
   if (ativa.length) return res.status(409).json({ error: `${colab.name} já está inscrito(a) neste benefício.` });
 
-  const desde = isDate(req.body.desde) ? req.body.desde : hojeISO();
+  const admissao = await rhVinculoAbertoDe(colabId);
+  const desde = isDate(req.body.desde) ? req.body.desde : (admissao || hojeISO());
+  if (admissao && desde < admissao) {
+    return res.status(400).json({ error: `A adesão não pode começar antes da admissão (${admissao}).` });
+  }
   const ins = await query(
-    `INSERT INTO erp_rh_beneficio_colab (beneficio_id, colaborador_id, desde, valor_colaborador, observacao, registrado_por)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    `INSERT INTO erp_rh_beneficio_colab (beneficio_id, colaborador_id, desde, valor_colaborador, observacao, pendente, registrado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
     [beneficioId, colabId, desde,
      req.body.valor_colaborador !== undefined && req.body.valor_colaborador !== '' ? Number(req.body.valor_colaborador) : null,
-     sanitize(req.body.observacao) || null, req.user.id]);
+     sanitize(req.body.observacao) || null, req.body.pendente !== false, req.user.id]);
   res.json({ ok: true, id: ins[0].id });
+}));
+
+// Inscrever vários de uma vez — pedido explícito pra não ter que abrir o
+// formulário pessoa por pessoa. Cada um usa a PRÓPRIA admissão como início
+// (não é uma data compartilhada do lote); quem já está inscrito é ignorado em
+// silêncio (a tela já os mostra desabilitados, então chegar aqui é só reenvio
+// de um clique duplo, não um erro do usuário).
+app.post('/api/rh/beneficios/:id/colaboradores/bulk', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const beneficioId = Number(req.params.id);
+  const beneficio = (await query('SELECT * FROM erp_rh_beneficios WHERE id=$1', [beneficioId]))[0];
+  if (!beneficio) return res.status(404).json({ error: 'Benefício não encontrado.' });
+  if (!beneficio.ativo) return res.status(400).json({ error: 'Este benefício está desativado — reative-o antes de inscrever alguém.' });
+  const ids = Array.isArray(req.body.colaborador_ids) ? [...new Set(req.body.colaborador_ids.map(Number).filter(Boolean))] : [];
+  if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um colaborador.' });
+
+  const valor = req.body.valor_colaborador !== undefined && req.body.valor_colaborador !== '' ? Number(req.body.valor_colaborador) : null;
+  const observacao = sanitize(req.body.observacao) || null;
+  const pendente = req.body.pendente !== false;
+
+  const inscritos = [], jaInscritos = [];
+  for (const colabId of ids) {
+    const ativa = await query(
+      'SELECT id FROM erp_rh_beneficio_colab WHERE beneficio_id=$1 AND colaborador_id=$2 AND ate IS NULL',
+      [beneficioId, colabId]);
+    if (ativa.length) { jaInscritos.push(colabId); continue; }
+    const admissao = await rhVinculoAbertoDe(colabId);
+    const ins = await query(
+      `INSERT INTO erp_rh_beneficio_colab (beneficio_id, colaborador_id, desde, valor_colaborador, observacao, pendente, registrado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [beneficioId, colabId, admissao || hojeISO(), valor, observacao, pendente, req.user.id]);
+    inscritos.push({ colaborador_id: colabId, id: ins[0].id });
+  }
+  res.json({ ok: true, inscritos: inscritos.length, ja_inscritos: jaInscritos.length });
+}));
+
+app.put('/api/rh/beneficio_colab/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const atual = (await query('SELECT * FROM erp_rh_beneficio_colab WHERE id=$1', [id]))[0];
+  if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada.' });
+
+  const desde = req.body.desde !== undefined ? (isDate(req.body.desde) ? req.body.desde : null) : String(atual.desde).slice(0, 10);
+  if (!desde) return res.status(400).json({ error: 'Informe a data de início.' });
+  const admissao = await rhVinculoAbertoDe(atual.colaborador_id);
+  if (admissao && desde < admissao) {
+    return res.status(400).json({ error: `O início não pode ser antes da admissão (${admissao}).` });
+  }
+  // ate: string vazia LIMPA (volta a ficar em vigor); undefined mantém; data válida define.
+  const ate = req.body.ate === '' || req.body.ate === null ? null
+    : req.body.ate !== undefined ? (isDate(req.body.ate) ? req.body.ate : atual.ate) : atual.ate;
+  if (ate && ate < desde) return res.status(400).json({ error: 'O fim não pode ser antes do início.' });
+
+  try {
+    await query(
+      `UPDATE erp_rh_beneficio_colab SET desde=$1, ate=$2, valor_colaborador=$3, observacao=$4, pendente=$5 WHERE id=$6`,
+      [desde, ate,
+       req.body.valor_colaborador !== undefined ? (req.body.valor_colaborador === '' ? null : Number(req.body.valor_colaborador)) : atual.valor_colaborador,
+       req.body.observacao !== undefined ? sanitize(req.body.observacao) || null : atual.observacao,
+       req.body.pendente !== undefined ? req.body.pendente === true : atual.pendente, id]);
+  } catch (e) {
+    // Reabrir (ate=null) enquanto já existe outra adesão em vigor da mesma
+    // pessoa no mesmo benefício esbarra no índice único — é exatamente o que
+    // ele existe para evitar, então vira mensagem clara, não erro 500.
+    if (String(e.message).includes('erp_rh_beneficio_colab_ativa_ux')) {
+      return res.status(409).json({ error: 'Já existe uma adesão em vigor desta pessoa neste benefício — encerre a outra antes.' });
+    }
+    throw e;
+  }
+  res.json({ ok: true });
 }));
 
 app.post('/api/rh/beneficio_colab/:id/encerrar', requireAuth, requireEdit('rh'), h(async (req, res) => {
@@ -5657,6 +5739,11 @@ app.post('/api/rh/colaboradores/:id/arquivar', requireAuth, requireEdit('rh'), h
         WHERE id=$8`,
       [dataSaida, tipo, sanitize(req.body.motivo) || null, aviso, avisoEm,
        sanitize(req.body.observacao) || null, req.user.id, aberto[0].id]);
+    // A saída da empresa é a saída do benefício também — sem isso, o TotalPass
+    // de alguém desligado continuaria "em vigor" no ERP pra sempre, contando
+    // no custo de pessoal de quem nem trabalha mais aqui.
+    await query(
+      'UPDATE erp_rh_beneficio_colab SET ate=$1 WHERE colaborador_id=$2 AND ate IS NULL', [dataSaida, id]);
   }
   await query(
     `UPDATE erp_colaboradores SET arquivado_em=now(), arquivado_por=$1, arquivado_motivo=$2, ativo=false WHERE id=$3`,

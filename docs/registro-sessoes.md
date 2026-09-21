@@ -6521,3 +6521,66 @@ mandando `periodicidade` de fato (antes nunca era enviada). 28 verificações, t
 Testado no navegador reproduzindo cards com e sem logo, ativo e desativado.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-21 — Sessão 133: adesão de benefício — editar, datas atreladas à entrada/saída, pendente e lote
+
+**Solicitação:** *"Nos beneficios cadastrado de a opção de editar o funcionario cadastrado, por
+exemplo esse da Adele coloque pra testar e ele registro somente a data de hoje. Quero que no
+registro a data esteja atrelada a de entrada e de saida da pessoa da empresa, mas quero que conste
+algo como pendente pois necessito fazer esses cadastros nas respectivas plataformas. Quero tambem
+poder adicionar varios de uma vez, não de uma lista suspensa e sim onde possa selecionar todo mundo
+que quero colocar, quem já tiver alocado pro beneficio aparece impossibilitdo de selecionar."*
+
+Antes de implementar, confirmei dois pontos com o Marcelo: (1) "pendente" é um status à parte —
+nasce pendente, ele marca como confirmado quando termina de cadastrar na plataforma do fornecedor
+(TotalPass, Flash etc.); (2) desligar alguém encerra automaticamente os benefícios em que estava
+inscrito, com a data da saída — mesmo padrão que desativar um benefício já fazia. As duas respostas
+foram sim.
+
+### Os três problemas, e o que faltava
+
+1. **Não dava pra editar** uma adesão já feita — só inscrever ou encerrar. O teste da Adele expôs
+   isso: sem campo de data no formulário de inscrever, o "desde" saía sempre igual a hoje.
+2. **A data não tinha relação com a admissão nem com o desligamento.** Inscrever alguém usava
+   "hoje" por padrão, e desligar a pessoa não mexia em nada nas adesões — um benefício continuaria
+   "em vigor" pra sempre no ERP, contando no custo de pessoal de quem nem trabalha mais aqui.
+3. **Inscrição era um por vez**, via `<select>` único que simplesmente OMITIA quem já estava
+   inscrito — sem dar pra ver o time inteiro numa lista só.
+
+### O ajuste
+
+**Editar.** Botão ✎ novo na listagem de inscritos, abre um modal com desde/até/desconto/observação
+e o checkbox de pendente. Endpoint `PUT /api/rh/beneficio_colab/:id`. "Até" vazio reabre a adesão —
+e se reabrir esbarrar no índice único (já existe outra em vigor da mesma pessoa no mesmo benefício),
+vira mensagem clara, não erro 500.
+
+**Data atrelada à entrada e à saída.** Inscrever (sozinho ou em lote) usa por padrão a **admissão**
+do vínculo aberto da pessoa, não mais "hoje" — e recusa `desde` anterior à admissão. Desligar a
+pessoa (`POST /.../arquivar`) agora encerra automaticamente (`ate = data da saída`) qualquer adesão
+em vigor dela, no mesmo espírito de quando um benefício inteiro é desativado.
+
+**Pendente.** Coluna nova (`erp_rh_beneficio_colab.pendente`, migration aditiva), nasce `true` —
+"fez a adesão aqui, falta cadastrar lá fora" — e vira `false` quando o RH confirma pelo modal de
+editar. Badge na listagem: amarelo "Pendente" / verde "Confirmado".
+
+**Lote.** `rhFormInscrever` virou uma lista com checkbox (não mais um select) — todo mundo com
+vínculo ativo aparece; quem já está inscrito vem **marcado e travado** (`checked disabled`), visível
+em vez de omitido, com uma etiqueta "já inscrito". Cada pessoa selecionada entra com a PRÓPRIA
+admissão — não uma data única do lote. Endpoint novo, `POST /.../colaboradores/bulk`: reenviar o
+lote com quem já está inscrito não falha, só ignora em silêncio (é o clique duplo, não um erro).
+
+### Verificação
+
+`verifica-beneficios-adesao.js`, com o app inteiro de pé: o "desde" sai da admissão (não de hoje) —
+exatamente o bug relatado; `desde` anterior à admissão é recusado, tanto ao inscrever quanto ao
+editar; editar funciona e grava pendente/observação; fechar e reabrir pelo PUT funciona, e o
+conflito de reabrir com outra adesão em vigor vira 409 com mensagem clara; o lote inscreve vários,
+cada um com a própria admissão, e reenviar o lote com gente repetida não quebra; desligar a pessoa
+encerra a adesão dela automaticamente na data da saída, sem afetar quem continua na casa. Depois,
+checagem estática confirmando a lista de checkbox (não mais select), o travamento de quem já está
+inscrito, o endpoint de lote, e a existência do modal de editar. 27 verificações, todas passando —
+mais as 62 das suítes anteriores de Benefícios/Custo/Organograma/Calculadora/Ficha PDF, sem
+regressão. Testado no navegador reproduzindo as três telas com dados de exemplo.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
