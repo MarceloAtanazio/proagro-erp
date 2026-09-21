@@ -8984,12 +8984,27 @@ let RH_ABA = 'painel';   // painel | pessoas | quadro | minutas
 // card simplesmente sumir, e não haveria onde responder "o que aconteceu com
 // aquele candidato?" — nem de onde reabrir o processo.
 let RH_QUADRO_VISTA = 'andamento';   // andamento | cancelada
+// '' = todas as vagas; 'sem' = só quem não tem vaga vinculada; ou o ID da vaga.
+// Fica em variável de módulo, como RH_QUADRO_VISTA, para sobreviver a um
+// re-render (abrir um card e voltar) sem perder o filtro que a pessoa escolheu.
+let RH_QUADRO_VAGA = '';
 
 async function rhQuadro(c) {
-  const d = await api('/api/rh/admissoes?situacao=' + RH_QUADRO_VISTA);
-  const cards = d.cards || [];
+  const [d, vagas] = await Promise.all([
+    api('/api/rh/admissoes?situacao=' + RH_QUADRO_VISTA),
+    api('/api/rh/vagas').catch(() => [])
+  ]);
+  const todosCards = d.cards || [];
   const n = d.contagem || { andamento: 0, cancelada: 0 };
   const encerrados = RH_QUADRO_VISTA === 'cancelada';
+
+  // Com 10 vagas abertas e 60 candidatos, cada coluna do kanban vira uma lista
+  // ilegível — o filtro existe para isolar "os candidatos desta vaga", que é a
+  // mesma pergunta que a tela de Vagas já responde com "Candidatos (N)".
+  const cards = RH_QUADRO_VAGA === '' ? todosCards
+    : RH_QUADRO_VAGA === 'sem' ? todosCards.filter(a => !a.vaga_id)
+    : todosCards.filter(a => String(a.vaga_id) === RH_QUADRO_VAGA);
+  const vagaAtual = vagas.find(v => String(v.id) === RH_QUADRO_VAGA);
 
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-quadro-topo">
@@ -8997,6 +9012,12 @@ async function rhQuadro(c) {
         ? 'Processos que <strong>não viraram contratação</strong>. A pessoa fica arquivada — pode ser reaberta numa vaga futura ou excluída de vez.'
         : 'Quem está aqui é <strong>candidato</strong>. Vira colaborador quando o contrato é assinado — até lá não aparece em Colaboradores, Viáticos nem Suprimentos.'}</span>
       <div class="spacer"></div>
+      <select id="rh-filtro-vaga">
+        <option value="">Todas as vagas</option>
+        ${vagas.map(v => `<option value="${v.id}" ${String(v.id) === RH_QUADRO_VAGA ? 'selected' : ''}>
+          ${esc(v.cargo)}${v.departamento ? ' · ' + esc(v.departamento) : ''}</option>`).join('')}
+        <option value="sem" ${RH_QUADRO_VAGA === 'sem' ? 'selected' : ''}>Sem vaga vinculada</option>
+      </select>
       <select id="rh-vista">
         <option value="andamento" ${encerrados ? '' : 'selected'}>Em andamento (${n.andamento || 0})</option>
         <option value="cancelada" ${encerrados ? 'selected' : ''}>Encerrados sem contratação (${n.cancelada || 0})</option>
@@ -9014,11 +9035,14 @@ async function rhQuadro(c) {
       </div>`;
     }).join('')}</div>
     ${cards.length ? '' : `<div class="rh-vazio">
-      <p><strong>Nenhuma admissão em andamento.</strong> O quadro acompanha a entrada de cada
+      <p><strong>${todosCards.length && RH_QUADRO_VAGA
+          ? `Nenhum candidato ${RH_QUADRO_VAGA === 'sem' ? 'sem vaga vinculada' : `da vaga ${esc(vagaAtual ? vagaAtual.cargo : '')}`} nesta vista.`
+          : 'Nenhuma admissão em andamento.'}</strong> O quadro acompanha a entrada de cada
       candidato, da carta oferta ao onboarding. Use <strong>+ Novo candidato</strong> para abrir um card.</p></div>`}`}`;
   rhLigarAbas();
   const b = $('#rh-novo-candidato'); if (b) b.onclick = rhFormNovoColaborador;
   $('#rh-vista').onchange = e => { RH_QUADRO_VISTA = e.target.value; renderRH(); };
+  $('#rh-filtro-vaga').onchange = e => { RH_QUADRO_VAGA = e.target.value; renderRH(); };
   c.querySelectorAll('[data-card]').forEach(x => x.onclick = () => rhAbrirCard(Number(x.dataset.card)));
   c.querySelectorAll('[data-reabrir]').forEach(x => x.onclick = () => rhReabrirProcesso(Number(x.dataset.reabrir), x.dataset.nome));
   c.querySelectorAll('[data-excluir-cand]').forEach(x => x.onclick = () =>

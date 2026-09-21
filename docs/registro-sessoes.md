@@ -5729,3 +5729,29 @@ por slot da minuta. As dezesseis suítes passam.
 Medido também na tela: no modal de 1040px os dois campos sozinhos viravam duas caixas de ~500px para um
 telefone e um e-mail. Com o teto de 320px o par fica com cara de formulário — 320x38 cada, lado a lado, a
 1800px de largura.
+
+## 2026-09-21 — Sessão 116: filtro por vaga no Quadro de admissão
+
+**Solicitação:** *"Aqui nessa tela é importante ter um filtro por vaga pelo menos, pra poder ver os
+candidatos pra determinada vaga. Senão quando tiver 10 vagas, e 60 candidatos vai ficar difícil."*
+
+### O que mudou
+
+O Quadro de admissão passou a buscar `/api/rh/vagas` junto com os cards e ganhou um segundo seletor, ao
+lado do de "Em andamento / Encerrados": **Todas as vagas**, cada vaga por nome (cargo · departamento) e
+**Sem vaga vinculada** — para quem entrou direto pelo "+ Novo candidato" sem passar por uma vaga aberta.
+
+Não precisou de mudança no servidor: `GET /api/rh/admissoes` já devolve `vaga_id` em cada card (vem de
+`a.*`), então o filtro é só um `.filter()` no que já chegava. A escolha fica em `RH_QUADRO_VAGA`, uma
+variável de módulo do mesmo jeito que `RH_QUADRO_VISTA` — sobrevive a abrir um card e voltar, sem resetar
+o filtro que a pessoa escolheu.
+
+### Verificação
+
+Estendi `verifica-triagem.js` com cinco asserções: o card trazendo `vaga_id` (ou nulo) para cada uma das
+três origens possíveis; a tela buscando `/api/rh/vagas` junto com os cards; o filtro guardando a escolha
+entre re-renders; e as três leituras que a tela precisa (todas, uma vaga específica, sem vaga). As
+dezesseis suítes continuam passando.
+
+Medido na tela com o `styles.css` real: os dois seletores cabem lado a lado a 1600px sem quebrar, e o
+"+ Novo candidato" continua na borda direita.
