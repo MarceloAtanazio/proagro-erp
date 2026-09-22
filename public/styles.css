@@ -1259,7 +1259,15 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 /* Barra acima do quadro: a regra do módulo (candidato ≠ colaborador) fica dita
    onde ela se aplica, e o botão de novo candidato mora junto dela. */
 .rh-quadro-topo { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
-.rh-quadro-dica { font-size: 12.5px; color: var(--ink-2); max-width: 620px; line-height: 1.5; }
+/* 620px espremia a dica em 3 linhas mesmo com a tela cheia de espaço livre à
+   direita (a página costuma ter bem mais que 1000px de miolo) — 1100 deixa o
+   texto respirar em 1-2 linhas na maioria das telas. */
+.rh-quadro-dica { font-size: 12.5px; color: var(--ink-2); max-width: 1100px; line-height: 1.5; }
+/* .spacer empurra os controles à direita da dica (Organograma, Quadro de
+   admissão) — só que nunca tinha flex:1 NESTE contexto (só em .toolbar e
+   .via-km-topo), então ficava um <div> vazio sem efeito nenhum: os controles
+   grudavam na dica em vez de irem pro canto direito, livre. */
+.rh-quadro-topo .spacer { flex: 1; }
 
 /* Selo ao lado do nome na ficha de quem ainda está em admissão. Em âmbar e não
    em vermelho: não é erro, é uma etapa do processo. */

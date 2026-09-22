@@ -6740,3 +6740,41 @@ Marcelo: "Carta Oferta → Entrevista", "Entrevista → Carta Oferta", "Triagem 
 Triagem" — uma linha por movimento, do mais recente pro mais antigo, legível de cima pra baixo.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-22 — Sessão 139: dica do topo das telas de RH ganha espaço, e o spacer do Organograma passa a valer
+
+**Solicitação:** *"Tanto nessa pagina de férias quanto nas outras os textos logo abaixo das abas
+estão muito concentrados a esqueda o que faz ter quebras e gerando varias linhas. Coloque mais a
+direita sem problemas, utilize todo o espaço livre."* (print de Férias com o texto quebrando em 3
+linhas e uma seta vermelha apontando pra uma área vazia enorme à direita).
+
+### Quanto sobrava, medido de verdade
+
+O texto de Férias precisa de ~1656px pra caber numa linha só — bem mais do que qualquer tela
+comporta com folga, então não fazia sentido mirar "sempre 1 linha". O que estava errado era o teto:
+`.rh-quadro-dica` tinha `max-width: 620px` fixo, forçando 3 linhas mesmo em telas com mais de
+1000px de miolo disponível — o texto nunca tinha chance de usar o espaço que sobrava.
+
+### Dois ajustes, achados juntos
+
+**A dica.** `max-width` de 620px para 1100px — o texto de Férias cai de 3 para 2 linhas, e o do
+Organograma cabe numa linha só, sem esticar a ponto de virar uma frase gigante e difícil de
+acompanhar visualmente (não é "sem limite", é "bem mais limite").
+
+**O spacer.** Ao medir, notei que o `<div class="spacer">` usado no Organograma e no Quadro de
+admissão pra empurrar os controles (toggle de vista, filtro) pro canto direito **nunca teve efeito
+nesse contexto** — a regra `.spacer { flex: 1 }` só existia para dois lugares bem específicos
+(`.toolbar` e `.via-km-topo`), então o spacer virava um `<div>` vazio, e os controles ficavam
+grudados na dica em vez de ocupar o espaço livre — o mesmo sintoma do relato, numa segunda tela.
+Corrigido junto: `.rh-quadro-topo .spacer { flex: 1; }`.
+
+### Verificação
+
+`verifica-dica-espaco.js`: confirma o novo `max-width` (1100px, sem sobrar o 620px antigo) e a regra
+nova do spacer. 3 verificações, todas passando — mais as 132 das suítes anteriores, sem regressão.
+Testado no navegador com as três variações reais: Férias (texto solto, sem spacer) cai de 3 pra 2
+linhas; Organograma (com spacer) cabe numa linha e os controles vão pro canto direito de verdade;
+Benefícios (botão logo após a dica, sem spacer) continua com o botão colado ao texto, como deve ser.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
