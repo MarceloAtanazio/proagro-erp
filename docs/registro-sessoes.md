@@ -6778,3 +6778,40 @@ linhas; Organograma (com spacer) cabe numa linha e os controles vão pro canto d
 Benefícios (botão logo após a dica, sem spacer) continua com o botão colado ao texto, como deve ser.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-22 — Sessão 140: vaga ganha descrição e onde foi divulgada
+
+**Solicitação:** *"Aqui em vagas eu queria colocar mais informações sobre a vaga, alguma coisa de
+descrição e onde (plataforma) que foi anunciada."*
+
+### O ajuste
+
+Duas colunas novas em `erp_rh_vagas` (migration aditiva): `descricao` (o texto do anúncio — o que o
+cargo faz, requisitos, benefícios) e `divulgada_em` (onde foi anunciada). `divulgada_em` é **texto
+livre, não catálogo** — uma vaga costuma sair em mais de uma plataforma ao mesmo tempo (ex.:
+"LinkedIn, Gupy, indicação"), e uma lista fechada obrigaria escolher só uma.
+
+Já existia um campo `observacao` na vaga, mas ele é nota INTERNA do RH sobre o processo — coisa
+bem diferente do texto que descreve a vaga em si. Os dois agora convivem, com rótulos que deixam
+isso claro no formulário: "Descrição da vaga" (textarea, o texto do anúncio) e "Observações
+internas" (input curto, "não aparece no anúncio").
+
+No card: onde foi divulgada aparece junto da linha de departamento/data ("Subscrição · aberta em
+22/09/2026 · via LinkedIn, Gupy, indicação"); a descrição ganha um parágrafo próprio, com fonte mais
+legível que a nota interna (que continua pequena e cinza) — cortado em 3 linhas
+(`-webkit-line-clamp`) pra um card com descrição longa não virar um mural; o texto inteiro mora no
+formulário de editar.
+
+### Verificação
+
+`verifica-vagas.js` (arquivo já existente, estendido): os dois campos são gravados e devolvidos na
+listagem (não são write-only); editar só a descrição não apaga onde foi divulgada
+(`rhMontarSet` só toca no que veio no corpo da requisição); os dois continuam opcionais — abrir uma
+vaga sem nenhum dos dois continua funcionando igual a antes. Checagem estática confirma os campos no
+formulário, o envio ao salvar, a exibição no card e o CSS do corte em 3 linhas com quebra de linha
+preservada. 34 verificações no arquivo, todas passando — mais as 143 das suítes anteriores, sem
+regressão. Testado no navegador reproduzindo um card completo (com descrição longa, divulgação em
+múltiplas plataformas e nota interna) ao lado de um card simples, e o formulário de editar.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

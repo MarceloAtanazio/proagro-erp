@@ -2891,7 +2891,7 @@ async function rhGarantirFornecedor(colabId, userId) {
 // sendo um quadro de pessoas.
 const RH_VAGA_SITUACOES = ['aberta', 'pausada', 'fechada'];
 const RH_VAGA_CAMPOS = ['cargo', 'nivel', 'departamento', 'posicoes', 'regime', 'modelo_trabalho',
-  'salario_previsto', 'observacao'];
+  'salario_previsto', 'observacao', 'descricao', 'divulgada_em'];
 
 // A contagem de candidatos vem junto com a lista: sem ela, "vaga aberta" não
 // diz se o processo está parado ou fervendo, que é a pergunta que se faz olhando
@@ -2928,13 +2928,14 @@ app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => 
   const pos = Number(req.body.posicoes);
   const ins = await query(
     `INSERT INTO erp_rh_vagas (cargo, nivel, departamento, posicoes, regime, modelo_trabalho,
-        salario_previsto, observacao, criado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        salario_previsto, observacao, descricao, divulgada_em, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [cargo, sanitize(req.body.nivel) || null, sanitize(req.body.departamento) || null,
      Number.isFinite(pos) && pos > 0 ? Math.round(pos) : 1,
      sanitize(req.body.regime) || 'regular', sanitize(req.body.modelo_trabalho) || 'presencial',
      req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
-     sanitize(req.body.observacao) || null, req.user.id]);
+     sanitize(req.body.observacao) || null, sanitize(req.body.descricao) || null,
+     sanitize(req.body.divulgada_em) || null, req.user.id]);
   res.json(ins[0]);
 }));
 

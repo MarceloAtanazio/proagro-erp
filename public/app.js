@@ -11501,7 +11501,8 @@ async function rhVagas(c) {
         <div class="rh-vaga-cab">
           <div>
             <b>${esc(rhTxt(v.cargo))}${v.nivel ? ' · ' + esc(rhRotulo(RH_NIVEIS, v.nivel)) : ''}</b>
-            <span>${esc(rhTxt(v.departamento))} · aberta em ${rhData(v.aberta_em)}</span>
+            <span>${esc(rhTxt(v.departamento))} · aberta em ${rhData(v.aberta_em)}${
+              v.divulgada_em ? ' · via ' + esc(v.divulgada_em) : ''}</span>
           </div>
           <span class="badge ${v.situacao === 'aberta' ? 'ok' : v.situacao === 'pausada' ? 'late' : ''}">${
             esc(rhRotulo(RH_VAGA_SIT, v.situacao))}</span>
@@ -11512,6 +11513,7 @@ async function rhVagas(c) {
           <div class="rh-tira" title="Candidatos desta vaga que já viraram colaborador"><span>Contratados</span><b>${v.contratados} de ${posicoes}</b></div>
           ${v.salario_previsto ? `<div class="rh-tira"><span>Salário previsto</span><b>${brl(Number(v.salario_previsto))}</b></div>` : ''}
         </div>
+        ${v.descricao ? `<p class="rh-vaga-desc">${esc(v.descricao)}</p>` : ''}
         ${v.observacao ? `<p class="rh-custo-nota">${esc(v.observacao)}</p>` : ''}
         ${v.situacao === 'fechada' && v.fechamento_motivo
           ? `<p class="rh-custo-nota">Fechada em ${rhData(v.fechada_em)} — ${esc(v.fechamento_motivo)}</p>` : ''}
@@ -11559,8 +11561,12 @@ function rhFormVaga(v) {
       ${fldSel('vg-regime', 'Regime', RH_REGIME, v.regime || 'regular')}
       ${fldSel('vg-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, v.modelo_trabalho || 'presencial')}
     </div>
-    ${fld('vg-salario_previsto', 'Salário previsto', 'number', v.salario_previsto || '', 'step="0.01" min="0"')}
-    ${fld('vg-observacao', 'Observações', 'text', v.observacao || '')}
+    <div class="form-row">
+      ${fld('vg-salario_previsto', 'Salário previsto', 'number', v.salario_previsto || '', 'step="0.01" min="0"')}
+      ${fld('vg-divulgada_em', 'Divulgada em', 'text', v.divulgada_em || '', 'placeholder="LinkedIn, Gupy, indicação..."')}
+    </div>
+    ${fldArea('vg-descricao', 'Descrição da vaga', v.descricao || '', 'rows="4" placeholder="O que o cargo faz, requisitos, benefícios — o texto do anúncio."')}
+    ${fld('vg-observacao', 'Observações internas', 'text', v.observacao || '', 'placeholder="Nota do RH sobre o processo — não aparece no anúncio."')}
     ${novo ? '' : `<div class="form-row">
       ${fldSel('vg-situacao', 'Situação', RH_VAGA_SIT, v.situacao || 'aberta')}
       ${fld('vg-fechamento_motivo', 'Motivo do fechamento', 'text', v.fechamento_motivo || '')}
@@ -11579,7 +11585,8 @@ function rhFormVaga(v) {
           cargo: $('#vg-cargo').value, nivel: $('#vg-nivel').value,
           departamento: $('#vg-departamento').value, posicoes: $('#vg-posicoes').value,
           regime: $('#vg-regime').value, modelo_trabalho: $('#vg-modelo_trabalho').value,
-          salario_previsto: $('#vg-salario_previsto').value, observacao: $('#vg-observacao').value
+          salario_previsto: $('#vg-salario_previsto').value, observacao: $('#vg-observacao').value,
+          descricao: $('#vg-descricao').value, divulgada_em: $('#vg-divulgada_em').value
         };
         if (!body.cargo) return modalError('Escolha o cargo da vaga.');
         if (!novo) { body.situacao = $('#vg-situacao').value; body.fechamento_motivo = $('#vg-fechamento_motivo').value; }
