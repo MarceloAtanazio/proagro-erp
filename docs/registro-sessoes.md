@@ -6887,3 +6887,54 @@ no navegador: o campo aparece logo após Departamento, com a nota explicando o m
 form quanto refletido no modal de detalhes.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-23 — Sessão 143: nova etapa "Avaliações" — prova técnica e psicotécnico, com laudo e histórico permanente
+
+**Solicitação:** *"Aqui em 'Quadro de admissão' quero criar mais uma etapa entre 'Triagem' e 'Entrevista'
+é uma etapa onde temos as provas técnicas e exames psicotécnicos, quero deixar registrado nessa etapa
+qual foram os resultados e anexar as avaliações e isso quero levar pra todas proximas etapas futuras e
+guardar no historico da pessoa se ela entrar ou nao na empresa."* Confirmado com o Marcelo: nome da
+etapa **"Avaliações"**, e os dois exames ficam **separados por tipo** — resultado e laudo próprios para
+a prova técnica e para o psicotécnico, sem misturar num campo só.
+
+### O que mudou
+
+Nova etapa `avaliacoes` entrou em `RH_ETAPAS`, entre Triagem e Entrevista — o funil passa de 8 para 9
+etapas. É **só registro**: `rhPendencias` devolve lista vazia pra ela, porque nem toda vaga pede os dois
+exames, e travar quem não tem prova técnica pra registrar seria burocracia sem propósito.
+
+Quatro colunas novas em `erp_rh_admissoes` — `avaliacao_tecnica_em`, `avaliacao_tecnica_resultado`,
+`psicotecnico_em`, `psicotecnico_resultado` — editáveis no card enquanto o processo está na etapa (bloco
+"Marcos desta etapa", igual a qualquer outra etapa). O que muda é o que acontece DEPOIS: como o requisito
+era "levar pra todas as próximas etapas", o card ganhou uma seção "Avaliações" que continua aparecendo em
+TODA etapa posterior (idx atual ≥ idx de Avaliações), agora como resumo somente-leitura dos 4 campos.
+
+Os laudos (PDF/imagem/etc.) usam a mesma máquina de anexos dos outros dossiês do sistema, com um
+`entity_type` novo: `rh_admissao_doc`. A escolha deliberada foi prender o anexo ao **processo**
+(`erp_rh_admissoes`), não ao colaborador — porque a mesma pessoa pode abrir mais de uma candidatura ao
+longo do tempo, e cada laudo pertence à avaliação DAQUELE processo. Como `erp_rh_admissoes` nunca é
+apagada quando um processo é encerrado (só muda `situacao`/`cancelamento_*`), os resultados e os laudos
+sobrevivem no histórico independente de a pessoa ter sido contratada ou não — sem nenhum código extra
+pra isso, é so' consequência de nunca deletar a linha.
+
+Novo `entity_type` de anexo significa, de novo, o mesmo ponto sensível de sempre: a CHECK constraint de
+`erp_attachments.entity_type` no banco tem de saber do tipo novo, senão é o incidente de 3 dias que já
+aconteceu duas vezes (`rh_doc`, `viatico_km`) se repetindo. Migração nova (`2026-09-23-rh-etapa-
+avaliacoes.sql`) recria a constraint com a lista completa, no mesmo padrão ADITIVA de sempre, mais um
+bloco `DO $$` conferindo o resultado.
+
+### Verificação
+
+`verifica-avaliacoes-etapa.js` (novo, 18 verificações): a etapa existe e fica exatamente entre Triagem e
+Entrevista; não bloqueia avanço mesmo sem nenhum campo preenchido; os 4 campos persistem separados
+(técnica não pisa em psicotécnico); upload/listagem/exclusão de laudo funcionam contra `rh_admissao_doc`;
+`doc_tipo` fora da lista cai em "outro" sem quebrar; upload contra um processo inexistente dá 404, não
+500 silencioso. `verifica-attach-tipos.js` (repontado pra ler a nova migração, que agora é a autoridade):
+confirma que `rh_admissao_doc` está dos dois lados — no `ATTACH_TYPES` do código e na CHECK constraint do
+banco. `verifica-rh-admissao.js` (ajustado: eram 8 etapas, agora 9) e o resto da suíte de RH — 12 arquivos,
+mais de 130 verificações — sem regressão. Testado no navegador (mock com CSS real): o card na etapa
+Avaliações mostra os 4 campos editáveis mais a lista de laudos; numa etapa futura (Entrevista em diante)
+os mesmos 4 campos aparecem como resumo, junto com os laudos — sem reabrir a edição.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

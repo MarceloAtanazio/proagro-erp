@@ -883,7 +883,8 @@ const ATTACH_TYPES = {
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos',
   viatico_km: 'viaticos',   // fotos do odômetro; qual é qual vai em doc_tipo
   contrato: 'contratos',
-  rh_doc: 'rh'   // dossiê do colaborador; o tipo do documento vai em doc_tipo
+  rh_doc: 'rh',   // dossiê do colaborador; o tipo do documento vai em doc_tipo
+  rh_admissao_doc: 'rh'   // laudo da avaliação técnica/psicotécnico; o tipo vai em doc_tipo
 };
 const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)', colab_seguro: 'apólice de seguro' };
 // CNH e apólice são documentos pessoais: quem tem apenas leitura em Viáticos
@@ -1100,15 +1101,17 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
     payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas',
     colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
     viatico_km: 'erp_viaticos_km',
-    contrato: 'erp_contratos', rh_doc: 'erp_colaboradores'
+    contrato: 'erp_contratos', rh_doc: 'erp_colaboradores', rh_admissao_doc: 'erp_rh_admissoes'
   }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
-  if (!own.length) return res.status(404).json({ error: (ehAnexoColaborador(req.params.type) || req.params.type === 'rh_doc') ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : 'Título não encontrado.' });
+  if (!own.length) return res.status(404).json({ error: (ehAnexoColaborador(req.params.type) || req.params.type === 'rh_doc') ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : req.params.type === 'rh_admissao_doc' ? 'Processo de admissão não encontrado.' : 'Título não encontrado.' });
 
   // No dossiê de RH o que identifica o documento é o TIPO (rg, cpf, ctps…),
   // não o `kind` — que é a lista fechada compartilhada com boletos e notas.
   const docTipo = req.params.type === 'rh_doc'
     ? (RH_DOC_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
+    : req.params.type === 'rh_admissao_doc'
+    ? (RH_AVAL_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
     : req.params.type === 'viatico_km'
     ? (['odometro_inicial', 'odometro_final'].includes(req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
     : null;
@@ -2201,6 +2204,16 @@ const RH_DOC_TIPOS = [
   { cod: 'termo_equipamento',    nome: 'Termo de entrega de equipamento',     obrigatorio: false },
   { cod: 'declaracao',           nome: 'Declaração ou termo',                 obrigatorio: false },
   { cod: 'outro',                nome: 'Outro',                               obrigatorio: false }
+];
+
+// Anexos da etapa Avaliações: laudo/relatório da prova técnica e do
+// psicotécnico, cada um com seu próprio tipo — igual ao dossiê, mas preso ao
+// PROCESSO (erp_rh_admissoes), não ao colaborador, porque um candidato pode
+// abrir mais de um processo ao longo do tempo.
+const RH_AVAL_TIPOS = [
+  { cod: 'avaliacao_tecnica', nome: 'Avaliação técnica' },
+  { cod: 'psicotecnico',      nome: 'Psicotécnico' },
+  { cod: 'outro',             nome: 'Outro' }
 ];
 
 // Campos que a LGPD trata como sensíveis e o que é remuneração. Quem não tem
@@ -3606,6 +3619,10 @@ const RH_ETAPAS = [
   // e comprovante de quem talvez não seja contratado é exatamente o que o
   // sistema evita na exclusão de candidato.
   { cod: 'triagem',           nome: 'Triagem' },
+  // Prova técnica e psicotécnico, com resultado e laudo por tipo — fica
+  // registrado no processo (não no colaborador), então sobrevive mesmo se o
+  // candidato não for contratado.
+  { cod: 'avaliacoes',        nome: 'Avaliações' },
   { cod: 'entrevista',        nome: 'Entrevista' },
   { cod: 'carta_oferta',      nome: 'Carta Oferta' },
   { cod: 'documentacao',      nome: 'Documentação' },
@@ -3661,6 +3678,10 @@ function rhPendencias(adm, colab, checklist, mapa) {
       // tela. Agora os campos estão no próprio card, e a frase aponta para lá.
       return colab && (colab.celular || colab.email_pessoal || colab.email_corporativo)
         ? [] : ['Informe o celular ou o e-mail do candidato no quadro “Contato do candidato”, aqui mesmo.'];
+    // Avaliações fica só para REGISTRO — técnica e psicotécnico nem sempre se
+    // aplicam à vaga, então não trava quem não tem o que preencher aqui.
+    case 'avaliacoes':
+      return [];
     // A data da entrevista é o que transforma "vamos entrevistar" em registro.
     // Sem ela, o card avança e ninguém sabe se a conversa aconteceu.
     case 'entrevista':
@@ -3704,11 +3725,13 @@ function rhPendencias(adm, colab, checklist, mapa) {
 const RH_ADM_CAMPOS = ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'centro_custo',
   'dias_presenciais', 'dias_home_office', 'vr_dia', 'home_office_dia',
   'regime', 'modelo_trabalho', 'salario_previsto', 'admissao_prevista', 'gestor_id', 'responsavel_id',
-  'vaga_id', 'entrevista_em', 'entrevista_notas',
+  'vaga_id', 'avaliacao_tecnica_em', 'avaliacao_tecnica_resultado', 'psicotecnico_em', 'psicotecnico_resultado',
+  'entrevista_em', 'entrevista_notas',
   'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para', 'exame_realizado_em', 'exame_resultado',
   'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em', 'acessos_concluidos_em',
   'onboarding_iniciado_em', 'onboarding_concluido_em', 'observacao'];
-const RH_ADM_DATA = ['admissao_prevista', 'entrevista_em', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
+const RH_ADM_DATA = ['admissao_prevista', 'avaliacao_tecnica_em', 'psicotecnico_em',
+  'entrevista_em', 'oferta_enviada_em', 'oferta_aceita_em', 'exame_agendado_para',
   'exame_realizado_em', 'contrato_emitido_em', 'contrato_assinado_em', 'acessos_solicitados_em',
   'acessos_concluidos_em', 'onboarding_iniciado_em', 'onboarding_concluido_em'];
 const RH_ADM_NUM = ['salario_previsto', 'gestor_id', 'responsavel_id', 'vaga_id',
@@ -3852,6 +3875,12 @@ app.get('/api/rh/admissoes/:id', requireAuth, requireViewAny(['rh']), h(async (r
     `SELECT id, nome, file_name FROM erp_rh_minutas
       WHERE ativa=true AND regime=$1 AND modelo_trabalho=$2 LIMIT 1`,
     [adm.regime || 'regular', adm.modelo_trabalho || 'presencial']);
+  // Presos ao PROCESSO, não ao colaborador — sobrevivem no histórico da
+  // admissão mesmo que a pessoa abra um novo processo depois.
+  const anexosAvaliacao = await query(
+    `SELECT id, doc_tipo, file_name, mime_type, byte_size, created_at
+       FROM erp_attachments WHERE entity_type='rh_admissao_doc' AND entity_id=$1 ORDER BY created_at DESC`,
+    [adm.id]);
   res.json({
     admissao: rhFiltrar(adm, req.user, colab),
     colaborador: rhFiltrar(colab, req.user, colab),
@@ -3860,6 +3889,8 @@ app.get('/api/rh/admissoes/:id', requireAuth, requireViewAny(['rh']), h(async (r
     // dois arquivos que se editam em momentos diferentes, e um código gravado
     // que a tela não sabe traduzir vira linha em branco no funil.
     motivos: RH_MOTIVO_ENCERRAR,
+    tipos_avaliacao: RH_AVAL_TIPOS,
+    anexos_avaliacao: anexosAvaliacao,
     checklist,
     historico: hist,
     minuta: minuta[0] || null,

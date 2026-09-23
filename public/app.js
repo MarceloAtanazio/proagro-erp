@@ -8940,7 +8940,7 @@ const rhTxt = v => (v == null || v === '' ? '—' : String(v));
 // ============================================================
 
 const RH_ETAPA_ICONE = {
-  triagem: '🔎', entrevista: '💬',
+  triagem: '🔎', avaliacoes: '🧪', entrevista: '💬',
   carta_oferta: '✉', documentacao: '📄', exame_admissional: '🩺',
   contrato: '✍', contas_acessos: '🔑', onboarding: '🎒'
 };
@@ -8950,6 +8950,12 @@ const RH_ETAPA_CAMPOS = {
   // aba Contato da ficha. Campo repetido aqui seria um segundo lugar para o
   // mesmo dado, e o card e a ficha começariam a discordar.
   triagem: [],
+  avaliacoes: [
+    { c: 'avaliacao_tecnica_em', r: 'Prova técnica em', t: 'date' },
+    { c: 'avaliacao_tecnica_resultado', r: 'Resultado da prova técnica', t: 'text' },
+    { c: 'psicotecnico_em', r: 'Psicotécnico em', t: 'date' },
+    { c: 'psicotecnico_resultado', r: 'Resultado do psicotécnico', t: 'text' }
+  ],
   entrevista: [
     { c: 'entrevista_em', r: 'Entrevista em', t: 'date' },
     { c: 'entrevista_notas', r: 'Como foi', t: 'text' }
@@ -9320,6 +9326,30 @@ async function rhAbrirCard(id) {
         : fld('ad-' + f.c, f.r, 'date', a[f.c] ? String(a[f.c]).slice(0, 10) : '')).join('')}
       </div></div>` : ''}
 
+    ${/* Os resultados de técnica/psicotécnico se preenchem no "Marcos desta
+          etapa" enquanto o card está em Avaliações — aqui só o próprio bloco
+          some quando não se aplica mais editar. Os laudos e, uma vez que a
+          pessoa PASSOU por Avaliações, o resumo dos resultados, ficam sempre
+          visíveis daqui em diante — inclusive depois do processo encerrado,
+          porque é a MESMA linha de erp_rh_admissoes que guarda o histórico. */
+      iAtual >= d.etapas.findIndex(e => e.cod === 'avaliacoes') ? (() => {
+        const nomeAval = cod => (d.tipos_avaliacao.find(t => t.cod === cod) || {}).nome || cod;
+        const anexos = d.anexos_avaliacao || [];
+        return `<div class="rh-sec"><h4>Avaliações</h4>
+          ${a.etapa === 'avaliacoes' ? '' : `<div class="rh-linhas">
+            <div class="rh-linha"><span>Prova técnica em</span><b>${a.avaliacao_tecnica_em ? rhData(a.avaliacao_tecnica_em) : '—'}</b></div>
+            <div class="rh-linha"><span>Resultado da prova técnica</span><b>${esc(a.avaliacao_tecnica_resultado || '—')}</b></div>
+            <div class="rh-linha"><span>Psicotécnico em</span><b>${a.psicotecnico_em ? rhData(a.psicotecnico_em) : '—'}</b></div>
+            <div class="rh-linha"><span>Resultado do psicotécnico</span><b>${esc(a.psicotecnico_resultado || '—')}</b></div>
+          </div>`}
+          <div class="rh-check">${anexos.length ? anexos.map(x => `<div class="rh-check-item ok">
+            <span class="mk">📎</span><span class="nm">${esc(nomeAval(x.doc_tipo))} — ${esc(x.file_name)}</span>
+            <span class="via"><button class="rh-link" data-ver-aval="${x.id}">ver</button>${ed ? ` · <button class="btn-ic perigo" data-del-aval="${x.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</span>
+          </div>`).join('') : '<div class="rh-nota">Nenhum laudo anexado ainda.</div>'}</div>
+          ${ed ? '<div class="rh-acoes"><button class="btn sm" id="rh-add-aval">+ Anexar laudo</button></div>' : ''}
+        </div>`;
+      })() : ''}
+
     <div class="rh-sec"><h4>Dados do processo</h4><div class="rh-grid">
       ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoesCargo(a.cargo_pretendido, true), a.cargo_pretendido || '')}
       ${fldSel('ad-nivel_pretendido', 'Nível', RH_NIVEIS, a.nivel_pretendido || '')}
@@ -9387,6 +9417,11 @@ async function rhAbrirCard(id) {
   if (irDossie) irDossie.onclick = () => { closeModal(); abrirFichaRH(a.colaborador_id, 'dossie'); };
   const bp = $('#rh-previa'); if (bp) bp.onclick = () => rhPreviaContrato(id);
   const be = $('#rh-emitir'); if (be) be.onclick = () => rhEmitirContrato(id, a.colaborador_nome);
+  const addAval = $('#rh-add-aval');
+  if (addAval) addAval.onclick = () => rhAnexarAvaliacao(id, d.tipos_avaliacao);
+  document.querySelectorAll('[data-ver-aval]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.verAval)));
+  document.querySelectorAll('[data-del-aval]').forEach(b => b.onclick = () =>
+    confirmDelete('laudo', '/api/attachments/' + b.dataset.delAval, () => rhAbrirCard(id)));
 
   const sincMinuta = () => {
     const alvo = $('#ad-minuta-alvo'); if (!alvo) return;
@@ -10568,7 +10603,7 @@ const rhBarras = (itens, total, cor) => {
     </div>`).join('')}</div>`;
 };
 
-const RH_ETAPA_NOME = { triagem: 'Triagem', entrevista: 'Entrevista',
+const RH_ETAPA_NOME = { triagem: 'Triagem', avaliacoes: 'Avaliações', entrevista: 'Entrevista',
   carta_oferta: 'Carta Oferta', documentacao: 'Documentação',
   exame_admissional: 'Exame admissional', contrato: 'Contrato',
   contas_acessos: 'Contas e Acessos', onboarding: 'Onboarding' };
@@ -13236,6 +13271,30 @@ function rhAnexarDoc(id, tipos) {
             file_name: f.name, mime_type: f.type || 'application/octet-stream',
             kind: 'outro', doc_tipo: $('#ad-tipo').value, data } });
           closeModal(); toast('Documento anexado.'); abrirFichaRH(id, 'dossie');
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
+     }}]);
+}
+
+// Laudo da etapa Avaliações — preso ao PROCESSO (admissão), não ao
+// colaborador: mesmo padrão do dossiê, só troca o entity_type e pra onde volta
+// ao terminar.
+function rhAnexarAvaliacao(admissaoId, tipos) {
+  openModal('Anexar laudo de avaliação', `
+    ${fldSel('av-tipo', 'Tipo de avaliação', tipos.map(t => ({ v: t.cod, t: t.nome })), 'avaliacao_tecnica')}
+    <div class="field"><label for="av-file">Arquivo</label><input type="file" id="av-file"
+      accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx"></div>
+    <div class="rh-nota">Até 3 MB por arquivo. O tipo real é conferido pelo conteúdo, não pela extensão.</div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
+        const f = $('#av-file').files[0];
+        if (!f) return modalError('Escolha um arquivo.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+        try {
+          const data = await readFileAsBase64(f);
+          await api(`/api/attachments/rh_admissao_doc/${admissaoId}`, { method: 'POST', body: {
+            file_name: f.name, mime_type: f.type || 'application/octet-stream',
+            kind: 'outro', doc_tipo: $('#av-tipo').value, data } });
+          closeModal(); toast('Laudo anexado.'); rhAbrirCard(admissaoId);
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
      }}]);
 }
