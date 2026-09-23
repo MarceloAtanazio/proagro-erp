@@ -11513,7 +11513,8 @@ async function rhVagas(c) {
           <div class="rh-tira" title="Candidatos desta vaga que já viraram colaborador"><span>Contratados</span><b>${v.contratados} de ${posicoes}</b></div>
           ${v.salario_previsto ? `<div class="rh-tira"><span>Salário previsto</span><b>${brl(Number(v.salario_previsto))}</b></div>` : ''}
         </div>
-        ${v.descricao ? `<p class="rh-vaga-desc">${esc(v.descricao)}</p>` : ''}
+        ${v.descricao ? `<p class="rh-vaga-desc">${esc(v.descricao)}</p>
+          <button class="rh-link rh-vaga-vermais" data-vaga-detalhes="${v.id}">Ver descrição completa</button>` : ''}
         ${v.observacao ? `<p class="rh-custo-nota">${esc(v.observacao)}</p>` : ''}
         ${v.situacao === 'fechada' && v.fechamento_motivo
           ? `<p class="rh-custo-nota">Fechada em ${rhData(v.fechada_em)} — ${esc(v.fechamento_motivo)}</p>` : ''}
@@ -11543,6 +11544,34 @@ async function rhVagas(c) {
     const v = lista.find(x => String(x.id) === b.dataset.vagaCand);
     b.onclick = () => rhFormNovoColaborador(true, v);
   });
+  c.querySelectorAll('[data-vaga-detalhes]').forEach(b => b.onclick = () =>
+    rhVagaDetalhes(lista.find(v => String(v.id) === b.dataset.vagaDetalhes), ed));
+}
+
+// O card corta a descrição em 3 linhas (rh-vaga-desc, line-clamp) pra não
+// virar um mural — mas então precisa de um jeito de ler o resto. Este modal
+// é essa "caixa": não só a descrição inteira, o resumo da vaga junto (pra não
+// precisar abrir Editar só pra CONSULTAR, que é uma ação bem mais comum que
+// editar de fato).
+function rhVagaDetalhes(v, ed) {
+  if (!v) return;
+  const posicoes = Number(v.posicoes) || 1;
+  openModal(`${esc(rhTxt(v.cargo))}${v.nivel ? ' · ' + esc(rhRotulo(RH_NIVEIS, v.nivel)) : ''}`, `
+    <div class="rh-linhas">
+      <div class="rh-linha"><span>Departamento</span><b>${esc(rhTxt(v.departamento))}</b></div>
+      <div class="rh-linha"><span>Situação</span><b>${esc(rhRotulo(RH_VAGA_SIT, v.situacao))}</b></div>
+      <div class="rh-linha"><span>Aberta em</span><b>${rhData(v.aberta_em)}</b></div>
+      <div class="rh-linha"><span>Posições</span><b>${posicoes} (${v.contratados} contratado(s))</b></div>
+      ${v.salario_previsto ? `<div class="rh-linha"><span>Salário previsto</span><b>${brl(Number(v.salario_previsto))}</b></div>` : ''}
+      ${v.divulgada_em ? `<div class="rh-linha"><span>Divulgada em</span><b>${esc(v.divulgada_em)}</b></div>` : ''}
+    </div>
+    ${v.descricao ? `<div class="rh-sec"><h4>Descrição da vaga</h4>
+      <p class="rh-vaga-desc-full">${esc(v.descricao)}</p></div>` : '<div class="empty">Sem descrição cadastrada.</div>'}
+    ${v.observacao ? `<div class="rh-sec"><h4>Observações internas</h4>
+      <p class="rh-vaga-desc-full">${esc(v.observacao)}</p></div>` : ''}`,
+    [{ label: 'Fechar', onClick: closeModal },
+     ...(ed ? [{ label: 'Editar', cls: 'primary', onClick: () => rhFormVaga(v) }] : [])],
+    { wide: true });
 }
 
 function rhFormVaga(v) {

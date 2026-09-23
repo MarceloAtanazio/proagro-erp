@@ -6815,3 +6815,40 @@ regressão. Testado no navegador reproduzindo um card completo (com descrição 
 múltiplas plataformas e nota interna) ao lado de um card simples, e o formulário de editar.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-23 — Sessão 141: "Ver descrição completa" na vaga
+
+**Solicitação:** *"Adicionamos ali a informação da vaga mas muitas vezes ela é longa e não da pra
+ver.. Que tal adicionar um botão de 'ver mais' ou 'ver detalhes' pra abrir uma caixa e mostrar o
+descritivo da vaga? Tente otimizar isso para que possamos prover uma visualização melhor pro
+usuario."*
+
+A descrição da vaga (sessão anterior) corta em 3 linhas no card — de propósito, pra não virar um
+mural — mas até agora o texto completo só existia reabrindo o formulário de editar, que mistura
+"consultar" com "editar" (uma ação bem mais comum que a outra).
+
+### O ajuste
+
+Botão "Ver descrição completa" logo abaixo do texto truncado — só aparece quando a vaga TEM
+descrição. Fica **fora** do parágrafo cortado de propósito: um link dentro de um bloco com
+`-webkit-line-clamp` corre o risco de ficar escondido junto com o texto que passou do limite de
+linhas, se cair além da 3ª linha.
+
+O clique abre um modal (`rhVagaDetalhes`) que não é só a descrição solta — é uma "visualização
+melhor" de verdade: o resumo da vaga inteiro (departamento, situação, data de abertura, posições e
+contratados, salário previsto, onde foi divulgada) mais a descrição por extenso e as observações
+internas, cada uma no mesmo cartão com título maiúsculo (`.rh-sec`/`h4`) usado no resto do sistema —
+sem inventar um estilo novo. Quem edita RH ainda vê o botão "Editar" dentro do modal, pra não
+precisar fechar e caçar o card de novo só pra corrigir algo.
+
+### Verificação
+
+`verifica-vagas.js` (estendido): confirma que o botão só existe fora do parágrafo truncado, que o
+modal mostra a descrição SEM o corte de 3 linhas, que o resumo (departamento/situação/divulgação)
+aparece junto do texto, e que o botão "Editar" só some pra quem não tem permissão — mesma regra do
+resto da tela. 25 verificações no arquivo, todas passando — mais as 153 das suítes anteriores, sem
+regressão. Testado no navegador: o card mostra a descrição cortada com o link verde logo abaixo, e o
+modal reproduz o resumo completo mais a descrição em parágrafos, sem nenhum corte.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

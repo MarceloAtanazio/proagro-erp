@@ -1053,10 +1053,17 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 /* Descrição é o texto do anúncio — legível, não a nota interna cinza e
    pequena (.rh-custo-nota, que continua servindo pra "observações"). Corta
    em 3 linhas: o card não pode virar um mural só porque uma vaga tem uma
-   descrição longa; o texto inteiro mora no formulário de editar. */
+   descrição longa; o texto inteiro fica a um clique, no "Ver descrição
+   completa" (rhVagaDetalhes) — fora do <p>, porque um link DENTRO de um
+   line-clamp pode ficar cortado junto com o texto, escondido. */
 .rh-vaga-desc { margin: 10px 0 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
   white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden; }
+.rh-vaga-vermais { display: block; margin-top: 4px; font-size: 12px; }
+/* O texto completo no modal de detalhes — dentro de .rh-sec (o mesmo cartão
+   com título maiúsculo usado em toda ficha), só a quebra de linha do que foi
+   digitado precisa ser preservada, que .rh-sec sozinho não faz. */
+.rh-vaga-desc-full { font-size: 13px; color: var(--ink-2); line-height: 1.6; white-space: pre-wrap; }
 .rh-vaga-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
   padding-top: 12px; border-top: 1px solid #EAF0EC; }
 
