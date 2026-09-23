@@ -9250,6 +9250,23 @@ async function rhAbrirCard(id) {
       ? `<div class="rh-nota aviso"><strong>Para sair desta etapa:</strong><ul>${d.pendencias.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`
       : '<div class="rh-nota">✔ Etapa concluída — pode avançar.</div>'}
 
+    ${/* Currículo: acesso rápido, em QUALQUER etapa — não é algo que se cobra
+          numa etapa específica, é o primeiro documento que existe do
+          candidato, e quem abre o card quer olhar ele sem caçar em outro
+          lugar. Por isso fica logo no topo, antes até do contato. */
+      (() => {
+        const cv = (d.anexos_avaliacao || []).find(x => x.doc_tipo === 'curriculo');
+        return `<div class="rh-sec"><h4>Currículo</h4>
+          ${cv
+            ? `<div class="rh-check"><div class="rh-check-item ok"><span class="mk">📎</span>
+                 <span class="nm">${esc(cv.file_name)}</span>
+                 <span class="via"><button class="rh-link" data-ver-aval="${cv.id}">ver</button>${ed ? ` · <button class="btn-ic perigo" data-del-aval="${cv.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</span>
+               </div></div>`
+            : '<div class="rh-nota">Nenhum currículo anexado ainda.</div>'}
+          ${ed ? `<div class="rh-acoes"><button class="btn sm" id="rh-add-curriculo">${cv ? 'Substituir currículo' : '+ Anexar currículo'}</button></div>` : ''}
+        </div>`;
+      })()}
+
     ${/* Contato nas etapas de recrutamento.
           A triagem exige um contato para avançar, e até aqui NÃO HAVIA ONDE
           INFORMAR: os campos da pessoa só apareciam na Documentação, e a
@@ -9334,7 +9351,8 @@ async function rhAbrirCard(id) {
           porque é a MESMA linha de erp_rh_admissoes que guarda o histórico. */
       iAtual >= d.etapas.findIndex(e => e.cod === 'avaliacoes') ? (() => {
         const nomeAval = cod => (d.tipos_avaliacao.find(t => t.cod === cod) || {}).nome || cod;
-        const anexos = d.anexos_avaliacao || [];
+        // O currículo tem seção própria, sempre visível — sem duplicar aqui.
+        const anexos = (d.anexos_avaliacao || []).filter(x => x.doc_tipo !== 'curriculo');
         return `<div class="rh-sec"><h4>Avaliações</h4>
           ${a.etapa === 'avaliacoes' ? '' : `<div class="rh-linhas">
             <div class="rh-linha"><span>Prova técnica em</span><b>${a.avaliacao_tecnica_em ? rhData(a.avaliacao_tecnica_em) : '—'}</b></div>
@@ -9417,6 +9435,8 @@ async function rhAbrirCard(id) {
   if (irDossie) irDossie.onclick = () => { closeModal(); abrirFichaRH(a.colaborador_id, 'dossie'); };
   const bp = $('#rh-previa'); if (bp) bp.onclick = () => rhPreviaContrato(id);
   const be = $('#rh-emitir'); if (be) be.onclick = () => rhEmitirContrato(id, a.colaborador_nome);
+  const addCv = $('#rh-add-curriculo');
+  if (addCv) addCv.onclick = () => rhAnexarCurriculo(id);
   const addAval = $('#rh-add-aval');
   if (addAval) addAval.onclick = () => rhAnexarAvaliacao(id, d.tipos_avaliacao);
   document.querySelectorAll('[data-ver-aval]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.verAval)));
@@ -13295,6 +13315,32 @@ function rhAnexarAvaliacao(admissaoId, tipos) {
             file_name: f.name, mime_type: f.type || 'application/octet-stream',
             kind: 'outro', doc_tipo: $('#av-tipo').value, data } });
           closeModal(); toast('Laudo anexado.'); rhAbrirCard(admissaoId);
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
+     }}]);
+}
+
+// Currículo do candidato — mesmo entity_type do laudo (rh_admissao_doc), só
+// que sem escolha de tipo: é sempre um único arquivo, e um novo upload
+// SUBSTITUI o anterior, porque não faz sentido guardar currículo velho.
+function rhAnexarCurriculo(admissaoId) {
+  openModal('Anexar currículo', `
+    <div class="field"><label for="cv-file">Arquivo</label><input type="file" id="cv-file"
+      accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"></div>
+    <div class="rh-nota">Até 3 MB. Um novo arquivo substitui o currículo anexado antes.</div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
+        const f = $('#cv-file').files[0];
+        if (!f) return modalError('Escolha um arquivo.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+        try {
+          const dados = await api('/api/rh/admissoes/' + admissaoId);
+          const antigo = (dados.anexos_avaliacao || []).find(x => x.doc_tipo === 'curriculo');
+          const data = await readFileAsBase64(f);
+          await api(`/api/attachments/rh_admissao_doc/${admissaoId}`, { method: 'POST', body: {
+            file_name: f.name, mime_type: f.type || 'application/octet-stream',
+            kind: 'outro', doc_tipo: 'curriculo', data } });
+          if (antigo) await api('/api/attachments/' + antigo.id, { method: 'DELETE' });
+          closeModal(); toast('Currículo anexado.'); rhAbrirCard(admissaoId);
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
      }}]);
 }

@@ -1111,7 +1111,9 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const docTipo = req.params.type === 'rh_doc'
     ? (RH_DOC_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
     : req.params.type === 'rh_admissao_doc'
-    ? (RH_AVAL_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
+    // Currículo é um tipo à parte, fora do catálogo de avaliações — fica
+    // sempre acessível no card, em toda etapa, e não some no meio do funil.
+    ? (req.body.doc_tipo === 'curriculo' || RH_AVAL_TIPOS.some(d => d.cod === req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
     : req.params.type === 'viatico_km'
     ? (['odometro_inicial', 'odometro_final'].includes(req.body.doc_tipo) ? req.body.doc_tipo : 'outro')
     : null;

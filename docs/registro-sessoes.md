@@ -6938,3 +6938,43 @@ Avaliações mostra os 4 campos editáveis mais a lista de laudos; numa etapa fu
 os mesmos 4 campos aparecem como resumo, junto com os laudos — sem reabrir a edição.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-23 — Sessão 144: currículo no card do candidato — acesso rápido, em qualquer etapa
+
+**Solicitação:** *"Permita que no perfil do candidato, dentro do seu card eu possa adicionar o curriculo
+do mesmo para que o acesso a informação seja rapido."*
+
+### O que mudou
+
+Nova seção "Currículo" no card de admissão (`rhAbrirCard`), logo no topo — antes até do bloco de
+contato — porque não é algo que se cobra numa etapa específica: é o primeiro documento que existe do
+candidato, e quem abre o card quer achar ele sem caçar em outro lugar. Diferente da etapa Avaliações
+(sessão anterior), que só aparece a partir de "Avaliações" em diante, o Currículo aparece em **toda**
+etapa, da Triagem ao Onboarding.
+
+Reaproveitou a mesma máquina de anexos criada pra Avaliações: `entity_type='rh_admissao_doc'`, preso
+ao processo. A diferença é o `doc_tipo`: **'curriculo'**, um tipo à parte do catálogo de avaliações
+(`RH_AVAL_TIPOS`), sem precisar de escolha na hora de anexar — é sempre um único arquivo por processo,
+e um novo upload primeiro sobe o novo, depois apaga o antigo (substituição, não acúmulo de currículos
+velhos). Como `doc_tipo` é só uma coluna de texto sem CHECK constraint no banco (diferente de
+`entity_type`, que tem), **não precisou de migração nova** — só validar o valor em código, igual já se
+fazia pros outros tipos.
+
+O endpoint que já devolvia os anexos da etapa Avaliações (`anexos_avaliacao`) passou a trazer também o
+currículo junto — o filtro por `doc_tipo` acontece no front: a seção Currículo pega só
+`doc_tipo==='curriculo'`, e a seção Avaliações passou a EXCLUIR esse tipo da própria lista, pra não
+aparecer duplicado nos dois lugares.
+
+### Verificação
+
+`verifica-curriculo-card.js` (novo, 8 verificações): currículo é aceito com o candidato ainda na
+Triagem (não trava esperando a etapa Avaliações); o `doc_tipo` grava exatamente `'curriculo'`, não cai
+em "outro"; o card devolve o currículo mesmo fora de Avaliações; a troca de arquivo deixa só um
+currículo (o antigo some); currículo e laudo de avaliação técnica convivem na mesma lista sem se
+confundir. Resto da suíte de RH (`verifica-avaliacoes-etapa.js`, `verifica-rh-admissao.js`,
+`verifica-attach-tipos.js`, `verifica-historico-card.js`, `verifica-card-modal-largura.js`) sem
+regressão. Testado no navegador (mock com CSS real): a seção aparece logo no topo do card, tanto vazia
+("+ Anexar currículo") quanto com arquivo já anexado (nome, "ver", excluir e "Substituir currículo").
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
