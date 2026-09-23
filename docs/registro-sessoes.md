@@ -6852,3 +6852,38 @@ regressão. Testado no navegador: o card mostra a descrição cortada com o link
 modal reproduz o resumo completo mais a descrição em parágrafos, sem nenhum corte.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-23 — Sessão 142: "Aberta em" vira editável — pra manter o histórico correto
+
+**Solicitação:** *"Acabei de lembrar de mais um ponto, em 'editar' adicione um campo onde eu possa
+adicionar a info de quando essa vaga foi aberta, hoje você traz essa info no momento do registro
+mais muitas vezes anuncio e depois venho cadastrar.. Apenas pra manter o historico correto."*
+
+`aberta_em` sempre foi `DEFAULT CURRENT_DATE` no banco — carimbado no instante do cadastro, sem
+nenhum jeito de mudar depois. Na prática o anúncio sai antes de alguém lembrar de cadastrar a vaga
+aqui, então a data ficava sistematicamente atrasada em relação ao que de fato aconteceu — e essa
+data não é só decorativa: o Painel usa exatamente `aberta_em` pra calcular o **tempo médio até
+preencher** uma vaga (dias entre a abertura e a assinatura do contrato). Uma data errada ali
+distorce a métrica de recrutamento inteira, silenciosamente.
+
+### O ajuste
+
+Campo "Aberta em" (tipo data) no formulário — tanto pra abrir uma vaga nova (pode já nascer com a
+data retroativa) quanto pra editar uma existente, com uma nota explicando o porquê ("anuncia-se a
+vaga e só depois vem o cadastro aqui; ajuste pra data real, e o histórico sai certo"). No backend, o
+POST aceita a data informada (cai em hoje se vier vazia ou inválida, exatamente como o banco já
+fazia sozinho) e o PUT passa a aceitar editá-la — antes `aberta_em` nem estava na lista de campos
+que o formulário de editar conseguia tocar.
+
+### Verificação
+
+`verifica-vagas.js` (estendido): abrir uma vaga já com data retroativa funciona; sem informar,
+continua caindo em hoje (o comportamento de antes, preservado); editar a data depois de já
+cadastrada funciona; uma data inválida sozinha no corpo (sem mais nada pra salvar) vira 400
+explícito — não um 200 silencioso que faria a tela achar que salvou algo que não salvou. 43
+verificações no arquivo, todas passando — mais as 156 das suítes anteriores, sem regressão. Testado
+no navegador: o campo aparece logo após Departamento, com a nota explicando o motivo, tanto no
+form quanto refletido no modal de detalhes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

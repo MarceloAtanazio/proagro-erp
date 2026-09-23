@@ -2891,7 +2891,7 @@ async function rhGarantirFornecedor(colabId, userId) {
 // sendo um quadro de pessoas.
 const RH_VAGA_SITUACOES = ['aberta', 'pausada', 'fechada'];
 const RH_VAGA_CAMPOS = ['cargo', 'nivel', 'departamento', 'posicoes', 'regime', 'modelo_trabalho',
-  'salario_previsto', 'observacao', 'descricao', 'divulgada_em'];
+  'salario_previsto', 'observacao', 'descricao', 'divulgada_em', 'aberta_em'];
 
 // A contagem de candidatos vem junto com a lista: sem ela, "vaga aberta" não
 // diz se o processo está parado ou fervendo, que é a pergunta que se faz olhando
@@ -2926,16 +2926,21 @@ app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => 
   const cargo = sanitize(req.body.cargo);
   if (!cargo) return res.status(400).json({ error: 'Informe o cargo da vaga.' });
   const pos = Number(req.body.posicoes);
+  // A vaga costuma ser anunciada antes de virar registro aqui — cadastrar só
+  // no dia em que alguém "lembrou" faria o histórico contar dias de processo
+  // que na prática já correram. isDate() cai pro dia de hoje se vier vazio ou
+  // inválido, do jeito que o banco já fazia sozinho antes deste campo existir.
+  const abertaEm = isDate(req.body.aberta_em) ? req.body.aberta_em : hojeISO();
   const ins = await query(
     `INSERT INTO erp_rh_vagas (cargo, nivel, departamento, posicoes, regime, modelo_trabalho,
-        salario_previsto, observacao, descricao, divulgada_em, criado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        salario_previsto, observacao, descricao, divulgada_em, aberta_em, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
     [cargo, sanitize(req.body.nivel) || null, sanitize(req.body.departamento) || null,
      Number.isFinite(pos) && pos > 0 ? Math.round(pos) : 1,
      sanitize(req.body.regime) || 'regular', sanitize(req.body.modelo_trabalho) || 'presencial',
      req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
      sanitize(req.body.observacao) || null, sanitize(req.body.descricao) || null,
-     sanitize(req.body.divulgada_em) || null, req.user.id]);
+     sanitize(req.body.divulgada_em) || null, abertaEm, req.user.id]);
   res.json(ins[0]);
 }));
 
@@ -2962,7 +2967,7 @@ app.put('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) 
       }
     }
   }
-  const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, [], ['posicoes', 'salario_previsto'], []);
+  const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, ['aberta_em'], ['posicoes', 'salario_previsto'], []);
   if (corpo.situacao !== undefined) { cols.push('situacao'); vals.push(corpo.situacao); }
   if (corpo.fechamento_motivo !== undefined) { cols.push('fechamento_motivo'); vals.push(sanitize(corpo.fechamento_motivo) || null); }
   // A data de fechamento acompanha a situação, e some ao reabrir: vaga aberta

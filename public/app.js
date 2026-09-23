@@ -11584,16 +11584,21 @@ function rhFormVaga(v) {
     </div>
     <div class="form-row">
       ${fld('vg-departamento', 'Departamento', 'text', v.departamento || '')}
+      ${fld('vg-aberta_em', 'Aberta em', 'date', String(v.aberta_em || todayISO()).slice(0, 10))}
+    </div>
+    <div class="form-row">
       ${fld('vg-posicoes', 'Posições', 'number', v.posicoes != null ? v.posicoes : 1, 'min="1" step="1"')}
-    </div>
-    <div class="form-row">
       ${fldSel('vg-regime', 'Regime', RH_REGIME, v.regime || 'regular')}
-      ${fldSel('vg-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, v.modelo_trabalho || 'presencial')}
     </div>
     <div class="form-row">
+      ${fldSel('vg-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, v.modelo_trabalho || 'presencial')}
       ${fld('vg-salario_previsto', 'Salário previsto', 'number', v.salario_previsto || '', 'step="0.01" min="0"')}
+    </div>
+    <div class="form-row">
       ${fld('vg-divulgada_em', 'Divulgada em', 'text', v.divulgada_em || '', 'placeholder="LinkedIn, Gupy, indicação..."')}
     </div>
+    <p class="rh-custo-nota">"Aberta em" não precisa ser hoje — anuncia-se a vaga e só depois vem o
+      cadastro aqui; ajuste pra data real, e o histórico (tempo até preencher, no Painel) sai certo.</p>
     ${fldArea('vg-descricao', 'Descrição da vaga', v.descricao || '', 'rows="4" placeholder="O que o cargo faz, requisitos, benefícios — o texto do anúncio."')}
     ${fld('vg-observacao', 'Observações internas', 'text', v.observacao || '', 'placeholder="Nota do RH sobre o processo — não aparece no anúncio."')}
     ${novo ? '' : `<div class="form-row">
@@ -11615,7 +11620,8 @@ function rhFormVaga(v) {
           departamento: $('#vg-departamento').value, posicoes: $('#vg-posicoes').value,
           regime: $('#vg-regime').value, modelo_trabalho: $('#vg-modelo_trabalho').value,
           salario_previsto: $('#vg-salario_previsto').value, observacao: $('#vg-observacao').value,
-          descricao: $('#vg-descricao').value, divulgada_em: $('#vg-divulgada_em').value
+          descricao: $('#vg-descricao').value, divulgada_em: $('#vg-divulgada_em').value,
+          aberta_em: $('#vg-aberta_em').value
         };
         if (!body.cargo) return modalError('Escolha o cargo da vaga.');
         if (!novo) { body.situacao = $('#vg-situacao').value; body.fechamento_motivo = $('#vg-fechamento_motivo').value; }
