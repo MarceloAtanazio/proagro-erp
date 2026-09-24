@@ -8890,6 +8890,14 @@ function rhLigarSelectCargo(idSel, aoMudar) {
   };
 }
 const RH_NIVEIS = [{ v: '', t: '—' }, { v: 'junior', t: 'Júnior' }, { v: 'pleno', t: 'Pleno' }, { v: 'senior', t: 'Sênior' }];
+// Rótulo da vaga pro select de "trocar de vaga" no card: cargo + nível (o que
+// mais muda entre vagas do mesmo cargo) + departamento, e a situação só
+// quando não está aberta — senão toda opção diria "(aberta)" à toa.
+const rhVagaLabel = v => {
+  const nivel = RH_NIVEIS.find(n => n.v === v.nivel);
+  return `${v.cargo}${nivel && nivel.v ? ' · ' + nivel.t : ''}${v.departamento ? ' — ' + v.departamento : ''}`
+    + (v.situacao && v.situacao !== 'aberta' ? ` (${v.situacao})` : '');
+};
 
 const RH_TIPO_VINCULO = [{ v: 'clt', t: 'CLT' }, { v: 'pj', t: 'PJ' }, { v: 'estagio', t: 'Estágio' },
   { v: 'aprendiz', t: 'Jovem Aprendiz' }, { v: 'temporario', t: 'Temporário' }];
@@ -9220,8 +9228,10 @@ function rhKanbanCard(a, arrastavel) {
 
 // ---------------- Card ----------------
 async function rhAbrirCard(id) {
-  let d;
-  try { d = await api('/api/rh/admissoes/' + id); } catch (e) { return toast(e.message); }
+  let d, vagas;
+  try {
+    [d, vagas] = await Promise.all([api('/api/rh/admissoes/' + id), api('/api/rh/vagas').catch(() => [])]);
+  } catch (e) { return toast(e.message); }
   const a = d.admissao, ed = d.pode.editar;
   const iAtual = d.etapas.findIndex(e => e.cod === a.etapa);
   const proxima = d.etapas[iAtual + 1] || null;
@@ -9377,7 +9387,17 @@ async function rhAbrirCard(id) {
         </div>`;
       })() : ''}
 
-    <div class="rh-sec"><h4>Dados do processo</h4><div class="rh-grid">
+    <div class="rh-sec"><h4>Dados do processo</h4>
+      ${/* Trocar de vaga é comum — o cargo pretendido às vezes não bate com o
+            nível real do candidato, e reabrir o processo do zero pra corrigir
+            isso jogaria fora o histórico inteiro. Ao escolher outra vaga, os
+            campos abaixo (cargo, nível, departamento, regime, modelo) se
+            atualizam sozinhos pra bater com ela — mas só de fato muda quando
+            o card for salvo. */''}
+      <div class="rh-grid curta">
+        ${fldSel('ad-vaga_id', 'Vaga', [{ v: '', t: '— nenhuma vinculada —' }, ...vagas.map(v => ({ v: String(v.id), t: rhVagaLabel(v) }))], a.vaga_id ? String(a.vaga_id) : '')}
+      </div>
+    <div class="rh-grid">
       ${fldSel('ad-cargo_pretendido', 'Cargo', rhOpcoesCargo(a.cargo_pretendido, true), a.cargo_pretendido || '')}
       ${fldSel('ad-nivel_pretendido', 'Nível', RH_NIVEIS, a.nivel_pretendido || '')}
       ${fld('ad-departamento', 'Departamento', 'text', a.departamento || '')}
@@ -9463,12 +9483,29 @@ async function rhAbrirCard(id) {
   };
   ['ad-regime', 'ad-modelo_trabalho'].forEach(x => { const e = $('#' + x); if (e) e.onchange = sincMinuta; });
   sincMinuta();
+
+  // Trocar a vaga pré-preenche cargo/nível/departamento/regime/modelo com o
+  // que ESSA vaga pede — mas nada se grava sozinho, é só um ponto de partida
+  // pra conferir antes de clicar Salvar.
+  const selVaga = $('#ad-vaga_id');
+  if (selVaga) selVaga.onchange = () => {
+    const vagaEscolhida = vagas.find(v => String(v.id) === selVaga.value);
+    if (!vagaEscolhida) return;
+    const setar = (idCampo, val) => { const e = $('#' + idCampo); if (e) e.value = val || ''; };
+    setar('ad-cargo_pretendido', vagaEscolhida.cargo);
+    setar('ad-nivel_pretendido', vagaEscolhida.nivel);
+    setar('ad-departamento', vagaEscolhida.departamento);
+    setar('ad-regime', vagaEscolhida.regime || 'regular');
+    setar('ad-modelo_trabalho', vagaEscolhida.modelo_trabalho || 'presencial');
+    toast('Cargo, nível, departamento, regime e modelo foram atualizados pra bater com a vaga — confira e Salve.');
+    sincMinuta();
+  };
 }
 
 function rhCorpoCard(etapa) {
   const body = {};
   (RH_ETAPA_CAMPOS[etapa] || []).forEach(f => { const e = $('#ad-' + f.c); if (e) body[f.c] = e.value; });
-  ['cargo_pretendido', 'nivel_pretendido', 'departamento', 'regime', 'modelo_trabalho',
+  ['vaga_id', 'cargo_pretendido', 'nivel_pretendido', 'departamento', 'regime', 'modelo_trabalho',
    'admissao_prevista', 'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office',
    'home_office_dia'].forEach(k => { const e = $('#ad-' + k); if (e) body[k] = e.value; });
   return body;

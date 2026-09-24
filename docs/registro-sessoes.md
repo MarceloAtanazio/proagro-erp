@@ -7018,3 +7018,44 @@ larguras de modal e mobile): ícone renderiza limpo, item de arquivo com nome/ta
 botões, sem cortar nem espremer.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-24 — Sessão 146: trocar a vaga do candidato sem encerrar e reabrir o processo
+
+**Solicitação:** *"Quero poder alterar a qual vaga o candidato está concorrendo, porque por exemplo,
+tem vezes que um técnico está concorrendo a Pleno e identificamos que ele é Júnior e pra não encerrar
+o processo e reabrir novamente eu queria ter a opção apenas de mudar e alocar a pessoa em outra
+vaga."*
+
+### O que já existia
+
+`vaga_id` já era gravado no processo — mas só na hora do CADASTRO (o card nascia ligado à vaga
+escolhida) e o campo já estava na lista de colunas que o `PUT /api/rh/admissoes/:id` aceita gravar
+(`RH_ADM_CAMPOS`/`RH_ADM_NUM`). O que faltava era o card ter ONDE trocar isso depois.
+
+### O que mudou
+
+Novo campo "Vaga" no topo de "Dados do processo", numa linha própria — lista todas as vagas (aberta,
+pausada ou fechada; fechada aparece com a etiqueta, pra não confundir com uma vaga viva), e "— nenhuma
+vinculada —" pra desvincular. Ao trocar, cargo, nível, departamento, regime e modelo de trabalho do
+processo se atualizam sozinhos pra bater com a vaga escolhida — é exatamente o caso do Pleno/Júnior do
+pedido: troca a vaga, o nível já vem certo, só falta clicar Salvar (nada grava até lá).
+
+Backend: o `PUT` agora confere que a vaga informada existe de verdade (senão 400, não um 500 silencioso
+gravando um vínculo quebrado) e, quando a vaga REALMENTE muda — não em todo salvar, já que o front
+sempre manda o campo mesmo sem mexer nele — grava uma linha no Histórico do card, com o nome das duas
+vagas (antes → depois). Reaproveita a mesma tabela de histórico que já registra troca de etapa; a etapa
+em si não muda, só a observação conta o que aconteceu. Trocar de vaga não fecha nem reabre o processo:
+continua na mesma etapa, com o mesmo histórico de tudo que já rolou antes.
+
+### Verificação
+
+`verifica-trocar-vaga.js` (novo, 10 verificações): salvar sem mexer na vaga não gera entrada de
+histórico (evita spam a cada Salvar); troca real entre duas vagas do mesmo cargo grava uma linha
+contando a mudança; vaga inexistente dá 400 explícito e não corrompe o vínculo; desvincular (vaga
+vazia) funciona e também fica no histórico. Resto da suíte de RH (`verifica-rh-admissao.js`,
+`verifica-rh-api.js`, `verifica-vagas.js`, `verifica-avaliacoes-etapa.js`, `verifica-curriculo-card.js`)
+sem regressão. Testado no navegador (mock com CSS real): campo "Vaga" isolado no topo da seção, e os
+campos de cargo/nível/departamento sincronizando visualmente após a troca.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

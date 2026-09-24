@@ -3911,9 +3911,39 @@ app.put('/api/rh/admissoes/:id', requireAuth, requireEdit('rh'), h(async (req, r
   const permitidos = RH_ADM_CAMPOS.filter(c => rhVeRemuneracao(req.user) || c !== 'salario_previsto');
   const { cols, vals } = rhMontarSet(req.body, permitidos, RH_ADM_DATA, RH_ADM_NUM, []);
   if (!cols.length) return res.status(400).json({ error: 'Nada para salvar.' });
+
+  // Trocar de vaga é normal (nível corrigido, remanejamento pra outra posição)
+  // e não pode exigir encerrar e reabrir o processo do zero — mas a vaga
+  // informada tem de existir de verdade, e a troca fica no histórico do card,
+  // do mesmo jeito que uma mudança de etapa fica.
+  const iVaga = cols.indexOf('vaga_id');
+  let vagaLog = null;
+  if (iVaga >= 0) {
+    const novaId = vals[iVaga];
+    const nomeDe = async vid => {
+      if (!vid) return null;
+      const v = await query('SELECT cargo, nivel FROM erp_rh_vagas WHERE id=$1', [vid]);
+      return v.length ? v[0].cargo + (v[0].nivel ? ' (' + v[0].nivel + ')' : '') : null;
+    };
+    if (novaId != null) {
+      const nomeNova = await nomeDe(novaId);
+      if (!nomeNova) return res.status(400).json({ error: 'Vaga não encontrada.' });
+      const nomeAntiga = await nomeDe(dados.adm.vaga_id);
+      if (nomeAntiga !== nomeNova) vagaLog = `Vaga alterada: ${nomeAntiga || '— nenhuma —'} → ${nomeNova}`;
+    } else if (dados.adm.vaga_id) {
+      vagaLog = `Vaga alterada: ${(await nomeDe(dados.adm.vaga_id)) || '— nenhuma —'} → — nenhuma —`;
+    }
+  }
+
   const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
   await query(`UPDATE erp_rh_admissoes SET ${set}, updated_at=now() WHERE id=` + D + (cols.length + 1),
     [...vals, Number(req.params.id)]);
+  if (vagaLog) {
+    await query(
+      `INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, movido_por, observacao)
+       VALUES ($1,$2,$2,$3,$4)`,
+      [Number(req.params.id), dados.adm.etapa, req.user.id, vagaLog]);
+  }
   res.json({ ok: true, campos: cols.length });
 }));
 
