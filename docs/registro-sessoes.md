@@ -7132,3 +7132,35 @@ commit. Testado no navegador (mock com CSS real): respiro visível entre KPI e a
 os valores normalmente, olho fechado borra só os números, rótulos e barras continuam legíveis.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-24 — Sessão 149: o olho do Custo de pessoal esquecia o valor da periculosidade
+
+**Solicitação:** *"Ocultou os valores certinho só ficou faltando o valor que está abaixo da folha
+mensal que deixei destacado em vermelho"* — com print mostrando "R$ 26.301,10 de periculosidade"
+ainda legível, sem blur, dentro do card "Folha mensal" já borrado.
+
+### A causa
+
+O CSS do blur (sessão anterior) mirava `.kpi-v` (o número grande) e `.val` — mas só o `.val` que fica
+DENTRO de `.rh-barra-linha` (a lista de "Folha por departamento"). O valor da periculosidade não é o
+número grande do card, é texto solto dentro da NOTA do KPI (`.kpi-n`, ex.: "17 salário(s) cadastrado(s)
+· inclui R$ 26.301,10 de periculosidade") — nem o seletor `.kpi-v` pegava (não é o valor principal),
+nem o `.rh-barra-linha .val` (não está numa barra). Escapava dos dois lados.
+
+### O ajuste
+
+Duas mudanças pontuais: o valor da periculosidade passou a vir embrulhado em `<span class="val">` na
+própria nota (reaproveitando a mesma classe já usada nas barras, sem inventar uma nova); e o seletor
+CSS deixou de restringir `.val` a `.rh-barra-linha` — agora é `.rh-custo-oculto .val` puro, que cobre
+os dois lugares (a barra E a nota do KPI) com uma regra só.
+
+### Verificação
+
+`verifica-painel-espacamento-olho.js` (estendido, +2 verificações): confirma que o valor da
+periculosidade vem embrulhado no `<span class="val">` certo, e que o seletor CSS não ficou mais restrito
+a `.rh-barra-linha`. `verifica-custo.js` sem regressão (mudança não toca o cálculo, só a marcação).
+Verificado via `getComputedStyle` no navegador (mock com CSS real): com `.rh-custo-oculto` aplicado, o
+`<span class="val">` da periculosidade e o `.kpi-v` do card ambos resolvem para `filter: blur(6px)`.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

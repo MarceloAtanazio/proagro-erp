@@ -1320,7 +1320,7 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .rh-olho:hover { border-color: #C8D2CC; background: #FAFBFA; }
 /* O blur cobre só o número — rótulo e legenda continuam legíveis, então dá
    pra saber que "Folha mensal" existe sem saber quanto é. */
-.rh-custo-oculto .kpi-v, .rh-custo-oculto .rh-barra-linha .val { filter: blur(6px); user-select: none; }
+.rh-custo-oculto .kpi-v, .rh-custo-oculto .val { filter: blur(6px); user-select: none; }
 
 /* KPI: rótulo pequeno, número grande, e a COBERTURA embaixo. A nota não é
    enfeite — é ela que impede o número de ser lido como se cobrisse todo mundo. */

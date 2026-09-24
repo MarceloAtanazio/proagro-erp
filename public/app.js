@@ -10795,7 +10795,7 @@ async function rhPainel(c) {
       </h3>
       <div class="kpis">
         ${rhKpi('Folha mensal', brl(cu.folha_mensal), `${co.com_salario} salário(s) cadastrado(s)` +
-          (cu.periculosidade_mensal ? ` · inclui ${brl(cu.periculosidade_mensal)} de periculosidade` : ''))}
+          (cu.periculosidade_mensal ? ` · inclui <span class="val">${brl(cu.periculosidade_mensal)}</span> de periculosidade` : ''))}
         ${rhKpi('Benefícios/mês', brl(cu.beneficios_mensais), `estimado em ${cu.base_dias_uteis} dias úteis`)}
         ${rhKpi('Custo médio', cu.custo_medio == null ? '—' : brl(cu.custo_medio), 'por colaborador com vínculo')}
         ${rhKpi('Custo anual', brl((cu.folha_mensal + cu.beneficios_mensais) * 12), 'sem encargos e 13º')}
