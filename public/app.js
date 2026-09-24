@@ -9484,20 +9484,26 @@ async function rhAbrirCard(id) {
   ['ad-regime', 'ad-modelo_trabalho'].forEach(x => { const e = $('#' + x); if (e) e.onchange = sincMinuta; });
   sincMinuta();
 
-  // Trocar a vaga pré-preenche cargo/nível/departamento/regime/modelo com o
-  // que ESSA vaga pede — mas nada se grava sozinho, é só um ponto de partida
-  // pra conferir antes de clicar Salvar.
+  // Trocar a vaga pré-preenche cargo/nível/departamento/regime/modelo — e o
+  // pacote (salário, VR, home office) que a vaga anuncia — com o que ESSA
+  // vaga pede. Nada se grava sozinho, é só um ponto de partida pra conferir
+  // antes de clicar Salvar.
   const selVaga = $('#ad-vaga_id');
   if (selVaga) selVaga.onchange = () => {
     const vagaEscolhida = vagas.find(v => String(v.id) === selVaga.value);
     if (!vagaEscolhida) return;
-    const setar = (idCampo, val) => { const e = $('#' + idCampo); if (e) e.value = val || ''; };
+    const setar = (idCampo, val) => { const e = $('#' + idCampo); if (e) e.value = (val == null ? '' : val); };
     setar('ad-cargo_pretendido', vagaEscolhida.cargo);
     setar('ad-nivel_pretendido', vagaEscolhida.nivel);
     setar('ad-departamento', vagaEscolhida.departamento);
     setar('ad-regime', vagaEscolhida.regime || 'regular');
     setar('ad-modelo_trabalho', vagaEscolhida.modelo_trabalho || 'presencial');
-    toast('Cargo, nível, departamento, regime e modelo foram atualizados pra bater com a vaga — confira e Salve.');
+    setar('ad-salario_previsto', vagaEscolhida.salario_previsto);
+    setar('ad-vr_dia', vagaEscolhida.vr_dia);
+    setar('ad-dias_presenciais', vagaEscolhida.dias_presenciais);
+    setar('ad-dias_home_office', vagaEscolhida.dias_home_office);
+    setar('ad-home_office_dia', vagaEscolhida.home_office_dia);
+    toast('Cargo, nível, departamento, regime, modelo e o pacote (salário, VR, home office) foram atualizados pra bater com a vaga — confira e Salve.');
     sincMinuta();
   };
 }
@@ -9988,7 +9994,7 @@ function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
     </div>
     <div class="form-row">
       ${fldSel('nc-cargo', 'Cargo', rhOpcoesCargo(vaga ? vaga.cargo : '', true), vaga ? vaga.cargo : '')}
-      ${fldSel('nc-nivel', 'Nível', RH_NIVEIS, '')}
+      ${fldSel('nc-nivel', 'Nível', RH_NIVEIS, (vaga && vaga.nivel) || '')}
       ${fld('nc-departamento', 'Departamento', 'text', (vaga && vaga.departamento) || '')}
     </div>
     <div class="form-row">
@@ -9996,6 +10002,19 @@ function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
       ${fldSel('nc-modelo_trabalho', 'Modelo de trabalho', RH_MODELO_TRAB, (vaga && vaga.modelo_trabalho) || 'presencial')}
       ${fld('nc-admissao_prevista', 'Admissão prevista', 'date', '')}
     </div>
+    ${/* Salário/VR/home office só fazem sentido pra quem passa pelo Quadro:
+          "já é funcionário" tem o vínculo próprio pra isso. Pré-preenchidos
+          da vaga (quando veio de uma) — o mesmo pacote que ela anuncia é o
+          que o card nasce carregando, sem precisar redigitar. */
+      comAdmissao ? `<div class="form-row">
+      ${fld('nc-salario_previsto', 'Salário previsto (R$)', 'number', (vaga && vaga.salario_previsto != null ? vaga.salario_previsto : ''), 'step="0.01" min="0"')}
+      ${fld('nc-vr_dia', 'Vale-refeição/dia (R$)', 'number', (vaga && vaga.vr_dia != null ? vaga.vr_dia : ''), 'step="0.01" min="0"')}
+    </div>
+    <div class="form-row" id="nc-remoto" ${vaga && ['hibrido', 'home_office'].includes(vaga.modelo_trabalho || '') ? '' : 'hidden'}>
+      ${fld('nc-dias_presenciais', 'Dias presenciais/semana', 'number', (vaga && vaga.dias_presenciais != null ? vaga.dias_presenciais : ''), 'min="0" max="7"')}
+      ${fld('nc-dias_home_office', 'Dias em home office/semana', 'number', (vaga && vaga.dias_home_office != null ? vaga.dias_home_office : ''), 'min="0" max="7"')}
+      ${fld('nc-home_office_dia', 'Ajuda de custo home office/dia (R$)', 'number', (vaga && vaga.home_office_dia != null ? vaga.home_office_dia : ''), 'step="0.01" min="0"')}
+    </div>` : ''}
     <div class="form-row">
       ${/* Candidato não tem e-mail da empresa: pedir "corporativo" a ele é
             pedir um dado que só existe depois da contratação, e o campo ficava
@@ -10023,7 +10042,12 @@ function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
           email_pessoal: comAdmissao ? $('#nc-email_pessoal').value : '',
           celular: $('#nc-celular').value,
           abrir_admissao: $('#nc-abrir').checked,
-          vaga_id: vaga ? vaga.id : null };
+          vaga_id: vaga ? vaga.id : null,
+          ...(comAdmissao ? {
+            salario_previsto: $('#nc-salario_previsto').value, vr_dia: $('#nc-vr_dia').value,
+            dias_presenciais: $('#nc-dias_presenciais').value, dias_home_office: $('#nc-dias_home_office').value,
+            home_office_dia: $('#nc-home_office_dia').value
+          } : {}) };
         try {
           const r = await api('/api/rh/colaboradores', { method: 'POST', body });
           closeModal();
@@ -10038,6 +10062,8 @@ function rhFormNovoColaborador(comAdmissao = true, vaga = null) {
     const sel = $('#nc-nivel'), temNivel = rhCargoTemNivel($('#nc-cargo').value);
     sel.disabled = !temNivel; if (!temNivel) sel.value = '';
     sel.title = temNivel ? '' : 'Este cargo não tem níveis Júnior/Pleno/Sênior';
+    const remoto = $('#nc-remoto');
+    if (remoto) remoto.hidden = !['hibrido', 'home_office'].includes($('#nc-modelo_trabalho').value);
   };
   ['nc-cargo', 'nc-regime', 'nc-modelo_trabalho'].forEach(x => { $('#' + x).onchange = sinc; });
   rhLigarSelectCargo('nc-cargo', sinc);
@@ -11716,7 +11742,16 @@ function rhFormVaga(v) {
       ${fld('vg-salario_previsto', 'Salário previsto', 'number', v.salario_previsto || '', 'step="0.01" min="0"')}
     </div>
     <div class="form-row">
+      ${fld('vg-vr_dia', 'Vale-refeição/dia (R$)', 'number', v.vr_dia == null ? '' : v.vr_dia, 'step="0.01" min="0"')}
       ${fld('vg-divulgada_em', 'Divulgada em', 'text', v.divulgada_em || '', 'placeholder="LinkedIn, Gupy, indicação..."')}
+    </div>
+    ${/* Só a jornada híbrida e o home office pedem estes três — mesmo recorte
+          usado no card do candidato (rhAbrirCard), pra virar exatamente o
+          mesmo pacote quando a pessoa entra pela vaga. */''}
+    <div class="form-row" id="vg-remoto" ${['hibrido', 'home_office'].includes(v.modelo_trabalho || '') ? '' : 'hidden'}>
+      ${fld('vg-dias_presenciais', 'Dias presenciais/semana', 'number', v.dias_presenciais == null ? '' : v.dias_presenciais, 'min="0" max="7"')}
+      ${fld('vg-dias_home_office', 'Dias em home office/semana', 'number', v.dias_home_office == null ? '' : v.dias_home_office, 'min="0" max="7"')}
+      ${fld('vg-home_office_dia', 'Ajuda de custo home office/dia (R$)', 'number', v.home_office_dia == null ? '' : v.home_office_dia, 'step="0.01" min="0"')}
     </div>
     <p class="rh-custo-nota">"Aberta em" não precisa ser hoje — anuncia-se a vaga e só depois vem o
       cadastro aqui; ajuste pra data real, e o histórico (tempo até preencher, no Painel) sai certo.</p>
@@ -11740,7 +11775,10 @@ function rhFormVaga(v) {
           cargo: $('#vg-cargo').value, nivel: $('#vg-nivel').value,
           departamento: $('#vg-departamento').value, posicoes: $('#vg-posicoes').value,
           regime: $('#vg-regime').value, modelo_trabalho: $('#vg-modelo_trabalho').value,
-          salario_previsto: $('#vg-salario_previsto').value, observacao: $('#vg-observacao').value,
+          salario_previsto: $('#vg-salario_previsto').value, vr_dia: $('#vg-vr_dia').value,
+          dias_presenciais: $('#vg-dias_presenciais').value, dias_home_office: $('#vg-dias_home_office').value,
+          home_office_dia: $('#vg-home_office_dia').value,
+          observacao: $('#vg-observacao').value,
           descricao: $('#vg-descricao').value, divulgada_em: $('#vg-divulgada_em').value,
           aberta_em: $('#vg-aberta_em').value
         };
@@ -11753,6 +11791,9 @@ function rhFormVaga(v) {
         } catch (e) { modalError(e.message); }
      }}], { wide: true });
   rhLigarSelectCargo('vg-cargo');
+  const remoto = $('#vg-remoto');
+  if (remoto) $('#vg-modelo_trabalho').onchange = e =>
+    { remoto.hidden = !['hibrido', 'home_office'].includes(e.target.value); };
 }
 
 // Os candidatos de uma vaga, com a etapa em que cada um está. É a pergunta que

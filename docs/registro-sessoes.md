@@ -7164,3 +7164,45 @@ Verificado via `getComputedStyle` no navegador (mock com CSS real): com `.rh-cus
 `<span class="val">` da periculosidade e o `.kpi-v` do card ambos resolvem para `filter: blur(6px)`.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-24 — Sessão 150: o pacote da vaga (salário, VR, home office) chega no candidato
+
+**Solicitação:** *"Essas informações destacadas em vermelho foram cadastradas na aba 'Vagas' no momento
+em que registro o funcionário, porém quando ele vem pro 'Quadro de admissão' elas não vêm, pode
+verificar se está tudo certo na rota?"* — com print do card do candidato mostrando Salário previsto,
+Vale-refeição/dia, Dias presenciais, Dias home office e Ajuda de custo home office, perguntando se a
+rota estava passando esses valores da vaga pro candidato.
+
+### O que a apuração encontrou
+
+Salário previsto **já existia** no cadastro da vaga, mas o formulário de "+ Candidato"
+(`rhFormNovoColaborador`) nunca teve campo pra ele — nem pré-preenchido, nem editável — então nunca era
+enviado ao criar o candidato, mesmo a vaga já sabendo o valor. Bug real, confirmado.
+
+Os outros 4 campos (vale-refeição/dia, dias presenciais, dias home office, ajuda de custo home office)
+**não existiam em lugar nenhum da vaga** — só no card do candidato. Não tinham de onde vir; perguntei ao
+Marcelo se preferia só corrigir o salário ou também levar esses 4 pra vaga, e a escolha foi levar todos.
+
+### O que mudou
+
+`erp_rh_vagas` ganhou as 4 colunas novas (migração aditiva). O formulário de Vaga ganhou os campos —
+VR/dia sempre visível, e dias presenciais/home office/ajuda de custo só aparecem quando o modelo de
+trabalho é híbrido ou home office (mesmo recorte já usado no card do candidato). "+ Candidato" passa a
+trazer os 5 campos (salário + os 4 novos) pré-preenchidos da vaga, editáveis antes de confirmar — e o
+nível, que também ficava sempre em branco por descuido, agora vem junto. Como bônus consistente: o
+select de "trocar de vaga" no card (sessão 146) passou a sincronizar esse pacote também, não só
+cargo/nível/departamento/regime/modelo.
+
+### Verificação
+
+`verifica-vaga-pacote.js` (novo, 14 verificações contra o Express real): cria vaga com o pacote
+completo, edita um campo isolado, e confirma que "+ Candidato" a partir da vaga grava os 5 valores no
+card — inclusive reproduzindo o bug relatado (antes desta correção, salário previsto se perdia mesmo
+já existindo na vaga). `verifica-vaga-pacote-front.js` (novo, verificação estática): confirma os campos
+nos dois formulários e a sincronização no card. `verifica-vagas.js` (repontado: seu stub tinha os
+índices posicionais do INSERT antigo, hardcoded — quebrou com as 4 colunas novas no meio da lista, e foi
+corrigido) e o resto da suíte de RH sem regressão. Testado no navegador (mock com CSS real): os dois
+formulários mostram o pacote completo, com o mesmo recorte visual do card.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

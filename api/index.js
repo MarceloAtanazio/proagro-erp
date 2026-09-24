@@ -2906,7 +2906,8 @@ async function rhGarantirFornecedor(colabId, userId) {
 // sendo um quadro de pessoas.
 const RH_VAGA_SITUACOES = ['aberta', 'pausada', 'fechada'];
 const RH_VAGA_CAMPOS = ['cargo', 'nivel', 'departamento', 'posicoes', 'regime', 'modelo_trabalho',
-  'salario_previsto', 'observacao', 'descricao', 'divulgada_em', 'aberta_em'];
+  'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office', 'home_office_dia',
+  'observacao', 'descricao', 'divulgada_em', 'aberta_em'];
 
 // A contagem de candidatos vem junto com a lista: sem ela, "vaga aberta" não
 // diz se o processo está parado ou fervendo, que é a pergunta que se faz olhando
@@ -2948,12 +2949,17 @@ app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => 
   const abertaEm = isDate(req.body.aberta_em) ? req.body.aberta_em : hojeISO();
   const ins = await query(
     `INSERT INTO erp_rh_vagas (cargo, nivel, departamento, posicoes, regime, modelo_trabalho,
-        salario_previsto, observacao, descricao, divulgada_em, aberta_em, criado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        salario_previsto, vr_dia, dias_presenciais, dias_home_office, home_office_dia,
+        observacao, descricao, divulgada_em, aberta_em, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
     [cargo, sanitize(req.body.nivel) || null, sanitize(req.body.departamento) || null,
      Number.isFinite(pos) && pos > 0 ? Math.round(pos) : 1,
      sanitize(req.body.regime) || 'regular', sanitize(req.body.modelo_trabalho) || 'presencial',
      req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
+     req.body.vr_dia ? Number(req.body.vr_dia) : null,
+     Number.isFinite(Number(req.body.dias_presenciais)) && req.body.dias_presenciais !== '' ? Number(req.body.dias_presenciais) : null,
+     Number.isFinite(Number(req.body.dias_home_office)) && req.body.dias_home_office !== '' ? Number(req.body.dias_home_office) : null,
+     req.body.home_office_dia ? Number(req.body.home_office_dia) : null,
      sanitize(req.body.observacao) || null, sanitize(req.body.descricao) || null,
      sanitize(req.body.divulgada_em) || null, abertaEm, req.user.id]);
   res.json(ins[0]);
@@ -2982,7 +2988,8 @@ app.put('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) 
       }
     }
   }
-  const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, ['aberta_em'], ['posicoes', 'salario_previsto'], []);
+  const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, ['aberta_em'],
+    ['posicoes', 'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office', 'home_office_dia'], []);
   if (corpo.situacao !== undefined) { cols.push('situacao'); vals.push(corpo.situacao); }
   if (corpo.fechamento_motivo !== undefined) { cols.push('fechamento_motivo'); vals.push(sanitize(corpo.fechamento_motivo) || null); }
   // A data de fechamento acompanha a situação, e some ao reabrir: vaga aberta
@@ -3799,12 +3806,17 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
       // alguém é cadastrado direto, sem vaga aberta — acontece, e forçar uma
       // vaga fantasma só para ter o campo preenchido seria pior.
       `INSERT INTO erp_rh_admissoes (colaborador_id, cargo_pretendido, nivel_pretendido, departamento,
-         regime, modelo_trabalho, salario_previsto, admissao_prevista, vaga_id, responsavel_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) RETURNING id`,
+         regime, modelo_trabalho, salario_previsto, vr_dia, dias_presenciais, dias_home_office, home_office_dia,
+         admissao_prevista, vaga_id, responsavel_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14) RETURNING id`,
       [colabId, sanitize(req.body.cargo) || null, sanitize(req.body.nivel) || null,
        sanitize(req.body.departamento) || null, sanitize(req.body.regime) || 'regular',
        sanitize(req.body.modelo_trabalho) || 'presencial',
        req.body.salario_previsto ? Number(req.body.salario_previsto) : null,
+       req.body.vr_dia ? Number(req.body.vr_dia) : null,
+       Number.isFinite(Number(req.body.dias_presenciais)) && req.body.dias_presenciais !== '' ? Number(req.body.dias_presenciais) : null,
+       Number.isFinite(Number(req.body.dias_home_office)) && req.body.dias_home_office !== '' ? Number(req.body.dias_home_office) : null,
+       req.body.home_office_dia ? Number(req.body.home_office_dia) : null,
        isDate(req.body.admissao_prevista) ? req.body.admissao_prevista : null,
        Number(req.body.vaga_id) > 0 ? Number(req.body.vaga_id) : null, req.user.id]);
     admissaoId = a[0].id;
