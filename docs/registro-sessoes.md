@@ -6978,3 +6978,43 @@ regressão. Testado no navegador (mock com CSS real): a seção aparece logo no 
 ("+ Anexar currículo") quanto com arquivo já anexado (nome, "ver", excluir e "Substituir currículo").
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-24 — Sessão 145: currículo e laudos de Avaliações — visual corrigido, ícone quebrado e botões apertados
+
+**Solicitação:** *"Dentro do perfil do candidato em 'Quadro de admissões' melhor um pouco a visualização
+dos quadros de 'Curriculo' e 'Avaliações', está muito feio e simples. Os botões também estão
+quebrados!"* — com print mostrando o ícone de anexo renderizando como um glifo estreito e cinza,
+irreconhecível, e o "ver · 🗑" espremido num cantinho.
+
+### A causa
+
+As duas seções (implementadas nas sessões 143 e 144) reaproveitaram `.rh-check-item` — o componente de
+checklist ✔/✘ de documento obrigatório — pra mostrar arquivo anexado. Dois problemas nisso: (1)
+`.rh-check-item .mk` tem `font-weight:700`, e negrito num emoji faz o navegador cair pra uma variação
+monocromática/estreita do glifo em vez do desenho colorido normal — daí o ícone "quebrado" do print; (2)
+o layout é `grid-template-columns: 20px 1fr auto`, pensado pra uma marca + rótulo + status curto, não
+pra um nome de arquivo + botões de ação — por isso "ver" (link de texto) e o 🗑 (botão-ícone) ficavam
+espremidos dentro da última coluna, sem o respiro de um botão de verdade.
+
+### O ajuste
+
+As duas seções passaram a usar `.ec-anexo-item` — o cartão de anexo já usado (e já validado
+visualmente) na ficha do colaborador para CNH, veículo e apólice: ícone sem negrito, nome do arquivo
+em destaque, tamanho e data em cinza, e botões `.btn.sm` de verdade ("Ver" / "Excluir", este último
+`danger-ghost`) em vez do link+ícone amontoados. Sem o `font-weight` forçado, o emoji volta a
+renderizar normal. É responsivo (`.ec-anexo-item` já quebra em telas estreitas) e mantém os mesmos
+`data-ver-aval`/`data-del-aval` — só a casca visual mudou, a lógica de clique continua a mesma.
+Currículo vazio e "Nenhum laudo anexado ainda" também trocaram de `.rh-nota` para `.ec-anexo-vazio`
+(o texto cinza mais discreto já usado nesse mesmo padrão em outros lugares do sistema, em vez da caixa
+com borda de aviso, que é pra pendência/alerta — currículo vazio não é um alerta).
+
+### Verificação
+
+Mudança só de markup/CSS reaproveitando um componente já testado — sem toque em backend. Suíte de
+`verifica-avaliacoes-etapa.js`, `verifica-curriculo-card.js` e `verifica-card-modal-largura.js`
+continuam passando (a lógica de anexo não mudou, só a casca). Testado no navegador (mock com CSS real,
+larguras de modal e mobile): ícone renderiza limpo, item de arquivo com nome/tamanho/data e os dois
+botões, sem cortar nem espremer.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

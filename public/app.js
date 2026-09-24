@@ -9256,14 +9256,20 @@ async function rhAbrirCard(id) {
           lugar. Por isso fica logo no topo, antes até do contato. */
       (() => {
         const cv = (d.anexos_avaliacao || []).find(x => x.doc_tipo === 'curriculo');
+        // Mesmo cartão de anexo usado em toda a ficha do colaborador
+        // (.ec-anexo-item) — não a lista de checklist (.rh-check-item), que é
+        // pra ✔/✘ de obrigatoriedade, não pra arquivo com botão de ação.
         return `<div class="rh-sec"><h4>Currículo</h4>
           ${cv
-            ? `<div class="rh-check"><div class="rh-check-item ok"><span class="mk">📎</span>
-                 <span class="nm">${esc(cv.file_name)}</span>
-                 <span class="via"><button class="rh-link" data-ver-aval="${cv.id}">ver</button>${ed ? ` · <button class="btn-ic perigo" data-del-aval="${cv.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</span>
-               </div></div>`
-            : '<div class="rh-nota">Nenhum currículo anexado ainda.</div>'}
-          ${ed ? `<div class="rh-acoes"><button class="btn sm" id="rh-add-curriculo">${cv ? 'Substituir currículo' : '+ Anexar currículo'}</button></div>` : ''}
+            ? `<div class="ec-anexo-item">
+                 <span>📄</span>
+                 <div class="ec-anexo-nome" title="${esc(cv.file_name)}">${esc(cv.file_name)}</div>
+                 <small>${fmtSize(cv.byte_size)} · ${rhData(cv.created_at)}</small>
+                 <button class="btn sm" data-ver-aval="${cv.id}" type="button">Ver</button>
+                 ${ed ? `<button class="btn sm danger-ghost" data-del-aval="${cv.id}" type="button">Excluir</button>` : ''}
+               </div>`
+            : '<div class="ec-anexo-vazio">Nenhum currículo anexado ainda.</div>'}
+          ${ed ? `<div class="rh-acoes"><button class="btn sm" id="rh-add-curriculo" type="button">${cv ? '🔄 Substituir currículo' : '📎 Anexar currículo'}</button></div>` : ''}
         </div>`;
       })()}
 
@@ -9360,11 +9366,14 @@ async function rhAbrirCard(id) {
             <div class="rh-linha"><span>Psicotécnico em</span><b>${a.psicotecnico_em ? rhData(a.psicotecnico_em) : '—'}</b></div>
             <div class="rh-linha"><span>Resultado do psicotécnico</span><b>${esc(a.psicotecnico_resultado || '—')}</b></div>
           </div>`}
-          <div class="rh-check">${anexos.length ? anexos.map(x => `<div class="rh-check-item ok">
-            <span class="mk">📎</span><span class="nm">${esc(nomeAval(x.doc_tipo))} — ${esc(x.file_name)}</span>
-            <span class="via"><button class="rh-link" data-ver-aval="${x.id}">ver</button>${ed ? ` · <button class="btn-ic perigo" data-del-aval="${x.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}</span>
-          </div>`).join('') : '<div class="rh-nota">Nenhum laudo anexado ainda.</div>'}</div>
-          ${ed ? '<div class="rh-acoes"><button class="btn sm" id="rh-add-aval">+ Anexar laudo</button></div>' : ''}
+          ${anexos.length ? anexos.map(x => `<div class="ec-anexo-item">
+            <span>📄</span>
+            <div class="ec-anexo-nome" title="${esc(x.file_name)}"><strong>${esc(nomeAval(x.doc_tipo))}:</strong> ${esc(x.file_name)}</div>
+            <small>${fmtSize(x.byte_size)} · ${rhData(x.created_at)}</small>
+            <button class="btn sm" data-ver-aval="${x.id}" type="button">Ver</button>
+            ${ed ? `<button class="btn sm danger-ghost" data-del-aval="${x.id}" type="button">Excluir</button>` : ''}
+          </div>`).join('') : '<div class="ec-anexo-vazio">Nenhum laudo anexado ainda.</div>'}
+          ${ed ? '<div class="rh-acoes"><button class="btn sm" id="rh-add-aval" type="button">📎 Anexar laudo</button></div>' : ''}
         </div>`;
       })() : ''}
 
