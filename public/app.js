@@ -10677,6 +10677,12 @@ const RH_MODELO_NOME = { presencial: 'Presencial', hibrido: 'Híbrido',
   home_office: 'Home office', externo: 'Jornada externa' };
 const RH_SEXO_NOME = { M: 'Masculino', F: 'Feminino', O: 'Outro' };
 
+// Esconder o custo de pessoal é uma preferência de tela cheia/projetor, não
+// de um carregamento só — por isso fica no localStorage, do mesmo jeito que o
+// menu lateral recolhido.
+const RH_CUSTO_OCULTO_KEY = 'proagro_rh_custo_oculto';
+let RH_CUSTO_OCULTO = localStorage.getItem(RH_CUSTO_OCULTO_KEY) === '1';
+
 async function rhPainel(c) {
   const d = await api('/api/rh/painel');
   const co = d.cobertura, hc = d.headcount, re = d.recrutamento;
@@ -10781,7 +10787,12 @@ async function rhPainel(c) {
         : '<div class="rh-sem">Nenhum desligamento nos últimos 12 meses.</div>'}
     </div>
 
-    ${cu ? `<div class="rh-painel-sec"><h3>Custo de pessoal</h3>
+    ${cu ? `<div class="rh-painel-sec ${RH_CUSTO_OCULTO ? 'rh-custo-oculto' : ''}" id="rh-sec-custo">
+      <h3 class="rh-h3-acao">Custo de pessoal
+        <button class="rh-olho" id="rh-custo-olho" type="button"
+          title="${RH_CUSTO_OCULTO ? 'Mostrar valores' : 'Ocultar valores'}"
+          aria-label="${RH_CUSTO_OCULTO ? 'Mostrar valores' : 'Ocultar valores'}">${RH_CUSTO_OCULTO ? '🙈' : '👁'}</button>
+      </h3>
       <div class="kpis">
         ${rhKpi('Folha mensal', brl(cu.folha_mensal), `${co.com_salario} salário(s) cadastrado(s)` +
           (cu.periculosidade_mensal ? ` · inclui ${brl(cu.periculosidade_mensal)} de periculosidade` : ''))}
@@ -10860,6 +10871,15 @@ async function rhPainel(c) {
 
   rhLigarAbas();
   $('#rh-add-clima').onclick = rhFormClima;
+  const olho = $('#rh-custo-olho');
+  if (olho) olho.onclick = () => {
+    RH_CUSTO_OCULTO = !RH_CUSTO_OCULTO;
+    localStorage.setItem(RH_CUSTO_OCULTO_KEY, RH_CUSTO_OCULTO ? '1' : '0');
+    const sec = $('#rh-sec-custo');
+    sec.classList.toggle('rh-custo-oculto', RH_CUSTO_OCULTO);
+    olho.textContent = RH_CUSTO_OCULTO ? '🙈' : '👁';
+    olho.title = olho.ariaLabel = RH_CUSTO_OCULTO ? 'Mostrar valores' : 'Ocultar valores';
+  };
 }
 
 function rhFormClima() {

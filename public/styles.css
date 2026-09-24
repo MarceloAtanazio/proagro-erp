@@ -1307,6 +1307,20 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
   letter-spacing: .04em; color: var(--muted); }
 .rh-mini { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: none; letter-spacing: 0;
   background: #F1F5F2; border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; }
+/* A caixa de aviso/nota vinha colada na grade de KPIs logo acima — sem
+   respiro nenhum entre um cartão numérico e a faixa colorida embaixo dele. */
+.kpis + .rh-alerta, .kpis + .rh-nota { margin-top: 14px; }
+
+/* Cabeçalho de seção com uma ação (o olho de ocultar valor) do lado do
+   título — só quando a seção pede, senão os outros ficam iguais a antes. */
+.rh-painel-sec > h3.rh-h3-acao { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rh-olho { flex: 0 0 auto; width: 28px; height: 28px; display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid var(--line); border-radius: 7px; background: #fff;
+  color: var(--ink-2); font-size: 14px; cursor: pointer; }
+.rh-olho:hover { border-color: #C8D2CC; background: #FAFBFA; }
+/* O blur cobre só o número — rótulo e legenda continuam legíveis, então dá
+   pra saber que "Folha mensal" existe sem saber quanto é. */
+.rh-custo-oculto .kpi-v, .rh-custo-oculto .rh-barra-linha .val { filter: blur(6px); user-select: none; }
 
 /* KPI: rótulo pequeno, número grande, e a COBERTURA embaixo. A nota não é
    enfeite — é ela que impede o número de ser lido como se cobrisse todo mundo. */

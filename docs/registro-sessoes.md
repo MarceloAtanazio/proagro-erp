@@ -7090,3 +7090,45 @@ mensagem de vazio também usa o rótulo completo. `verifica-vagas.js`, `verifica
 mostra "Técnico(a) de Campo · Pleno — Campo".
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-24 — Sessão 148: Painel de RH — respiro nos avisos, e olho pra esconder o custo de pessoal
+
+**Solicitação:** *"Esses avisos destacados em vermelho estão muito colados nos blocos de cima, dê um
+espaçamento entre eles senão a visualização fica muito ruim. Adicionalmente a isso coloque um botão
+como se fosse um olho para que eu possa ocultar as informações financeiras em 'Custo de pessoal', que
+dê um blur só nos valores que mostra."* — com dois prints do Painel: "Vagas paradas" e "Não inclui
+encargos" coladas direto embaixo da grade de KPIs, sem respiro nenhum.
+
+### Espaçamento
+
+`.kpis` (a grade de cartões numéricos) não tinha `margin-bottom`, e `.rh-alerta`/`.rh-nota` não tinham
+`margin-top` — cada um só empurrava o que vinha DEPOIS dele, nunca o que vinha antes. Resultado: toda
+vez que um aviso aparecia logo abaixo de uma grade de KPIs (Recrutamento → "vagas paradas", Custo de
+pessoal → nota dos encargos, Desenvolvimento → "nenhum treinamento"), ficava colado. Regra CSS nova,
+`.kpis + .rh-alerta, .kpis + .rh-nota { margin-top: 14px }`, mirada só nesse encontro específico — não
+mexe no espaçamento de avisos que aparecem em outro contexto da tela.
+
+### Olho no Custo de pessoal
+
+Botão novo no cabeçalho da seção (👁 / 🙈), que alterna uma classe (`rh-custo-oculto`) na seção inteira.
+O CSS dessa classe borra (`filter: blur`) só os elementos de VALOR — os 4 números grandes dos cartões
+de KPI e o valor de cada linha de "Folha por departamento" — sem tocar em rótulo, legenda ou nas
+próprias barras (a barra mostra proporção relativa, não o número exato, então continua útil mesmo
+"escondida"). A preferência fica no `localStorage` do navegador (mesmo padrão já usado pro menu lateral
+recolhido), então volta esticada do jeito que a pessoa deixou da última vez — útil pra quem projeta a
+tela numa reunião e não quer lembrar de clicar toda vez.
+
+### Verificação
+
+`verifica-painel-espacamento-olho.js` (novo, verificação estática de texto): confirma a regra CSS de
+espaçamento, o botão e seu `id`, o toggle de classe + gravação no `localStorage`, e que o CSS do blur
+mira só `.kpi-v`/`.val`, não a seção inteira. `verifica-custo.js` e `verifica-metricas-vinculo.js` sem
+regressão (mudança é só frontend, nada de backend mudou aqui). `verifica-rh-painel.js` apresentou 3
+falhas em testes de ARQUIVAR COLABORADOR, sem nenhuma relação com este trabalho — o stub do teste não
+conhece uma query nova (`UPDATE erp_rh_beneficio_colab...`) que já está em `api/index.js` por causa do
+trabalho em andamento de outra sessão neste mesmo repositório; nenhum arquivo tocado aqui entra nesse
+commit. Testado no navegador (mock com CSS real): respiro visível entre KPI e aviso; olho aberto mostra
+os valores normalmente, olho fechado borra só os números, rótulos e barras continuam legíveis.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
