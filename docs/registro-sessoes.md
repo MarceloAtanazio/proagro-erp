@@ -7059,3 +7059,34 @@ sem regressão. Testado no navegador (mock com CSS real): campo "Vaga" isolado n
 campos de cargo/nível/departamento sincronizando visualmente após a troca.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-24 — Sessão 147: filtro de vagas do Quadro ganha o nível no rótulo
+
+**Solicitação:** *"No filtro de vagas é importante adicionar o nível também, pois ali no exemplo não
+dá pra diferenciar a vaga de Júnior e a de Pleno no caso de técnico de campo."* — com print mostrando
+duas opções idênticas "Técnico(a) de Campo · Campo" no `<select>` "Todas as vagas".
+
+### A causa
+
+O rótulo do filtro (`rh-filtro-vaga`) montava só `cargo + departamento`, sem olhar pro nível — sobrou
+de antes de a sessão anterior ter criado `rhVagaLabel()` (cargo + nível + departamento + situação) pro
+select de "trocar de vaga" no card. As duas telas nasceram em momentos diferentes e cada uma montava o
+próprio texto.
+
+### O ajuste
+
+Filtro do Quadro e a mensagem de "nenhum candidato nesta vista" (que também citava só o cargo) passaram
+a usar a mesma `rhVagaLabel()` — uma função, dois lugares, sem rótulo divergente entre eles. Agora
+"Técnico de Campo · Pleno — Campo" e "Técnico de Campo · Júnior — Campo" aparecem como opções
+distintas.
+
+### Verificação
+
+`verifica-filtro-vaga-nivel.js` (novo, verificação estática de texto): confirma que o `<select
+id="rh-filtro-vaga">` usa `rhVagaLabel(v)` e que não sobrou o rótulo antigo sem nível; confirma que a
+mensagem de vazio também usa o rótulo completo. `verifica-vagas.js`, `verifica-trocar-vaga.js` e
+`verifica-arrasto-quadro.js` sem regressão. Testado no navegador (mock com CSS real): opção do select
+mostra "Técnico(a) de Campo · Pleno — Campo".
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

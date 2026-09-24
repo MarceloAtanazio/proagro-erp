@@ -9033,7 +9033,7 @@ async function rhQuadro(c) {
       <select id="rh-filtro-vaga">
         <option value="">Todas as vagas</option>
         ${vagas.map(v => `<option value="${v.id}" ${String(v.id) === RH_QUADRO_VAGA ? 'selected' : ''}>
-          ${esc(v.cargo)}${v.departamento ? ' · ' + esc(v.departamento) : ''}</option>`).join('')}
+          ${esc(rhVagaLabel(v))}</option>`).join('')}
         <option value="sem" ${RH_QUADRO_VAGA === 'sem' ? 'selected' : ''}>Sem vaga vinculada</option>
       </select>
       <select id="rh-vista">
@@ -9054,7 +9054,7 @@ async function rhQuadro(c) {
     }).join('')}</div>
     ${cards.length ? '' : `<div class="rh-vazio">
       <p><strong>${todosCards.length && RH_QUADRO_VAGA
-          ? `Nenhum candidato ${RH_QUADRO_VAGA === 'sem' ? 'sem vaga vinculada' : `da vaga ${esc(vagaAtual ? vagaAtual.cargo : '')}`} nesta vista.`
+          ? `Nenhum candidato ${RH_QUADRO_VAGA === 'sem' ? 'sem vaga vinculada' : `da vaga ${esc(vagaAtual ? rhVagaLabel(vagaAtual) : '')}`} nesta vista.`
           : 'Nenhuma admissão em andamento.'}</strong> O quadro acompanha a entrada de cada
       candidato, da carta oferta ao onboarding. Use <strong>+ Novo candidato</strong> para abrir um card.</p></div>`}`}`;
   rhLigarAbas();
