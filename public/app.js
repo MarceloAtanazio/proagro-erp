@@ -13365,11 +13365,13 @@ function rhAbaDossie(painel, d, id) {
     <div class="rh-sec"><h4>Arquivos ${ed ? '<button class="btn sm" id="rh-add-doc">+ Anexar documento</button>' : ''}</h4>
       ${d.dossie.length ? `<div class="rh-docs">${Object.keys(porTipo).map(t => `
         <div class="rh-doc-grupo"><h5>${esc(nome(t))}</h5>
-          ${porTipo[t].map(a => `<div class="rh-doc">
-            <button class="rh-link" data-ver="${a.id}">${esc(a.file_name)}</button>
-            <span>${fmtSize(a.byte_size)} · ${rhData(a.created_at)}</span>
-            ${ed ? `<button class="btn-ic perigo" data-del-doc="${a.id}" title="Excluir" aria-label="Excluir">🗑</button>` : ''}
-          </div>`).join('')}
+          <div class="rh-doc-grid">${porTipo[t].map(a => `<div class="rh-doc-card">
+            <span class="rh-doc-thumb" data-docthumb="${a.id}"><i>🖼</i></span>
+            <span class="rh-doc-info"><b title="${esc(a.file_name)}">${esc(a.file_name)}</b><small>${fmtSize(a.byte_size)} · ${rhData(a.created_at)}</small></span>
+            <span class="rh-doc-bts">
+              <button class="btn sm" data-ver="${a.id}">Ver</button>
+              ${ed ? `<button class="btn sm danger-ghost" data-del-doc="${a.id}">Excluir</button>` : ''}
+            </span></div>`).join('')}</div>
         </div>`).join('')}</div>`
         : '<div class="empty">Nenhum documento no dossiê.</div>'}
     </div>`;
@@ -13379,6 +13381,20 @@ function rhAbaDossie(painel, d, id) {
   painel.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.ver)));
   painel.querySelectorAll('[data-del-doc]').forEach(b => b.onclick = () =>
     confirmDelete('documento', '/api/attachments/' + b.dataset.delDoc, () => abrirFichaRH(id, 'dossie')));
+  // Miniaturas carregadas depois do HTML entrar, uma a uma — mesmo padrão das
+  // fotos de odômetro (viaKmSecao): se falhar ou não for imagem, fica o ícone.
+  painel.querySelectorAll('[data-docthumb]').forEach(async el => {
+    try {
+      const r = await api('/api/attachments/file/' + el.dataset.docthumb);
+      if (!/^image\//.test(r.mime_type || '')) return;
+      const img = new Image();
+      img.src = 'data:' + r.mime_type + ';base64,' + r.data;
+      img.alt = '';
+      el.innerHTML = ''; el.appendChild(img);
+      el.onclick = () => colabVerAnexo(Number(el.dataset.docthumb));
+      el.style.cursor = 'zoom-in';
+    } catch { /* fica o ícone */ }
+  });
 }
 
 function rhAnexarDoc(id, tipos) {

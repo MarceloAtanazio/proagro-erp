@@ -1606,6 +1606,22 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .via-km-foto-bts { flex: 0 0 auto; display: flex; gap: 4px; }
 
+/* Dossiê do colaborador: mesmo cartão com miniatura das fotos do odômetro
+   (.via-km-foto) — RG/CPF/CNH também são documento onde ver a própria imagem
+   sem abrir nada ajuda a conferir. Classes próprias (não via-km-*) porque o
+   dossiê não tem nada a ver com viagem, só reaproveita o desenho. */
+.rh-doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 8px; }
+.rh-doc-card { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; min-width: 0; }
+.rh-doc-thumb { flex: 0 0 auto; width: 46px; height: 46px; border-radius: 6px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; font-size: 18px;
+  background: #EEF2EF; border: 1px solid var(--line); }
+.rh-doc-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rh-doc-info { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rh-doc-info b { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rh-doc-info small { font-size: 11px; color: var(--muted); }
+.rh-doc-bts { flex: 0 0 auto; display: flex; gap: 4px; }
+
 /* Barra da fila de aprovação de quilometragem. Só existe quando há fila — um
    aviso permanente vira papel de parede e deixa de ser lido. */
 .via-fila { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

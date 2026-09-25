@@ -7206,3 +7206,41 @@ corrigido) e o resto da suíte de RH sem regressão. Testado no navegador (mock 
 formulários mostram o pacote completo, com o mesmo recorte visual do card.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-25 — Sessão 151: Dossiê — anexos ganham miniatura, padrão da comprovação de km
+
+**Solicitação:** *"Melhore essa página de 'Dossiê', vamos mudar a visualização dos anexos. Vamos
+tentar usar o padrão que usamos na comprovação de quilometragem, gostei bastante."* — com print da
+aba Dossiê mostrando "Arquivos" como link de texto (nome do arquivo) + tamanho/data + um botão-ícone
+de lixeira solto.
+
+### O que mudou
+
+A seção "Arquivos" trocou o link de texto solto (`.rh-doc`) pelo mesmo cartão com miniatura já usado
+nas fotos de odômetro em Viáticos (`viaKmSecao`/`.via-km-foto`): quadrado de 46px com a própria imagem
+do anexo — quando é foto, dá pra ver RG/CPF/CNH sem abrir nada, exatamente o motivo de o padrão ter
+sido elogiado lá — nome do arquivo + tamanho/data ao lado, e botões "Ver"/"Excluir" de verdade (`.btn
+sm`) no lugar do ícone-lixeira sozinho. Documento que não é imagem (PDF, por exemplo) fica com o ícone
+genérico 🖼, sem quebrar nada.
+
+Classes novas (`rh-doc-grid`/`rh-doc-card`/`rh-doc-thumb`/`rh-doc-info`/`rh-doc-bts`), não as `via-km-*`
+direto — mesmo desenho, mas o Dossiê não tem nada a ver com viagem, então reaproveitar o CSS por cópia
+renomeada evita confundir quem for mexer depois. A miniatura carrega depois do HTML entrar na tela, uma
+por vez (mesma técnica da foto do odômetro): busca o anexo, confere se o MIME é `image/*`, e só então
+troca o ícone por um `<img>` de verdade; falhou ou é PDF, fica o ícone — a linha continua dizendo que o
+anexo existe.
+
+O "Checklist de admissão" (a grade ✔/✘ por documento obrigatório) não mudou — é outro componente,
+mostra OBRIGATORIEDADE, não é uma lista de arquivo.
+
+### Verificação
+
+`verifica-dossie-thumb.js` (novo, verificação estática): confirma o cartão novo, a miniatura, os
+botões de texto, o carregamento assíncrono e o filtro por MIME. `verifica-rh-ficha.js`,
+`verifica-documentos.js` e `verifica-viaticos-km.js` sem regressão (mudança é só de visualização, a
+lógica de anexo do dossiê não mudou). Testado no navegador (mock com CSS real, desktop e 375px): a
+imagem real aparece dentro do quadrado, o ícone genérico substitui quando não há imagem, e o nome de
+arquivo longo trunca com reticências sem estourar o cartão.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
