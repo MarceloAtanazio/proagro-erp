@@ -1463,8 +1463,12 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .rh-org-cartao.vaga, .rh-org-caixa.vaga { border-style: dashed; background: #FBF7EF; }
 .rh-org-caixa.vaga { border-top-width: 4px; }
 .rh-org-cartao.vaga b, .rh-org-caixa.vaga b { font-style: italic; font-weight: 700; color: #8A5100; }
-.rh-org-grupo-item.vaga { font-style: italic; background: #FBF7EF; }
+.rh-org-grupo-item.vaga { font-style: italic; background: #FBF7EF; flex-wrap: wrap; row-gap: 2px; }
 .rh-org-grupo-item.vaga b { font-weight: 700; color: #8A5100; }
+/* "N posição(ões) em aberto" não cabe na mesma linha do nome+cargo sem
+   espremer os três — ganha linha própria, e por isso o agrupamento fica um
+   tico mais alto quando tem vaga dentro (min-width sobe junto, ver .rh-org-grupo). */
+.rh-org-grupo-item.vaga .qtd { flex-basis: 100%; color: #8A5100; }
 .rh-org-toggle { border: none; background: none; cursor: pointer; color: var(--muted);
   font-size: 11px; padding: 0 2px; line-height: 1; }
 .rh-org-toggle:hover { color: var(--ink); }
@@ -1534,12 +1538,17 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
    precisa da própria coluna, pra desenhar a árvore dele embaixo. */
 .rh-org-grupo { display: inline-block; text-align: left; background: var(--card);
   border: 1px solid var(--line); border-radius: 8px; min-width: 208px; }
+/* Grupo com pelo menos uma vaga dentro ganha mais largura — "1 posição(ões)
+   em aberto" na própria linha ainda precisa de espaço horizontal pra não
+   quebrar palavra ao meio. */
+.rh-org-grupo:has(.rh-org-grupo-item.vaga) { min-width: 248px; }
 .rh-org-grupo-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px;
   border-left-width: 4px; border-left-style: solid; }
 .rh-org-grupo-item + .rh-org-grupo-item { border-top: 1px solid var(--line); }
 .rh-org-grupo-item b { flex: 1; font-size: 12px; font-weight: 700; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rh-org-grupo-item .cargo { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.rh-org-grupo-item .qtd { font-size: 10px; }
 
 /* Lista de processos encerrados. Grade própria: o motivo é o conteúdo da tela,
    então é ele que fica com a sobra — no gabarito da lista de colaboradores quem

@@ -7356,3 +7356,41 @@ regressão. Testado no navegador (mock com CSS real): a vaga agora salta aos olh
 tracejada mais grossa no topo (vista Diagrama), rótulo "Vaga aberta" sozinho, cargo só uma vez embaixo.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-25 — Sessão 155: vaga no agrupamento vertical do Organograma também diz quantas posições
+
+**Solicitação:** *"Aqui no caso dos técnicos de campo otimizamos a visualização pra caber todos e é
+isso mesmo, mas é possível aumentar um pouco mais o card deles pra você colocar a quantidade de
+posições em aberto para as vagas em aberto?"* — print do agrupamento vertical (>5 técnicos, sem
+subordinado próprio, viram uma caixa só) mostrando duas linhas "Vaga aberta" sem dizer quantas posições
+cada uma tinha.
+
+### O que a lacuna era
+
+A contagem "N posição(ões) em aberto" só existia no `miolo()` — o conteúdo das caixas individuais
+(cartão da Lista, caixa do Diagrama). `grupoVertical()`, que desenha o agrupamento de folhas numa
+caixa só (usado quando a chefia tem muitos diretos sem subordinado próprio — o caso dos técnicos de
+campo), tem o PRÓPRIO template, mais enxuto (só nome + cargo por linha), e nunca ganhou essa contagem.
+
+### O ajuste
+
+A linha da vaga, dentro do grupo, ganha um terceiro pedaço: `N posição(ões) em aberto`, na mesma cor
+âmbar do resto do destaque de vaga. Como nome + cargo + contagem não cabem lado a lado numa linha só
+(a fileira já é estreita de propósito, pra caber lado a lado com as pessoas de verdade), a contagem
+quebra pra linha de baixo só nas linhas de vaga (`flex-wrap` restrito à classe `.vaga`) — as pessoas
+reais continuam numa linha só, como sempre foram. A caixa do grupo fica um pouco mais larga quando tem
+pelo menos uma vaga dentro (`:has(.rh-org-grupo-item.vaga)`), exatamente o "aumentar um pouco mais o
+card" pedido — cresce só o necessário pra caber o texto, não pra todo grupo sem vaga nenhuma.
+
+### Verificação
+
+`verifica-organograma-vagas.js` (estendido, +3 verificações): confirma a contagem na linha da vaga
+dentro do grupo, o `flex-wrap` restrito à vaga, e a largura mínima maior quando o grupo tem vaga.
+`verifica-organograma.js` (uma verificação pré-existente teve a janela de busca alargada — o
+comentário novo empurrou o `title=` pra fora dos 300 caracteres que o teste olhava; conteúdo continua
+correto, só a distância no texto mudou) e `verifica-vaga-gestor.js` sem regressão. Testado no navegador
+(mock com CSS real): nome e cargo na primeira linha, contagem de posições na linha de baixo, cor âmbar
+mantida.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

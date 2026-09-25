@@ -11063,8 +11063,13 @@ async function rhOrganograma(c) {
     const corNivel = rhOrgNivelCor(prof);
     return `<div class="rh-org-grupo">${filhos.map(f => {
       const cargo = [f.cargo, f.nivel ? (RH_NIVEL_ABREV[f.nivel] || f.nivel) : ''].filter(Boolean).join(' ');
+      // Vaga também diz QUANTAS posições — sem isso "Vaga aberta" sozinha não
+      // dizia se é uma ou cinco. Fica numa linha própria (a fileira de nomes é
+      // estreita demais pra três textos lado a lado) — a caixa cresce um
+      // pouco mais alto pra essa linha, não largo.
       return `<div class="rh-org-grupo-item${f.__vaga ? ' vaga' : ''}" title="${esc(tituloDe(f))}" style="border-left-color:${f.__vaga ? RH_ORG_COR_VAGA : corNivel}">
         <b>${esc(f.name)}</b>${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
+        ${f.__vaga ? `<span class="qtd">${f.posicoes || 1} posição(ões) em aberto</span>` : ''}
       </div>`;
     }).join('')}</div>`;
   };
