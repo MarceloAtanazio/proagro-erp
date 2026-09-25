@@ -7244,3 +7244,43 @@ imagem real aparece dentro do quadrado, o ícone genérico substitui quando não
 arquivo longo trunca com reticências sem estourar o cartão.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-25 — Sessão 152: "Erro inesperado" ao anexar documento grande no Dossiê
+
+**Solicitação:** *"Estou tentando anexar um documento e está dando a mensagem de 'Erro
+inesperado'."* — print do modal "Anexar documento ao dossiê" com a faixa vermelha genérica no topo,
+tentando subir "Certidão de Nascimento.jpg".
+
+### A causa
+
+`rhAnexarDoc` (o modal do Dossiê) não tinha a conferência de tamanho que `colabAnexosInline` já tem —
+um arquivo grande demais ia inteiro até o servidor. O `express.json({ limit: '12mb' })` do backend
+rejeita corpo maior que isso, e como **não existe nenhum middleware de erro global** no `api/index.js`
+(nenhum `app.use((err, req, res, next) => ...)`), a rejeição do body-parser vira a página de erro
+padrão do Express — HTML, não JSON. O `api()` do front tenta `res.json()`, falha, cai no `.catch(() =>
+({}))`, e sem `data.error` a mensagem vira o fallback genérico: "Erro inesperado". A tela nem chega a
+saber que o problema foi tamanho — só sabe que não recebeu um JSON entendível.
+
+### O ajuste
+
+As três funções de upload do RH que faltavam essa conferência (`rhAnexarDoc` — Dossiê,
+`rhAnexarAvaliacao` — laudo da etapa Avaliações, `rhAnexarCurriculo`) ganharam a mesma trava já usada
+em `colabAnexosInline`: `if (f.size > 3 * 1024 * 1024) return modalError('Arquivo acima do limite de 3
+MB.')`, antes de desabilitar o botão e tentar o upload. O arquivo grande nunca mais sai do navegador, e
+a mensagem passa a dizer exatamente o que está errado — em vez de bater a cabeça num "Erro inesperado"
+sem pista nenhuma.
+
+Não mexi no middleware de erro global em si (deixaria QUALQUER falha de parse em qualquer rota virar
+JSON, não só upload) — mudança maior, fora do que foi pedido aqui. A conferência do lado do cliente já
+resolve o caso relatado e fecha a mesma lacuna nos dois primos do Dossiê (laudo e currículo), que
+tinham exatamente o mesmo buraco.
+
+### Verificação
+
+`verifica-limite-anexo-rh.js` (novo): confirma a causa raiz (sem handler de erro global, com o limite
+de 12mb no body-parser) e que as três funções conferem o tamanho antes de desabilitar o botão de
+envio. `verifica-dossie-thumb.js`, `verifica-avaliacoes-etapa.js` e `verifica-curriculo-card.js` sem
+regressão.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

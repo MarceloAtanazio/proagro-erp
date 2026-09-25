@@ -13407,6 +13407,10 @@ function rhAnexarDoc(id, tipos) {
      { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
         const f = $('#ad-file').files[0];
         if (!f) return modalError('Escolha um arquivo.');
+        // Sem esta conferência, um arquivo grande demais ia até o servidor e
+        // voltava como "Erro inesperado" — o corpo do 413 nem chega em JSON,
+        // e api() cai no fallback genérico. Barrar aqui já diz o motivo certo.
+        if (f.size > 3 * 1024 * 1024) return modalError('Arquivo acima do limite de 3 MB.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
         try {
           const data = await readFileAsBase64(f);
@@ -13431,6 +13435,7 @@ function rhAnexarAvaliacao(admissaoId, tipos) {
      { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
         const f = $('#av-file').files[0];
         if (!f) return modalError('Escolha um arquivo.');
+        if (f.size > 3 * 1024 * 1024) return modalError('Arquivo acima do limite de 3 MB.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
         try {
           const data = await readFileAsBase64(f);
@@ -13454,6 +13459,7 @@ function rhAnexarCurriculo(admissaoId) {
      { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
         const f = $('#cv-file').files[0];
         if (!f) return modalError('Escolha um arquivo.');
+        if (f.size > 3 * 1024 * 1024) return modalError('Arquivo acima do limite de 3 MB.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
         try {
           const dados = await api('/api/rh/admissoes/' + admissaoId);
