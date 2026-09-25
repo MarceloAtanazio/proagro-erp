@@ -10983,6 +10983,10 @@ const RH_ORG_LIMIAR_AGRUPAR = 5;
 // organograma"; 'lista' fica como alternativa pra quando a árvore tem muita
 // gente e o diagrama de caixas fica largo demais pra ler de uma vez.
 let RH_ORG_VISTA = 'diagrama';
+// Fica desligado por padrão: o organograma "oficial" é quem já trabalha
+// aqui — vaga é intenção, não fato, e misturar por padrão faria a árvore
+// mentir sobre quem existe de verdade.
+let RH_ORG_MOSTRAR_VAGAS = false;
 
 async function rhOrganograma(c) {
   const d = await api('/api/rh/organograma');
@@ -10993,9 +10997,23 @@ async function rhOrganograma(c) {
   // casos viram "topo", mas só o segundo entra no aviso.
   const porGestor = {};
   pessoas.forEach(p => { (porGestor[p.gestor_id] ||= []).push(p); });
+  // Vaga entra no MESMO mapa que gente de verdade — filhosDe() nem precisa
+  // saber que ela existe, só que tem um gestor_id e um id. Só entram vagas
+  // cujo gestor está ativo: sem isso não haveria caixa nenhuma pra pendurar.
+  if (RH_ORG_MOSTRAR_VAGAS) {
+    (d.vagas || []).forEach(v => {
+      if (!idsAtivos.has(v.gestor_id)) return;
+      (porGestor[v.gestor_id] ||= []).push({
+        id: 'vaga-' + v.id, __vaga: true, name: 'Vaga aberta: ' + (v.cargo || ''),
+        cargo: v.cargo, nivel: v.nivel, departamento: v.departamento,
+        posicoes: v.posicoes, gestor_id: v.gestor_id
+      });
+    });
+  }
   const raizes = pessoas.filter(p => !p.gestor_id || !idsAtivos.has(p.gestor_id))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const departamentos = [...new Set(pessoas.map(p => p.departamento).filter(Boolean))].sort();
+  const departamentos = [...new Set([...pessoas, ...(RH_ORG_MOSTRAR_VAGAS ? d.vagas || [] : [])]
+    .map(p => p.departamento).filter(Boolean))].sort();
   const corDe = dep => dep ? RH_ORG_CORES[departamentos.indexOf(dep) % RH_ORG_CORES.length] : null;
 
   // Contagem recursiva de subordinados, com guarda contra ciclo: o servidor
@@ -11016,11 +11034,15 @@ async function rhOrganograma(c) {
   const miolo = (p, filhos, totalAbaixo, prof) => {
     const cargo = [p.cargo, p.nivel ? (RH_NIVEL_ABREV[p.nivel] || p.nivel) : ''].filter(Boolean).join(' ');
     const cor = corDe(p.departamento);
+    // Vaga nunca tem subordinado (ninguém reporta pra uma posição vazia), e o
+    // "total no time" dela é POSIÇÕES em aberto, não gente por baixo — é a
+    // única coisa que muda no miolo entre pessoa e vaga.
     return `${filhos.length ? '<button class="rh-org-toggle" aria-label="Recolher/expandir">▾</button>' : ''}
       <b>${esc(p.name)}</b>
       ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
       ${p.departamento ? `<span class="depto" style="color:${cor};background:${cor}1A;border-color:${cor}55">${esc(p.departamento)}</span>` : ''}
-      ${filhos.length ? `<span class="qtd">${filhos.length} direto(s) · ${totalAbaixo} no total</span>` : ''}`;
+      ${p.__vaga ? `<span class="qtd">${p.posicoes || 1} posição(ões) em aberto</span>`
+        : filhos.length ? `<span class="qtd">${filhos.length} direto(s) · ${totalAbaixo} no total</span>` : ''}`;
   };
   // O nome truncado com reticências (pra caixa ter tamanho fixo) ainda precisa
   // aparecer inteiro em algum lugar — o `title` do próprio cartão resolve isso
@@ -11034,7 +11056,7 @@ async function rhOrganograma(c) {
     const corNivel = rhOrgNivelCor(prof);
     return `<div class="rh-org-grupo">${filhos.map(f => {
       const cargo = [f.cargo, f.nivel ? (RH_NIVEL_ABREV[f.nivel] || f.nivel) : ''].filter(Boolean).join(' ');
-      return `<div class="rh-org-grupo-item" title="${esc(tituloDe(f))}" style="border-left-color:${corNivel}">
+      return `<div class="rh-org-grupo-item${f.__vaga ? ' vaga' : ''}" title="${esc(tituloDe(f))}" style="border-left-color:${corNivel}">
         <b>${esc(f.name)}</b>${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
       </div>`;
     }).join('')}</div>`;
@@ -11045,7 +11067,7 @@ async function rhOrganograma(c) {
     const proprios = new Set(visitados); proprios.add(p.id);
     const filhos = filhosDe(p);
     return `<div class="rh-org-no">
-      <div class="rh-org-cartao" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
+      <div class="rh-org-cartao${p.__vaga ? ' vaga' : ''}" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
         style="border-left-color:${rhOrgNivelCor(prof)}">
         ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
@@ -11070,7 +11092,7 @@ async function rhOrganograma(c) {
     // que ajuda; ou todos vão em coluna, ou todos entram no grupo vertical.
     const agrupar = filhos.length > RH_ORG_LIMIAR_AGRUPAR && filhos.every(f => !filhosDe(f).length);
     return `<li>
-      <div class="rh-org-caixa" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
+      <div class="rh-org-caixa${p.__vaga ? ' vaga' : ''}" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
         style="border-top-color:${cor || 'var(--line)'};border-left-color:${rhOrgNivelCor(prof)}">
         ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
@@ -11086,6 +11108,12 @@ async function rhOrganograma(c) {
       <div class="rh-quadro-dica">Quem está aqui reporta para quem — defina em <strong>Colaboradores →
         Vínculo → A quem reporta</strong>. Sem gestor definido, a pessoa aparece no topo.</div>
       <div class="spacer"></div>
+      ${/* Desligado é o "oficial" (só quem já trabalha aqui de verdade); ligado
+            soma as vagas com "a quem reporta" preenchido, tracejadas, no lugar
+            onde a pessoa vai entrar quando existir. */''}
+      <label class="check-chip" title="Soma, tracejadas, as vagas abertas que têm 'a quem reporta' definido">
+        <input type="checkbox" id="rh-org-vagas" ${RH_ORG_MOSTRAR_VAGAS ? 'checked' : ''}> Vagas em aberto
+      </label>
       <div class="rh-org-vistas">
         <button class="rh-org-vista ${RH_ORG_VISTA === 'diagrama' ? 'ativa' : ''}" data-org-vista="diagrama">Diagrama</button>
         <button class="rh-org-vista ${RH_ORG_VISTA === 'lista' ? 'ativa' : ''}" data-org-vista="lista">Lista</button>
@@ -11107,6 +11135,8 @@ async function rhOrganograma(c) {
 
   rhLigarAbas();
   c.querySelectorAll('[data-org-vista]').forEach(b => b.onclick = () => { RH_ORG_VISTA = b.dataset.orgVista; rhOrganograma(c); });
+  const cbVagas = $('#rh-org-vagas');
+  if (cbVagas) cbVagas.onchange = () => { RH_ORG_MOSTRAR_VAGAS = cbVagas.checked; rhOrganograma(c); };
   c.querySelectorAll('.rh-org-toggle').forEach(b => b.onclick = () => {
     // Lista: os filhos são o próximo IRMÃO do cartão (a div .rh-org-filhos).
     // Diagrama: os filhos são a <ul> dentro do MESMO <li> do cartão.
@@ -11649,7 +11679,8 @@ async function rhVagas(c) {
           <div>
             <b>${esc(rhTxt(v.cargo))}${v.nivel ? ' · ' + esc(rhRotulo(RH_NIVEIS, v.nivel)) : ''}</b>
             <span>${esc(rhTxt(v.departamento))} · aberta em ${rhData(v.aberta_em)}${
-              v.divulgada_em ? ' · via ' + esc(v.divulgada_em) : ''}</span>
+              v.divulgada_em ? ' · via ' + esc(v.divulgada_em) : ''}${
+              v.gestor_nome ? ' · reporta a ' + esc(v.gestor_nome) : ''}</span>
           </div>
           <span class="badge ${v.situacao === 'aberta' ? 'ok' : v.situacao === 'pausada' ? 'late' : ''}">${
             esc(rhRotulo(RH_VAGA_SIT, v.situacao))}</span>
@@ -11711,6 +11742,7 @@ function rhVagaDetalhes(v, ed) {
       <div class="rh-linha"><span>Posições</span><b>${posicoes} (${v.contratados} contratado(s))</b></div>
       ${v.salario_previsto ? `<div class="rh-linha"><span>Salário previsto</span><b>${brl(Number(v.salario_previsto))}</b></div>` : ''}
       ${v.divulgada_em ? `<div class="rh-linha"><span>Divulgada em</span><b>${esc(v.divulgada_em)}</b></div>` : ''}
+      ${v.gestor_nome ? `<div class="rh-linha"><span>A quem reporta</span><b>${esc(v.gestor_nome)}</b></div>` : ''}
     </div>
     ${v.descricao ? `<div class="rh-sec"><h4>Descrição da vaga</h4>
       <p class="rh-vaga-desc-full">${esc(v.descricao)}</p></div>` : '<div class="empty">Sem descrição cadastrada.</div>'}
@@ -11721,9 +11753,16 @@ function rhVagaDetalhes(v, ed) {
     { wide: true });
 }
 
-function rhFormVaga(v) {
+async function rhFormVaga(v) {
   const novo = !v;
   v = v || {};
+  // Quem pode ser gestor: gente ativa, com vínculo em aberto — mesmo recorte
+  // já usado em rhFormVinculo (a vaga não tem colaborador próprio, então não
+  // há "a si mesma" pra excluir da lista).
+  const todos = await api('/api/rh/colaboradores').catch(() => []);
+  const opcoesGestor = [{ v: '', t: '— ninguém definido ainda —' },
+    ...todos.filter(p => p.ativo && !p.desligamento)
+      .map(p => ({ v: p.id, t: p.name + (p.cargo ? ' · ' + p.cargo : '') }))];
   openModal(novo ? 'Nova vaga' : 'Editar vaga', `
     <div class="form-row">
       ${fldSel('vg-cargo', 'Cargo *', rhOpcoesCargo(v.cargo, true), v.cargo || '')}
@@ -11745,6 +11784,11 @@ function rhFormVaga(v) {
       ${fld('vg-vr_dia', 'Vale-refeição/dia (R$)', 'number', v.vr_dia == null ? '' : v.vr_dia, 'step="0.01" min="0"')}
       ${fld('vg-divulgada_em', 'Divulgada em', 'text', v.divulgada_em || '', 'placeholder="LinkedIn, Gupy, indicação..."')}
     </div>
+    <div class="form-row">
+      ${fldSel('vg-gestor_id', 'A quem reporta', opcoesGestor, v.gestor_id || '')}
+    </div>
+    <p class="rh-custo-nota">Preenchido, o Organograma pode mostrar esta vaga como a posição que vai
+      se encaixar ali — antes de existir alguém de verdade pra ocupar a caixa.</p>
     ${/* Só a jornada híbrida e o home office pedem estes três — mesmo recorte
           usado no card do candidato (rhAbrirCard), pra virar exatamente o
           mesmo pacote quando a pessoa entra pela vaga. */''}
@@ -11780,7 +11824,7 @@ function rhFormVaga(v) {
           home_office_dia: $('#vg-home_office_dia').value,
           observacao: $('#vg-observacao').value,
           descricao: $('#vg-descricao').value, divulgada_em: $('#vg-divulgada_em').value,
-          aberta_em: $('#vg-aberta_em').value
+          aberta_em: $('#vg-aberta_em').value, gestor_id: $('#vg-gestor_id').value
         };
         if (!body.cargo) return modalError('Escolha o cargo da vaga.');
         if (!novo) { body.situacao = $('#vg-situacao').value; body.fechamento_motivo = $('#vg-fechamento_motivo').value; }

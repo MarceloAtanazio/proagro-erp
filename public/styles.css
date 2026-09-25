@@ -1456,6 +1456,12 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .rh-org-cartao .qtd, .rh-org-caixa .qtd { font-size: 11px; color: var(--muted); }
 .rh-org-cartao .qtd { white-space: nowrap; }
 .rh-org-cartao.rh-org-fora, .rh-org-caixa.rh-org-fora { opacity: .28; }
+/* Vaga não é gente: tracejada e com o rótulo em itálico, pra nunca ser lida
+   como se já houvesse alguém na cadeira — é a posição, não a pessoa. */
+.rh-org-cartao.vaga, .rh-org-caixa.vaga { border-style: dashed; background: #FAFBFA; }
+.rh-org-cartao.vaga b, .rh-org-caixa.vaga b { font-style: italic; font-weight: 600; color: var(--ink-2); }
+.rh-org-grupo-item.vaga { font-style: italic; }
+.rh-org-grupo-item.vaga b { font-weight: 600; color: var(--ink-2); }
 .rh-org-toggle { border: none; background: none; cursor: pointer; color: var(--muted);
   font-size: 11px; padding: 0 2px; line-height: 1; }
 .rh-org-toggle:hover { color: var(--ink); }

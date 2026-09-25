@@ -2462,9 +2462,17 @@ app.get('/api/rh/organograma', requireAuth, requireViewAny(['rh']), h(async (req
   // o Painel já avisa "sem vínculo" e "sem fornecedor".
   const idsAtivos = new Set(pessoas.map(p => p.id));
   const gestorInativo = pessoas.filter(p => p.gestor_id && !idsAtivos.has(p.gestor_id));
+  // Vagas abertas com "a quem reporta" preenchido: candidatas a aparecer no
+  // organograma como a posição que ainda não virou gente — só as que TÊM
+  // gestor, porque uma vaga sem gestor não tem onde entrar na árvore.
+  const vagas = await query(
+    `SELECT id, cargo, nivel, departamento, posicoes, gestor_id
+       FROM erp_rh_vagas WHERE situacao='aberta' AND gestor_id IS NOT NULL
+      ORDER BY cargo`);
   res.json({
     pessoas,
-    gestor_inativo: gestorInativo.map(p => ({ id: p.id, name: p.name }))
+    gestor_inativo: gestorInativo.map(p => ({ id: p.id, name: p.name })),
+    vagas
   });
 }));
 
@@ -2907,18 +2915,20 @@ async function rhGarantirFornecedor(colabId, userId) {
 const RH_VAGA_SITUACOES = ['aberta', 'pausada', 'fechada'];
 const RH_VAGA_CAMPOS = ['cargo', 'nivel', 'departamento', 'posicoes', 'regime', 'modelo_trabalho',
   'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office', 'home_office_dia',
-  'observacao', 'descricao', 'divulgada_em', 'aberta_em'];
+  'observacao', 'descricao', 'divulgada_em', 'aberta_em', 'gestor_id'];
 
 // A contagem de candidatos vem junto com a lista: sem ela, "vaga aberta" não
 // diz se o processo está parado ou fervendo, que é a pergunta que se faz olhando
-// para uma lista de vagas.
+// para uma lista de vagas. O nome do gestor vem junto pelo mesmo motivo que
+// admissão já traz `gestor_nome`: ninguém quer decorar id pra ler "reporta a".
 const RH_SQL_VAGAS = `
-  SELECT v.*,
+  SELECT v.*, g.name AS gestor_nome,
          (SELECT count(*)::int FROM erp_rh_admissoes a
            WHERE a.vaga_id = v.id AND a.situacao = 'andamento') AS candidatos,
          (SELECT count(*)::int FROM erp_rh_admissoes a
            WHERE a.vaga_id = v.id AND a.situacao = 'concluida')    AS contratados
-    FROM erp_rh_vagas v`;
+    FROM erp_rh_vagas v
+    LEFT JOIN erp_colaboradores g ON g.id = v.gestor_id`;
 
 app.get('/api/rh/vagas', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   // Fechadas por último: a lista serve para trabalhar nas abertas.
@@ -2950,8 +2960,8 @@ app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => 
   const ins = await query(
     `INSERT INTO erp_rh_vagas (cargo, nivel, departamento, posicoes, regime, modelo_trabalho,
         salario_previsto, vr_dia, dias_presenciais, dias_home_office, home_office_dia,
-        observacao, descricao, divulgada_em, aberta_em, criado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+        observacao, descricao, divulgada_em, aberta_em, gestor_id, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
     [cargo, sanitize(req.body.nivel) || null, sanitize(req.body.departamento) || null,
      Number.isFinite(pos) && pos > 0 ? Math.round(pos) : 1,
      sanitize(req.body.regime) || 'regular', sanitize(req.body.modelo_trabalho) || 'presencial',
@@ -2961,7 +2971,8 @@ app.post('/api/rh/vagas', requireAuth, requireEdit('rh'), h(async (req, res) => 
      Number.isFinite(Number(req.body.dias_home_office)) && req.body.dias_home_office !== '' ? Number(req.body.dias_home_office) : null,
      req.body.home_office_dia ? Number(req.body.home_office_dia) : null,
      sanitize(req.body.observacao) || null, sanitize(req.body.descricao) || null,
-     sanitize(req.body.divulgada_em) || null, abertaEm, req.user.id]);
+     sanitize(req.body.divulgada_em) || null, abertaEm,
+     Number(req.body.gestor_id) > 0 ? Number(req.body.gestor_id) : null, req.user.id]);
   res.json(ins[0]);
 }));
 
@@ -2989,7 +3000,7 @@ app.put('/api/rh/vagas/:id', requireAuth, requireEdit('rh'), h(async (req, res) 
     }
   }
   const { cols, vals } = rhMontarSet(corpo, RH_VAGA_CAMPOS, ['aberta_em'],
-    ['posicoes', 'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office', 'home_office_dia'], []);
+    ['posicoes', 'salario_previsto', 'vr_dia', 'dias_presenciais', 'dias_home_office', 'home_office_dia', 'gestor_id'], []);
   if (corpo.situacao !== undefined) { cols.push('situacao'); vals.push(corpo.situacao); }
   if (corpo.fechamento_motivo !== undefined) { cols.push('fechamento_motivo'); vals.push(sanitize(corpo.fechamento_motivo) || null); }
   // A data de fechamento acompanha a situação, e some ao reabrir: vaga aberta

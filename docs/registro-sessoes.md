@@ -7284,3 +7284,43 @@ envio. `verifica-dossie-thumb.js`, `verifica-avaliacoes-etapa.js` e `verifica-cu
 regressão.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-25 — Sessão 153: vaga ganha "a quem reporta", e o Organograma pode mostrar a posição futura
+
+**Solicitação:** *"Aqui dentro [Vagas] quero colocar a opção para 'a quem reporta' pra você mostrar lá
+no organograma um card da posição que está sendo contratada e onde ela vai se alocar, e lá no
+organograma você deixe as opções de mostrar com essas vagas futuras e também mostrar a oficial que
+está no momento."* — com print da tela de Vagas.
+
+### O que mudou
+
+`erp_rh_vagas` ganha `gestor_id` (migração aditiva, `ON DELETE SET NULL` — apagar o gestor não apaga a
+vaga). O formulário de Vaga ganha o campo **"A quem reporta"**, mesmo recorte de `opcoesGestor` já
+usado em Colaboradores → Vínculo (gente ativa, com vínculo em aberto) — sem excluir "a si mesma" da
+lista, porque vaga não é colaborador. O nome do gestor aparece no card da lista de Vagas ("reporta a
+Fulano") e no modal de detalhes.
+
+No **Organograma**, checkbox novo **"Vagas em aberto"** na barra de cima, desligado por padrão — o
+organograma continua abrindo mostrando só a árvore oficial (quem já trabalha aqui de verdade). Ligado,
+`/api/rh/organograma` passa a devolver também as vagas `aberta` que têm gestor definido, e o front
+insere cada uma no MESMO mapa `porGestor` que já organiza as pessoas reais — não foi preciso reescrever
+a árvore, só alimentar o mapa que ela já lê. A vaga vira uma caixa tracejada e em itálico, sob o gestor
+certo, ao lado dos subordinados de verdade, com "N posição(ões) em aberto" no lugar da contagem de
+subordinados (porque vaga não tem gente por baixo dela). Vaga sem gestor, ou cujo gestor não está mais
+ativo, simplesmente não aparece — não tem onde pendurar a caixa.
+
+### Verificação
+
+`verifica-vaga-gestor.js` (novo, 12 verificações contra o Express real): vaga sem gestor não aparece no
+organograma; com gestor, aparece com o `gestor_id` certo; trocar o gestor reflete na consulta seguinte;
+fechar a vaga tira ela da lista (só `situacao='aberta'` entra). `verifica-organograma-vagas.js` (novo,
+estático): confirma o toggle desligado por padrão, o merge no mesmo `porGestor`, a classe `.vaga`
+tracejada nas três formas de desenhar um nó (cartão, caixa, grupo vertical), e o campo novo no
+formulário. `verifica-organograma.js` e `verifica-vagas.js` (repontados: os stubs tinham a lista de
+colunas do INSERT e as regexes de SELECT hardcoded, quebraram com `gestor_id` no meio) e o resto da
+suíte de RH sem regressão. Testado no navegador (mock com CSS real): vaga tracejada convivendo com
+pessoa real sob o mesmo gestor, nas duas vistas (Diagrama e Lista), e o select "A quem reporta" no
+formulário da vaga.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
