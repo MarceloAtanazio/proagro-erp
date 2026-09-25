@@ -7324,3 +7324,35 @@ pessoa real sob o mesmo gestor, nas duas vistas (Diagrama e Lista), e o select "
 formulário da vaga.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-25 — Sessão 154: vaga no Organograma — cor de destaque, e sem repetir o cargo
+
+**Solicitação:** *"As vagas em aberto quero um destaque um pouco maior, coloque uma cor de mais
+destaque pra mostrar melhor. Outra coisa, você tá mostrando por exemplo 'Vaga aberta: Analista de
+Subscrição' e abaixo você coloca novamente o cargo, não quero essa repetição, coloque somente 'Vaga
+aberta' e abaixo o cargo da maneira que tá mostrando."* — ajuste sobre a sessão anterior (vaga no
+Organograma), com print mostrando as caixas tracejadas cinza-claro e o cargo duplicado.
+
+### O que mudou
+
+O rótulo da vaga virou só **"Vaga aberta"** — o cargo já aparece na linha de baixo (`.cargo`), igual
+em qualquer pessoa da árvore; escrever ele duas vezes na mesma caixa era ruído, não informação.
+
+A cor: antes a vaga herdava a mesma escala neutra de profundidade (`rhOrgNivelCor`) usada por qualquer
+pessoa — por isso ficava discreta, quase se camuflando entre as caixas reais. Agora tem uma cor
+**própria**, o mesmo âmbar de aviso/pendência já usado no resto do RH (`#C8912B`, mesma família do
+`.rh-alerta`) — fundo levemente âmbar, borda tracejada na cor, e o texto do rótulo também nessa cor
+(`#8A5100`). É a mesma lógica de antes (a vaga entra no mesmo mapa por gestor, só ganha uma classe
+`.vaga`) — só troquei a cor que essa classe aplica.
+
+### Verificação
+
+`verifica-organograma-vagas.js` (estendido, +6 verificações): confirma que o nome da vaga não repete
+mais o cargo, que existe uma cor própria (`RH_ORG_COR_VAGA`) separada da escala neutra e da cor de
+setor, que essa cor é aplicada nas três formas de desenhar um nó (cartão, caixa, grupo vertical), e que
+o CSS usa o âmbar (`#8A5100`/`#FBF7EF`). `verifica-organograma.js` e `verifica-vaga-gestor.js` sem
+regressão. Testado no navegador (mock com CSS real): a vaga agora salta aos olhos — fundo âmbar, borda
+tracejada mais grossa no topo (vista Diagrama), rótulo "Vaga aberta" sozinho, cargo só uma vez embaixo.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

@@ -10973,6 +10973,10 @@ const RH_ORG_CORES = ['#1F4E78', '#00783F', '#A9741B', '#B23A2F', '#6B4FA0', '#0
 // pra dar pra distinguir "é chefia" de "é setor tal" com um olhar só.
 const RH_ORG_NIVEL_CORES = ['#1A2B22', '#43554B', '#74847B', '#A9B6AE', '#D3DAD5'];
 const rhOrgNivelCor = prof => RH_ORG_NIVEL_CORES[Math.min(prof, RH_ORG_NIVEL_CORES.length - 1)];
+// Vaga não entra na escala neutra de profundidade nem na cor do setor — tem a
+// PRÓPRIA cor (o mesmo âmbar de aviso/pendência já usado no resto do RH), pra
+// saltar aos olhos em qualquer nível da árvore, não só ficar tracejada.
+const RH_ORG_COR_VAGA = '#C8912B';
 // Acima disto, filhos QUE NÃO TÊM subordinado nenhum (folha) deixam de virar
 // uma coluna cada um e passam a ser uma lista vertical só — é a fileira de
 // técnicos embaixo de um coordenador que fazia a página esticar de lado, não
@@ -11003,8 +11007,11 @@ async function rhOrganograma(c) {
   if (RH_ORG_MOSTRAR_VAGAS) {
     (d.vagas || []).forEach(v => {
       if (!idsAtivos.has(v.gestor_id)) return;
+      // Só "Vaga aberta" no nome: o cargo já aparece logo abaixo, no mesmo
+      // lugar que aparece pra qualquer pessoa — repetir os dois seria a
+      // mesma informação duas vezes na mesma caixa.
       (porGestor[v.gestor_id] ||= []).push({
-        id: 'vaga-' + v.id, __vaga: true, name: 'Vaga aberta: ' + (v.cargo || ''),
+        id: 'vaga-' + v.id, __vaga: true, name: 'Vaga aberta',
         cargo: v.cargo, nivel: v.nivel, departamento: v.departamento,
         posicoes: v.posicoes, gestor_id: v.gestor_id
       });
@@ -11056,7 +11063,7 @@ async function rhOrganograma(c) {
     const corNivel = rhOrgNivelCor(prof);
     return `<div class="rh-org-grupo">${filhos.map(f => {
       const cargo = [f.cargo, f.nivel ? (RH_NIVEL_ABREV[f.nivel] || f.nivel) : ''].filter(Boolean).join(' ');
-      return `<div class="rh-org-grupo-item${f.__vaga ? ' vaga' : ''}" title="${esc(tituloDe(f))}" style="border-left-color:${corNivel}">
+      return `<div class="rh-org-grupo-item${f.__vaga ? ' vaga' : ''}" title="${esc(tituloDe(f))}" style="border-left-color:${f.__vaga ? RH_ORG_COR_VAGA : corNivel}">
         <b>${esc(f.name)}</b>${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
       </div>`;
     }).join('')}</div>`;
@@ -11068,7 +11075,7 @@ async function rhOrganograma(c) {
     const filhos = filhosDe(p);
     return `<div class="rh-org-no">
       <div class="rh-org-cartao${p.__vaga ? ' vaga' : ''}" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
-        style="border-left-color:${rhOrgNivelCor(prof)}">
+        style="border-left-color:${p.__vaga ? RH_ORG_COR_VAGA : rhOrgNivelCor(prof)}">
         ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
       ${filhos.length ? `<div class="rh-org-filhos">${filhos.map(f => nohLista(f, proprios, prof + 1)).join('')}</div>` : ''}
@@ -11093,7 +11100,7 @@ async function rhOrganograma(c) {
     const agrupar = filhos.length > RH_ORG_LIMIAR_AGRUPAR && filhos.every(f => !filhosDe(f).length);
     return `<li>
       <div class="rh-org-caixa${p.__vaga ? ' vaga' : ''}" data-depto="${esc(p.departamento || '')}" title="${esc(tituloDe(p))}"
-        style="border-top-color:${cor || 'var(--line)'};border-left-color:${rhOrgNivelCor(prof)}">
+        style="border-top-color:${p.__vaga ? RH_ORG_COR_VAGA : (cor || 'var(--line)')};border-left-color:${p.__vaga ? RH_ORG_COR_VAGA : rhOrgNivelCor(prof)}">
         ${miolo(p, filhos, contarAbaixo(p.id, new Set(visitados)), prof)}
       </div>
       ${filhos.length ? (agrupar
