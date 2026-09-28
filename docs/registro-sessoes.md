@@ -7394,3 +7394,41 @@ correto, só a distância no texto mudou) e `verifica-vaga-gestor.js` sem regres
 mantida.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-28 — Sessão 156: cards do Quadro trocam "N/N docs" por selos de Currículo e Avaliações
+
+**Solicitação:** *"O primeiro ajuste que quero fazer é que essa informação de 'docs' não é importante
+nesse momento do processo, pra mim seria mais valioso uma informação de currículo e avaliações. Dá pra
+criar algo visível pra mostrar que está tudo certo com o currículo e avaliações dos candidatos?"* — com
+print do Quadro de admissão, destacando a barra "0/10 docs" que aparecia em todo card, mesmo nas
+etapas de Triagem/Avaliações/Entrevista, onde documentação ainda nem é cobrada.
+
+Esse pedido tinha sido feito sem querer numa sessão paralela ("Currículo e avaliações dos candidatos"),
+que já tinha o trabalho pronto — backend, frontend e CSS — mas parado, sem publicar. Conferi o código,
+testei e publiquei a partir daqui, isolando só os trechos dessa feature (a árvore de trabalho é
+compartilhada entre sessões, e o resto do que aquela sessão tinha em andamento continua intocado).
+
+### O que mudou
+
+A barra "N/N docs" (que mede documentos de admissão — RG, CPF etc., só relevantes lá na Documentação)
+saiu do card do Quadro. No lugar, dois selos: **Currículo** (✔/✘, se tem o arquivo anexado) e
+**Avaliações N/2** (✔ quando os dois — prova técnica e psicotécnico — têm laudo anexado; ✘ enquanto
+falta pelo menos um). Anexo do tipo "outro" (laudo avulso, sem se encaixar nos dois tipos que contam)
+não entra na contagem — só os dois que representam etapas reais do processo.
+
+O card já carregava candidato e vaga na mesma consulta; a mudança foi trazer também `tem_curriculo` e
+`avaliacoes_ok`/`avaliacoes_total`, calculados a partir dos mesmos anexos já usados na seção "Currículo"
+e "Avaliações" do card aberto (sessões 143–144) — sem subquery nova além da que já buscava os tipos.
+
+### Verificação
+
+`verifica-selos-quadro.js` (novo, 9 verificações contra o Express real): candidato com currículo e os
+dois laudos mostra tudo ✔; sem nada anexado, tudo ✘; com só um dos dois laudos, "Avaliações 1/2"; anexo
+"outro" não conta pro total. `verifica-rh-admissao.js`, `verifica-arrasto-quadro.js`,
+`verifica-avaliacoes-etapa.js` e `verifica-curriculo-card.js` sem regressão — a barra de documentos
+continua existindo e funcionando normal na Documentação e na tabela de Encerrados, só sumiu do card do
+Quadro. Testado no navegador (mock com CSS real): selos como pílulas verde/vermelho, legíveis num
+relance, sem abrir o card.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

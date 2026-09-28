@@ -3850,7 +3850,12 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
   const rows = await query(`
     SELECT a.*, c.name AS colaborador_nome, c.sexo, g.name AS gestor_nome, u.name AS responsavel_nome,
            (SELECT COALESCE(json_agg(DISTINCT x.doc_tipo), '[]'::json) FROM erp_attachments x
-             WHERE x.entity_type='rh_doc' AND x.entity_id=c.id AND x.doc_tipo IS NOT NULL) AS tipos
+             WHERE x.entity_type='rh_doc' AND x.entity_id=c.id AND x.doc_tipo IS NOT NULL) AS tipos,
+           -- Currículo e avaliações vivem presos ao PROCESSO (rh_admissao_doc),
+           -- não ao colaborador — é o que a Triagem e a Avaliação olham, bem
+           -- antes de a Documentação (que cobra os docs de tipos acima) existir.
+           (SELECT COALESCE(json_agg(DISTINCT y.doc_tipo), '[]'::json) FROM erp_attachments y
+             WHERE y.entity_type='rh_admissao_doc' AND y.entity_id=a.id AND y.doc_tipo IS NOT NULL) AS tipos_avaliacao
       FROM erp_rh_admissoes a
       JOIN erp_colaboradores c ON c.id = a.colaborador_id
       LEFT JOIN erp_colaboradores g ON g.id = a.gestor_id
@@ -3868,16 +3873,24 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
     const m = minutas.find(x => x.regime === (regime || 'regular') && x.modelo_trabalho === (modelo || 'presencial'));
     return m && Array.isArray(m.slots) && m.slots.length ? m.slots : null;
   };
+  // Avaliações que realmente contam pro indicador do card: técnica e
+  // psicotécnico. "Outro" é anexo livre, não uma etapa que se cobra.
+  const AVAL_CONTAM = ['avaliacao_tecnica', 'psicotecnico'];
   const cards = rows.map(r => {
     const tipos = Array.isArray(r.tipos) ? r.tipos : [];
     const chk = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })));
     const pend = rhPendencias(r, r, chk, mapaDe(r.regime, r.modelo_trabalho));
     const base = rhFiltrar(r, req.user, r);
     delete base.tipos;
+    delete base.tipos_avaliacao;
     const mot = rhMotivoEncerrar(r.cancelamento_tipo);
+    const tiposAval = Array.isArray(r.tipos_avaliacao) ? r.tipos_avaliacao : [];
     return { ...base, checklist_total: chk.length, checklist_ok: chk.filter(x => x.ok).length,
              pendencias: pend, liberado: pend.length === 0,
-             motivo_nome: mot ? mot.nome : null, parte: mot ? mot.parte : null };
+             motivo_nome: mot ? mot.nome : null, parte: mot ? mot.parte : null,
+             tem_curriculo: tiposAval.includes('curriculo'),
+             avaliacoes_ok: AVAL_CONTAM.filter(t => tiposAval.includes(t)).length,
+             avaliacoes_total: AVAL_CONTAM.length };
   });
   // As três contagens vão sempre juntas: a aba "Encerrados" precisa mostrar
   // quantos são ANTES de ser aberta, senão ninguém descobre que existe.

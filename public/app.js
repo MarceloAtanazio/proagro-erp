@@ -9210,18 +9210,23 @@ function rhTabelaEncerrados(cards) {
 // Nome distinto do rhCard() dos cartões de situação da lista: os dois viviam
 // no mesmo escopo global e a última definição apagava a primeira.
 function rhKanbanCard(a, arrastavel) {
-  const pct = a.checklist_total ? Math.round(100 * a.checklist_ok / a.checklist_total) : 0;
   const cargo = [a.cargo_pretendido, a.nivel_pretendido
     ? ({ junior: 'Jr.', pleno: 'Pl.', senior: 'Sr.' }[a.nivel_pretendido] || a.nivel_pretendido) : '']
     .filter(Boolean).join(' ');
+  // Nesta fase (Triagem/Avaliações) o que importa é currículo anexado e
+  // avaliação feita, não quantos documentos de admissão já foram juntados —
+  // isso só passa a valer lá na frente, na Documentação.
+  const avalOk = a.avaliacoes_ok === a.avaliacoes_total;
   return `<button class="rh-kcard ${a.liberado ? 'ok' : ''}" data-card="${a.id}"
     data-etapa-atual="${a.etapa}" ${arrastavel ? 'draggable="true"' : ''}>
     <b>${esc(a.colaborador_nome)}</b>
     ${cargo ? `<span class="cargo">${esc(cargo)}</span>` : ''}
     ${a.admissao_prevista ? `<span class="data">Admissão prevista ${rhData(a.admissao_prevista)}</span>` : ''}
-    <span class="docs"><i style="width:${pct}%" class="${pct === 100 ? 'bom' : pct < 50 ? 'ruim' : 'meio'}"></i></span>
+    <span class="rh-selo">
+      <span class="selo ${a.tem_curriculo ? 'ok' : 'falta'}">${a.tem_curriculo ? '✔' : '✘'} Currículo</span>
+      <span class="selo ${avalOk ? 'ok' : 'falta'}">${avalOk ? '✔' : '✘'} Avaliações ${a.avaliacoes_ok}/${a.avaliacoes_total}</span>
+    </span>
     <span class="rodape">
-      <span class="chk">${a.checklist_ok}/${a.checklist_total} docs</span>
       ${a.liberado ? '<span class="lib">pronto para avançar</span>' : `<span class="pend">${a.pendencias.length} pendência(s)</span>`}
     </span></button>`;
 }
