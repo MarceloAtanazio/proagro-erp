@@ -7432,3 +7432,74 @@ Quadro. Testado no navegador (mock com CSS real): selos como pílulas verde/verm
 relance, sem abrir o card.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-09-29 — Sessão 157: Orçamento Anual ganha centro de custo — categoria × centro de custo × mês
+
+**Solicitação:** *"Preciso começar a montar o orçamento de gastos de toda empresa para o ano de 2027
+e no modelo atual só é possível adicionar o orçamento de uma maneira genérica e não detalhada como
+temos em outras seções do sistema. O que você sugere fazer para deixar essa maneira de criar o
+orçamento dos anos futuros de uma maneira mais detalhada e organizada?"* — pedido de planejamento, sem
+mexer em nada antes de alinhar o caminho.
+
+### A conversa antes do código
+
+Levantei o modelo atual (`erp_budgets`: só `categoria × mês → valor`, nada de centro de custo,
+fornecedor ou qualquer outra dimensão) e comparei com Contas a Pagar, que já usa categoria + centro de
+custo + fornecedor por lançamento. O achado que decidiu a conversa: categorias como "Folha de
+Pagamento" e "RH / Benefícios" já aparecem no Contas a Pagar espalhadas em 6–7 centros de custo
+diferentes — orçar só por categoria mistura o gasto de vários departamentos numa linha só, e não dá pra
+saber depois qual departamento estourou. Perguntei ao Marcelo (via `AskUserQuestion`) se a dimensão que
+faltava era centro de custo (confirmado) e o que fazer com o orçamento de 2026 já lançado (decisão:
+deixar como está, 2027 em diante já nasce detalhado). Entrei em modo de planejamento (`EnterPlanMode`),
+conferi que as duas funções que CONSOMEM os dados fora da tela de edição (`orcadoRealAnalise` da tela
+"Orçado × Realizado", e `orcamentoAnalise` dos exports Excel/PDF) já agregam por categoria com `+=` —
+ou seja, não precisavam mudar — e só então apresentei o plano final pra aprovação.
+
+### O que mudou
+
+**Banco:** `erp_budgets` ganha `cost_center text NOT NULL DEFAULT ''` (migração aditiva) e a unicidade
+passa a ser `(year, month, type, category, cost_center)`. `cost_center=''` representa "Geral / não
+departamental" — é o valor que as 240 linhas de 2026 já têm automaticamente, sem UPDATE nenhum. String
+vazia em vez de `NULL` é proposital: evita o Postgres tratar `NULL` como "distinto de tudo" no
+`UNIQUE`/`ON CONFLICT`.
+
+**Backend:** `POST /api/budgets/:year` passa a gravar `cost_center` por item, e o `ON CONFLICT` do
+upsert muda o alvo pra incluir a coluna nova. `DELETE /api/budgets/:year/category` continua igual
+(remove a categoria inteira, todos os centros de custo dela junto). Rota nova, `DELETE
+/api/budgets/:year/line`, remove só uma linha (um centro de custo dentro de uma categoria).
+
+**Frontend (`renderOrcamento`):** a grade vira grupos — cada categoria é um cabeçalho (nome + total
+somado de todos os centros de custo + botões "+ CC"/"× remover categoria"), e dentro dela uma linha
+editável por centro de custo (recuada, com os 12 meses, total próprio, "→12" e "× remover linha"). O
+modal "+ Adicionar categoria" ganhou o seletor de centro de custo (lista `CENTROS`, mesma já usada em
+Contas a Pagar), e um botão novo "+ CC" no cabeçalho de cada categoria já existente adiciona mais um
+centro de custo sem passar pelo fluxo completo de categoria.
+
+**Achado durante a implementação, fora do plano original:** o endpoint do Painel
+(`GET /api/reports/dashboard`) também consumia o orçamento pra montar "orçado × realizado do mês" —
+mas com um `.find()` direto sobre as linhas cruas de `erp_budgets`, sem somar por categoria primeiro
+(diferente das outras duas funções, que já somavam). Isso passava despercebido enquanto só existia uma
+linha por categoria/mês; com centro de custo habilitado, o Painel ia silenciosamente mostrar só o valor
+do PRIMEIRO centro de custo de cada categoria, ignorando os demais. Corrigido: a consulta agora passa
+por `somarPorMesCategoria` (a mesma função já usada pro lado do realizado) antes do `.find()`.
+
+### O que ficou de fora (de propósito)
+
+Migrar o orçamento de 2026 pra ter centro de custo (decisão do Marcelo); "Orçado × Realizado" e os
+exports detalhados por centro de custo (continuam funcionando, agregados por categoria — não ganharam
+a granularidade nova, fica como sugestão de próximo passo).
+
+### Verificação
+
+`verifica-orcamento-centro-custo.js` (novo, 14 verificações contra o Express real): duas linhas na
+mesma categoria com centros de custo diferentes sobrevivem sem se sobrescrever; editar uma não mexe na
+outra; upsert repetido atualiza, não duplica; remover uma linha não afeta as demais; remover a
+categoria remove tudo; POST sem `cost_center` (comportamento antigo) continua funcionando e grava `''`.
+`verifica-painel-orcado-cc.js` (novo, 4 verificações): prova o bug do Painel encontrado durante a
+implementação, e confirma a correção. `verifica-orcamento-front.js` (novo, estático): confirma a grade
+de 3 níveis, o agrupamento visual, os botões novos, e que `orcamentoAnalise`/`orcadoRealAnalise`
+continuam com `+=` — nenhuma das duas precisou de alteração. Testado no navegador (mock com CSS real):
+duas categorias, uma com dois centros de custo, total do cabeçalho batendo com a soma das sub-linhas.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>

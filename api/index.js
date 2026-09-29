@@ -1433,7 +1433,8 @@ app.get('/api/budgets/:year', requireAuth, requireViewAny(['orcamento','orcadore
   res.json(await query('SELECT * FROM erp_budgets WHERE year = $1 ORDER BY type, category, month', [year]));
 }));
 
-// Upsert em lote: [{month, type, category, amount}, ...]
+// Upsert em lote: [{month, type, category, cost_center, amount}, ...]. Sem
+// cost_center (ou vazio) grava '' — "Geral", a mesma convenção do banco.
 app.post('/api/budgets/:year', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
   const year = Number(req.params.year);
   const items = Array.isArray(req.body.items) ? req.body.items : [];
@@ -1441,16 +1442,27 @@ app.post('/api/budgets/:year', requireAuth, requireEdit('orcamento'), h(async (r
   for (const it of items) {
     const m = Number(it.month), a = Number(it.amount);
     if (m < 1 || m > 12 || !['receita', 'despesa'].includes(it.type) || !sanitize(it.category) || !isFinite(a) || a < 0) continue;
-    await query(`INSERT INTO erp_budgets (year, month, type, category, amount) VALUES ($1,$2,$3,$4,$5)
-      ON CONFLICT (year, month, type, category) DO UPDATE SET amount = excluded.amount`,
-      [year, m, it.type, sanitize(it.category), a]);
+    await query(`INSERT INTO erp_budgets (year, month, type, category, cost_center, amount) VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (year, month, type, category, cost_center) DO UPDATE SET amount = excluded.amount`,
+      [year, m, it.type, sanitize(it.category), sanitize(it.cost_center) || '', a]);
   }
   res.json({ ok: true });
 }));
 
+// Remove a categoria inteira — todos os centros de custo dela junto. É a
+// ação do cabeçalho do grupo, não de uma linha só.
 app.delete('/api/budgets/:year/category', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
   const { type, category } = req.body;
   await query('DELETE FROM erp_budgets WHERE year=$1 AND type=$2 AND category=$3', [Number(req.params.year), type, category]);
+  res.json({ ok: true });
+}));
+
+// Remove só UMA linha (um centro de custo dentro de uma categoria) — pra
+// tirar um departamento sem apagar a categoria toda.
+app.delete('/api/budgets/:year/line', requireAuth, requireEdit('orcamento'), h(async (req, res) => {
+  const { type, category, cost_center } = req.body;
+  await query('DELETE FROM erp_budgets WHERE year=$1 AND type=$2 AND category=$3 AND cost_center=$4',
+    [Number(req.params.year), type, category, sanitize(cost_center) || '']);
   res.json({ ok: true });
 }));
 
@@ -1868,10 +1880,14 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   const despesasPorCategoria = despCatRows.map(r => ({ category: r.category, total: n(r.total) }));
 
   // ---- Análise por categoria: orçado x realizado do mês atual ----
-  const orcadoCatRows = await query(`SELECT category, amount FROM erp_budgets WHERE year=$1 AND month=$2 AND type='despesa'`, [anoAtual, mesNum]);
-  // Mesma régua de Orçado x Realizado: reembolso conta, repasse à Flash não.
-  // As duas telas respondem a mesma pergunta e não podem divergir. O somar
-  // no fim não é enfeite: o `.find` logo abaixo pegaria só a primeira linha.
+  // Desde que o orçamento passou a aceitar centro de custo, uma categoria
+  // pode ter mais de uma linha no mesmo mês (uma por centro de custo) — por
+  // isso soma por categoria ANTES do `.find` abaixo. Mesma régua de Orçado x
+  // Realizado: reembolso conta, repasse à Flash não; as duas telas respondem
+  // a mesma pergunta e não podem divergir.
+  const orcadoCatRows = somarPorMesCategoria(
+    (await query(`SELECT category, amount AS total FROM erp_budgets WHERE year=$1 AND month=$2 AND type='despesa'`, [anoAtual, mesNum]))
+      .map(r => ({ ...r, month: mesNum })));
   const realCatRows = somarPorMesCategoria(
     (await query(`SELECT category, SUM(amount) AS total FROM erp_payables
        WHERE status='pago' AND to_char(payment_date,'YYYY-MM')=$1 AND category IS DISTINCT FROM $2
@@ -1882,12 +1898,12 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
       .map(r => ({ ...r, month: mesNum })));
   const catSet = new Set([...orcadoCatRows.map(r => r.category), ...realCatRows.map(r => r.category)]);
   const categoriaMes = [...catSet].map(cat => {
-    const orcado = n((orcadoCatRows.find(r => r.category === cat) || {}).amount);
+    const orcado = n((orcadoCatRows.find(r => r.category === cat) || {}).total);
     const realizado = n((realCatRows.find(r => r.category === cat) || {}).total);
     return { category: cat, orcado, realizado, variacao: realizado - orcado,
       variacaoPct: orcado > 0 ? ((realizado - orcado) / orcado) * 100 : (realizado > 0 ? null : 0) };
   }).sort((a, b) => b.realizado - a.realizado);
-  const orcadoDespesaMes = orcadoCatRows.reduce((s, r) => s + n(r.amount), 0);
+  const orcadoDespesaMes = orcadoCatRows.reduce((s, r) => s + n(r.total), 0);
 
   // ---- Análise por centro de custo (últimos 12 meses, ranking completo) ----
   const centrosRows = await query(`SELECT cost_center, SUM(amount) AS total FROM erp_payables

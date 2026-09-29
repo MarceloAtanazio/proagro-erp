@@ -302,6 +302,12 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 }
 .budget-grid td input:hover { border-color: var(--line); background: #fff; }
 .budget-grid td input:focus { border-color: var(--verde-500); background: #fff; }
+/* Categoria é o grupo (fundo levemente marcado, borda de cima mais grossa
+   pra separar do grupo anterior); cada centro de custo dentro dela é uma
+   linha normal, só recuada — é o cabeçalho quem soma todas elas. */
+.budget-grid tr.budget-cat-row td { background: #FAFBFA; border-top: 2px solid var(--line); font-size: 13px; }
+.budget-grid tr.budget-cat-row:first-child td { border-top: none; }
+.budget-grid tr.budget-cc-row .cc-label { padding-left: 26px; color: var(--ink-2); white-space: nowrap; }
 
 /* ---------- Diversos ---------- */
 .empty { text-align: center; color: var(--muted); padding: 40px 20px; font-size: 13.5px; }

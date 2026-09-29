@@ -4035,32 +4035,52 @@ async function renderOrcamento() {
   const rows = await api('/api/budgets/' + year);
   const c = $('#content');
 
-  // organiza {type: {category: [12]}}
+  // organiza {type: {category: {cost_center: [12]}}} — cost_center='' é
+  // "Geral / não departamental". Uma categoria como "Folha de Pagamento" no
+  // Contas a Pagar já cai em vários centros de custo diferentes; sem essa
+  // camada a mesma categoria aqui misturava o gasto de todo mundo numa
+  // linha só.
   const grid = { despesa: {}, receita: {} };
   rows.forEach(r => {
-    grid[r.type][r.category] = grid[r.type][r.category] || Array(12).fill(0);
-    grid[r.type][r.category][r.month - 1] = r.amount;
+    const cc = r.cost_center || '';
+    grid[r.type][r.category] = grid[r.type][r.category] || {};
+    grid[r.type][r.category][cc] = grid[r.type][r.category][cc] || Array(12).fill(0);
+    grid[r.type][r.category][cc][r.month - 1] = r.amount;
   });
+  const ccLabel = cc => cc || 'Geral';
 
-  const tableFor = (type, cats) => {
-    const existing = Object.keys(grid[type]);
-    const allCats = [...new Set([...existing, ...[]])];
+  const tableFor = type => {
+    const cats = Object.keys(grid[type]);
     return `
       <div class="card" style="margin-bottom:16px">
         <h3>${type === 'receita' ? 'Receitas orçadas' : 'Despesas orçadas'}
           <button class="btn sm" data-addcat="${type}">+ Adicionar categoria</button></h3>
         <div style="overflow-x:auto"><table class="budget-grid" data-type="${type}">
-          <thead><tr><th>Categoria</th>${MESES.map(m => `<th class="num">${m}</th>`).join('')}<th class="num">Total</th><th></th></tr></thead>
-          <tbody>${allCats.map(cat => {
-            const vals = grid[type][cat];
-            return `<tr data-cat="${esc(cat)}">
-              <td><strong>${esc(cat)}</strong></td>
-              ${vals.map((v, i) => `<td class="num"><input data-month="${i + 1}" value="${v ? v.toLocaleString('pt-BR', { minimumFractionDigits: 0 }) : ''}" placeholder="0"></td>`).join('')}
-              <td class="num row-total">${brl(vals.reduce((a, b) => a + b, 0))}</td>
-              <td class="actions"><button class="btn sm" data-fill title="Replicar valor de Jan para todos os meses">→12</button>
-                <button class="btn sm danger-ghost" data-delcat>×</button></td>
-            </tr>`;
-          }).join('') || `<tr><td colspan="15"><div class="empty">Nenhuma categoria orçada. Clique em "+ Adicionar categoria".</div></td></tr>`}</tbody>
+          <thead><tr><th>Categoria / Centro de custo</th>${MESES.map(m => `<th class="num">${m}</th>`).join('')}<th class="num">Total</th><th></th></tr></thead>
+          <tbody>${cats.length ? cats.map(cat => {
+            const porCC = grid[type][cat];
+            const ccs = Object.keys(porCC).sort((a, b) => ccLabel(a).localeCompare(ccLabel(b)));
+            const totalCat = ccs.reduce((s, cc) => s + porCC[cc].reduce((a, b) => a + b, 0), 0);
+            return `
+              <tr class="budget-cat-row" data-cat="${esc(cat)}">
+                <td colspan="${MESES.length + 1}"><strong>${esc(cat)}</strong></td>
+                <td class="num row-total">${brl(totalCat)}</td>
+                <td class="actions">
+                  <button class="btn sm" data-addcc title="Adicionar centro de custo a esta categoria">+ CC</button>
+                  <button class="btn sm danger-ghost" data-delcat title="Remover a categoria inteira">×</button>
+                </td>
+              </tr>
+              ${ccs.map(cc => {
+                const vals = porCC[cc];
+                return `<tr class="budget-cc-row" data-cat="${esc(cat)}" data-cc="${esc(cc)}">
+                  <td class="cc-label">— ${esc(ccLabel(cc))}</td>
+                  ${vals.map((v, i) => `<td class="num"><input data-month="${i + 1}" value="${v ? v.toLocaleString('pt-BR', { minimumFractionDigits: 0 }) : ''}" placeholder="0"></td>`).join('')}
+                  <td class="num row-total">${brl(vals.reduce((a, b) => a + b, 0))}</td>
+                  <td class="actions"><button class="btn sm" data-fill title="Replicar valor de Jan para todos os meses">→12</button>
+                    <button class="btn sm danger-ghost" data-delline title="Remover esta linha">×</button></td>
+                </tr>`;
+              }).join('')}`;
+          }).join('') : `<tr><td colspan="15"><div class="empty">Nenhuma categoria orçada. Clique em "+ Adicionar categoria".</div></td></tr>`}</tbody>
         </table></div>
       </div>`;
   };
@@ -4073,9 +4093,9 @@ async function renderOrcamento() {
       <button class="btn" id="btn-orc-export">Exportar</button>
       <button class="btn primary" id="btn-save">Salvar orçamento</button>
     </div>
-    ${tableFor('receita', CAT_RECEITA)}
-    ${tableFor('despesa', CAT_DESPESA)}
-    <p class="hint">Digite os valores mensais orçados. O botão <strong>→12</strong> replica o valor de janeiro para os 12 meses. Clique em <strong>Salvar orçamento</strong> para gravar.</p>`;
+    ${tableFor('receita')}
+    ${tableFor('despesa')}
+    <p class="hint">Digite os valores mensais orçados, por centro de custo dentro de cada categoria. O botão <strong>→12</strong> replica o valor de janeiro para os 12 meses daquela linha. Clique em <strong>Salvar orçamento</strong> para gravar.</p>`;
 
   $('#o-year').onchange = e => { sessionStorage.setItem('orc-year', e.target.value); renderOrcamento(); };
 
@@ -4127,12 +4147,22 @@ async function renderOrcamento() {
     }
   }
 
+  // O total da CATEGORIA soma as linhas de todos os centros de custo dela —
+  // por isso recalcRow também atualiza o cabeçalho do grupo, não só a
+  // própria linha.
+  const recalcCat = (table, cat) => {
+    let t = 0;
+    table.querySelectorAll(`tbody tr.budget-cc-row[data-cat="${CSS.escape(cat)}"] input`).forEach(i => t += num(i.value));
+    const catRow = table.querySelector(`tbody tr.budget-cat-row[data-cat="${CSS.escape(cat)}"]`);
+    if (catRow) catRow.querySelector('.row-total').textContent = brl(t);
+  };
   const recalcRow = tr => {
     let t = 0;
     tr.querySelectorAll('input').forEach(i => t += num(i.value));
     tr.querySelector('.row-total').textContent = brl(t);
+    recalcCat(tr.closest('table'), tr.dataset.cat);
   };
-  c.querySelectorAll('.budget-grid tbody tr[data-cat]').forEach(tr => {
+  c.querySelectorAll('.budget-grid tbody tr.budget-cc-row').forEach(tr => {
     tr.querySelectorAll('input').forEach(i => i.oninput = () => recalcRow(tr));
     const fill = tr.querySelector('[data-fill]');
     if (fill) fill.onclick = () => {
@@ -4140,12 +4170,41 @@ async function renderOrcamento() {
       tr.querySelectorAll('input').forEach(i => i.value = first);
       recalcRow(tr);
     };
+    const del = tr.querySelector('[data-delline]');
+    if (del) del.onclick = async () => {
+      const type = tr.closest('table').dataset.type, cat = tr.dataset.cat, cc = tr.dataset.cc;
+      if (!confirm(`Remover a linha "${ccLabel(cc)}" da categoria "${cat}"?`)) return;
+      await api(`/api/budgets/${year}/line`, { method: 'DELETE', body: { type, category: cat, cost_center: cc } });
+      toast('Linha removida.'); renderOrcamento();
+    };
+  });
+
+  c.querySelectorAll('.budget-grid tbody tr.budget-cat-row').forEach(tr => {
+    const type = tr.closest('table').dataset.type, cat = tr.dataset.cat;
     const del = tr.querySelector('[data-delcat]');
     if (del) del.onclick = async () => {
-      const type = tr.closest('table').dataset.type, cat = tr.dataset.cat;
-      if (!confirm(`Remover a categoria "${cat}" do orçamento de ${year}?`)) return;
+      if (!confirm(`Remover a categoria "${cat}" do orçamento de ${year}? Isso apaga todos os centros de custo dela.`)) return;
       await api(`/api/budgets/${year}/category`, { method: 'DELETE', body: { type, category: cat } });
       toast('Categoria removida.'); renderOrcamento();
+    };
+    const addcc = tr.querySelector('[data-addcc]');
+    if (addcc) addcc.onclick = () => {
+      const existentes = Object.keys(grid[type][cat] || {});
+      const opcoes = [];
+      if (!existentes.includes('')) opcoes.push({ v: '', t: '— Geral / não departamental —' });
+      CENTROS.filter(x => !existentes.includes(x)).forEach(x => opcoes.push({ v: x, t: x }));
+      if (!opcoes.length) return toast('Todos os centros de custo já foram adicionados nesta categoria.');
+      openModal(`Adicionar centro de custo — ${cat}`, `
+        ${fldSel('cc-nome', 'Centro de custo', opcoes, opcoes[0].v)}
+        ${fld('cc-val', 'Valor mensal inicial (aplicado aos 12 meses)', 'number', '0', 'step="0.01" min="0"')}`,
+        [{ label: 'Cancelar', onClick: closeModal },
+         { label: 'Adicionar', cls: 'primary', onClick: async () => {
+            const cc = $('#cc-nome').value;
+            const v = Number($('#cc-val').value) || 0;
+            const items = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, type, category: cat, cost_center: cc, amount: v }));
+            await api('/api/budgets/' + year, { method: 'POST', body: { items } });
+            closeModal(); toast('Centro de custo adicionado.'); renderOrcamento();
+         }}]);
     };
   });
 
@@ -4156,14 +4215,16 @@ async function renderOrcamento() {
     openModal('Adicionar categoria ao orçamento', `
       ${fldSel('nc-cat', 'Categoria', [...available.map(x => ({ v: x, t: x })), { v: '__custom', t: 'Outra (digitar)…' }], available[0] || '__custom')}
       <div class="field" id="nc-custom-wrap" style="display:none"><label>Nome da categoria</label><input id="nc-custom"></div>
+      ${fldSel('nc-cc', 'Centro de custo', [{ v: '', t: '— Geral / não departamental —' }, ...CENTROS.map(x => ({ v: x, t: x }))], '')}
       ${fld('nc-val', 'Valor mensal inicial (aplicado aos 12 meses)', 'number', '0', 'step="0.01" min="0"')}`,
       [{ label: 'Cancelar', onClick: closeModal },
        { label: 'Adicionar', cls: 'primary', onClick: async () => {
           const sel = $('#nc-cat').value;
           const cat = sel === '__custom' ? $('#nc-custom').value.trim() : sel;
           if (!cat) return modalError('Informe a categoria.');
+          const cc = $('#nc-cc').value;
           const v = Number($('#nc-val').value) || 0;
-          const items = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, type, category: cat, amount: v }));
+          const items = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, type, category: cat, cost_center: cc, amount: v }));
           await api('/api/budgets/' + year, { method: 'POST', body: { items } });
           closeModal(); toast('Categoria adicionada.'); renderOrcamento();
        }}]);
@@ -4175,9 +4236,9 @@ async function renderOrcamento() {
     const items = [];
     c.querySelectorAll('.budget-grid').forEach(tbl => {
       const type = tbl.dataset.type;
-      tbl.querySelectorAll('tbody tr[data-cat]').forEach(tr => {
-        const cat = tr.dataset.cat;
-        tr.querySelectorAll('input').forEach(i => items.push({ month: Number(i.dataset.month), type, category: cat, amount: num(i.value) }));
+      tbl.querySelectorAll('tbody tr.budget-cc-row').forEach(tr => {
+        const cat = tr.dataset.cat, cc = tr.dataset.cc;
+        tr.querySelectorAll('input').forEach(i => items.push({ month: Number(i.dataset.month), type, category: cat, cost_center: cc, amount: num(i.value) }));
       });
     });
     await api('/api/budgets/' + year, { method: 'POST', body: { items } });
