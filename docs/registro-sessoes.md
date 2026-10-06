@@ -7559,3 +7559,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 28 verificações do backend com banco simulado (inclui linha telefônica, troca de série, série em custódia recusado, saldo ao editar quantidade e ao excluir) e 8 da lógica das categorias, executadas no navegador sobre o código real do `app.js`. A tela completa não foi exercitada (exige login).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 161: Suprimentos — telefone da linha no formato (DD) 99999-9999
+
+**Solicitação:** usar o formato correto do número da linha (DDD entre parênteses e espaço normal) no registro, nos Detalhes e no PDF.
+
+**O que mudou:** a caixa da linha no registro e na edição do envio aplica a máscara enquanto se digita (reaproveita `rhMascaraTelefone` do RH); a lista, os Detalhes e o termo em PDF exibem `(11) 96329-0654`, inclusive para envios já gravados só com dígitos (`supFone`). Aceita celular (11 dígitos), fixo (10) e número com +55; o que não bater com isso aparece como foi digitado. Sem mudança no banco.
+
+**Verificação:** 6 entradas conferidas (celular, fixo, com +55, parcial, curto, vazio) e a máscara ao digitar passo a passo.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

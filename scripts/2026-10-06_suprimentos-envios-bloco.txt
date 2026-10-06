@@ -3,7 +3,14 @@ const SUP_FORMAS_ENVIO = ['Entrega em mãos', 'Transportadora', 'Correios', 'Mot
 const SUP_ESTADO_UN = { em_estoque: ['ok', 'Em estoque'], em_custodia: ['warn', 'Em custódia'], baixado: ['off', 'Baixado'] };
 // Celular leva a linha telefônica junto: vale para a subcategoria "Celular" ou nome com celular/smartphone.
 const supEhCelular = x => /^celular$/i.test(String(x.subcategoria || x.item_subcategoria || '').trim()) || /celular|smartphone/i.test(String(x.nome || x.item_nome || ''));
-const supLinhaTxt = m => m.linha_telefonica ? `Linha ${esc(m.linha_telefonica)}${m.operadora ? ' · ' + esc(m.operadora) : ''}` : '';
+// Exibe o telefone como (DD) 99999-9999; o que não tiver 10 ou 11 dígitos aparece como foi digitado.
+const supFone = v => {
+  let d = rhSoDigitos(v);
+  if (d.length > 11 && d.slice(0, 2) === '55') d = d.slice(2);
+  return (d.length === 10 || d.length === 11) ? rhMascaraTelefone(d) : String(v == null ? '' : v);
+};
+const supMascararFone = id => { const el = $('#' + id); if (el) el.oninput = () => { el.value = rhMascaraTelefone(el.value); }; };
+const supLinhaTxt = m => m.linha_telefonica ? `Linha ${esc(supFone(m.linha_telefonica))}${m.operadora ? ' · ' + esc(m.operadora) : ''}` : '';
 
 async function supRenderEnvios(panel) {
   const [itens, colaboradores, movs] = await Promise.all([
@@ -122,7 +129,7 @@ async function supFormEnvio(itens, colaboradores) {
         try {
           const equip = (itens.find(i => i.id == $('#en-item').value) || {}).tipo === 'equipamento';
           await api('/api/suprimentos/envios', { method: 'POST', body: {
-            item_id: $('#en-item').value, numero_serie: equip ? $('#en-serie').value : null, patrimonio: equip ? $('#en-pat').value : null, linha_telefonica: $('#en-linha').value, operadora: $('#en-operadora').value, quantidade: $('#en-qtd').value,
+            item_id: $('#en-item').value, numero_serie: equip ? $('#en-serie').value : null, patrimonio: equip ? $('#en-pat').value : null, linha_telefonica: supFone($('#en-linha').value), operadora: $('#en-operadora').value, quantidade: $('#en-qtd').value,
             colaborador_id: $('#en-colab').value, data: $('#en-data').value, forma_envio: $('#en-forma').value,
             codigo_rastreio: $('#en-rastreio').value, condicao_saida: $('#en-cond').value, notes: $('#en-notes').value } });
           closeModal(); toast(equip ? 'Envio registrado. Gere o termo de responsabilidade em Detalhes.' : 'Envio registrado.'); renderSuprimentos();
@@ -142,6 +149,7 @@ async function supFormEnvio(itens, colaboradores) {
     }
   };
   $('#en-item').onchange = ajustar;
+  supMascararFone('en-linha');
   ajustar();
 }
 
@@ -179,7 +187,7 @@ function supDetalheEnvio(m, colaboradores) {
       ${linha('Tipo', equip ? 'Equipamento' : 'Material')}
       ${equip ? linha('Nº de série', txt(m.unidade_serie)) + linha('Patrimônio', txt(m.unidade_patrimonio)) : ''}
       ${linha('Marca / SKU', txt([m.item_marca, m.item_sku].filter(Boolean).join(' / ')))}
-      ${m.linha_telefonica ? linha('Linha telefônica', esc(m.linha_telefonica) + (m.operadora ? ' · ' + esc(m.operadora) : '')) : ''}
+      ${m.linha_telefonica ? linha('Linha telefônica', esc(supFone(m.linha_telefonica)) + (m.operadora ? ' · ' + esc(m.operadora) : '')) : ''}
       ${linha('Quantidade', supNum(m.quantidade) + ' ' + esc(m.unidade))}
       <tr><td colspan="2">${supSecTitle('Destinatário e envio')}</td></tr>
       ${linha('Colaborador', txt(m.colaborador_name) + (m.colaborador_cargo ? ' — ' + esc(m.colaborador_cargo) : ''))}
@@ -218,7 +226,7 @@ function supFormEditarEnvio(m, colaboradores) {
       ${fld('ee-rastreio', 'Código de rastreio', 'text', m.codigo_rastreio || '')}
     </div>
     ${celular ? `<div class="form-row">
-      ${fld('ee-linha', 'Nº da linha telefônica enviada', 'text', m.linha_telefonica || '', 'placeholder="(00) 00000-0000" inputmode="tel"')}
+      ${fld('ee-linha', 'Nº da linha telefônica enviada', 'text', supFone(m.linha_telefonica || ''), 'placeholder="(00) 00000-0000" inputmode="tel"')}
       ${fld('ee-operadora', 'Operadora', 'text', m.operadora || '', 'placeholder="Ex.: Vivo, Claro, TIM"')}
     </div>` : ''}
     ${fld('ee-cond', 'Condição / acessórios na saída', 'text', m.condicao_saida || '')}
@@ -231,11 +239,12 @@ function supFormEditarEnvio(m, colaboradores) {
           await api('/api/suprimentos/envios/' + m.id, { method: 'PUT', body: {
             colaborador_id: v('ee-colab'), data: v('ee-data'), numero_serie: v('ee-serie'), patrimonio: v('ee-pat'),
             quantidade: v('ee-qtd'), forma_envio: v('ee-forma'), codigo_rastreio: v('ee-rastreio'),
-            linha_telefonica: v('ee-linha'), operadora: v('ee-operadora'),
+            linha_telefonica: v('ee-linha') === undefined ? undefined : supFone(v('ee-linha')), operadora: v('ee-operadora'),
             condicao_saida: v('ee-cond'), condicao_devolucao: v('ee-cond-dev'), notes: v('ee-notes') } });
           closeModal(); toast('Envio atualizado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}], { wide: true });
+  supMascararFone('ee-linha');
 }
 
 // Unidades físicas de um equipamento: é aqui que o nº de série e o patrimônio
@@ -327,7 +336,7 @@ function supTermoPDF(m) {
         ['Data do envio', brDate(m.data)],
         ['Forma de envio', v(m.forma_envio)],
         ['Código de rastreio', v(m.codigo_rastreio)],
-        ...(m.linha_telefonica ? [['Linha telefônica', v(m.linha_telefonica) + (m.operadora ? ' (' + m.operadora + ')' : '')]] : []),
+        ...(m.linha_telefonica ? [['Linha telefônica', supFone(m.linha_telefonica) + (m.operadora ? ' (' + m.operadora + ')' : '')]] : []),
         ['Condição / acessórios na saída', v(m.condicao_saida)]
       ],
       styles: { font: 'helvetica', fontSize: 9.5, cellPadding: 2.6, textColor: [40, 46, 42], lineColor: [215, 222, 218], lineWidth: 0.2 },
