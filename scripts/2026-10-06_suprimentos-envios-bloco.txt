@@ -307,6 +307,7 @@ async function supUnidades(item) {
 }
 
 // Etiqueta de envio 10x15 cm: destinatário (ficha do colaborador) e remetente (dados da empresa).
+// Não lista o conteúdo: um envio pode levar mais de um item.
 async function supEtiquetaPDF(m) {
   if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
   try {
@@ -315,43 +316,62 @@ async function supEtiquetaPDF(m) {
     const faltam = [!dest.endereco && 'endereço', !dest.endereco_numero && 'número', !dest.municipio && 'município', !dest.uf && 'UF', !dest.cep && 'CEP'].filter(Boolean);
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [100, 150] });
-    const W = 100, M = 6, larg = W - M * 2;
-    const txt = (t, x, y, tam, estilo = 'normal', cor = [20, 28, 24]) => { doc.setFont('helvetica', estilo); doc.setFontSize(tam); doc.setTextColor(...cor); doc.text(t, x, y); };
-    const bloco = (linhas, x, y, tam, estilo, passo, cor) => {
-      doc.setFont('helvetica', estilo); doc.setFontSize(tam); doc.setTextColor(...(cor || [20, 28, 24]));
-      linhas.forEach(l => { const q = doc.splitTextToSize(l, larg); doc.text(q, x, y); y += q.length * passo; });
-      return y;
-    };
-    doc.setDrawColor(40, 50, 44); doc.setLineWidth(0.5); doc.rect(3, 3, W - 6, 144);
-    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M, 7, 26, 26 * (139 / 600));
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90, 100, 94);
-    doc.text(`Envio nº ${env.id}  ·  ${brDate(env.data)}`, W - M, 11, { align: 'right' });
+    const W = 100, H = 150, M = 7, L = W - M * 2;
+    const VERDE = [0, 120, 63], VERDE_ESC = [0, 84, 44], VERDE_CLARO = [240, 247, 242], TXT = [22, 30, 26], CINZA = [100, 110, 104];
+    const fonte = (tam, estilo = 'normal', cor = TXT) => { doc.setFont('helvetica', estilo); doc.setFontSize(tam); doc.setTextColor(...cor); };
+    const quebrar = (t, tam, estilo, largura) => { fonte(tam, estilo); return doc.splitTextToSize(String(t), largura); };
+    const rotulo = (t, x, y, cor) => { fonte(7, 'bold', cor); doc.text(t, x, y, { charSpace: 0.5 }); };
 
-    // DESTINATÁRIO
-    let y = 24;
-    txt('DESTINATÁRIO', M, y, 8, 'bold', [0, 120, 63]); y += 6;
-    y = bloco([String(dest.name || '—').toUpperCase()], M, y, 14, 'bold', 5.6);
+    // Moldura e cabeçalho
+    doc.setDrawColor(...VERDE_ESC); doc.setLineWidth(0.6); doc.roundedRect(3, 3, W - 6, H - 6, 3, 3);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M, 8.5, 30, 30 * (139 / 600));
+    fonte(10, 'bold', VERDE_ESC); doc.text(`ENVIO Nº ${env.id}`, W - M, 11.5, { align: 'right' });
+    fonte(7.5, 'normal', CINZA); doc.text(brDate(env.data), W - M, 15.8, { align: 'right' });
+    if (env.codigo_rastreio) doc.text(`Rastreio ${env.codigo_rastreio}`, W - M, 19.6, { align: 'right' });
+    doc.setFillColor(...VERDE); doc.rect(M, 24, L, 1.2, 'F');
+
+    // Destinatário (cartão com faixa lateral)
+    const X = M + 6, LT = L - 9;
+    const nome = quebrar(String(dest.name || '—').toUpperCase(), 15, 'bold', LT);
     const lograd = [dest.endereco, dest.endereco_numero].filter(Boolean).join(', ') + (dest.endereco_complemento ? ' - ' + dest.endereco_complemento : '');
-    y = bloco([lograd || '—', dest.bairro || ''].filter(Boolean), M, y + 1, 11, 'normal', 4.8);
-    y = bloco([[dest.municipio, dest.uf].filter(Boolean).join(' - ') || '—'], M, y, 11, 'normal', 4.8);
-    y += 2;
-    doc.setLineWidth(0.3); doc.rect(M, y, larg, 13);
-    txt('CEP', M + 3, y + 8.5, 8, 'bold', [90, 100, 94]);
-    txt(dest.cep ? rhMascaraCEP(rhSoDigitos(dest.cep)) : '—', M + 14, y + 9.5, 20, 'bold');
-    y += 18;
-    if (dest.celular) { txt(`Tel.: ${supFone(dest.celular)}`, M, y, 9); y += 5; }
+    const logr = quebrar(lograd || '—', 11, 'normal', LT);
+    const bairro = dest.bairro ? quebrar(dest.bairro, 11, 'normal', LT) : [];
+    const cidade = [dest.municipio, dest.uf].filter(Boolean).join(' - ') || '—';
+    const fone = dest.celular ? supFone(dest.celular) : '';
+    const alt = 5.5 + nome.length * 6.2 + 1.5 + logr.length * 5 + bairro.length * 5 + 6 + (fone ? 6 : 0) + 3.5;
+    const y0 = 30;
+    doc.setFillColor(...VERDE_CLARO); doc.rect(M, y0, L, alt, 'F');
+    doc.setFillColor(...VERDE); doc.rect(M, y0, 1.6, alt, 'F');
+    let y = y0 + 6;
+    rotulo('DESTINATÁRIO', X, y, VERDE); y += 6;
+    fonte(15, 'bold'); doc.text(nome, X, y); y += nome.length * 6.2 + 0.5;
+    fonte(11); doc.text(logr, X, y); y += logr.length * 5;
+    if (bairro.length) { doc.text(bairro, X, y); y += bairro.length * 5; }
+    fonte(12, 'bold'); doc.text(cidade, X, y + 0.5); y += 6;
+    if (fone) { fonte(9.5, 'normal', CINZA); doc.text(`Tel.: ${fone}`, X, y + 0.5); }
 
-    // REMETENTE
-    y = Math.max(y + 4, 92);
-    doc.setLineDashPattern([1.5, 1.5], 0); doc.setLineWidth(0.3); doc.line(M, y - 4, W - M, y - 4); doc.setLineDashPattern([], 0);
-    txt('REMETENTE', M, y, 7.5, 'bold', [0, 120, 63]); y += 5;
-    y = bloco([rem.legal_name || rem.trade_name || '—'], M, y, 9, 'bold', 4);
-    y = bloco([rem.cnpj ? `CNPJ ${rem.cnpj}` : '', rem.address || '', [rem.phone && supFone(rem.phone), rem.email].filter(Boolean).join('  ·  ')].filter(Boolean), M, y + 0.5, 8, 'normal', 3.6);
+    // CEP em destaque
+    const yc = y0 + alt + 4;
+    doc.setFillColor(...VERDE_ESC); doc.roundedRect(M, yc, L, 16, 2, 2, 'F');
+    fonte(8, 'bold', [200, 225, 208]); doc.text('CEP', M + 6, yc + 9.6, { charSpace: 0.5 });
+    fonte(26, 'bold', [255, 255, 255]); doc.text(dest.cep ? rhMascaraCEP(rhSoDigitos(dest.cep)) : '—', M + 22, yc + 11.4);
 
-    // Conteúdo
-    const conteudo = [`Conteúdo: ${env.item_nome || m.item_nome}`, env.numero_serie ? `Série ${env.numero_serie}` : '', env.codigo_rastreio ? `Rastreio ${env.codigo_rastreio}` : ''].filter(Boolean).join('  ·  ');
-    doc.line(M, 136, W - M, 136);
-    bloco([conteudo], M, 140, 7, 'normal', 3, [70, 80, 74]);
+    // Remetente (ancorado embaixo, em tom mais discreto)
+    const razao = quebrar(rem.legal_name || rem.trade_name || '—', 8.5, 'bold', L);
+    const ender = rem.address ? quebrar(rem.address, 7.5, 'normal', L) : [];
+    const contato = [rem.phone && supFone(rem.phone), rem.email].filter(Boolean).join('  ·  ');
+    const altR = 5 + razao.length * 3.8 + (rem.cnpj ? 3.6 : 0) + ender.length * 3.5 + (contato ? 3.6 : 0);
+    const yr = Math.max(yc + 16 + 9, H - 11 - altR);
+    doc.setDrawColor(150, 160, 154); doc.setLineWidth(0.3); doc.setLineDashPattern([1.4, 1.4], 0); doc.line(M, yr - 4, W - M, yr - 4); doc.setLineDashPattern([], 0);
+    rotulo('REMETENTE', M, yr, CINZA); let yy = yr + 4.6;
+    fonte(8.5, 'bold'); doc.text(razao, M, yy); yy += razao.length * 3.8;
+    fonte(7.5, 'normal', CINZA);
+    if (rem.cnpj) { doc.text(`CNPJ ${rem.cnpj}`, M, yy); yy += 3.6; }
+    if (ender.length) { doc.text(ender, M, yy); yy += ender.length * 3.5; }
+    if (contato) doc.text(contato, M, yy);
+
+    fonte(6.5, 'normal', [140, 150, 144]);
+    doc.text(`${rem.trade_name || 'ProAgro Seguros Brasil'}  ·  etiqueta gerada em ${new Date().toLocaleDateString('pt-BR')}`, W / 2, H - 6.2, { align: 'center' });
 
     doc.save(`etiqueta-envio-${m.id}.pdf`);
     toast(faltam.length ? `Etiqueta gerada, mas falta no cadastro do colaborador: ${faltam.join(', ')}. Complete na ficha do RH.` : 'Etiqueta gerada.');

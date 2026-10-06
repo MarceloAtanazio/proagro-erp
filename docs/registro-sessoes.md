@@ -7581,3 +7581,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** o PDF real foi gerado no navegador com dados de exemplo e renderizado em canvas para conferir o layout. Fluxo logado não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 163: Suprimentos — etiqueta de envio, segunda versão
+
+**Solicitação:** melhorar o visual e a disposição da etiqueta; tirar o conteúdo do envio, já que um envio pode levar mais de um item.
+
+**O que mudou:** o PDF 10×15 cm foi redesenhado — moldura arredondada; cabeçalho com logo e, à direita, "ENVIO Nº", data e rastreio; faixa verde; cartão do destinatário com faixa lateral e rótulo espaçado (nome em destaque, logradouro, bairro, município/UF em negrito, telefone); CEP em caixa verde-escura com texto branco grande; remetente discreto, ancorado embaixo, separado por linha pontilhada; rodapé com a empresa e a data de geração. O rodapé de conteúdo/série foi removido. Sem mudança no banco ou na API.
+
+**Verificação:** PDF real renderizado no navegador com os dados do exemplo (endereço do Arthur) e conferido visualmente.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
