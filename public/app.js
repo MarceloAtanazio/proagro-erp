@@ -6832,6 +6832,11 @@ function viaRenderRotaDetalhe(intermediarios, trechos, consumo, preco, idPrefix)
     <div class="via-route-list">${reorderHtml}</div>`;
 }
 
+// Carro alugado não tem consumo cadastrado (o do colaborador é do carro dele), então o
+// combustível é estimado com um consumo médio fixo. Só vale para aluguel; carro próprio
+// continua usando o consumo do cadastro do colaborador.
+const VIA_CONSUMO_ALUGUEL_KML = 10;
+
 // Executa o cálculo (valida consumo/preço, chama o OSRM, desenha o mapa,
 // renderiza resultado + reordenação + repetições) e devolve o km ponderado
 // via callback pra quem chamou preencher seus próprios campos (Carro Próprio,
@@ -7442,6 +7447,7 @@ function viaRenderAluguelBlock() {
           <button class="btn" id="al-calc-${i}" type="button">📍 Calcular rota automaticamente</button>
           ${viaBotaoRotasBrasil()}
         </div>
+        <p class="hint" style="margin-top:6px">O combustível do carro alugado é estimado com consumo médio de <strong>${VIA_CONSUMO_ALUGUEL_KML} km/L</strong>.</p>
         <div id="al-status-${i}" style="margin-top:8px"></div>
         <div class="field-row" style="margin-top:8px">${fld(`al-km-${i}`, 'Distância percorrida (km)', 'number', a.distancia_km || '', `step="0.1" min="0" ${kmCombDisabled}`)}${fld(`al-comb-${i}`, 'Combustível (R$)', 'number', a.combustivel_valor || '', `step="0.01" min="0" ${kmCombDisabled}`)}${fld(`al-pedagio-${i}`, 'Pedágio total (R$)', 'number', viaPedagioPonderado(a.trechos) > 0 ? viaPedagioPonderado(a.trechos).toFixed(2) : (a.pedagio_valor || ''), `step="0.01" min="0" ${kmCombDisabled}`)}</div>
         <label class="check-chip" style="margin-top:2px"><input type="checkbox" id="al-manual-${i}" ${a.manual_override ? 'checked' : ''}> ✏️ Rota não pôde ser calculada — preencher km/combustível manualmente</label>
@@ -7549,10 +7555,10 @@ function viaRenderAluguelBlock() {
       if (!temRetirada) return toast('Escolha o estado e o município de retirada antes de calcular a rota.');
       const pontoFixo = { uf: a.retirada_uf, municipio: a.retirada_municipio };
       const intermediarios = a.uso_local ? (a.paradas || []) : w.destinos;
-      viaExecutarCalculoRota(pontoFixo, intermediarios, w.colab, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos, meta) => {
+      viaExecutarCalculoRota(pontoFixo, intermediarios, { ...w.colab, veiculo_consumo_kml: VIA_CONSUMO_ALUGUEL_KML }, w.preco_combustivel, `al-status-${i}`, `aluguel-${i}`, a.trechos || [], (km, trechos, meta) => {
         a.manual_override = false;
         a.distancia_km = km.toFixed(1);
-        a.combustivel_valor = (km / w.colab.veiculo_consumo_kml * w.preco_combustivel).toFixed(2);
+        a.combustivel_valor = (km / VIA_CONSUMO_ALUGUEL_KML * w.preco_combustivel).toFixed(2);
         a.trechos = trechos;
         if (meta) { a.rota_pontos = meta.pontos; a.rota_geometry = meta.geometry; }
         const kmEl = document.getElementById(`al-km-${i}`), combEl = document.getElementById(`al-comb-${i}`), manualEl = document.getElementById(`al-manual-${i}`);
@@ -7767,7 +7773,11 @@ function viaMemoriaCategorias(w, cat) {
   const blocos = [...(t.aluguel_carro ? (t.alugueis || []) : []), ...(t.carro_proprio ? [t.carro_proprio_rota || {}] : [])];
   const kmTotal = blocos.reduce((s, b) => s + viaKmPonderado(b.trechos), 0);
   if (cat.combustivel) {
-    const consumo = w.colab.veiculo_consumo_kml;
+    // Consumo efetivo: aluguel usa o médio fixo, carro próprio o do cadastro. Com os dois na
+    // mesma viagem, vale a média ponderada (km total ÷ litros totais), que é o que a conta fez.
+    const consumoDe = b => (t.aluguel_carro && (t.alugueis || []).includes(b)) ? VIA_CONSUMO_ALUGUEL_KML : w.colab.veiculo_consumo_kml;
+    const litros = blocos.reduce((sm, b) => { const c = consumoDe(b); return sm + (c ? viaKmPonderado(b.trechos) / c : 0); }, 0);
+    const consumo = litros > 0 ? Number((kmTotal / litros).toFixed(2)) : w.colab.veiculo_consumo_kml;
     // O preço/litro não é gravado na solicitação (auditoria, achado B3), mas
     // pode ser reconstruído do próprio valor: combustível = km ÷ consumo ×
     // preço ⇒ preço = combustível × consumo ÷ km. Assim o PDF regerado mostra

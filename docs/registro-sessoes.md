@@ -7592,3 +7592,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** PDF real renderizado no navegador com os dados do exemplo (endereço do Arthur) e conferido visualmente.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 164: Viáticos — consumo médio de 10 km/L para carro alugado
+
+**Solicitação:** o cálculo automático de rota do carro alugado travava com "Cadastre o consumo (km/L) do veículo", mas o consumo de um carro alugado não é conhecido; usar 10 km/L sempre para alugados.
+
+**O que mudou:** nova constante `VIA_CONSUMO_ALUGUEL_KML = 10`. O botão "Calcular rota automaticamente" do aluguel passa a usar esse consumo (rota, combustível por trecho e total), sem exigir consumo cadastrado no colaborador. A premissa mostrada no resumo e no PDF ("km ÷ consumo × preço/L") usa o consumo efetivo: 10 km/L para aluguel, o do cadastro para carro próprio e, se a mesma viagem tiver os dois, a média ponderada. A tela do aluguel ganhou o aviso do consumo médio. Carro próprio segue travando sem consumo cadastrado. Sem mudança no banco ou na API (o valor do combustível já vinha calculado pela tela).
+
+**Verificação:** 5 verificações sobre a função real: aluguel calcula sem consumo cadastrado (200 km ÷ 10 × R$ 6,00 = R$ 120,00), carro próprio sem consumo continua travando e com consumo calcula normalmente.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
