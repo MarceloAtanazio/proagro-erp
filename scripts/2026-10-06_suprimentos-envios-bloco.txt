@@ -77,7 +77,11 @@ async function supFormEnvio(itens, colaboradores) {
   openModal('Registrar envio a funcionário', `
     ${fldSel('en-item', 'Item *', disp.map(i => ({ v: i.id, t: `${i.nome} — ${supNum(i.estoque_atual)} ${i.unidade} disp.` })), disp[0].id)}
     <div id="en-unid-wrap" style="display:none">
-      ${fldSel('en-unid', 'Unidade (nº de série) *', [], '')}
+      <div class="form-row">
+        ${fld('en-serie', 'Nº de série do equipamento *', 'text', '', 'list="en-serie-lista" autocomplete="off" placeholder="Número individual deste aparelho"')}
+        ${fld('en-pat', 'Patrimônio / etiqueta', 'text', '', 'placeholder="Opcional"')}
+      </div>
+      <datalist id="en-serie-lista"></datalist>
       <p class="hint" id="en-unid-hint" style="margin-top:-4px"></p>
     </div>
     <div class="form-row">
@@ -91,13 +95,13 @@ async function supFormEnvio(itens, colaboradores) {
     </div>
     ${fld('en-cond', 'Condição / acessórios na saída', 'text', '', 'placeholder="Ex.: novo, com carregador e capa"')}
     ${fld('en-notes', 'Observações', 'text', '', 'placeholder="Ex.: finalidade"')}
-    <p class="hint">Equipamentos saem por unidade (nº de série) e ficam em custódia até a devolução; gere o termo de responsabilidade em Detalhes depois de registrar. Materiais de consumo apenas dão baixa.</p>`,
+    <p class="hint">Equipamentos saem com o nº de série individual e ficam em custódia até a devolução; gere o termo de responsabilidade em Detalhes depois de registrar. Materiais de consumo apenas dão baixa.</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Registrar envio', cls: 'primary', onClick: async () => {
         try {
           const equip = (itens.find(i => i.id == $('#en-item').value) || {}).tipo === 'equipamento';
           await api('/api/suprimentos/envios', { method: 'POST', body: {
-            item_id: $('#en-item').value, unidade_id: equip ? $('#en-unid').value : null, quantidade: $('#en-qtd').value,
+            item_id: $('#en-item').value, numero_serie: equip ? $('#en-serie').value : null, patrimonio: equip ? $('#en-pat').value : null, quantidade: $('#en-qtd').value,
             colaborador_id: $('#en-colab').value, data: $('#en-data').value, forma_envio: $('#en-forma').value,
             codigo_rastreio: $('#en-rastreio').value, condicao_saida: $('#en-cond').value, notes: $('#en-notes').value } });
           closeModal(); toast(equip ? 'Envio registrado. Gere o termo de responsabilidade em Detalhes.' : 'Envio registrado.'); renderSuprimentos();
@@ -110,9 +114,9 @@ async function supFormEnvio(itens, colaboradores) {
     $('#en-qtd').disabled = equip;
     if (equip) {
       $('#en-qtd').value = 1;
-      const lista = unids.filter(u => u.item_id == item.id);
-      $('#en-unid').innerHTML = lista.map(u => `<option value="${u.id}">${esc([u.numero_serie ? 'Série ' + u.numero_serie : '', u.patrimonio ? 'Pat. ' + u.patrimonio : ''].filter(Boolean).join(' · '))}</option>`).join('');
-      $('#en-unid-hint').textContent = lista.length ? '' : 'Nenhuma unidade disponível. Cadastre em Estoque > Unidades deste item.';
+      const lista = unids.filter(u => u.item_id == item.id && u.numero_serie);
+      $('#en-serie-lista').innerHTML = lista.map(u => `<option value="${esc(u.numero_serie)}">${esc(u.patrimonio || '')}</option>`).join('');
+      $('#en-unid-hint').textContent = 'Digite o nº de série impresso no aparelho (o do modelo fica no cadastro do item). Ele fica registrado neste envio e no histórico do equipamento.';
     }
   };
   $('#en-item').onchange = ajustar;
@@ -175,7 +179,7 @@ function supFormEditarEnvio(m, itens) {
   const equip = m.item_tipo === 'equipamento';
   api('/api/suprimentos/unidades?estado=em_estoque&item_id=' + m.item_id).then(unids => {
     openModal(`Editar envio #${m.id}`, `
-      ${equip && !m.unidade_id ? fldSel('ee-unid', 'Vincular unidade (nº de série)', [{ v: '', t: '— escolha —' }, ...unids.map(u => ({ v: u.id, t: [u.numero_serie ? 'Série ' + u.numero_serie : '', u.patrimonio ? 'Pat. ' + u.patrimonio : ''].filter(Boolean).join(' · ') }))], '') : ''}
+      ${equip && !m.unidade_id ? `<div class="form-row">${fld('ee-serie', 'Nº de série do equipamento', 'text', '', 'placeholder="Número individual deste aparelho"')}${fld('ee-pat', 'Patrimônio / etiqueta', 'text', '', 'placeholder="Opcional"')}</div>` : ''}
       <div class="form-row">
         ${fldSel('ee-forma', 'Forma de envio', [{ v: '', t: '—' }, ...SUP_FORMAS_ENVIO.map(f => ({ v: f, t: f }))], m.forma_envio || '')}
         ${fld('ee-rastreio', 'Código de rastreio', 'text', m.codigo_rastreio || '')}
@@ -186,7 +190,7 @@ function supFormEditarEnvio(m, itens) {
        { label: 'Salvar', cls: 'primary', onClick: async () => {
           try {
             await api('/api/suprimentos/envios/' + m.id, { method: 'PUT', body: {
-              unidade_id: $('#ee-unid') ? $('#ee-unid').value || null : null, forma_envio: $('#ee-forma').value,
+              numero_serie: $('#ee-serie') ? $('#ee-serie').value : null, patrimonio: $('#ee-pat') ? $('#ee-pat').value : null, forma_envio: $('#ee-forma').value,
               codigo_rastreio: $('#ee-rastreio').value, condicao_saida: $('#ee-cond').value, notes: $('#ee-notes').value } });
             closeModal(); toast('Envio atualizado.'); renderSuprimentos();
           } catch (e) { modalError(e.message); }
@@ -203,7 +207,7 @@ async function supUnidades(item) {
   const emCustodia = un.filter(u => u.estado === 'em_custodia').length;
   const semSerie = Number(item.estoque_atual) + emCustodia > vivas.length;
   openModal(`Unidades — ${esc(item.nome)}`, `
-    <p class="hint" style="margin-top:0">Saldo em estoque: <strong>${supNum(item.estoque_atual)} ${esc(item.unidade)}</strong> · Unidades cadastradas em circulação: <strong>${vivas.length}</strong>
+    <p class="hint" style="margin-top:0">Registro de cada aparelho (criado automaticamente a cada envio; use para corrigir ou dar baixa). Saldo em estoque: <strong>${supNum(item.estoque_atual)} ${esc(item.unidade)}</strong> · Unidades cadastradas em circulação: <strong>${vivas.length}</strong>
       ${semSerie ? ' — <span style="color:#B23A2F">há aparelhos sem número de série cadastrado.</span>' : ''}</p>
     ${edit ? `<div class="form-row">
       ${fld('un-serie', 'Nº de série', 'text', '')}

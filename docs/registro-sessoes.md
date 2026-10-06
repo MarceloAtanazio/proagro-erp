@@ -7534,3 +7534,14 @@ Cadastrar as unidades dos equipamentos já em estoque e vincular o GPS do Arthur
 `verifica-envios-unidades.js` (17 verificações, banco simulado): equipamento sem unidade é recusado; mesma unidade não sai duas vezes; "entregue" exige termo; devolução repõe a unidade; série duplicada é recusada; baixa tira a unidade e o saldo. Migração aplicada no banco e conferida pelo bloco de autoverificação. A tela **não foi exercitada no navegador** (exige login no ERP) — conferência visual fica para depois do deploy.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 159: Suprimentos — nº do modelo no cadastro, nº de série digitado no envio
+
+**Solicitação:** o Marcelo viu que a sessão anterior misturou modelo e série: no cadastro do item vai o **número do modelo** (igual para todos os aparelhos do modelo) e, no envio, o **número de série individual** — "o equipamento do modelo X e série Y foi enviado para a pessoa Z".
+
+**O que mudou:** o envio de equipamento deixa de pedir uma unidade pré-cadastrada e passa a pedir o **nº de série digitado** (com sugestão dos já conhecidos e patrimônio opcional). A unidade é criada na hora, no primeiro envio, e segue guardada por baixo (custódia, devolução reaproveita, série único por modelo, histórico). O campo do cadastro do item passou a se chamar **Nº do modelo (do fabricante)**. A edição de um envio antigo (GPS do Arthur) também aceita o série digitado. A tela "Unidades" virou registro de cada aparelho, para corrigir ou dar baixa. Série já em custódia ou baixado é recusado com mensagem clara.
+
+**Verificação:** 18 verificações com banco simulado, incluindo "série inédito cria a unidade e já sai em custódia".
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

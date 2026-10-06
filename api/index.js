@@ -7143,6 +7143,27 @@ app.post('/api/suprimentos/compras', requireAuth, SUP_EDIT, h(async (req, res) =
   res.json({ ok: true, id: mov[0].id, payable_id: payableId });
 }));
 
+// Acha a unidade pelo nº de série digitado no envio; se for a primeira vez que
+// esse aparelho aparece, cria. Devolve { unidade } ou { erro }.
+async function unidadePorSerie(item, serie, patrimonio, userId, soExistente) {
+  serie = sanitize(serie) || ''; patrimonio = sanitize(patrimonio) || '';
+  if (!serie) return { erro: 'Informe o número de série do equipamento enviado.' };
+  let u = (await query('SELECT * FROM erp_estoque_unidades WHERE item_id=$1 AND numero_serie=$2', [item.id, serie]))[0];
+  if (u) {
+    if (u.estado === 'baixado') return { erro: 'Esta unidade foi baixada do estoque e não pode ser enviada.' };
+    if (u.estado !== 'em_estoque') return { erro: 'Este nº de série já está em custódia com outro colaborador. Registre a devolução antes de enviar de novo.' };
+    return { unidade: u };
+  }
+  if (soExistente) return { erro: 'Unidade não encontrada.' };
+  if (patrimonio) {
+    const dup = await query('SELECT id FROM erp_estoque_unidades WHERE patrimonio=$1', [patrimonio]);
+    if (dup.length) return { erro: 'Já existe uma unidade com este patrimônio.' };
+  }
+  const r = await query(`INSERT INTO erp_estoque_unidades (item_id, numero_serie, patrimonio, created_by)
+    VALUES ($1,$2,$3,$4) RETURNING id`, [item.id, serie, patrimonio, userId]);
+  return { unidade: { id: r[0].id, item_id: item.id, numero_serie: serie, patrimonio, estado: 'em_estoque' } };
+}
+
 // Envio a colaborador: saída do estoque (checa saldo). Equipamento entra em custódia.
 app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) => {
   const b = req.body;
@@ -7156,10 +7177,9 @@ app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) =>
   // rastrear quem está com qual aparelho. Material de consumo só dá baixa.
   let unidade = null;
   if (item.tipo === 'equipamento') {
-    if (!b.unidade_id) return res.status(400).json({ error: 'Selecione a unidade (nº de série) do equipamento. Cadastre as unidades em Estoque > Unidades.' });
-    unidade = (await query('SELECT * FROM erp_estoque_unidades WHERE id=$1', [b.unidade_id]))[0];
-    if (!unidade || unidade.item_id !== item.id) return res.status(400).json({ error: 'Unidade inválida para este item.' });
-    if (unidade.estado !== 'em_estoque') return res.status(400).json({ error: 'Esta unidade não está disponível em estoque (já em custódia ou baixada).' });
+    const r = await unidadePorSerie(item, b.numero_serie, b.patrimonio, req.user.id);
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    unidade = r.unidade;
     qtd = 1;
   }
   if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
@@ -7184,14 +7204,13 @@ app.put('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res)
     WHERE m.id=$1 AND m.origem='envio'`, [req.params.id]))[0];
   if (!env) return res.status(404).json({ error: 'Envio não encontrado.' });
   let unidadeId = env.unidade_id;
-  if (b.unidade_id && Number(b.unidade_id) !== env.unidade_id) {
-    if (env.unidade_id) return res.status(400).json({ error: 'Este envio já tem uma unidade vinculada.' });
+  if (sanitize(b.numero_serie) && !env.unidade_id) {
     if (env.status === 'devolvido') return res.status(400).json({ error: 'Envio já devolvido.' });
-    const u = (await query('SELECT * FROM erp_estoque_unidades WHERE id=$1', [b.unidade_id]))[0];
-    if (!u || u.item_id !== env.item_id) return res.status(400).json({ error: 'Unidade inválida para este item.' });
-    if (u.estado !== 'em_estoque') return res.status(400).json({ error: 'Esta unidade não está disponível em estoque.' });
-    await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [u.id]);
-    unidadeId = u.id;
+    const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [env.item_id]))[0];
+    const r = await unidadePorSerie(item, b.numero_serie, b.patrimonio, req.user.id);
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [r.unidade.id]);
+    unidadeId = r.unidade.id;
   }
   await query(`UPDATE erp_estoque_movimentos SET unidade_id=$1, forma_envio=$2, codigo_rastreio=$3, condicao_saida=$4, notes=$5 WHERE id=$6`,
     [unidadeId, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida), sanitize(b.notes), env.id]);
