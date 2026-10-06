@@ -3100,6 +3100,49 @@ const supSecTitle = t => `<div class="sup-sec-title">${t}</div>`;
 const fldArea = (id, label, value = '', attrs = '') =>
   `<div class="field"><label for="${id}">${label}</label><textarea id="${id}" rows="2" ${attrs}>${esc(value)}</textarea></div>`;
 
+// Categorias e subcategorias já definidas por tipo; "Outra (digitar)" cobre o que não estiver na lista.
+const SUP_CATALOGO = {
+  equipamento: {
+    'TI': ['Notebook', 'Desktop', 'Celular', 'Tablet', 'Monitor', 'Impressora / Scanner', 'Periféricos (mouse, teclado, headset)', 'Rede e conectividade', 'Armazenamento', 'Outros'],
+    'Campo e Operação': ['GPS / Navegação', 'Drone', 'Câmera / Fotografia', 'Medição (trena, balança, medidor)', 'Rádio comunicação', 'Outros'],
+    'Mobiliário': ['Cadeira', 'Mesa', 'Armário / Estante', 'Outros'],
+    'Ferramentas': ['Elétrica', 'Manual', 'Outros'],
+    'Outros': ['Outros']
+  },
+  material: {
+    'Escritório e Papelaria': ['Papel', 'Canetas e lápis', 'Pastas e arquivos', 'Etiquetas', 'Grampeadores e acessórios', 'Outros'],
+    'EPI': ['Luvas', 'Capacete', 'Botas e calçados', 'Colete / Uniforme', 'Óculos de proteção', 'Protetor solar / repelente', 'Outros'],
+    'Limpeza e Copa': ['Produtos de limpeza', 'Descartáveis', 'Café, água e alimentos', 'Outros'],
+    'Informática (consumo)': ['Cabos e adaptadores', 'Pilhas e baterias', 'Toner e cartuchos', 'Mídias e pen drives', 'Outros'],
+    'Campo e Operação': ['Formulários', 'Embalagens', 'Material de coleta', 'Sinalização', 'Outros'],
+    'Brindes e Institucional': ['Brindes', 'Material de divulgação', 'Outros'],
+    'Outros': ['Outros']
+  }
+};
+const SUP_OUTRA = '__outra';
+const supOpcoesClass = (lista, atual) => {
+  const l = (!atual || lista.includes(atual)) ? lista : [...lista, atual];
+  return '<option value="">— escolha —</option>' + l.map(x => `<option value="${esc(x)}"${x === atual ? ' selected' : ''}>${esc(x)}</option>`).join('') +
+    `<option value="${SUP_OUTRA}">Outra (digitar)…</option>`;
+};
+const supValorClass = (selId, txtId) => { const v = $('#' + selId).value; return v === SUP_OUTRA ? $('#' + txtId).value.trim() : v; };
+function supLigarClassificacao(i) {
+  const tipo = $('#it-tipo'), cat = $('#it-cat'), sub = $('#it-subcat'), catO = $('#it-cat-outra'), subO = $('#it-subcat-outra');
+  let catAtual = i.categoria || '', subAtual = i.subcategoria || '';
+  const desenharSub = () => {
+    const lista = (SUP_CATALOGO[tipo.value] || {})[cat.value] || [];
+    sub.innerHTML = supOpcoesClass(lista, subAtual); subO.style.display = 'none';
+  };
+  const desenharCat = () => {
+    cat.innerHTML = supOpcoesClass(Object.keys(SUP_CATALOGO[tipo.value] || {}), catAtual); catO.style.display = 'none';
+    desenharSub();
+  };
+  tipo.onchange = () => { catAtual = ''; subAtual = ''; desenharCat(); };
+  cat.onchange = () => { catO.style.display = cat.value === SUP_OUTRA ? '' : 'none'; subAtual = ''; if (cat.value !== SUP_OUTRA) desenharSub(); else { sub.innerHTML = supOpcoesClass([], ''); } };
+  sub.onchange = () => { subO.style.display = sub.value === SUP_OUTRA ? '' : 'none'; };
+  desenharCat();
+}
+
 function supFormItem(i) {
   const isEdit = !!i; i = i || {};
   const num = v => (v == null ? '' : v);
@@ -3115,8 +3158,10 @@ function supFormItem(i) {
 
     ${supSecTitle('2 · Classificação e organização')}
     <div class="form-row">
-      ${fld('it-cat', 'Categoria', 'text', i.categoria || '', 'placeholder="Ex.: EPI, Papelaria, TI"')}
-      ${fld('it-subcat', 'Subcategoria', 'text', i.subcategoria || '')}
+      <div class="field"><label for="it-cat">Categoria</label><select id="it-cat"></select>
+        <input id="it-cat-outra" placeholder="Digite a categoria" style="display:none;margin-top:6px"></div>
+      <div class="field"><label for="it-subcat">Subcategoria</label><select id="it-subcat"></select>
+        <input id="it-subcat-outra" placeholder="Digite a subcategoria" style="display:none;margin-top:6px"></div>
     </div>
     <div class="form-row">
       ${fld('it-marca', 'Marca / fabricante', 'text', i.marca || '')}
@@ -3163,7 +3208,7 @@ function supFormItem(i) {
      { label: isEdit ? 'Salvar' : 'Cadastrar', cls: 'primary', onClick: async () => {
         const body = {
           nome: $('#it-nome').value, sku: $('#it-sku').value, tipo: $('#it-tipo').value, descricao: $('#it-descricao').value,
-          categoria: $('#it-cat').value, subcategoria: $('#it-subcat').value, marca: $('#it-marca').value, unidade: $('#it-un').value,
+          categoria: supValorClass('it-cat', 'it-cat-outra'), subcategoria: supValorClass('it-subcat', 'it-subcat-outra'), marca: $('#it-marca').value, unidade: $('#it-un').value,
           estoque_minimo: $('#it-min').value, estoque_maximo: $('#it-max').value,
           peso_liquido: $('#it-pliq').value, peso_bruto: $('#it-pbru').value,
           dim_altura: $('#it-dalt').value, dim_largura: $('#it-dlar').value, dim_profundidade: $('#it-dpro').value,
@@ -3177,6 +3222,7 @@ function supFormItem(i) {
           closeModal(); toast(isEdit ? 'Item atualizado.' : 'Item cadastrado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}], { wide: true });
+  supLigarClassificacao(i);
 }
 
 // Ficha completa do item (somente leitura) — mostra todos os dados do cadastro.
@@ -3342,6 +3388,9 @@ function supFormCompra(itens, fornecedores) {
 // ---- Aba Envios a funcionários ----
 const SUP_FORMAS_ENVIO = ['Entrega em mãos', 'Transportadora', 'Correios', 'Motoboy / entregador', 'Outro'];
 const SUP_ESTADO_UN = { em_estoque: ['ok', 'Em estoque'], em_custodia: ['warn', 'Em custódia'], baixado: ['off', 'Baixado'] };
+// Celular leva a linha telefônica junto: vale para a subcategoria "Celular" ou nome com celular/smartphone.
+const supEhCelular = x => /^celular$/i.test(String(x.subcategoria || x.item_subcategoria || '').trim()) || /celular|smartphone/i.test(String(x.nome || x.item_nome || ''));
+const supLinhaTxt = m => m.linha_telefonica ? `Linha ${esc(m.linha_telefonica)}${m.operadora ? ' · ' + esc(m.operadora) : ''}` : '';
 
 async function supRenderEnvios(panel) {
   const [itens, colaboradores, movs] = await Promise.all([
@@ -3375,7 +3424,7 @@ async function supRenderEnvios(panel) {
           : `<button class="btn sm" data-termo="${m.id}" data-att="envio_termo:${m.id}" title="Ainda sem termo assinado">📎</button> <span class="badge warn">Pendente</span>`;
         return `<tr>
           <td>${brDate(m.data)}</td>
-          <td>${esc(m.item_nome)}${ident ? `<br><small class="mono" style="color:var(--muted)">${ident}</small>` : ''}${semUnidade ? '<br><small style="color:#B23A2F">Sem nº de série vinculado</small>' : ''}</td>
+          <td>${esc(m.item_nome)}${ident ? `<br><small class="mono" style="color:var(--muted)">${ident}</small>` : ''}${semUnidade ? '<br><small style="color:#B23A2F">Sem nº de série vinculado</small>' : ''}${m.linha_telefonica ? `<br><small style="color:var(--muted)">${supLinhaTxt(m)}</small>` : ''}</td>
           <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
           <td>${esc(m.colaborador_name || '—')}</td>
           <td>${envio || '<small style="color:var(--muted)">—</small>'}</td>
@@ -3383,11 +3432,12 @@ async function supRenderEnvios(panel) {
           <td>${termo}</td>
           <td class="actions"><button class="btn sm" data-det="${m.id}">Detalhes</button>
             ${edit && m.status === 'enviado' ? `<button class="btn sm" data-entregue="${m.id}">Marcar entregue</button>` : ''}
-            ${edit && equip && m.status !== 'devolvido' ? `<button class="btn sm" data-devolver="${m.id}">Registrar devolução</button>` : ''}</td>
+            ${edit && equip && m.status !== 'devolvido' ? `<button class="btn sm" data-devolver="${m.id}">Registrar devolução</button>` : ''}
+            ${edit ? `<button class="btn sm" data-edit-env="${m.id}">Editar</button><button class="btn sm danger-ghost" data-del-env="${m.id}">Excluir</button>` : ''}</td>
         </tr>`;
       }).join('') || `<tr><td colspan="8"><div class="empty">Nenhum envio encontrado.</div></td></tr>`}</tbody>`;
     const T = $('#en-tbl'), achar = id => movs.find(m => m.id == id);
-    T.querySelectorAll('[data-det]').forEach(b => b.onclick = () => supDetalheEnvio(achar(b.dataset.det), itens));
+    T.querySelectorAll('[data-det]').forEach(b => b.onclick = () => supDetalheEnvio(achar(b.dataset.det), colaboradores));
     T.querySelectorAll('[data-termo]').forEach(b => b.onclick = () => {
       const m = achar(b.dataset.termo);
       openAttachments('envio_termo', m.id, `Termo do envio #${m.id} — ${m.item_nome}`);
@@ -3402,6 +3452,17 @@ async function supRenderEnvios(panel) {
         }
       });
       T.querySelectorAll('[data-devolver]').forEach(b => b.onclick = () => supFormDevolucao(b.dataset.devolver));
+      T.querySelectorAll('[data-edit-env]').forEach(b => b.onclick = () => supFormEditarEnvio(achar(b.dataset.editEnv), colaboradores));
+      T.querySelectorAll('[data-del-env]').forEach(b => b.onclick = () => {
+        const m = achar(b.dataset.delEnv);
+        openModal('Excluir envio', `<p>Excluir o envio de <strong>${esc(m.item_nome)}</strong> para <strong>${esc(m.colaborador_name || '—')}</strong>?</p>
+          <p class="hint">O item volta ao estoque${m.devolucao_registrada ? '' : ''} e o termo assinado anexado, se houver, é removido. Esta ação não pode ser desfeita.</p>`,
+          [{ label: 'Cancelar', onClick: closeModal },
+           { label: 'Excluir', cls: 'primary', onClick: async () => {
+              try { await api('/api/suprimentos/envios/' + m.id, { method: 'DELETE' }); closeModal(); toast('Envio excluído.'); renderSuprimentos(); }
+              catch (e) { modalError(e.message); }
+           }}]);
+      });
     }
   };
   $('#en-fstatus').oninput = draw;
@@ -3425,6 +3486,12 @@ async function supFormEnvio(itens, colaboradores) {
       <datalist id="en-serie-lista"></datalist>
       <p class="hint" id="en-unid-hint" style="margin-top:-4px"></p>
     </div>
+    <div id="en-linha-wrap" style="display:none">
+      <div class="form-row">
+        ${fld('en-linha', 'Nº da linha telefônica enviada', 'text', '', 'placeholder="(00) 00000-0000" inputmode="tel"')}
+        ${fld('en-operadora', 'Operadora', 'text', '', 'placeholder="Ex.: Vivo, Claro, TIM"')}
+      </div>
+    </div>
     <div class="form-row">
       ${fld('en-qtd', 'Quantidade *', 'number', '1', 'step="0.001" min="0.001"')}
       ${fld('en-data', 'Data do envio', 'date', todayISO())}
@@ -3442,7 +3509,7 @@ async function supFormEnvio(itens, colaboradores) {
         try {
           const equip = (itens.find(i => i.id == $('#en-item').value) || {}).tipo === 'equipamento';
           await api('/api/suprimentos/envios', { method: 'POST', body: {
-            item_id: $('#en-item').value, numero_serie: equip ? $('#en-serie').value : null, patrimonio: equip ? $('#en-pat').value : null, quantidade: $('#en-qtd').value,
+            item_id: $('#en-item').value, numero_serie: equip ? $('#en-serie').value : null, patrimonio: equip ? $('#en-pat').value : null, linha_telefonica: $('#en-linha').value, operadora: $('#en-operadora').value, quantidade: $('#en-qtd').value,
             colaborador_id: $('#en-colab').value, data: $('#en-data').value, forma_envio: $('#en-forma').value,
             codigo_rastreio: $('#en-rastreio').value, condicao_saida: $('#en-cond').value, notes: $('#en-notes').value } });
           closeModal(); toast(equip ? 'Envio registrado. Gere o termo de responsabilidade em Detalhes.' : 'Envio registrado.'); renderSuprimentos();
@@ -3452,6 +3519,7 @@ async function supFormEnvio(itens, colaboradores) {
     const item = itens.find(i => i.id == $('#en-item').value) || {};
     const equip = item.tipo === 'equipamento';
     $('#en-unid-wrap').style.display = equip ? '' : 'none';
+    $('#en-linha-wrap').style.display = supEhCelular(item) ? '' : 'none';
     $('#en-qtd').disabled = equip;
     if (equip) {
       $('#en-qtd').value = 1;
@@ -3480,7 +3548,7 @@ function supFormDevolucao(id) {
 }
 
 // Ficha completa de um envio: tudo que foi registrado, mais o termo (PDF e anexo).
-function supDetalheEnvio(m, itens) {
+function supDetalheEnvio(m, colaboradores) {
   const edit = !READONLY, equip = m.item_tipo === 'equipamento';
   const linha = (rot, val) => `<tr><td style="color:var(--muted);width:38%">${rot}</td><td><strong>${val}</strong></td></tr>`;
   const txt = v => (v == null || v === '') ? '—' : esc(v);
@@ -3490,7 +3558,7 @@ function supDetalheEnvio(m, itens) {
     btns.push({ label: 'Gerar termo (PDF)', onClick: () => supTermoPDF(m) });
     btns.push({ label: 'Termo assinado / anexos', onClick: () => openAttachments('envio_termo', m.id, `Termo do envio #${m.id} — ${m.item_nome}`) });
   }
-  if (edit && m.status !== 'devolvido') btns.push({ label: 'Editar dados', cls: 'primary', onClick: () => supFormEditarEnvio(m, itens) });
+  if (edit) btns.push({ label: 'Editar', cls: 'primary', onClick: () => supFormEditarEnvio(m, colaboradores) });
   openModal(`Envio #${m.id} — ${esc(m.item_nome)}`, `
     <table><tbody>
       <tr><td colspan="2">${supSecTitle('Equipamento / item')}</td></tr>
@@ -3498,6 +3566,7 @@ function supDetalheEnvio(m, itens) {
       ${linha('Tipo', equip ? 'Equipamento' : 'Material')}
       ${equip ? linha('Nº de série', txt(m.unidade_serie)) + linha('Patrimônio', txt(m.unidade_patrimonio)) : ''}
       ${linha('Marca / SKU', txt([m.item_marca, m.item_sku].filter(Boolean).join(' / ')))}
+      ${m.linha_telefonica ? linha('Linha telefônica', esc(m.linha_telefonica) + (m.operadora ? ' · ' + esc(m.operadora) : '')) : ''}
       ${linha('Quantidade', supNum(m.quantidade) + ' ' + esc(m.unidade))}
       <tr><td colspan="2">${supSecTitle('Destinatário e envio')}</td></tr>
       ${linha('Colaborador', txt(m.colaborador_name) + (m.colaborador_cargo ? ' — ' + esc(m.colaborador_cargo) : ''))}
@@ -3516,27 +3585,44 @@ function supDetalheEnvio(m, itens) {
     </tbody></table>`, btns, { wide: true });
 }
 
-function supFormEditarEnvio(m, itens) {
-  const equip = m.item_tipo === 'equipamento';
-  api('/api/suprimentos/unidades?estado=em_estoque&item_id=' + m.item_id).then(unids => {
-    openModal(`Editar envio #${m.id}`, `
-      ${equip && !m.unidade_id ? `<div class="form-row">${fld('ee-serie', 'Nº de série do equipamento', 'text', '', 'placeholder="Número individual deste aparelho"')}${fld('ee-pat', 'Patrimônio / etiqueta', 'text', '', 'placeholder="Opcional"')}</div>` : ''}
-      <div class="form-row">
-        ${fldSel('ee-forma', 'Forma de envio', [{ v: '', t: '—' }, ...SUP_FORMAS_ENVIO.map(f => ({ v: f, t: f }))], m.forma_envio || '')}
-        ${fld('ee-rastreio', 'Código de rastreio', 'text', m.codigo_rastreio || '')}
-      </div>
-      ${fld('ee-cond', 'Condição / acessórios na saída', 'text', m.condicao_saida || '')}
-      ${fld('ee-notes', 'Observações', 'text', m.notes || '')}`,
-      [{ label: 'Cancelar', onClick: closeModal },
-       { label: 'Salvar', cls: 'primary', onClick: async () => {
-          try {
-            await api('/api/suprimentos/envios/' + m.id, { method: 'PUT', body: {
-              numero_serie: $('#ee-serie') ? $('#ee-serie').value : null, patrimonio: $('#ee-pat') ? $('#ee-pat').value : null, forma_envio: $('#ee-forma').value,
-              codigo_rastreio: $('#ee-rastreio').value, condicao_saida: $('#ee-cond').value, notes: $('#ee-notes').value } });
-            closeModal(); toast('Envio atualizado.'); renderSuprimentos();
-          } catch (e) { modalError(e.message); }
-       }}]);
-  }).catch(e => toast(e.message));
+function supFormEditarEnvio(m, colaboradores) {
+  const equip = m.item_tipo === 'equipamento', devolvido = m.status === 'devolvido';
+  const colabs = colaboradores.some(c => c.id === m.colaborador_id) ? colaboradores
+    : [{ id: m.colaborador_id, name: m.colaborador_name || '—', cargo: '' }, ...colaboradores];
+  const celular = supEhCelular(m) || m.linha_telefonica;
+  openModal(`Editar envio #${m.id}`, `
+    <p class="hint" style="margin-top:0"><strong>${esc(m.item_nome)}</strong> — para trocar o item, exclua este envio e registre outro.</p>
+    <div class="form-row">
+      ${fldSel('ee-colab', 'Colaborador destinatário', colabs.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), m.colaborador_id)}
+      ${fld('ee-data', 'Data do envio', 'date', (m.data || '').slice(0, 10))}
+    </div>
+    ${equip ? `<div class="form-row">
+      ${fld('ee-serie', 'Nº de série do equipamento', 'text', m.unidade_serie || '', devolvido ? 'disabled title="Envio já devolvido"' : 'placeholder="Número individual deste aparelho"')}
+      ${fld('ee-pat', 'Patrimônio / etiqueta', 'text', m.unidade_patrimonio || '', 'placeholder="Opcional"')}
+    </div>` : fld('ee-qtd', 'Quantidade', 'number', m.quantidade, 'step="0.001" min="0.001"')}
+    <div class="form-row">
+      ${fldSel('ee-forma', 'Forma de envio', [{ v: '', t: '—' }, ...SUP_FORMAS_ENVIO.map(f => ({ v: f, t: f }))], m.forma_envio || '')}
+      ${fld('ee-rastreio', 'Código de rastreio', 'text', m.codigo_rastreio || '')}
+    </div>
+    ${celular ? `<div class="form-row">
+      ${fld('ee-linha', 'Nº da linha telefônica enviada', 'text', m.linha_telefonica || '', 'placeholder="(00) 00000-0000" inputmode="tel"')}
+      ${fld('ee-operadora', 'Operadora', 'text', m.operadora || '', 'placeholder="Ex.: Vivo, Claro, TIM"')}
+    </div>` : ''}
+    ${fld('ee-cond', 'Condição / acessórios na saída', 'text', m.condicao_saida || '')}
+    ${devolvido ? fld('ee-cond-dev', 'Condição na devolução', 'text', m.condicao_devolucao || '') : ''}
+    ${fld('ee-notes', 'Observações', 'text', m.notes || '')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar', cls: 'primary', onClick: async () => {
+        const v = id => { const el = $('#' + id); return el ? el.value : undefined; };
+        try {
+          await api('/api/suprimentos/envios/' + m.id, { method: 'PUT', body: {
+            colaborador_id: v('ee-colab'), data: v('ee-data'), numero_serie: v('ee-serie'), patrimonio: v('ee-pat'),
+            quantidade: v('ee-qtd'), forma_envio: v('ee-forma'), codigo_rastreio: v('ee-rastreio'),
+            linha_telefonica: v('ee-linha'), operadora: v('ee-operadora'),
+            condicao_saida: v('ee-cond'), condicao_devolucao: v('ee-cond-dev'), notes: v('ee-notes') } });
+          closeModal(); toast('Envio atualizado.'); renderSuprimentos();
+        } catch (e) { modalError(e.message); }
+     }}], { wide: true });
 }
 
 // Unidades físicas de um equipamento: é aqui que o nº de série e o patrimônio
@@ -3628,6 +3714,7 @@ function supTermoPDF(m) {
         ['Data do envio', brDate(m.data)],
         ['Forma de envio', v(m.forma_envio)],
         ['Código de rastreio', v(m.codigo_rastreio)],
+        ...(m.linha_telefonica ? [['Linha telefônica', v(m.linha_telefonica) + (m.operadora ? ' (' + m.operadora + ')' : '')]] : []),
         ['Condição / acessórios na saída', v(m.condicao_saida)]
       ],
       styles: { font: 'helvetica', fontSize: 9.5, cellPadding: 2.6, textColor: [40, 46, 42], lineColor: [215, 222, 218], lineWidth: 0.2 },

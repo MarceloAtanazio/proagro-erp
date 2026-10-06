@@ -7545,3 +7545,17 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 18 verificações com banco simulado, incluindo "série inédito cria a unidade e já sai em custódia".
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 160: Suprimentos — categorias pré-definidas, linha telefônica do celular, editar/excluir envio
+
+**Solicitação (ajustes finos):** (1) no cadastro do item, categorias e subcategorias já definidas conforme o tipo (material de consumo ou equipamento) — exemplo: Equipamento › TI › Celular; (2) ao enviar um celular, abrir uma caixa para registrar o número da linha telefônica enviada junto; (3) botões de Editar e Excluir na tabela de envios, porque depois de registrado só era possível mexer no código de rastreio pelos Detalhes.
+
+**O que mudou:**
+- **Categorias:** o cadastro do item ganhou listas por tipo (equipamento: TI, Campo e Operação, Mobiliário, Ferramentas, Outros; material: Escritório e Papelaria, EPI, Limpeza e Copa, Informática (consumo), Campo e Operação, Brindes e Institucional, Outros), cada uma com suas subcategorias. Trocar o tipo refaz as listas; "Outra (digitar)" cobre o que não estiver na lista e valores antigos de itens já cadastrados são preservados na edição.
+- **Linha telefônica:** novas colunas `linha_telefonica` e `operadora` no envio. Quando o item é um celular (subcategoria "Celular" ou nome com celular/smartphone), o formulário de envio abre a caixa da linha e da operadora; o valor aparece na lista, em Detalhes e no termo em PDF.
+- **Editar e Excluir:** a tabela de envios ganhou os botões. Editar permite trocar colaborador, data, nº de série e patrimônio (a unidade antiga volta ao estoque e a nova entra em custódia), quantidade (material, com conferência de saldo), forma, rastreio, linha, condições e observações; só o item não muda (excluir e registrar de novo). Excluir remove o envio, a devolução ligada a ele e o termo anexado, devolve a unidade ao estoque e o saldo se recompõe; o diálogo de confirmação avisa disso.
+
+**Verificação:** 28 verificações do backend com banco simulado (inclui linha telefônica, troca de série, série em custódia recusado, saldo ao editar quantidade e ao excluir) e 8 da lógica das categorias, executadas no navegador sobre o código real do `app.js`. A tela completa não foi exercitada (exige login).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

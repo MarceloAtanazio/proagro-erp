@@ -365,7 +365,8 @@ const AUDIT_MAP = {
     (body && body.payable_id ? ` — lançada em Contas a Pagar (título ID ${body.payable_id})` : ''),
   'POST /api/suprimentos/envios': (req, body) => `Registrou envio de ${req.body.quantidade} un. do item ID ${req.body.item_id} ao colaborador ID ${req.body.colaborador_id} (movimento ID ${body && body.id})`,
   'POST /api/suprimentos/envios/:id/status': req => `Marcou o envio ID ${req.params.id} como "${req.body.status}"${req.body.status === 'devolvido' ? ' (item retornou ao estoque)' : ''}`,
-  'PUT /api/suprimentos/envios/:id': req => `Atualizou os dados do envio ID ${req.params.id} (unidade ${req.body.unidade_id || '—'}, rastreio "${req.body.codigo_rastreio || ''}")`,
+  'PUT /api/suprimentos/envios/:id': req => `Editou o envio ID ${req.params.id} (série "${req.body.numero_serie || ''}", rastreio "${req.body.codigo_rastreio || ''}")`,
+  'DELETE /api/suprimentos/envios/:id': req => `Excluiu o envio ID ${req.params.id} (item voltou ao estoque, termo anexado removido)`,
   'POST /api/suprimentos/unidades': (req, body) => `Cadastrou a unidade de série "${req.body.numero_serie || ''}" / patrimônio "${req.body.patrimonio || ''}" do item ID ${req.body.item_id} (unidade ID ${body && body.id})`,
   'PUT /api/suprimentos/unidades/:id': req => `Editou a unidade ID ${req.params.id} (série "${req.body.numero_serie || ''}", patrimônio "${req.body.patrimonio || ''}")`,
   'POST /api/suprimentos/unidades/:id/baixar': req => `Deu baixa na unidade ID ${req.params.id} — motivo: "${req.body.motivo}"`,
@@ -7098,7 +7099,7 @@ app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res)
     SELECT m.*, i.nome AS item_nome, i.unidade, i.tipo AS item_tipo,
       s.name AS supplier_name, c.name AS colaborador_name, c.cargo AS colaborador_cargo, u.name AS created_by_name,
       un.numero_serie AS unidade_serie, un.patrimonio AS unidade_patrimonio,
-      i.marca AS item_marca, i.sku AS item_sku,
+      i.marca AS item_marca, i.sku AS item_sku, i.subcategoria AS item_subcategoria,
       (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='envio_termo' AND a.entity_id = m.id) AS termos
     FROM erp_estoque_movimentos m
     JOIN erp_estoque_itens i ON i.id = m.item_id
@@ -7188,32 +7189,88 @@ app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) =>
   const data = isDate(b.data) ? b.data : hojeISO();
   const mov = await query(`INSERT INTO erp_estoque_movimentos
     (item_id, tipo, origem, quantidade, colaborador_id, status, data, notes, created_by,
-     unidade_id, forma_envio, codigo_rastreio, condicao_saida)
-    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+     unidade_id, forma_envio, codigo_rastreio, condicao_saida, linha_telefonica, operadora)
+    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
     [item.id, qtd, b.colaborador_id, data, sanitize(b.notes), req.user.id,
-     unidade ? unidade.id : null, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida)]);
+     unidade ? unidade.id : null, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida),
+     sanitize(b.linha_telefonica), sanitize(b.operadora)]);
   if (unidade) await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [unidade.id]);
   res.json({ ok: true, id: mov[0].id });
 }));
 
-// Complementa um envio já registrado (ex.: os feitos antes do controle por
-// unidade): vincula a unidade e/ou edita forma, rastreio e condição de saída.
+// Edita um envio já registrado. O item não muda (para trocar, exclua e registre
+// de novo); o resto sim — e o estoque/unidade acompanham a mudança.
 app.put('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
   const b = req.body;
   const env = (await query(`SELECT m.*, i.tipo AS item_tipo FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id=m.item_id
     WHERE m.id=$1 AND m.origem='envio'`, [req.params.id]))[0];
   if (!env) return res.status(404).json({ error: 'Envio não encontrado.' });
-  let unidadeId = env.unidade_id;
-  if (sanitize(b.numero_serie) && !env.unidade_id) {
-    if (env.status === 'devolvido') return res.status(400).json({ error: 'Envio já devolvido.' });
-    const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [env.item_id]))[0];
-    const r = await unidadePorSerie(item, b.numero_serie, b.patrimonio, req.user.id);
-    if (r.erro) return res.status(400).json({ error: r.erro });
-    await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [r.unidade.id]);
-    unidadeId = r.unidade.id;
+  const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [env.item_id]))[0];
+  const devolvido = env.status === 'devolvido', equip = env.item_tipo === 'equipamento';
+
+  let colabId = env.colaborador_id;
+  if (b.colaborador_id && Number(b.colaborador_id) !== env.colaborador_id) {
+    const c = (await query('SELECT id FROM erp_colaboradores WHERE id=$1', [b.colaborador_id]))[0];
+    if (!c) return res.status(400).json({ error: 'Colaborador inválido.' });
+    colabId = c.id;
   }
-  await query(`UPDATE erp_estoque_movimentos SET unidade_id=$1, forma_envio=$2, codigo_rastreio=$3, condicao_saida=$4, notes=$5 WHERE id=$6`,
-    [unidadeId, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida), sanitize(b.notes), env.id]);
+  const data = isDate(b.data) ? b.data : env.data;
+
+  let qtd = Number(env.quantidade);
+  if (!equip && b.quantidade != null && b.quantidade !== '' && Number(b.quantidade) !== qtd) {
+    const nova = Number(b.quantidade);
+    if (!isFinite(nova) || nova <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
+    const extra = nova - qtd;
+    if (extra > 0) {
+      const saldo = await estoqueAtualItem(env.item_id);
+      if (extra > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}.` });
+    }
+    qtd = nova;
+  }
+
+  let unidadeId = env.unidade_id;
+  if (equip) {
+    const atual = env.unidade_id ? (await query('SELECT * FROM erp_estoque_unidades WHERE id=$1', [env.unidade_id]))[0] : null;
+    const serieNova = sanitize(b.numero_serie) || '';
+    if (serieNova && (!atual || serieNova !== atual.numero_serie)) {
+      if (devolvido) return res.status(400).json({ error: 'Envio já devolvido: o nº de série não pode mais ser trocado.' });
+      const r = await unidadePorSerie(item, serieNova, b.patrimonio, req.user.id);
+      if (r.erro) return res.status(400).json({ error: r.erro });
+      await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [r.unidade.id]);
+      if (atual) await query(`UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1 AND estado='em_custodia'`, [atual.id]);
+      unidadeId = r.unidade.id;
+    } else if (atual && b.patrimonio !== undefined) {
+      const pat = sanitize(b.patrimonio) || '';
+      if (pat !== atual.patrimonio) {
+        if (pat) {
+          const dup = await query('SELECT id FROM erp_estoque_unidades WHERE patrimonio=$1 AND id <> $2', [pat, atual.id]);
+          if (dup.length) return res.status(400).json({ error: 'Já existe uma unidade com este patrimônio.' });
+        }
+        await query('UPDATE erp_estoque_unidades SET patrimonio=$1 WHERE id=$2', [pat, atual.id]);
+      }
+    }
+  }
+
+  await query(`UPDATE erp_estoque_movimentos SET colaborador_id=$1, data=$2, quantidade=$3, unidade_id=$4, forma_envio=$5,
+      codigo_rastreio=$6, condicao_saida=$7, condicao_devolucao=$8, linha_telefonica=$9, operadora=$10, notes=$11 WHERE id=$12`,
+    [colabId, data, qtd, unidadeId, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida),
+     devolvido ? sanitize(b.condicao_devolucao) : env.condicao_devolucao,
+     sanitize(b.linha_telefonica), sanitize(b.operadora), sanitize(b.notes), env.id]);
+  if (colabId !== env.colaborador_id) await query('UPDATE erp_estoque_movimentos SET colaborador_id=$1 WHERE devolucao_de=$2', [colabId, env.id]);
+  res.json({ ok: true });
+}));
+
+// Exclui o envio inteiro: some a saída, a devolução ligada a ela e o termo anexado;
+// a unidade volta ao estoque e o saldo se recompõe (ele é a soma dos movimentos).
+app.delete('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const env = (await query(`SELECT * FROM erp_estoque_movimentos WHERE id=$1 AND origem='envio'`, [req.params.id]))[0];
+  if (!env) return res.status(404).json({ error: 'Envio não encontrado.' });
+  await query(`DELETE FROM erp_attachments WHERE entity_type='envio_termo' AND entity_id=$1`, [env.id]);
+  await query('DELETE FROM erp_estoque_movimentos WHERE devolucao_de=$1', [env.id]);
+  await query('DELETE FROM erp_estoque_movimentos WHERE id=$1', [env.id]);
+  if (env.unidade_id && env.status !== 'devolvido') {
+    await query(`UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1 AND estado='em_custodia'`, [env.unidade_id]);
+  }
   res.json({ ok: true });
 }));
 
