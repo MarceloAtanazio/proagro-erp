@@ -7616,3 +7616,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 11 verificações do backend com banco simulado (dispensar e descontar encerram e não reaparecem; outro colaborador não é afetado; cliente antigo funciona; sem decisão nada é encerrado).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 166: Viáticos — decisão da pendência também na aprovação
+
+**Solicitação:** a solicitação do Fabricio, aberta pelo perfil dele ("Solicitar viagem"), chegou para aprovação sem a opção de descontar ou não a pendência (R$ 2.241,93); o aviso só aparecia em "+ Nova solicitação". O responsável por gerir os valores transferidos precisa decidir nas duas situações.
+
+**Diagnóstico:** o autosserviço cria a solicitação em Em Approvals com valor liberado zerado; o valor passa a existir depois, no **Editar** ou ao **agendar a transferência** — e nenhum dos dois consultava a pendência (a edição pulava a checagem de propósito).
+
+**O que mudou:** o aviso virou um componente único (`viaPendenciaAviso`), usado em três pontos: Nova solicitação (como antes, "Sim" já marcado), **Editar** (solicitação em Em Approvals, só administrador, sem escolha pré-marcada) e o modal **Agendar transferência no Flash** (decisão exigida quando há valor). O backend aceita a decisão no `PUT` da solicitação e no `POST .../status` com `transferencia_agendada`, só para administrador e, na edição, só enquanto estiver em Em Approvals; encerra apenas pendências abertas do dono da solicitação e grava a decisão e a solicitação em que foi tomada. O log de auditoria registra a decisão nos três pontos. Regras novas: sem valor liberado informado nada é decidido (a pendência segue aberta — antes, com o campo vazio, "Sim" encerrava sem descontar nada); se o valor for menor que a pendência, o aviso diz que a diferença não será cobrada depois.
+
+**Verificação:** 22 verificações do backend com banco simulado (inclui 403 para quem não é administrador, bloqueio fora de Em Approvals e colaborador trocado na edição) e 19 do componente no navegador, executando o código real do `app.js`. Fluxo logado não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

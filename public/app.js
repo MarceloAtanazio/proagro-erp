@@ -5639,6 +5639,60 @@ async function renderViaticos() {
   }
 }
 
+// Aviso de pendência de estouro de viagem anterior, com a decisão de descontar do valor liberado ou dispensar.
+// Usado onde o valor liberado é definido: nova solicitação, edição (Em Approvals) e agendamento da transferência.
+//   opts.padrao: true = "Sim" já marcado (nova solicitação); null = nenhuma escolha ainda.
+//   opts.obrigatorio: exige escolher quando há valor liberado informado.
+// Devolve o estado; `resolver(valorDigitado)` diz o que fazer ao salvar. Sem valor liberado informado, nada é
+// decidido e a pendência continua em aberto (o desconto só faz sentido quando existe valor a descontar).
+async function viaPendenciaAviso(box, colabId, liberadoEl, opts = {}) {
+  const est = { ativo: false, ids: [], total: 0, aplicar: opts.padrao === undefined ? null : opts.padrao };
+  est.resolver = digitado => {
+    if (!est.ativo) return { decisao: null, liquido: digitado };
+    const base = { ids: est.ids, total: est.total };
+    if (!(digitado > 0) && est.aplicar !== false) return { ...base, decisao: null, liquido: digitado };
+    if (est.aplicar === null) {
+      return opts.obrigatorio
+        ? { erro: `Decida sobre a pendência de ${brl(est.total)}: descontar do valor liberado ou não.` }
+        : { ...base, decisao: null, liquido: digitado };
+    }
+    if (est.aplicar) return { ...base, decisao: 'descontar', liquido: Math.max(0, digitado - est.total) };
+    return { ...base, decisao: 'dispensar', liquido: digitado };
+  };
+  box.innerHTML = '';
+  let r;
+  try { r = await api(`/api/viaticos/colaboradores/${colabId}/pendencia`); } catch { return est; }
+  if (!(r.total > 0)) return est;
+  est.ativo = true; est.ids = r.solicitacoes.map(x => x.id); est.total = r.total;
+  box.innerHTML = `<div class="alert-item warn" style="margin-bottom:12px">⚠️ Este colaborador tem <strong>${brl(r.total)}</strong> em pendência de viagem(ns) anterior(es) ainda não descontada.
+      <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
+        <span style="font-size:13px">Descontar do valor liberado${opts.obrigatorio ? ' nesta transferência' : ' nesta solicitação'}?</span>
+        <button type="button" class="btn sm" data-vp-sim>Sim</button>
+        <button type="button" class="btn sm" data-vp-nao>Não</button>
+      </div>
+      <div style="margin-top:6px; font-size:12.5px; color:var(--ink-2)">A decisão é tomada agora: ao salvar, a pendência é encerrada nas duas opções e este aviso não aparece mais.</div>
+      <div data-vp-prev style="margin-top:8px; font-size:13px; font-weight:600"></div></div>`;
+  const sim = box.querySelector('[data-vp-sim]'), nao = box.querySelector('[data-vp-nao]'), prev = box.querySelector('[data-vp-prev]');
+  // Só mostramos a prévia do líquido; o valor digitado não é alterado (a dedução é aplicada ao salvar).
+  const atualizar = () => {
+    sim.classList.toggle('primary', est.aplicar === true); nao.classList.toggle('primary', est.aplicar === false);
+    const digitado = Number((liberadoEl && liberadoEl.value) || 0);
+    prev.innerHTML = est.aplicar === null
+      ? 'Escolha uma opção — enquanto não escolher, a pendência continua em aberto.'
+      : est.aplicar === false
+        ? `➡️ A pendência de <strong>${brl(est.total)}</strong> NÃO será descontada e será encerrada — não aparecerá em próximas solicitações. Valor liberado: <strong>${brl(digitado)}</strong>.`
+        : !(digitado > 0)
+          ? '⏳ Sem valor liberado informado ainda: a pendência continua em aberto até você registrar o valor.'
+          : `✅ Será descontado <strong>${brl(est.total)}</strong> no envio. Valor líquido a liberar: <strong>${brl(Math.max(0, digitado - est.total))}</strong> (digitado: ${brl(digitado)}).` +
+            (digitado < est.total ? ` <span style="color:#B23A2F">O valor liberado é menor que a pendência: a diferença de ${brl(est.total - digitado)} não será cobrada depois.</span>` : '');
+  };
+  sim.onclick = () => { est.aplicar = true; atualizar(); };
+  nao.onclick = () => { est.aplicar = false; atualizar(); };
+  if (liberadoEl) liberadoEl.addEventListener('input', atualizar);
+  atualizar();
+  return est;
+}
+
 async function formSolicitacao(existing) {
   const colaboradores = await api('/api/colaboradores');
   const ativos = colaboradores.filter(c => c.ativo);
@@ -5647,6 +5701,7 @@ async function formSolicitacao(existing) {
       [{ label: 'Fechar', cls: 'primary', onClick: closeModal }]);
   }
   const isEdit = !!existing;
+  let pend = null;
   const colabAtual = existing ? colaboradores.find(c => c.id === existing.colaborador_id) : ativos[0];
   let destinosList = (isEdit && Array.isArray(existing.destinos)) ? [...existing.destinos] : [];
 
@@ -5689,17 +5744,16 @@ async function formSolicitacao(existing) {
           valor_liberado: Number($('#vs-liberado').value) || 0,
           notes: $('#vs-notes').value
         };
-        // Pendência de viagem(ns) anterior(es): aplica o desconto de verdade (e não
-        // só na tela) e sempre informa a decisão tomada (descontar ou manter em
-        // aberto), pra ficar registrado no log de auditoria de forma clara.
-        const descIds = $('#vs-desc-ids');
-        if (descIds) {
-          const ids = JSON.parse(descIds.value || '[]');
-          const valorPend = Number($('#vs-desc-valor').value || 0);
-          const aplicar = $('#vs-desc-aplicar').value === 'true';
-          b.pendencia_info = { valor: valorPend, decisao: aplicar ? 'descontar' : 'dispensar', ids };
-          b.pendencia_ids = ids; b.pendencia_decisao = aplicar ? 'descontar' : 'dispensar';
-          if (aplicar) b.valor_liberado = Math.max(0, b.valor_liberado - valorPend);
+        // Pendência de viagem(ns) anterior(es): a decisão (descontar ou dispensar) é aplicada de verdade
+        // — e não só na tela — e registrada no log de auditoria.
+        if (pend && pend.ativo) {
+          const dec = pend.resolver(b.valor_liberado);
+          if (dec.erro) return modalError(dec.erro);
+          if (dec.decisao) {
+            b.pendencia_info = { valor: dec.total, decisao: dec.decisao, ids: dec.ids };
+            b.pendencia_ids = dec.ids; b.pendencia_decisao = dec.decisao;
+            b.valor_liberado = dec.liquido;
+          }
         }
         try {
           if (isEdit) await api(`/api/viaticos/solicitacoes/${existing.id}`, { method: 'PUT', body: b });
@@ -5736,49 +5790,18 @@ async function formSolicitacao(existing) {
   };
 
   // Auto-preenche o tier ao trocar de colaborador, e checa pendência de estouro anterior.
+  // Na edição, a decisão cabe ao administrador e só enquanto a solicitação está em Em Approvals
+  // (antes de o dinheiro sair) e para o mesmo colaborador — é o caso das solicitações abertas pelo
+  // próprio colaborador, que nunca passaram pelo aviso da criação.
   const checarPendencia = async () => {
     const colabId = Number($('#vs-colab').value);
     const colab = colaboradores.find(c => c.id === colabId);
     if (colab && !isEdit) $('#vs-tier').value = colab.tier;
     const alerta = $('#vs-pendencia-alerta');
     if (!alerta) return;
-    alerta.innerHTML = '';
-    if (isEdit) return; // pendência só se aplica ao criar nova
-    try {
-      const r = await api(`/api/viaticos/colaboradores/${colabId}/pendencia`);
-      if (r.total > 0) {
-        alerta.innerHTML = `<div class="alert-item warn" style="margin-bottom:12px">⚠️ Este colaborador tem <strong>${brl(r.total)}</strong> em pendência de viagem(ns) anterior(es) ainda não descontada.
-          <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
-            <span style="font-size:13px">Descontar do valor liberado nesta solicitação?</span>
-            <button type="button" class="btn sm" id="vs-desc-sim">Sim</button>
-            <button type="button" class="btn sm" id="vs-desc-nao">Não</button>
-          </div>
-          <div style="margin-top:6px; font-size:12.5px; color:var(--ink-2)">A decisão é tomada agora: ao salvar a solicitação, a pendência é encerrada nas duas opções e este aviso não aparece mais.</div>
-          <div id="vs-desc-preview" style="margin-top:8px; font-size:13px; font-weight:600"></div></div>
-          <input type="hidden" id="vs-desc-ids" value='${JSON.stringify(r.solicitacoes.map(s => s.id))}'>
-          <input type="hidden" id="vs-desc-aplicar" value="true">
-          <input type="hidden" id="vs-desc-valor" value="${r.total}">`;
-        // Não mexemos no valor digitado em "Valor liberado" — só mostramos uma prévia
-        // de quanto ficaria líquido, e a dedução de verdade só é aplicada no momento
-        // de enviar o formulário (evita o valor "sumir"/zerar por causa de uma
-        // captura antiga do campo antes de você terminar de digitar).
-        const liberadoEl = $('#vs-liberado');
-        let descontarAtivo = true;
-        const atualizarPreview = () => {
-          $('#vs-desc-aplicar').value = descontarAtivo ? 'true' : 'false';
-          $('#vs-desc-sim').classList.toggle('primary', descontarAtivo);
-          $('#vs-desc-nao').classList.toggle('primary', !descontarAtivo);
-          const digitado = Number(liberadoEl.value || 0);
-          $('#vs-desc-preview').innerHTML = descontarAtivo
-            ? `✅ Será descontado <strong>${brl(r.total)}</strong> no envio. Valor líquido a liberar: <strong>${brl(Math.max(0, digitado - r.total))}</strong> (digitado: ${brl(digitado)}).`
-            : `➡️ A pendência de <strong>${brl(r.total)}</strong> NÃO será descontada e será encerrada — não aparecerá em próximas solicitações. Valor liberado: <strong>${brl(digitado)}</strong>.`;
-        };
-        $('#vs-desc-sim').onclick = () => { descontarAtivo = true; atualizarPreview(); };
-        $('#vs-desc-nao').onclick = () => { descontarAtivo = false; atualizarPreview(); };
-        liberadoEl.oninput = atualizarPreview;
-        atualizarPreview();
-      }
-    } catch { /* silencioso */ }
+    alerta.innerHTML = ''; pend = null;
+    if (isEdit && !(USER.role === 'admin' && existing.status === 'em_approvals' && colabId === existing.colaborador_id)) return;
+    pend = await viaPendenciaAviso(alerta, colabId, $('#vs-liberado'), { padrao: isEdit ? null : true });
   };
   $('#vs-colab').onchange = checarPendencia;
   checarPendencia();
@@ -6063,12 +6086,13 @@ async function viewSolicitacao(id) {
             } catch (e) { modalError(e.message); }
          }}]);
     };
-    const aplicarStatus = async (novo, valorLiberado) => {
+    const aplicarStatus = async (novo, valorLiberado, extra) => {
       const payload = { status: novo };
       if (valorLiberado !== undefined) payload.valor_liberado = valorLiberado;
+      if (extra) Object.assign(payload, extra);
       try {
         await api(`/api/viaticos/solicitacoes/${id}/status`, { method: 'POST', body: payload });
-        toast(valorLiberado !== undefined ? 'Transferência agendada e valor liberado registrado.' : 'Status atualizado.');
+        toast(extra ? 'Transferência agendada, valor liberado registrado e pendência encerrada.' : valorLiberado !== undefined ? 'Transferência agendada e valor liberado registrado.' : 'Status atualizado.');
         viewSolicitacao(id);
       } catch (e) { toast(e.message); }
     };
@@ -6078,17 +6102,27 @@ async function viewSolicitacao(id) {
       // liberado passa a existir. Sem pedir, a solicitação continuava com
       // Liberado R$ 0,00 e não havia como fechar a comprovação depois.
       if (novo === 'transferencia_agendada' && !s.valor_liberado) {
-        return openModal('Agendar transferência no Flash', `
+        let pendAg = { resolver: v => ({ decisao: null, liquido: v }) };
+        openModal('Agendar transferência no Flash', `
           <p style="font-size:13.5px; color:var(--ink-2)">A solicitação pede <strong>${brl(solicitado)}</strong>.
           Informe quanto foi efetivamente transferido no Flash — é esse valor que será comparado com a comprovação.</p>
+          <div id="vp-box"></div>
           <div class="field">${fld('vs-lib-novo', 'Valor liberado no Flash', 'number', solicitado || '', 'step="0.01" min="0"')}</div>
           <p style="font-size:12px; color:var(--muted)">Se ainda não sabe o valor, deixe zerado e preencha depois em "Editar".</p>`,
           [{ label: 'Cancelar', onClick: closeModal },
            { label: 'Agendar transferência', cls: 'primary', onClick: () => {
              const v = Number($('#vs-lib-novo').value);
              if (!isFinite(v) || v < 0) return toast('Informe um valor válido.');
-             closeModal(); aplicarStatus(novo, v);
+             const dec = pendAg.resolver(v);
+             if (dec.erro) return modalError(dec.erro);
+             closeModal();
+             if (dec.decisao) {
+               aplicarStatus(novo, dec.liquido, { pendencia_ids: dec.ids, pendencia_decisao: dec.decisao,
+                 pendencia_info: { valor: dec.total, decisao: dec.decisao, ids: dec.ids } });
+             } else aplicarStatus(novo, v);
            } }]);
+        viaPendenciaAviso($('#vp-box'), s.colaborador_id, $('#vs-lib-novo'), { padrao: null, obrigatorio: true }).then(e => { pendAg = e; });
+        return;
       }
       aplicarStatus(novo);
     };

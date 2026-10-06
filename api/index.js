@@ -326,20 +326,12 @@ const AUDIT_MAP = {
   'PUT /api/viaticos/config': req => `Atualizou a margem sobre o preço ANP do combustível para ${req.body.margem_pct}%`,
   'POST /api/viaticos/config/atualizar-anp': (req, body) => `Atualizou manualmente o preço do combustível via ANP${body && body.combustivel_anp_valor ? ` (R$ ${body.combustivel_anp_valor}/L, semana ${body.combustivel_anp_semana_fim})` : ''}`,
   'DELETE /api/viaticos/tud/:id': req => `Excluiu uma faixa da TUD (ID ${req.params.id})`,
-  'POST /api/viaticos/solicitacoes': (req, body) => {
-    let msg = `Criou solicitação de viático (ID ${body && body.id}) para o colaborador ID ${req.body.colaborador_id}`;
-    const pi = req.body.pendencia_info;
-    if (pi && pi.valor > 0) {
-      msg += pi.decisao === 'descontar'
-        ? ` — descontou pendência de ${fmtBRL(pi.valor)} de viagem(ns) anterior(es) (ID ${(pi.ids || []).join(', ')}) do valor liberado`
-        : ` — optou por NÃO descontar a pendência de ${fmtBRL(pi.valor)} (encerrada sem desconto, não aparece mais; viagem(ns) ID ${(pi.ids || []).join(', ')})`;
-    }
-    return msg;
-  },
+  'POST /api/viaticos/solicitacoes': (req, body) =>
+    `Criou solicitação de viático (ID ${body && body.id}) para o colaborador ID ${req.body.colaborador_id}` + auditPendencia(req.body.pendencia_info),
   'POST /api/viaticos/solicitacoes/autosservico': (req, body) => `Colaborador enviou uma solicitação de viático via autosserviço (ID ${body && body.id})`,
-  'PUT /api/viaticos/solicitacoes/:id': req => `Editou a solicitação de viático ID ${req.params.id}`,
+  'PUT /api/viaticos/solicitacoes/:id': req => `Editou a solicitação de viático ID ${req.params.id}` + auditPendencia(req.body.pendencia_info),
   'POST /api/viaticos/solicitacoes/:id/status': req => `Alterou manualmente o status da solicitação de viático ID ${req.params.id} para "${req.body.status}"` +
-    (req.body.valor_liberado ? ` e registrou o valor liberado de R$ ${Number(req.body.valor_liberado).toFixed(2)}` : ''),
+    (req.body.valor_liberado ? ` e registrou o valor liberado de R$ ${Number(req.body.valor_liberado).toFixed(2)}` : '') + auditPendencia(req.body.pendencia_info),
   'POST /api/viaticos/solicitacoes/:id/fechar': (req, body) => `Fechou/conferiu a solicitação de viático ID ${req.params.id} — resultado: ${body && body.status}` +
     (body && body.status === 'divergente' ? ` (pendência de ${fmtBRL(body.valor_pendencia)})` : body && body.status === 'devolvido' ? ` (${fmtBRL(body.valor_devolvido)} devolvido à carteira)` : ''),
   'POST /api/viaticos/solicitacoes/:id/km': (req, body) => `Registrou quilometragem na viagem ID ${req.params.id} (${req.body.km_inicial} → ${req.body.km_final} km${body && body.valor_reembolso ? `, R$ ${body.valor_reembolso}` : ''})`,
@@ -372,6 +364,14 @@ const AUDIT_MAP = {
   'POST /api/suprimentos/unidades/:id/baixar': req => `Deu baixa na unidade ID ${req.params.id} — motivo: "${req.body.motivo}"`,
   'POST /api/suprimentos/ajustes': req => `Ajustou o estoque do item ID ${req.body.item_id}: ${req.body.tipo === 'saida' ? '−' : '+'}${req.body.quantidade} un. — motivo: "${req.body.notes}"`
 };
+
+// Texto da decisão sobre pendência de estouro (descontar/dispensar) para o log de auditoria.
+function auditPendencia(pi) {
+  if (!pi || !(pi.valor > 0)) return '';
+  return pi.decisao === 'descontar'
+    ? ` — descontou pendência de ${fmtBRL(pi.valor)} de viagem(ns) anterior(es) (ID ${(pi.ids || []).join(', ')}) do valor liberado`
+    : ` — optou por NÃO descontar a pendência de ${fmtBRL(pi.valor)} (encerrada sem desconto, não aparece mais; viagem(ns) ID ${(pi.ids || []).join(', ')})`;
+}
 
 // Intercepta res.json em toda requisição autenticada de escrita (POST/PUT/
 // DELETE) e grava um registro no log de auditoria com a descrição da ação.
@@ -6320,6 +6320,20 @@ app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny
   res.json({ total, solicitacoes: rows.map(r => ({ ...r, valor_pendencia: n(r.valor_pendencia) })) });
 }));
 
+// A pendência de viagem anterior é decidida UMA vez — descontar do valor liberado ou dispensar — e
+// nas duas decisões ela é encerrada e registrada: não pode voltar a aparecer depois, porque descontar
+// tanto tempo depois não faz sentido. Só encerra pendências ABERTAS do próprio colaborador.
+async function encerrarPendencias(b, colaboradorId, naSolicitacaoId) {
+  const ids = (Array.isArray(b.pendencia_ids) ? b.pendencia_ids : (Array.isArray(b.descontar_pendencia_ids) ? b.descontar_pendencia_ids : []))
+    .map(Number).filter(Number.isInteger);
+  if (!ids.length) return;
+  const decisao = b.pendencia_decisao === 'dispensar' ? 'dispensada' : 'descontada';
+  await query(`UPDATE erp_viaticos_solicitacoes
+      SET pendencia_resolvida=true, pendencia_decisao=$3, pendencia_decidida_em=now(), pendencia_decidida_na=$4
+    WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND status='divergente' AND pendencia_resolvida=false`,
+    [ids, colaboradorId, decisao, naSolicitacaoId]);
+}
+
 app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
@@ -6328,28 +6342,28 @@ app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(a
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
     [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo), b.data_inicio, b.data_fim,
      b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.user.id]);
-  // A pendência de viagem anterior é decidida UMA vez, aqui, na viagem seguinte: descontar do valor
-  // liberado ou dispensar. Nas duas decisões ela é encerrada (e registrada) — não pode voltar a
-  // aparecer depois, porque descontar muito tempo depois não faz sentido.
-  const idsPend = (Array.isArray(b.pendencia_ids) ? b.pendencia_ids : (Array.isArray(b.descontar_pendencia_ids) ? b.descontar_pendencia_ids : []))
-    .map(Number).filter(Number.isInteger);
-  if (idsPend.length) {
-    const decisao = b.pendencia_decisao === 'dispensar' ? 'dispensada' : 'descontada';
-    await query(`UPDATE erp_viaticos_solicitacoes
-        SET pendencia_resolvida=true, pendencia_decisao=$3, pendencia_decidida_em=now(), pendencia_decidida_na=$4
-      WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND status='divergente' AND pendencia_resolvida=false`,
-      [idsPend, b.colaborador_id, decisao, ins[0].id]);
-  }
+  await encerrarPendencias(b, b.colaborador_id, ins[0].id);
   res.json({ ok: true, id: ins[0].id });
 }));
 
 app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
+  // Decidir sobre a pendência é liberar (ou abrir mão de) valor: só administrador, e só antes da transferência.
+  const querDecidir = Array.isArray(b.pendencia_ids) && b.pendencia_ids.length;
+  let donoPend = null;
+  if (querDecidir) {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Somente um administrador pode decidir sobre a pendência de viagem anterior.' });
+    const atual = (await query('SELECT colaborador_id, status FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+    if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (atual.status !== 'em_approvals') return res.status(400).json({ error: 'A decisão sobre a pendência só pode ser tomada enquanto a solicitação está em Em Approvals.' });
+    donoPend = atual.colaborador_id;
+  }
   await query(`UPDATE erp_viaticos_solicitacoes SET colaborador_id=$1, tier=$2, categoria_local=$3, ordem_trabalho=$4, destinos=$5, motivo=$6,
     data_inicio=$7, data_fim=$8, data_expiracao_flash=$9, valor_solicitado=$10, valor_liberado=$11, notes=$12 WHERE id=$13`,
     [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo), b.data_inicio, b.data_fim,
      b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.params.id]);
+  if (querDecidir) await encerrarPendencias(b, donoPend, Number(req.params.id));
   res.json({ ok: true });
 }));
 
@@ -6366,7 +6380,14 @@ app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viat
     if (status !== 'transferencia_agendada') return res.status(400).json({ error: 'O valor liberado só pode ser informado ao agendar a transferência.' });
     const lib = Number(req.body.valor_liberado);
     if (!isFinite(lib) || lib < 0) return res.status(400).json({ error: 'Valor liberado inválido.' });
+    if (Array.isArray(req.body.pendencia_ids) && req.body.pendencia_ids.length && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Somente um administrador pode decidir sobre a pendência de viagem anterior.' });
+    }
     await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true, valor_liberado=$2 WHERE id=$3', [status, lib, req.params.id]);
+    if (Array.isArray(req.body.pendencia_ids) && req.body.pendencia_ids.length) {
+      const dono = (await query('SELECT colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+      if (dono) await encerrarPendencias(req.body, dono.colaborador_id, Number(req.params.id));
+    }
     return res.json({ ok: true });
   }
   await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true WHERE id=$2', [status, req.params.id]);
