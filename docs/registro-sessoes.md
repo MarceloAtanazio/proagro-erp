@@ -7503,3 +7503,34 @@ continuam com `+=` — nenhuma das duas precisou de alteração. Testado no nave
 duas categorias, uma com dois centros de custo, total do cabeçalho batendo com a soma das sub-linhas.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 158: Suprimentos — rastreio completo dos envios a funcionários (série, termo, custódia)
+
+**Solicitação:** na aba "Envios a funcionários", o Marcelo queria detalhar o envio: como rastrear o equipamento, onde ver o número de série e onde está a ficha de comprovação de entrega — "um controle geral e completo desses envios".
+
+### Diagnóstico
+
+O envio guardava só item, quantidade, colaborador, data, situação e uma observação livre. O nº de série existia apenas no **cadastro do item** (um campo único), e o do GPS Garmin era na prática código de modelo, não série de unidade. Com 5 notebooks iguais não havia como saber qual foi para quem. Não existia ficha de comprovação.
+
+### Decisões (AskUserQuestion)
+
+Controle **por unidade física** (série + patrimônio); termo **em PDF + anexo assinado**; envios já feitos (GPS do Arthur) são **complementados depois**, pela própria tela.
+
+### O que mudou
+
+**Banco:** tabela nova `erp_estoque_unidades` (série, patrimônio, estado em_estoque/em_custodia/baixado; série única por item, patrimônio único). `erp_estoque_movimentos` ganha `unidade_id`, `forma_envio`, `codigo_rastreio`, `condicao_saida`, `condicao_devolucao`, `data_entrega`. O termo assinado reaproveita `erp_attachments` com o tipo novo `envio_termo`.
+
+**Backend:** equipamento só sai escolhendo uma unidade disponível (quantidade fixa em 1; a unidade vai a "em custódia"); material segue por quantidade. "Entregue" de equipamento só com o termo assinado anexado. Devolução devolve a unidade ao estoque e grava a condição. Rotas novas: `GET/POST/PUT /api/suprimentos/unidades`, `POST .../unidades/:id/baixar` (dá saída no estoque para o saldo continuar batendo), `PUT /api/suprimentos/envios/:id` (vincula unidade/edita rastreio de envios antigos).
+
+**Frontend:** botão "Unidades" nos equipamentos do Estoque; lista de Envios com série/patrimônio, forma + rastreio, coluna Termo (pendente/anexos) e busca por série, patrimônio, colaborador ou rastreio; "Detalhes" com a ficha completa do envio; "Gerar termo (PDF)" com logo, dados do equipamento, cláusulas e linhas de assinatura; formulário de envio com unidade, forma, rastreio e condição de saída; devolução com condição.
+
+### Fora de escopo / pendente
+
+Cadastrar as unidades dos equipamentos já em estoque e vincular o GPS do Arthur. O texto do termo (cláusulas) deve ser revisado pelo RH/jurídico. Assinatura digital ficou de fora.
+
+### Verificação
+
+`verifica-envios-unidades.js` (17 verificações, banco simulado): equipamento sem unidade é recusado; mesma unidade não sai duas vezes; "entregue" exige termo; devolução repõe a unidade; série duplicada é recusada; baixa tira a unidade e o saldo. Migração aplicada no banco e conferida pelo bloco de autoverificação. A tela **não foi exercitada no navegador** (exige login no ERP) — conferência visual fica para depois do deploy.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

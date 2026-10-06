@@ -3062,6 +3062,7 @@ async function supRenderEstoque(panel) {
           <td>${sit}</td>
           <td class="actions">
             <button class="btn sm" data-ficha="${i.id}">Ficha</button>
+            ${i.tipo === 'equipamento' ? `<button class="btn sm" data-unid="${i.id}">Unidades</button>` : ''}
             ${edit ? `<button class="btn sm" data-mov="${i.id}">Ajustar</button>
             <button class="btn sm" data-hist="${i.id}">Histórico</button>
             <button class="btn sm" data-edit="${i.id}">Editar</button>` : ''}
@@ -3069,6 +3070,7 @@ async function supRenderEstoque(panel) {
         </tr>`;
       }).join('') || `<tr><td colspan="9"><div class="empty">Nenhum item cadastrado ainda.</div></td></tr>`}</tbody>`;
     $('#sup-tbl').querySelectorAll('[data-ficha]').forEach(b => b.onclick = () => supFichaItem(itens.find(i => i.id == b.dataset.ficha)));
+    $('#sup-tbl').querySelectorAll('[data-unid]').forEach(b => b.onclick = () => supUnidades(itens.find(i => i.id == b.dataset.unid)));
     if (edit) {
       $('#sup-tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => supFormItem(itens.find(i => i.id == b.dataset.edit)));
       $('#sup-tbl').querySelectorAll('[data-mov]').forEach(b => b.onclick = () => supFormAjuste(itens.find(i => i.id == b.dataset.mov)));
@@ -3338,6 +3340,9 @@ function supFormCompra(itens, fornecedores) {
 }
 
 // ---- Aba Envios a funcionários ----
+const SUP_FORMAS_ENVIO = ['Entrega em mãos', 'Transportadora', 'Correios', 'Motoboy / entregador', 'Outro'];
+const SUP_ESTADO_UN = { em_estoque: ['ok', 'Em estoque'], em_custodia: ['warn', 'Em custódia'], baixado: ['off', 'Baixado'] };
+
 async function supRenderEnvios(panel) {
   const [itens, colaboradores, movs] = await Promise.all([
     api('/api/suprimentos/itens'),
@@ -3348,75 +3353,306 @@ async function supRenderEnvios(panel) {
   const ST = { enviado: ['warn', 'Enviado'], entregue: ['pend', 'Entregue'], devolvido: ['ok', 'Devolvido'] };
   panel.innerHTML = `
     <div class="toolbar">
+      <input type="search" id="en-q" placeholder="Buscar colaborador, item, nº de série, patrimônio, rastreio…">
       <select id="en-fstatus"><option value="">Todas as situações</option><option value="enviado">Enviado</option><option value="entregue">Entregue</option><option value="devolvido">Devolvido</option></select>
       <div class="spacer"></div>${edit ? '<button class="btn primary" id="sup-new-envio">+ Registrar envio</button>' : ''}
     </div>
     <div class="table-wrap"><table id="en-tbl"></table></div>`;
   const draw = () => {
-    const fs = $('#en-fstatus').value;
-    const rows = movs.filter(m => !fs || m.status === fs);
+    const fs = $('#en-fstatus').value, q = $('#en-q').value.toLowerCase().trim();
+    const rows = movs.filter(m => (!fs || m.status === fs) && (!q ||
+      [m.item_nome, m.colaborador_name, m.unidade_serie, m.unidade_patrimonio, m.codigo_rastreio, m.forma_envio].join(' ').toLowerCase().includes(q)));
     $('#en-tbl').innerHTML = `
-      <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th>Colaborador</th><th>Tipo</th><th>Situação</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
+      <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th>Colaborador</th><th>Envio</th><th>Situação</th><th>Termo</th><th class="actions">Ações</th></tr></thead>
       <tbody>${rows.map(m => {
         const equip = m.item_tipo === 'equipamento', st = ST[m.status] || ['off', m.status];
+        const ident = [m.unidade_serie ? 'Série ' + esc(m.unidade_serie) : '', m.unidade_patrimonio ? 'Pat. ' + esc(m.unidade_patrimonio) : ''].filter(Boolean).join(' · ');
+        const semUnidade = equip && !m.unidade_id;
+        const envio = [m.forma_envio ? esc(m.forma_envio) : '', m.codigo_rastreio ? '<span class="mono">' + esc(m.codigo_rastreio) + '</span>' : ''].filter(Boolean).join('<br>');
+        const termo = !equip ? '<small style="color:var(--muted)">—</small>'
+          : m.termos ? `<button class="btn sm" data-termo="${m.id}" data-att="envio_termo:${m.id}">📎 ${m.termos}</button>`
+          : m.status === 'devolvido' ? '<small style="color:var(--muted)">—</small>'
+          : `<button class="btn sm" data-termo="${m.id}" data-att="envio_termo:${m.id}" title="Ainda sem termo assinado">📎</button> <span class="badge warn">Pendente</span>`;
         return `<tr>
-          <td>${brDate(m.data)}</td><td>${esc(m.item_nome)}</td>
+          <td>${brDate(m.data)}</td>
+          <td>${esc(m.item_nome)}${ident ? `<br><small class="mono" style="color:var(--muted)">${ident}</small>` : ''}${semUnidade ? '<br><small style="color:#B23A2F">Sem nº de série vinculado</small>' : ''}</td>
           <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
           <td>${esc(m.colaborador_name || '—')}</td>
-          <td>${equip ? 'Equipamento' : 'Material'}</td>
-          <td><span class="badge ${st[0]}">${st[1]}</span>${m.data_devolucao ? ` <small style="color:var(--muted)">${brDate(m.data_devolucao)}</small>` : ''}</td>
-          ${edit ? `<td class="actions">${m.status === 'devolvido' ? '<small style="color:var(--muted)">—</small>' :
-            `${m.status === 'enviado' ? `<button class="btn sm" data-entregue="${m.id}">Marcar entregue</button>` : ''}
-             ${equip ? `<button class="btn sm" data-devolver="${m.id}">Registrar devolução</button>` : ''}`}</td>` : ''}
+          <td>${envio || '<small style="color:var(--muted)">—</small>'}</td>
+          <td><span class="badge ${st[0]}">${st[1]}</span>${m.data_devolucao ? ` <small style="color:var(--muted)">${brDate(m.data_devolucao)}</small>` : m.data_entrega ? ` <small style="color:var(--muted)">${brDate(m.data_entrega)}</small>` : ''}</td>
+          <td>${termo}</td>
+          <td class="actions"><button class="btn sm" data-det="${m.id}">Detalhes</button>
+            ${edit && m.status === 'enviado' ? `<button class="btn sm" data-entregue="${m.id}">Marcar entregue</button>` : ''}
+            ${edit && equip && m.status !== 'devolvido' ? `<button class="btn sm" data-devolver="${m.id}">Registrar devolução</button>` : ''}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="${edit ? 7 : 6}"><div class="empty">Nenhum envio registrado ainda.</div></td></tr>`}</tbody>`;
+      }).join('') || `<tr><td colspan="8"><div class="empty">Nenhum envio encontrado.</div></td></tr>`}</tbody>`;
+    const T = $('#en-tbl'), achar = id => movs.find(m => m.id == id);
+    T.querySelectorAll('[data-det]').forEach(b => b.onclick = () => supDetalheEnvio(achar(b.dataset.det), itens));
+    T.querySelectorAll('[data-termo]').forEach(b => b.onclick = () => {
+      const m = achar(b.dataset.termo);
+      openAttachments('envio_termo', m.id, `Termo do envio #${m.id} — ${m.item_nome}`);
+    });
     if (edit) {
-      $('#en-tbl').querySelectorAll('[data-entregue]').forEach(b => b.onclick = async () => {
-        try { await api(`/api/suprimentos/envios/${b.dataset.entregue}/status`, { method: 'POST', body: { status: 'entregue' } }); toast('Marcado como entregue.'); renderSuprimentos(); }
-        catch (e) { toast(e.message); }
+      T.querySelectorAll('[data-entregue]').forEach(b => b.onclick = async () => {
+        const m = achar(b.dataset.entregue);
+        try { await api(`/api/suprimentos/envios/${m.id}/status`, { method: 'POST', body: { status: 'entregue' } }); toast('Marcado como entregue.'); renderSuprimentos(); }
+        catch (e) {
+          toast(e.message);
+          if (/termo/i.test(e.message)) openAttachments('envio_termo', m.id, `Termo do envio #${m.id} — ${m.item_nome}`);
+        }
       });
-      $('#en-tbl').querySelectorAll('[data-devolver]').forEach(b => b.onclick = () => supFormDevolucao(b.dataset.devolver));
+      T.querySelectorAll('[data-devolver]').forEach(b => b.onclick = () => supFormDevolucao(b.dataset.devolver));
     }
   };
   $('#en-fstatus').oninput = draw;
+  $('#en-q').oninput = draw;
   if (edit) $('#sup-new-envio').onclick = () => supFormEnvio(itens, colaboradores);
   draw();
 }
 
-function supFormEnvio(itens, colaboradores) {
+async function supFormEnvio(itens, colaboradores) {
   const disp = itens.filter(i => i.ativo && Number(i.estoque_atual) > 0);
   if (!disp.length) { toast('Não há itens com estoque disponível para envio.'); return; }
   if (!colaboradores.length) { toast('Nenhum colaborador cadastrado. Cadastre em Viáticos.'); return; }
+  const unids = await api('/api/suprimentos/unidades?estado=em_estoque');
   openModal('Registrar envio a funcionário', `
     ${fldSel('en-item', 'Item *', disp.map(i => ({ v: i.id, t: `${i.nome} — ${supNum(i.estoque_atual)} ${i.unidade} disp.` })), disp[0].id)}
+    <div id="en-unid-wrap" style="display:none">
+      ${fldSel('en-unid', 'Unidade (nº de série) *', [], '')}
+      <p class="hint" id="en-unid-hint" style="margin-top:-4px"></p>
+    </div>
     <div class="form-row">
       ${fld('en-qtd', 'Quantidade *', 'number', '1', 'step="0.001" min="0.001"')}
       ${fld('en-data', 'Data do envio', 'date', todayISO())}
     </div>
     ${fldSel('en-colab', 'Colaborador destinatário *', colaboradores.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), colaboradores[0].id)}
-    ${fld('en-notes', 'Observações', 'text', '', 'placeholder="Ex.: nº de série, finalidade"')}
-    <p class="hint">Equipamentos ficam em custódia (você registra a devolução depois). Materiais de consumo apenas dão baixa.</p>`,
+    <div class="form-row">
+      ${fldSel('en-forma', 'Forma de envio', [{ v: '', t: '—' }, ...SUP_FORMAS_ENVIO.map(f => ({ v: f, t: f }))], '')}
+      ${fld('en-rastreio', 'Código de rastreio', 'text', '', 'placeholder="Se houver (transportadora/Correios)"')}
+    </div>
+    ${fld('en-cond', 'Condição / acessórios na saída', 'text', '', 'placeholder="Ex.: novo, com carregador e capa"')}
+    ${fld('en-notes', 'Observações', 'text', '', 'placeholder="Ex.: finalidade"')}
+    <p class="hint">Equipamentos saem por unidade (nº de série) e ficam em custódia até a devolução; gere o termo de responsabilidade em Detalhes depois de registrar. Materiais de consumo apenas dão baixa.</p>`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Registrar envio', cls: 'primary', onClick: async () => {
         try {
-          await api('/api/suprimentos/envios', { method: 'POST', body: { item_id: $('#en-item').value, quantidade: $('#en-qtd').value, colaborador_id: $('#en-colab').value, data: $('#en-data').value, notes: $('#en-notes').value } });
-          closeModal(); toast('Envio registrado.'); renderSuprimentos();
+          const equip = (itens.find(i => i.id == $('#en-item').value) || {}).tipo === 'equipamento';
+          await api('/api/suprimentos/envios', { method: 'POST', body: {
+            item_id: $('#en-item').value, unidade_id: equip ? $('#en-unid').value : null, quantidade: $('#en-qtd').value,
+            colaborador_id: $('#en-colab').value, data: $('#en-data').value, forma_envio: $('#en-forma').value,
+            codigo_rastreio: $('#en-rastreio').value, condicao_saida: $('#en-cond').value, notes: $('#en-notes').value } });
+          closeModal(); toast(equip ? 'Envio registrado. Gere o termo de responsabilidade em Detalhes.' : 'Envio registrado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
+  const ajustar = () => {
+    const item = itens.find(i => i.id == $('#en-item').value) || {};
+    const equip = item.tipo === 'equipamento';
+    $('#en-unid-wrap').style.display = equip ? '' : 'none';
+    $('#en-qtd').disabled = equip;
+    if (equip) {
+      $('#en-qtd').value = 1;
+      const lista = unids.filter(u => u.item_id == item.id);
+      $('#en-unid').innerHTML = lista.map(u => `<option value="${u.id}">${esc([u.numero_serie ? 'Série ' + u.numero_serie : '', u.patrimonio ? 'Pat. ' + u.patrimonio : ''].filter(Boolean).join(' · '))}</option>`).join('');
+      $('#en-unid-hint').textContent = lista.length ? '' : 'Nenhuma unidade disponível. Cadastre em Estoque > Unidades deste item.';
+    }
+  };
+  $('#en-item').onchange = ajustar;
+  ajustar();
 }
 
 function supFormDevolucao(id) {
   openModal('Registrar devolução', `
     <p class="hint">O item volta ao estoque nesta data.</p>
     ${fld('dv-data', 'Data da devolução', 'date', todayISO())}
-    ${fld('dv-notes', 'Observações', 'text', '', 'placeholder="Ex.: estado do equipamento"')}`,
+    ${fld('dv-cond', 'Condição na devolução', 'text', '', 'placeholder="Ex.: perfeito estado, tela riscada, sem carregador"')}
+    ${fld('dv-notes', 'Observações', 'text', '')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Confirmar devolução', cls: 'primary', onClick: async () => {
         try {
-          await api(`/api/suprimentos/envios/${id}/status`, { method: 'POST', body: { status: 'devolvido', data: $('#dv-data').value, notes: $('#dv-notes').value } });
+          await api(`/api/suprimentos/envios/${id}/status`, { method: 'POST', body: { status: 'devolvido', data: $('#dv-data').value, condicao_devolucao: $('#dv-cond').value, notes: $('#dv-notes').value } });
           closeModal(); toast('Devolução registrada. Item retornou ao estoque.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
+}
+
+// Ficha completa de um envio: tudo que foi registrado, mais o termo (PDF e anexo).
+function supDetalheEnvio(m, itens) {
+  const edit = !READONLY, equip = m.item_tipo === 'equipamento';
+  const linha = (rot, val) => `<tr><td style="color:var(--muted);width:38%">${rot}</td><td><strong>${val}</strong></td></tr>`;
+  const txt = v => (v == null || v === '') ? '—' : esc(v);
+  const ST = { enviado: 'Enviado', entregue: 'Entregue', devolvido: 'Devolvido' };
+  const btns = [{ label: 'Fechar', onClick: closeModal }];
+  if (equip) {
+    btns.push({ label: 'Gerar termo (PDF)', onClick: () => supTermoPDF(m) });
+    btns.push({ label: 'Termo assinado / anexos', onClick: () => openAttachments('envio_termo', m.id, `Termo do envio #${m.id} — ${m.item_nome}`) });
+  }
+  if (edit && m.status !== 'devolvido') btns.push({ label: 'Editar dados', cls: 'primary', onClick: () => supFormEditarEnvio(m, itens) });
+  openModal(`Envio #${m.id} — ${esc(m.item_nome)}`, `
+    <table><tbody>
+      <tr><td colspan="2">${supSecTitle('Equipamento / item')}</td></tr>
+      ${linha('Item', esc(m.item_nome))}
+      ${linha('Tipo', equip ? 'Equipamento' : 'Material')}
+      ${equip ? linha('Nº de série', txt(m.unidade_serie)) + linha('Patrimônio', txt(m.unidade_patrimonio)) : ''}
+      ${linha('Marca / SKU', txt([m.item_marca, m.item_sku].filter(Boolean).join(' / ')))}
+      ${linha('Quantidade', supNum(m.quantidade) + ' ' + esc(m.unidade))}
+      <tr><td colspan="2">${supSecTitle('Destinatário e envio')}</td></tr>
+      ${linha('Colaborador', txt(m.colaborador_name) + (m.colaborador_cargo ? ' — ' + esc(m.colaborador_cargo) : ''))}
+      ${linha('Data do envio', brDate(m.data))}
+      ${linha('Forma de envio', txt(m.forma_envio))}
+      ${linha('Código de rastreio', txt(m.codigo_rastreio))}
+      ${linha('Condição / acessórios na saída', txt(m.condicao_saida))}
+      ${linha('Registrado por', txt(m.created_by_name))}
+      <tr><td colspan="2">${supSecTitle('Situação')}</td></tr>
+      ${linha('Situação atual', ST[m.status] || txt(m.status))}
+      ${linha('Entregue em', m.data_entrega ? brDate(m.data_entrega) : '—')}
+      ${linha('Devolvido em', m.data_devolucao ? brDate(m.data_devolucao) : '—')}
+      ${linha('Condição na devolução', txt(m.condicao_devolucao))}
+      ${equip ? linha('Termo assinado anexado', m.termos ? m.termos + ' arquivo(s)' : '<span style="color:#B23A2F">Pendente</span>') : ''}
+      ${linha('Observações', txt(m.notes))}
+    </tbody></table>`, btns, { wide: true });
+}
+
+function supFormEditarEnvio(m, itens) {
+  const equip = m.item_tipo === 'equipamento';
+  api('/api/suprimentos/unidades?estado=em_estoque&item_id=' + m.item_id).then(unids => {
+    openModal(`Editar envio #${m.id}`, `
+      ${equip && !m.unidade_id ? fldSel('ee-unid', 'Vincular unidade (nº de série)', [{ v: '', t: '— escolha —' }, ...unids.map(u => ({ v: u.id, t: [u.numero_serie ? 'Série ' + u.numero_serie : '', u.patrimonio ? 'Pat. ' + u.patrimonio : ''].filter(Boolean).join(' · ') }))], '') : ''}
+      <div class="form-row">
+        ${fldSel('ee-forma', 'Forma de envio', [{ v: '', t: '—' }, ...SUP_FORMAS_ENVIO.map(f => ({ v: f, t: f }))], m.forma_envio || '')}
+        ${fld('ee-rastreio', 'Código de rastreio', 'text', m.codigo_rastreio || '')}
+      </div>
+      ${fld('ee-cond', 'Condição / acessórios na saída', 'text', m.condicao_saida || '')}
+      ${fld('ee-notes', 'Observações', 'text', m.notes || '')}`,
+      [{ label: 'Cancelar', onClick: closeModal },
+       { label: 'Salvar', cls: 'primary', onClick: async () => {
+          try {
+            await api('/api/suprimentos/envios/' + m.id, { method: 'PUT', body: {
+              unidade_id: $('#ee-unid') ? $('#ee-unid').value || null : null, forma_envio: $('#ee-forma').value,
+              codigo_rastreio: $('#ee-rastreio').value, condicao_saida: $('#ee-cond').value, notes: $('#ee-notes').value } });
+            closeModal(); toast('Envio atualizado.'); renderSuprimentos();
+          } catch (e) { modalError(e.message); }
+       }}]);
+  }).catch(e => toast(e.message));
+}
+
+// Unidades físicas de um equipamento: é aqui que o nº de série e o patrimônio
+// de cada aparelho são cadastrados e que se vê com quem cada um está.
+async function supUnidades(item) {
+  const edit = !READONLY;
+  const un = await api('/api/suprimentos/unidades?item_id=' + item.id);
+  const vivas = un.filter(u => u.estado !== 'baixado');
+  const emCustodia = un.filter(u => u.estado === 'em_custodia').length;
+  const semSerie = Number(item.estoque_atual) + emCustodia > vivas.length;
+  openModal(`Unidades — ${esc(item.nome)}`, `
+    <p class="hint" style="margin-top:0">Saldo em estoque: <strong>${supNum(item.estoque_atual)} ${esc(item.unidade)}</strong> · Unidades cadastradas em circulação: <strong>${vivas.length}</strong>
+      ${semSerie ? ' — <span style="color:#B23A2F">há aparelhos sem número de série cadastrado.</span>' : ''}</p>
+    ${edit ? `<div class="form-row">
+      ${fld('un-serie', 'Nº de série', 'text', '')}
+      ${fld('un-pat', 'Patrimônio / etiqueta', 'text', '')}
+      ${fld('un-obs', 'Observação', 'text', '')}
+    </div><div style="margin-bottom:12px"><button class="btn primary" id="un-add">+ Adicionar unidade</button></div>` : ''}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Nº de série</th><th>Patrimônio</th><th>Situação</th><th>Com quem</th><th>Obs.</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
+      <tbody>${un.map(u => { const st = SUP_ESTADO_UN[u.estado] || ['off', u.estado];
+        return `<tr${u.estado === 'baixado' ? ' style="opacity:.55"' : ''}>
+          <td class="mono">${esc(u.numero_serie || '—')}</td><td class="mono">${esc(u.patrimonio || '—')}</td>
+          <td><span class="badge ${st[0]}">${st[1]}</span></td><td>${esc(u.estado === 'em_custodia' ? (u.com_colaborador || '—') : '—')}</td>
+          <td><small>${esc(u.notes || '')}</small></td>
+          ${edit ? `<td class="actions"><button class="btn sm" data-uedit="${u.id}">Editar</button>
+            ${u.estado === 'em_estoque' ? `<button class="btn sm danger-ghost" data-ubaixa="${u.id}">Dar baixa</button>` : ''}</td>` : ''}
+        </tr>`; }).join('') || `<tr><td colspan="6"><div class="empty">Nenhuma unidade cadastrada ainda.</div></td></tr>`}</tbody>
+    </table></div>`, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
+  if (!edit) return;
+  $('#un-add').onclick = async () => {
+    try {
+      await api('/api/suprimentos/unidades', { method: 'POST', body: { item_id: item.id, numero_serie: $('#un-serie').value, patrimonio: $('#un-pat').value, notes: $('#un-obs').value } });
+      toast('Unidade adicionada.'); supUnidades(item);
+    } catch (e) { modalError(e.message); }
+  };
+  document.querySelectorAll('[data-uedit]').forEach(b => b.onclick = () => {
+    const u = un.find(x => x.id == b.dataset.uedit);
+    openModal('Editar unidade', `
+      ${fld('ue-serie', 'Nº de série', 'text', u.numero_serie || '')}
+      ${fld('ue-pat', 'Patrimônio / etiqueta', 'text', u.patrimonio || '')}
+      ${fld('ue-obs', 'Observação', 'text', u.notes || '')}`,
+      [{ label: 'Cancelar', onClick: () => supUnidades(item) },
+       { label: 'Salvar', cls: 'primary', onClick: async () => {
+          try { await api('/api/suprimentos/unidades/' + u.id, { method: 'PUT', body: { numero_serie: $('#ue-serie').value, patrimonio: $('#ue-pat').value, notes: $('#ue-obs').value } }); toast('Unidade atualizada.'); supUnidades(item); }
+          catch (e) { modalError(e.message); }
+       }}]);
+  });
+  document.querySelectorAll('[data-ubaixa]').forEach(b => b.onclick = () => {
+    const u = un.find(x => x.id == b.dataset.ubaixa);
+    openModal('Dar baixa na unidade', `<p class="hint">A unidade sai de circulação e o estoque diminui em 1. Use para perda, quebra ou descarte.</p>
+      ${fld('ub-motivo', 'Motivo *', 'text', '')}`,
+      [{ label: 'Cancelar', onClick: () => supUnidades(item) },
+       { label: 'Confirmar baixa', cls: 'primary', onClick: async () => {
+          try { await api('/api/suprimentos/unidades/' + u.id + '/baixar', { method: 'POST', body: { motivo: $('#ub-motivo').value } }); toast('Baixa registrada.'); renderSuprimentos(); }
+          catch (e) { modalError(e.message); }
+       }}]);
+  });
+}
+
+// Termo de responsabilidade do equipamento — imprime, colhe a assinatura e
+// anexa o scan em "Termo assinado / anexos".
+function supTermoPDF(m) {
+  if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth(), MARGIN = 18;
+    const VERDE = [0, 120, 63], CINZA = [110, 120, 114];
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 32, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', MARGIN, 11, logoW, logoH);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    doc.text(`Envio nº ${m.id}  ·  Emitido em ${new Date().toLocaleDateString('pt-BR')} por ${USER.name}`, pageW - MARGIN, 15, { align: 'right' });
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 25, pageW - MARGIN, 25);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...VERDE);
+    doc.text('TERMO DE RESPONSABILIDADE E ENTREGA DE EQUIPAMENTO', pageW / 2, 36, { align: 'center' });
+
+    const v = x => (x == null || x === '') ? '—' : String(x);
+    doc.autoTable({
+      startY: 44, margin: { left: MARGIN, right: MARGIN }, theme: 'grid',
+      body: [
+        ['Colaborador', v(m.colaborador_name) + (m.colaborador_cargo ? ' — ' + m.colaborador_cargo : '')],
+        ['Equipamento', v(m.item_nome)],
+        ['Marca / SKU', v([m.item_marca, m.item_sku].filter(Boolean).join(' / '))],
+        ['Nº de série', v(m.unidade_serie)],
+        ['Patrimônio', v(m.unidade_patrimonio)],
+        ['Quantidade', `${supNum(m.quantidade)} ${m.unidade}`],
+        ['Data do envio', brDate(m.data)],
+        ['Forma de envio', v(m.forma_envio)],
+        ['Código de rastreio', v(m.codigo_rastreio)],
+        ['Condição / acessórios na saída', v(m.condicao_saida)]
+      ],
+      styles: { font: 'helvetica', fontSize: 9.5, cellPadding: 2.6, textColor: [40, 46, 42], lineColor: [215, 222, 218], lineWidth: 0.2 },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 60, fillColor: [244, 247, 245] } }
+    });
+    let y = doc.lastAutoTable.finalY + 10;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(30, 38, 32);
+    const clausulas = [
+      'Declaro ter recebido o equipamento acima descrito, em condições de uso conforme indicado, e estou ciente de que ele é de propriedade da empresa, cedido apenas para o exercício das minhas atividades profissionais.',
+      'Comprometo-me a: (1) utilizá-lo de forma adequada e exclusivamente para fins de trabalho; (2) zelar pela sua guarda e conservação; (3) não emprestá-lo nem cedê-lo a terceiros; (4) comunicar de imediato à empresa qualquer perda, furto, roubo ou dano; e (5) devolvê-lo quando solicitado ou no encerramento do meu vínculo.'
+    ];
+    clausulas.forEach(t => {
+      const linhas = doc.splitTextToSize(t, pageW - MARGIN * 2);
+      doc.text(linhas, MARGIN, y); y += linhas.length * 5 + 4;
+    });
+    y += 14;
+    doc.text('Local e data: ______________________________, ____ / ____ / ________', MARGIN, y);
+    y += 26;
+    const larg = 72;
+    doc.setDrawColor(60, 70, 64); doc.setLineWidth(0.3);
+    doc.line(MARGIN, y, MARGIN + larg, y); doc.line(pageW - MARGIN - larg, y, pageW - MARGIN, y);
+    doc.setFontSize(9);
+    doc.text('Colaborador: ' + v(m.colaborador_name), MARGIN, y + 5);
+    doc.text('CPF: ______________________', MARGIN, y + 10);
+    doc.text('Responsável pela entrega: ' + v(USER.name), pageW - MARGIN - larg, y + 5);
+    doc.setFontSize(7.5); doc.setTextColor(...CINZA);
+    doc.text('Após assinado, anexe o termo em Suprimentos > Envios a funcionários > Termo.', pageW / 2, 285, { align: 'center' });
+    doc.save(`termo-responsabilidade-envio-${m.id}.pdf`);
+  } catch (e) { toast('Não foi possível gerar o PDF: ' + e.message); }
 }
 
 // ============================================================
@@ -13603,7 +13839,8 @@ const KIND_LABELS = { boleto: 'Boleto', nota_fiscal: 'Nota Fiscal', comprovante:
 const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', contrato: '📑', outro: '📎' };
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
-  colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos' }[t] || 'receber');
+  colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos',
+  envio_termo: 'suprimentos' }[t] || 'receber');
 
 // ---- Fila de aprovação de quilometragem ----
 //
@@ -13888,7 +14125,7 @@ function openAttachments(type, id, label) {
   const editable = canEditPage(pageForType(type));
   // Tipo já sugerido pelo contexto: em Contratos o anexo esperado é o próprio
   // contrato assinado, não faz sentido a pessoa ter de escolher "Outro" e trocar.
-  const kindPadrao = type === 'contrato' ? 'contrato' : 'outro';
+  const kindPadrao = type === 'contrato' ? 'contrato' : type === 'envio_termo' ? 'comprovante' : 'outro';
   const opt = (v, t) => `<option value="${v}"${v === kindPadrao ? ' selected' : ''}>${t}</option>`;
   openModal('Anexos — ' + label, `
     ${editable ? `
