@@ -7570,3 +7570,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 6 entradas conferidas (celular, fixo, com +55, parcial, curto, vazio) e a máscara ao digitar passo a passo.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 162: Suprimentos — etiqueta de envio em PDF
+
+**Solicitação:** botão que gere uma etiqueta com os dados de destinatário e remetente puxando dos cadastros.
+
+**O que mudou:** botão **Etiqueta** em cada envio (tabela e Detalhes) gera um PDF 10×15 cm: logo, destinatário em destaque (nome, logradouro, número, complemento, bairro, município/UF, CEP em caixa e celular), remetente (razão social, CNPJ, endereço, telefone e e-mail de Configurações > Empresa) e rodapé com conteúdo, série e código de rastreio. O destinatário vem da ficha do colaborador (RH) pela nova rota `GET /api/suprimentos/envios/:id/etiqueta`, restrita a quem edita Suprimentos e limitada ao colaborador daquele envio. Se faltar endereço, número, município, UF ou CEP no cadastro, a etiqueta sai mesmo assim e o sistema avisa o que completar. Sem mudança no banco.
+
+**Verificação:** o PDF real foi gerado no navegador com dados de exemplo e renderizado em canvas para conferir o layout. Fluxo logado não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

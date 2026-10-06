@@ -7274,6 +7274,21 @@ app.delete('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, r
   res.json({ ok: true });
 }));
 
+// Dados da etiqueta de envio: endereço do colaborador (ficha do RH) + remetente (Configurações > Empresa).
+// Só devolve o endereço do destinatário DESTE envio, a quem tem edição em Suprimentos.
+app.get('/api/suprimentos/envios/:id/etiqueta', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const env = (await query(`SELECT m.id, m.data, m.quantidade, m.forma_envio, m.codigo_rastreio, m.colaborador_id,
+      i.nome AS item_nome, un.numero_serie, un.patrimonio
+    FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id
+    LEFT JOIN erp_estoque_unidades un ON un.id = m.unidade_id
+    WHERE m.id=$1 AND m.origem='envio'`, [req.params.id]))[0];
+  if (!env) return res.status(404).json({ error: 'Envio não encontrado.' });
+  const dest = (await query(`SELECT name, endereco, endereco_numero, endereco_complemento, bairro, municipio, uf, cep, celular
+    FROM erp_colaboradores WHERE id=$1`, [env.colaborador_id]))[0] || {};
+  const rem = (await query('SELECT legal_name, trade_name, cnpj, address, phone, email FROM erp_company_settings WHERE id=1'))[0] || {};
+  res.json({ envio: env, destinatario: dest, remetente: rem });
+}));
+
 // ---- Unidades físicas (nº de série / patrimônio) dos equipamentos ----
 app.get('/api/suprimentos/unidades', requireAuth, SUP_VIEW, h(async (req, res) => {
   const cond = [], params = [];
