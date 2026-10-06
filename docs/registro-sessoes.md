@@ -7603,3 +7603,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 5 verificações sobre a função real: aluguel calcula sem consumo cadastrado (200 km ÷ 10 × R$ 6,00 = R$ 120,00), carro próprio sem consumo continua travando e com consumo calcula normalmente.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-06 — Sessão 165: Viáticos — pendência de estouro decidida uma única vez
+
+**Solicitação:** o aviso de pendência (descontar do valor liberado: Sim/Não) está correto, mas depois da decisão — aceitando ou recusando o desconto — ele não deve mais aparecer; a decisão é tomada na viagem seguinte e não se pode descontar tanto tempo depois.
+
+**Diagnóstico:** ao escolher "Sim", a pendência era marcada como resolvida; ao escolher "Não", ela continuava em aberto e o aviso voltava em toda nova solicitação.
+
+**O que mudou:** ao salvar a solicitação, a pendência é encerrada nas duas decisões. Novas colunas registram o que foi decidido (`pendencia_decisao`: descontada ou dispensada), quando e em qual solicitação. O aviso passa a dizer que a decisão é tomada agora e que o aviso não aparece mais; o texto da opção "Não" informa que a pendência é encerrada sem desconto. O log de auditoria registra "encerrada sem desconto". Uma pendência encerrada sai do card "Divergentes (estouro)" e dos totais. O campo antigo `descontar_pendencia_ids` continua aceito. A solicitação só encerra pendências do próprio colaborador e que ainda estejam abertas. Quem fecha o modal sem salvar não decide nada.
+
+**Verificação:** 11 verificações do backend com banco simulado (dispensar e descontar encerram e não reaparecem; outro colaborador não é afetado; cliente antigo funciona; sem decisão nada é encerrado).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

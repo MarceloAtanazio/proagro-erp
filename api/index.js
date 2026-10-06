@@ -332,7 +332,7 @@ const AUDIT_MAP = {
     if (pi && pi.valor > 0) {
       msg += pi.decisao === 'descontar'
         ? ` — descontou pendência de ${fmtBRL(pi.valor)} de viagem(ns) anterior(es) (ID ${(pi.ids || []).join(', ')}) do valor liberado`
-        : ` — optou por NÃO descontar a pendência de ${fmtBRL(pi.valor)} (mantida em aberto, viagem(ns) ID ${(pi.ids || []).join(', ')})`;
+        : ` — optou por NÃO descontar a pendência de ${fmtBRL(pi.valor)} (encerrada sem desconto, não aparece mais; viagem(ns) ID ${(pi.ids || []).join(', ')})`;
     }
     return msg;
   },
@@ -6328,10 +6328,17 @@ app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(a
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
     [b.colaborador_id, b.tier, b.categoria_local, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo), b.data_inicio, b.data_fim,
      b.data_expiracao_flash || null, b.valor_solicitado ? Number(b.valor_solicitado) : null, Number(b.valor_liberado), sanitize(b.notes), req.user.id]);
-  // Se o colaborador optou por descontar a pendência anterior automaticamente, marca como resolvida.
-  if (b.descontar_pendencia_ids && Array.isArray(b.descontar_pendencia_ids) && b.descontar_pendencia_ids.length) {
-    await query(`UPDATE erp_viaticos_solicitacoes SET pendencia_resolvida=true WHERE id = ANY($1::int[]) AND colaborador_id=$2`,
-      [b.descontar_pendencia_ids, b.colaborador_id]);
+  // A pendência de viagem anterior é decidida UMA vez, aqui, na viagem seguinte: descontar do valor
+  // liberado ou dispensar. Nas duas decisões ela é encerrada (e registrada) — não pode voltar a
+  // aparecer depois, porque descontar muito tempo depois não faz sentido.
+  const idsPend = (Array.isArray(b.pendencia_ids) ? b.pendencia_ids : (Array.isArray(b.descontar_pendencia_ids) ? b.descontar_pendencia_ids : []))
+    .map(Number).filter(Number.isInteger);
+  if (idsPend.length) {
+    const decisao = b.pendencia_decisao === 'dispensar' ? 'dispensada' : 'descontada';
+    await query(`UPDATE erp_viaticos_solicitacoes
+        SET pendencia_resolvida=true, pendencia_decisao=$3, pendencia_decidida_em=now(), pendencia_decidida_na=$4
+      WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND status='divergente' AND pendencia_resolvida=false`,
+      [idsPend, b.colaborador_id, decisao, ins[0].id]);
   }
   res.json({ ok: true, id: ins[0].id });
 }));

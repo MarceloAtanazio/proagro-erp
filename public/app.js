@@ -5697,8 +5697,9 @@ async function formSolicitacao(existing) {
           const ids = JSON.parse(descIds.value || '[]');
           const valorPend = Number($('#vs-desc-valor').value || 0);
           const aplicar = $('#vs-desc-aplicar').value === 'true';
-          b.pendencia_info = { valor: valorPend, decisao: aplicar ? 'descontar' : 'manter', ids };
-          if (aplicar) { b.valor_liberado = Math.max(0, b.valor_liberado - valorPend); b.descontar_pendencia_ids = ids; }
+          b.pendencia_info = { valor: valorPend, decisao: aplicar ? 'descontar' : 'dispensar', ids };
+          b.pendencia_ids = ids; b.pendencia_decisao = aplicar ? 'descontar' : 'dispensar';
+          if (aplicar) b.valor_liberado = Math.max(0, b.valor_liberado - valorPend);
         }
         try {
           if (isEdit) await api(`/api/viaticos/solicitacoes/${existing.id}`, { method: 'PUT', body: b });
@@ -5752,6 +5753,7 @@ async function formSolicitacao(existing) {
             <button type="button" class="btn sm" id="vs-desc-sim">Sim</button>
             <button type="button" class="btn sm" id="vs-desc-nao">Não</button>
           </div>
+          <div style="margin-top:6px; font-size:12.5px; color:var(--ink-2)">A decisão é tomada agora: ao salvar a solicitação, a pendência é encerrada nas duas opções e este aviso não aparece mais.</div>
           <div id="vs-desc-preview" style="margin-top:8px; font-size:13px; font-weight:600"></div></div>
           <input type="hidden" id="vs-desc-ids" value='${JSON.stringify(r.solicitacoes.map(s => s.id))}'>
           <input type="hidden" id="vs-desc-aplicar" value="true">
@@ -5769,7 +5771,7 @@ async function formSolicitacao(existing) {
           const digitado = Number(liberadoEl.value || 0);
           $('#vs-desc-preview').innerHTML = descontarAtivo
             ? `✅ Será descontado <strong>${brl(r.total)}</strong> no envio. Valor líquido a liberar: <strong>${brl(Math.max(0, digitado - r.total))}</strong> (digitado: ${brl(digitado)}).`
-            : `➡️ A pendência de <strong>${brl(r.total)}</strong> NÃO será descontada — continua em aberto para uma próxima solicitação. Valor liberado: <strong>${brl(digitado)}</strong>.`;
+            : `➡️ A pendência de <strong>${brl(r.total)}</strong> NÃO será descontada e será encerrada — não aparecerá em próximas solicitações. Valor liberado: <strong>${brl(digitado)}</strong>.`;
         };
         $('#vs-desc-sim').onclick = () => { descontarAtivo = true; atualizarPreview(); };
         $('#vs-desc-nao').onclick = () => { descontarAtivo = false; atualizarPreview(); };
