@@ -723,6 +723,13 @@ app.get('/api/payables', requireAuth, requireViewAny(['pagar']), h(async (req, r
 
 const PAYMENT_METHODS = ['boleto', 'pix', 'transferencia'];
 
+// Linha digitável do boleto: só dígitos. 47 = boleto bancário; 48 = conta de consumo/tributo.
+// Só vale para a forma "boleto"; nas outras formas o campo é descartado (como a chave PIX).
+function boletoLinhaDigitos(b, pm) {
+  if (pm !== 'boleto') return null;
+  return String(b.boleto_line == null ? '' : b.boleto_line).replace(/\D/g, '') || null;
+}
+
 function validateTitle(b) {
   if (!sanitize(b.description)) return 'Descrição é obrigatória.';
   if (!sanitize(b.category)) return 'Categoria é obrigatória.';
@@ -731,6 +738,11 @@ function validateTitle(b) {
   if (!isDate(b.due_date)) return 'Data de vencimento inválida.';
   if (b.payment_method && !PAYMENT_METHODS.includes(b.payment_method)) return 'Forma de pagamento inválida.';
   if (b.payment_method === 'pix' && !sanitize(b.pix_key)) return 'Informe a chave PIX para essa forma de pagamento.';
+  // A linha é opcional (o boleto pode ainda não ter chegado), mas, se informada, tem de estar completa.
+  const linha = boletoLinhaDigitos(b, b.payment_method);
+  if (linha && linha.length !== 47 && linha.length !== 48) {
+    return 'Linha digitável inválida: informe os 47 dígitos (boleto bancário) ou os 48 (conta de consumo/tributo).';
+  }
   return null;
 }
 
@@ -738,10 +750,10 @@ app.post('/api/payables', requireAuth, requireEdit('pagar'), h(async (req, res) 
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   const pm = b.payment_method || null;
-  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, payment_method, pix_key, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, payment_method, pix_key, boleto_line, notes, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, sanitize(b.notes), req.user.id]);
+     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, boletoLinhaDigitos(b, pm), sanitize(b.notes), req.user.id]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
@@ -757,20 +769,20 @@ app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, re
     let newSupplierName = '';
     if (b.supplier_id) newSupplierName = (await query('SELECT name FROM erp_suppliers WHERE id=$1', [b.supplier_id]))[0]?.name || '';
     const changes = describeFieldChanges(
-      { ...old, supplier_name: old.supplier_name || '', amount: fmtBRL(old.amount), due_date: brDateBR(old.due_date), payment_method: PM_LABEL_PT[old.payment_method] || '' },
+      { ...old, supplier_name: old.supplier_name || '', boleto_line: old.boleto_line || '', amount: fmtBRL(old.amount), due_date: brDateBR(old.due_date), payment_method: PM_LABEL_PT[old.payment_method] || '' },
       { supplier_name: newSupplierName, description: sanitize(b.description), category: sanitize(b.category), cost_center: sanitize(b.cost_center),
-        document: sanitize(b.document), amount: fmtBRL(b.amount), due_date: brDateBR(b.due_date), payment_method: PM_LABEL_PT[pm] || '', pix_key: pm === 'pix' ? sanitize(b.pix_key) : '', notes: sanitize(b.notes) },
+        document: sanitize(b.document), amount: fmtBRL(b.amount), due_date: brDateBR(b.due_date), payment_method: PM_LABEL_PT[pm] || '', pix_key: pm === 'pix' ? sanitize(b.pix_key) : '', boleto_line: boletoLinhaDigitos(b, pm) || '', notes: sanitize(b.notes) },
       [['supplier_name','Fornecedor'],['description','Descrição'],['category','Categoria'],['cost_center','Centro de custo'],
-       ['document','Documento'],['amount','Valor'],['due_date','Vencimento'],['payment_method','Forma de pagamento'],['pix_key','Chave PIX'],['notes','Observações']]
+       ['document','Documento'],['amount','Valor'],['due_date','Vencimento'],['payment_method','Forma de pagamento'],['pix_key','Chave PIX'],['boleto_line','Linha digitável'],['notes','Observações']]
     );
     req.auditAction = changes.length
       ? `Editou o título a pagar "${old.description}" (ID ${req.params.id}) — ${changes.join('; ')}`
       : `Editou o título a pagar "${old.description}" (ID ${req.params.id}) sem alterações de campo`;
   }
 
-  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, payment_method=$8, pix_key=$9, notes=$10 WHERE id=$11`,
+  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, payment_method=$8, pix_key=$9, boleto_line=$10, notes=$11 WHERE id=$12`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, sanitize(b.notes), req.params.id]);
+     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, boletoLinhaDigitos(b, pm), sanitize(b.notes), req.params.id]);
   res.json({ ok: true });
 }));
 

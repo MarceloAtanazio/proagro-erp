@@ -797,21 +797,22 @@ async function renderPagar() {
   $('#btn-new').onclick = () => formPagar(null, sups);
 
   const exportarPagarCSV = () => exportCSV('contas_a_pagar',
-    ['ID','Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','Valor','Status','Pagamento'],
+    ['ID','Vencimento','Descricao','Fornecedor','Categoria','CentroCusto','Documento','FormaPagamento','ChavePix','LinhaDigitavel','Valor','Status','Pagamento'],
     lastFiltered.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
-      r.payment_method || '', r.payment_method === 'pix' ? (r.pix_key || '') : '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
+      r.payment_method || '', r.payment_method === 'pix' ? (r.pix_key || '') : '', r.payment_method === 'boleto' ? boletoFormatarLinha(r.boleto_line) : '', String(r.amount).replace('.', ','), r.status, r.payment_date || '']));
 
   const exportarPagarExcel = () => {
     if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
     const PM_LABELS_XL = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
     const wsData = [
-      ['ID', 'Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Documento', 'Forma de Pagamento', 'Chave PIX', 'Valor', 'Status', 'Pagamento'],
+      ['ID', 'Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Documento', 'Forma de Pagamento', 'Chave PIX', 'Linha digitável', 'Valor', 'Status', 'Pagamento'],
       ...lastFiltered.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
         r.payment_method ? (PM_LABELS_XL[r.payment_method] || r.payment_method) : '', r.payment_method === 'pix' ? (r.pix_key || '') : '',
+        r.payment_method === 'boleto' ? boletoFormatarLinha(r.boleto_line) : '',
         Number(r.amount), r.status === 'pago' ? 'Pago' : (r.due_date < todayISO() ? 'Vencido' : 'Pendente'), r.payment_date || ''])
     ];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    for (let i = 1; i <= lastFiltered.length; i++) { const cell = ws['J' + (i + 1)]; if (cell) cell.z = '"R$" #,##0.00'; }
+    for (let i = 1; i <= lastFiltered.length; i++) { const cell = ws['K' + (i + 1)]; if (cell) cell.z = '"R$" #,##0.00'; }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Contas a Pagar');
     XLSX.writeFile(wb, `contas_a_pagar_${todayISO()}.xlsx`);
@@ -851,6 +852,23 @@ function baixaPagar(r) {
      }}]);
 }
 
+// Linha digitável do boleto. 47 dígitos = boleto bancário (AAAAA.AAAAA BBBBB.BBBBBB CCCCC.CCCCCC D EEEEEEEEEEEEEE);
+// 48 dígitos, começando por 8 = conta de consumo/tributo (quatro blocos "NNNNNNNNNNN-D").
+function boletoFormatarLinha(v) {
+  const d = String(v == null ? '' : v).replace(/\D/g, '').slice(0, 48);
+  if (d[0] === '8') return (d.match(/.{1,12}/g) || []).map(g => g.length > 11 ? g.slice(0, 11) + '-' + g.slice(11) : g).join(' ');
+  const partes = [[0, 5, '.'], [5, 10, ' '], [10, 15, '.'], [15, 21, ' '], [21, 26, '.'], [26, 32, ' '], [32, 33, ' '], [33, 47, '']];
+  let out = '';
+  for (const [a, b, sep] of partes) {
+    const t = d.slice(a, b);
+    if (!t) break;
+    out += t;
+    if (t.length === b - a && d.length > b) out += sep;
+  }
+  return out;
+}
+const boletoLinhaValida = v => { const n = String(v == null ? '' : v).replace(/\D/g, '').length; return n === 47 || n === 48; };
+
 function formPagar(r, sups) {
   const isEdit = !!r; r = r || {};
   const PM_LABELS = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
@@ -875,13 +893,17 @@ function formPagar(r, sups) {
         <small style="color:var(--muted); display:block; margin-top:-8px">Preenchida automaticamente com a chave cadastrada no fornecedor — pode editar se for diferente.</small>
       </div>
     </div>
+    <div id="p-boleto-wrap" style="display:${r.payment_method === 'boleto' ? 'block' : 'none'}">
+      ${fld('p-boleto', 'Linha digitável do boleto', 'text', boletoFormatarLinha(r.boleto_line), 'inputmode="numeric" autocomplete="off" placeholder="00000.00000 00000.000000 00000.000000 0 00000000000000"')}
+      <small style="color:var(--muted); display:block; margin:-8px 0 12px">Cole ou digite os 47 dígitos do boleto (48 nas contas de consumo). Opcional — pode ser preenchida depois.</small>
+    </div>
     ${fld('p-notes', 'Observações', 'text', r.notes || '')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: isEdit ? 'Salvar alterações' : 'Criar título', cls: 'primary', onClick: async () => {
         const body = {
           description: $('#p-desc').value, supplier_id: $('#p-sup').value || null, category: $('#p-cat').value,
           cost_center: $('#p-cc').value, document: $('#p-doc').value, amount: $('#p-val').value,
-          due_date: $('#p-due').value, payment_method: $('#p-pm').value, pix_key: $('#p-pix').value, notes: $('#p-notes').value
+          due_date: $('#p-due').value, payment_method: $('#p-pm').value, pix_key: $('#p-pix').value, boleto_line: $('#p-boleto').value, notes: $('#p-notes').value
         };
         try {
           if (isEdit) await api('/api/payables/' + r.id, { method: 'PUT', body });
@@ -889,8 +911,10 @@ function formPagar(r, sups) {
           closeModal(); toast(isEdit ? 'Título atualizado.' : 'Título criado.'); renderPagar();
         } catch (e) { modalError(e.message); }
      }}]);
+  rhLigarCampo('p-boleto', boletoFormatarLinha, boletoLinhaValida, 'Linha digitável incompleta: informe 47 dígitos (boleto) ou 48 (conta de consumo).');
   $('#p-pm').onchange = () => {
     $('#p-pix-wrap').style.display = $('#p-pm').value === 'pix' ? 'block' : 'none';
+    $('#p-boleto-wrap').style.display = $('#p-pm').value === 'boleto' ? 'block' : 'none';
     if ($('#p-pm').value === 'pix') {
       const sup = sups.find(s => String(s.id) === $('#p-sup').value);
       if (sup && sup.pix_key) $('#p-pix').value = sup.pix_key;

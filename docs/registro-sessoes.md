@@ -7629,3 +7629,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 22 verificações do backend com banco simulado (inclui 403 para quem não é administrador, bloqueio fora de Em Approvals e colaborador trocado na edição) e 19 do componente no navegador, executando o código real do `app.js`. Fluxo logado não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-14 — Sessão 167: Contas a Pagar — linha digitável do boleto
+
+**Solicitação:** ao escolher "Boleto" em "Forma de pagamento", liberar um campo igual ao da chave PIX para registrar a linha digitável do boleto.
+
+**O que mudou:** nova coluna `erp_payables.boleto_line`. No formulário de título, escolher Boleto abre o campo **Linha digitável do boleto** (e esconde o da chave PIX, como já acontecia ao contrário). O campo ocupa a linha inteira, porque a linha digitável não cabe na meia coluna do PIX, e é **opcional** — diferente da chave PIX, que é obrigatória — para não travar a edição de boletos já lançados nem títulos criados antes de o boleto chegar. Máscara ao digitar ou colar: 47 dígitos como `AAAAA.AAAAA BBBBB.BBBBBB CCCCC.CCCCCC D EEEEEEEEEEEEEE` (boleto bancário) e 48 dígitos como quatro blocos `NNNNNNNNNNN-D` (conta de consumo/tributo, começando por 8); ao sair do campo com a linha incompleta aparece o aviso (reaproveita `rhLigarCampo`). No servidor: grava só os dígitos, exige 47 ou 48 quando informada, descarta o valor se a forma não for boleto e registra a mudança no log de auditoria. As exportações CSV e Excel ganharam a coluna "Linha digitável" (o formato de moeda do Excel passou da coluna J para a K).
+
+**Verificação:** 21 verificações de backend e máscara (grava só dígitos, linha incompleta recusada, PIX descarta a linha, trocar a forma apaga, digitação aos poucos) e 14 do formulário real no navegador (campo aparece e some conforme a forma, máscara, aviso, corpo enviado ao salvar, boleto antigo abre formatado). Fluxo logado não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
