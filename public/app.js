@@ -720,7 +720,7 @@ async function renderPagar() {
       <button class="btn" id="btn-export">Exportar</button>
       <button class="btn primary" id="btn-new">+ Novo título</button>
     </div>
-    <div class="table-wrap"><table id="tbl" class="tbl-fin"></table></div>`;
+    <div class="table-wrap"><table id="tbl" class="tbl-fin tbl-pagar"></table></div>`;
 
   // Mantém o painel de filtros fixo logo abaixo da barra superior ao rolar.
   const topbarEl = document.querySelector('.topbar');
@@ -748,10 +748,10 @@ async function renderPagar() {
     $('#tbl').innerHTML = `
       <colgroup>
         <col class="c-id"><col class="c-venc"><col class="c-desc"><col class="c-forn"><col class="c-pm">
-        <col class="c-val"><col class="c-status"><col class="c-conc"><col class="c-acoes">
+        <col class="c-val"><col class="c-status"><col class="c-aprov"><col class="c-conc"><col class="c-acoes">
       </colgroup>
       <thead><tr><th>ID</th><th>Vencimento</th><th>Descrição</th><th>Fornecedor</th><th>Forma de<br>Pagamento</th>
-        <th class="num">Valor</th><th>Status</th><th class="c-conc-cell" title="Conciliado com o extrato bancário?">Conc.</th><th class="actions">Ações</th></tr></thead>
+        <th class="num">Valor</th><th>Status</th><th class="c-aprov-cell" title="Aprovação da diretoria: anexo do tipo Aprovação neste título">Aprov.</th><th class="c-conc-cell" title="Conciliado com o extrato bancário?">Conc.</th><th class="actions">Ações</th></tr></thead>
       <tbody>${filtered.map(r => {
         const late = r.status === 'pendente' && r.due_date < today;
         return `<tr>
@@ -764,6 +764,8 @@ async function renderPagar() {
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
+          <td class="c-aprov-cell">${(() => { const i = pagarAprovInfo(r.aprovacao_count > 0, r.due_date);
+            return `<button type="button" class="aprov-btn ${i.cls}" data-aprov="${r.id}" data-venc="${esc(r.due_date)}" title="${esc(i.titulo)}" aria-label="Aprovação">${i.glifo}</button>`; })()}</td>
           <td class="c-conc-cell">${r.status !== 'pago'
             ? '<span class="conc-na" title="Título ainda não baixado — não há o que conciliar">—</span>'
             : r.reconciled
@@ -777,14 +779,15 @@ async function renderPagar() {
             <button class="btn-ic" data-edit="${r.id}" title="Editar" aria-label="Editar">✎</button>
             <button class="btn-ic perigo" data-del="${r.id}" title="Excluir" aria-label="Excluir">🗑</button>
           </td></tr>`;
-      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
-      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="3"></td></tr></tfoot>`;
+      }).join('') || '<tr><td colspan="10"><div class="empty">Nenhum título encontrado.</div></td></tr>'}</tbody>
+      <tfoot><tr><td colspan="5">Total filtrado (${filtered.length})</td><td class="num">${brl(total)}</td><td colspan="4"></td></tr></tfoot>`;
 
 
 
     $('#tbl').querySelectorAll('[data-pay]').forEach(b => b.onclick = () => baixaPagar(rows.find(r => r.id == b.dataset.pay)));
     $('#tbl').querySelectorAll('[data-unpay]').forEach(b => b.onclick = async () => { await api(`/api/payables/${b.dataset.unpay}/unpay`, { method: 'POST' }); toast('Baixa estornada.'); renderPagar(); });
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formPagar(rows.find(r => r.id == b.dataset.edit), sups));
+    $('#tbl').querySelectorAll('[data-aprov]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.aprov); openAttachments('payable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('payable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => confirmDelete('título', `/api/payables/${b.dataset.del}`, renderPagar));
   };
@@ -14359,6 +14362,22 @@ async function openAttachmentFile(attId, parentType, parentId, parentLabel) {
   }
 }
 
+// Aprovação da diretoria em Contas a Pagar (anexo do tipo "Aprovação"). A cobrança vale a partir desta data de
+// VENCIMENTO: o que vence antes aparece com "—" em vez de ✘, para não acusar erro no que veio antes da regra.
+// Título antigo que tenha o anexo mostra ✔ do mesmo jeito.
+const PAGAR_APROV_A_PARTIR_DE = '2026-10-14';
+function pagarAprovInfo(tem, venc) {
+  if (tem) return { cls: 'conc-sim', glifo: '✔', titulo: 'Aprovação da diretoria anexada — clique para ver os anexos' };
+  if (String(venc || '').slice(0, 10) >= PAGAR_APROV_A_PARTIR_DE) return { cls: 'conc-nao', glifo: '✘', titulo: 'Sem anexo de Aprovação — clique para anexar' };
+  return { cls: 'conc-na', glifo: '—', titulo: 'Vencimento anterior a ' + brDate(PAGAR_APROV_A_PARTIR_DE) + ': aprovação não cobrada nesta tabela' };
+}
+function updateAprovCell(id, tem) {
+  const b = document.querySelector(`[data-aprov="${id}"]`);
+  if (!b) return;
+  const i = pagarAprovInfo(tem, b.dataset.venc);
+  b.className = 'aprov-btn ' + i.cls; b.textContent = i.glifo; b.title = i.titulo;
+}
+
 function updateAttBadge(type, id, n) {
   const b = document.querySelector(`[data-att="${type}:${id}"]`);
   if (b) b.textContent = '📎' + (n ? ' ' + n : '');
@@ -14396,6 +14415,7 @@ function openAttachments(type, id, label) {
     try {
       const items = await api(`/api/attachments/${type}/${id}`);
       updateAttBadge(type, id, items.length);
+      if (type === 'payable') updateAprovCell(id, items.some(a => a.kind === 'aprovacao'));
       const box = $('#att-list');
       if (!box) return;
       if (!items.length) { box.innerHTML = '<div class="empty">Nenhum documento anexado.</div>'; return; }

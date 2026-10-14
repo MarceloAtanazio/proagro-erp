@@ -772,6 +772,21 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .tbl-fin .conc-nao { color: var(--danger); }
 .tbl-fin .conc-na  { color: var(--muted); cursor: default; }
 
+/* ===== Contas a Pagar: coluna "Aprov." e ajustes de leitura =====
+   Aprov. e Conc. são colunas de SÍMBOLO: mesma largura, cabeçalho e conteúdo centralizados, para os dois
+   símbolos ficarem alinhados na vertical. Aprov. é botão (abre os anexos), com a mesma aparência de Conc.
+   A tabela fica 66px mais larga que a de Contas a Receber por causa dela. */
+.tbl-fin.tbl-pagar { min-width: 1302px; }
+.tbl-fin col.c-aprov { width: 66px; }
+.tbl-fin .c-aprov-cell { text-align: center; padding-left: 8px; padding-right: 8px; }
+.tbl-fin .aprov-btn { background: none; border: 0; border-radius: 6px; padding: 4px 8px; font: inherit;
+  font-size: 15px; font-weight: 700; line-height: 1; cursor: pointer; }
+.tbl-fin .aprov-btn:hover { background: #F0F4F1; }
+.tbl-fin .aprov-btn:focus-visible { outline: 2px solid var(--verde-500); outline-offset: 1px; }
+/* Linha com ícones e texto: centralizar na vertical evita o ícone "caído" em relação ao texto. */
+.tbl-fin.tbl-pagar td { vertical-align: middle; }
+.tbl-fin.tbl-pagar td.num { font-variant-numeric: tabular-nums; }
+
 /* Botao de icone da grade: o rotulo vive no title e no aria-label, nao no
    proprio botao. Sao as mesmas quatro acoes de antes, num terco da largura --
    com texto elas ocupavam 272px, a coluna fixa mais larga da tabela, e ainda

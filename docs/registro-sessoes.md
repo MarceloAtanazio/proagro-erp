@@ -7651,3 +7651,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 9 verificações (a API aceita e grava `aprovacao`, `contrato` continua aceito e tipo desconhecido cai em `outro`; a lista do modal, executando a função real do `app.js`, troca a opção em Contas a Pagar e não muda em Contratos nem em Contas a Receber). Fluxo logado não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-14 — Sessão 169: Contas a Pagar — coluna "Aprov." e tabela revisada
+
+**Solicitação:** coluna "APROV." entre Status e Conc., marcando ✔ quando o título tem anexo do tipo "Aprovação" e ✘ quando não tem (mesmos símbolos da coluna Conc.); valer a partir da data do dia, com "—" para o que vem antes, para não marcar erro indevido; e ajustar todas as colunas para uma tabela excelente em UX.
+
+**O que mudou:** a API passou a devolver `aprovacao_count` por título. A tabela ganhou a coluna **Aprov.** (✔ verde, ✘ vermelho, "—" cinza), que é um botão: abre os anexos do título e, ao anexar ou excluir uma Aprovação, a célula atualiza na hora. A regra usa o **vencimento** como data de corte (`PAGAR_APROV_A_PARTIR_DE = 2026-10-14`): vencimento a partir dessa data sem anexo mostra ✘; antes disso mostra "—"; título antigo que já tenha o anexo mostra ✔. Revisão da tabela: Aprov. e Conc. com a mesma largura (66 px), cabeçalho e símbolo centralizados no mesmo eixo; alinhamento vertical ao centro (o ícone deixa de ficar "caído" em relação ao texto); algarismos de largura fixa nos valores; largura mínima da tabela de Contas a Pagar ajustada (+66 px) sem afetar Contas a Receber (regras restritas à classe `tbl-pagar`). Dicas (tooltip) explicam cada símbolo. Exportações e filtros não mudaram.
+
+**Verificação:** o app real (`app.js` + `styles.css`) foi aberto com dados simulados numa tela de 1900 px: 12 linhas com os símbolos esperados (—, ✔, ✘), nenhuma célula cortada, centros verticais iguais em todas as células, centros horizontais de Aprov. e Conc. consistentes, clique abre os anexos da linha certa e a célula troca ✘↔✔ ao anexar/excluir. A consulta nova foi conferida no banco real (somente leitura). Fluxo logado real não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
