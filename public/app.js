@@ -14078,8 +14078,8 @@ function rhAnexarCurriculo(admissaoId) {
 // ============================================================
 // Anexos (boletos, notas fiscais, comprovantes)
 // ============================================================
-const KIND_LABELS = { boleto: 'Boleto', nota_fiscal: 'Nota Fiscal', comprovante: 'Comprovante', contrato: 'Contrato', outro: 'Outro' };
-const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', contrato: '📑', outro: '📎' };
+const KIND_LABELS = { boleto: 'Boleto', nota_fiscal: 'Nota Fiscal', comprovante: 'Comprovante', contrato: 'Contrato', aprovacao: 'Aprovação', outro: 'Outro' };
+const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', contrato: '📑', aprovacao: '🖋️', outro: '📎' };
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos',
@@ -14380,7 +14380,7 @@ function openAttachments(type, id, label) {
             ${opt('boleto', 'Boleto')}
             ${opt('nota_fiscal', 'Nota Fiscal')}
             ${opt('comprovante', 'Comprovante de pagamento')}
-            ${opt('contrato', 'Contrato assinado')}
+            ${type === 'payable' ? opt('aprovacao', 'Aprovação') : opt('contrato', 'Contrato assinado')}
             ${opt('outro', 'Outro')}
           </select>
           <input type="file" id="att-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xml,.xls,.xlsx,.docx">

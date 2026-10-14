@@ -7640,3 +7640,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 21 verificações de backend e máscara (grava só dígitos, linha incompleta recusada, PIX descarta a linha, trocar a forma apaga, digitação aos poucos) e 14 do formulário real no navegador (campo aparece e some conforme a forma, máscara, aviso, corpo enviado ao salvar, boleto antigo abre formatado). Fluxo logado não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-14 — Sessão 168: Contas a Pagar — anexo do tipo "Aprovação"
+
+**Solicitação:** nos anexos de Contas a Pagar, em "Adicionar documento", substituir "Contrato assinado" por "Aprovação" — o documento do Approvals com a aprovação da diretoria para o pagamento.
+
+**O que mudou:** novo tipo de anexo `aprovacao` (constraint `erp_attachments_kind_check` e `ATTACH_KINDS` da API; rótulo "Aprovação" e ícone na lista de anexos). O seletor do modal mostra "Aprovação" no lugar de "Contrato assinado" **somente em Contas a Pagar**: o mesmo modal serve a Contratos (onde "Contrato assinado" continua fazendo sentido), a Contas a Receber e outros módulos, e existem anexos de seguro de colaborador com o tipo `contrato`. Nenhum anexo de Contas a Pagar usava "Contrato", então não houve migração de dados.
+
+**Verificação:** 9 verificações (a API aceita e grava `aprovacao`, `contrato` continua aceito e tipo desconhecido cai em `outro`; a lista do modal, executando a função real do `app.js`, troca a opção em Contas a Pagar e não muda em Contratos nem em Contas a Receber). Fluxo logado não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

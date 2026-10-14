@@ -910,7 +910,7 @@ const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)',
 // documento de colega. Por isso estes tipos exigem permissão de EDIÇÃO até
 // para visualizar — diferente dos comprovantes de despesa.
 const ehAnexoColaborador = type => Object.prototype.hasOwnProperty.call(ATTACH_TIPOS_COLAB, type);
-const ATTACH_KINDS = ['boleto', 'nota_fiscal', 'comprovante', 'contrato', 'outro'];
+const ATTACH_KINDS = ['boleto', 'nota_fiscal', 'comprovante', 'contrato', 'aprovacao', 'outro'];
 const MAX_ATTACH_BYTES = 3 * 1024 * 1024; // 3 MB por arquivo (limite seguro p/ Vercel)
 // Formatos aceitos como comprovante: os que a operação realmente usa
 // (comprovante em PDF/foto, XML de NFe, planilha e documento). Ficam de fora
