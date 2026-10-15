@@ -7662,3 +7662,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** o app real (`app.js` + `styles.css`) foi aberto com dados simulados numa tela de 1900 px: 12 linhas com os símbolos esperados (—, ✔, ✘), nenhuma célula cortada, centros verticais iguais em todas as células, centros horizontais de Aprov. e Conc. consistentes, clique abre os anexos da linha certa e a célula troca ✘↔✔ ao anexar/excluir. A consulta nova foi conferida no banco real (somente leitura). Fluxo logado real não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-15 — Sessão 170: Contas a Pagar — aprovação compartilhada entre vários títulos
+
+**Solicitação:** pagamentos como o auxílio home-office (aprovação geral) e FGTS/Tributos Federais (uma aprovação só) compartilham a mesma aprovação; como tratar isso, antes de montar o pacote ZIP da tesouraria. Decisões do Marcelo: só os títulos **filtrados na tela** entram na seleção; o LEIAME do pacote será em espanhol (México).
+
+**O que mudou:** nova tabela `erp_payable_aprovacoes` (vínculos entre títulos e um anexo do tipo Aprovação): o arquivo é guardado **uma vez só**, no título onde foi anexado, e os demais títulos se ligam a ele. No modal de anexos de Contas a Pagar, ao escolher "Aprovação" aparece **"Esta aprovação vale também para"** com os títulos filtrados na tela e ainda sem aprovação (marcar, marcar todos, limpar); ao anexar, os marcados são vinculados. Há também **"Usar uma aprovação já anexada…"** (liga este título, e os marcados, a uma aprovação existente). Nos títulos vinculados, a aprovação aparece como compartilhada, com **Desvincular** (tira só aquele título); no título dono, mostra "vale para N outros títulos" e **avisa antes de excluir** o arquivo, porque a exclusão remove a aprovação de todos. A coluna **Aprov.** e o contador 📎 consideram os vínculos, inclusive ao filtrar de novo e depois de excluir. Novas rotas: `POST /api/payables/aprovacoes/vincular`, `DELETE /api/payables/:id/aprovacoes/:attId`, `GET /api/payables/aprovacoes/existentes` e `POST /api/payables/pacote` (metadados de boletos e aprovações para a etapa 2). Só anexos do tipo Aprovação podem ser compartilhados; vincular exige edição em Contas a Pagar; até 500 títulos por vez.
+
+**Verificação:** 16 verificações das rotas (validações, duplicidade, permissão, formato das listas), 20 no app real com servidor simulado (filtrar Home-Office, anexar uma vez e vincular 4 títulos, desvincular, excluir o dono com aviso, usar aprovação existente) e as consultas novas conferidas no banco real (somente leitura). No teste apareceu e foi corrigido um defeito: depois de excluir o arquivo do dono, os vinculados continuavam com ✔ na tabela. Fluxo logado real não testado.
+
+**Próxima etapa:** o pacote ZIP (PDF + Excel + boletos + aprovações + LEIAME.txt em espanhol do México).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

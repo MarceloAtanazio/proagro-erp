@@ -787,6 +787,21 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .tbl-fin.tbl-pagar td { vertical-align: middle; }
 .tbl-fin.tbl-pagar td.num { font-variant-numeric: tabular-nums; }
 
+/* ===== Aprovação compartilhada (modal de anexos de Contas a Pagar) ===== */
+.att-vinc { border: 1px solid var(--line); border-radius: 10px; background: #FAFBFA; padding: 10px 12px; }
+.att-vinc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; font-size: 13px; }
+.att-vinc-head small { color: var(--muted); }
+.att-vinc-bts { display: flex; gap: 6px; flex: none; }
+.att-vinc-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.att-vinc .att-vinc-item { display: grid; margin: 0; font-weight: 400; color: var(--ink); grid-template-columns: 18px 44px 1fr auto; align-items: center; gap: 8px; padding: 7px 10px;
+  border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.att-vinc .att-vinc-item:last-child { border-bottom: 0; }
+.att-vinc .att-vinc-item:hover { background: #F4F8F5; }
+.att-vinc .att-vinc-item .v-id { color: var(--muted); font-variant-numeric: tabular-nums; }
+.att-vinc .att-vinc-item .v-desc small { display: block; color: var(--muted); font-size: 11.5px; }
+.att-vinc .att-vinc-item .v-val { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.att-vinc-count { display: block; margin-top: 6px; color: var(--muted); }
+
 /* Botao de icone da grade: o rotulo vive no title e no aria-label, nao no
    proprio botao. Sao as mesmas quatro acoes de antes, num terco da largura --
    com texto elas ocupavam 272px, a coluna fixa mais larga da tabela, e ainda
