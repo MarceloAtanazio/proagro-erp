@@ -7675,3 +7675,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Próxima etapa:** o pacote ZIP (PDF + Excel + boletos + aprovações + LEIAME.txt em espanhol do México).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-15 — Sessão 171: Contas a Pagar — pacote ZIP da tesouraria
+
+**Solicitação:** a cada semana, enviar à tesouraria as contas a pagar para efetivar os pagamentos; opção dentro de "Exportar" que gere um pacote (ZIP) com o PDF e o Excel das contas filtradas, os boletos das contas que têm boleto e as aprovações. Decisões do Marcelo: só o que estiver **filtrado na tela** entra; o `LEIAME.txt` traz, para cada aprovação, os pagamentos que ela cobre e o total, **em espanhol do México**.
+
+**O que mudou:** em Exportar há agora **"Pacote ZIP (tesouraria)"**. O ZIP é montado no navegador (JSZip, carregado de CDN) e traz: `Contas_a_Pagar_AAAA-MM-DD.pdf` e `.xlsx` (com as colunas novas **Aprovação** e **Boleto**), `Boletos/` (um arquivo por título: `ID - descrição - fornecedor`), `Aprovacoes/` (`Aprov-01 - …`, `Aprov-02 - …`: cada aprovação **uma vez só**, mesmo quando compartilhada por vários títulos) e `LEIAME.txt` em espanhol (México): resumo e total (por pagar × já pagos, por forma de pagamento), conteúdo do pacote, cada aprovação com os pagamentos que cobre e o total coberto, pagamentos **sin aprobación**, boletos faltando, arquivos que não puderam ser baixados e um glossário português→espanhol das colunas. O arquivo é UTF-8 com BOM e quebras CRLF, para abrir bem no Bloco de Notas. Uma janela de progresso acompanha o download dos anexos (3 por vez) e, no fim, mostra o resumo com avisos (títulos sem aprovação, boleto faltando, ZIP acima de 20 MB, que pode passar do limite do e-mail). Os anexos são baixados **antes** de gerar o PDF e o Excel, de modo que "Boleto: Sim" e "Aprov-01" nunca apontam para um arquivo que ficou de fora. Títulos já pagos entram marcados "YA PAGADO" e não geram avisos; a regra de cobrança de aprovação continua valendo a partir dos vencimentos de 14/10/2026. O PDF e o Excel individuais continuam como antes (o texto dos filtros do PDF passou a vir de um helper compartilhado e o Excel ganhou largura de colunas).
+
+**Verificação:** no app real (`app.js` + `styles.css` + `index.html`) com servidor simulado: sem filtro (11 títulos, 3 aprovações, 3 boletos), com filtros de status e período (só os 9 filtrados; filtros descritos em espanhol), falha ao baixar um boleto (o pacote sai, o boleto fica de fora, o Excel mostra "Falta" e o LEIAME lista o arquivo) e filtro sem resultado (avisa e não gera). Conteúdo do ZIP aberto e conferido: nomes de arquivo, Excel (cabeçalhos e valores), PDF válido e LEIAME completo. Fluxo logado real, com os anexos de verdade, não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

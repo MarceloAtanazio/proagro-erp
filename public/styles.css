@@ -802,6 +802,11 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .att-vinc .att-vinc-item .v-val { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .att-vinc-count { display: block; margin-top: 6px; color: var(--muted); }
 
+/* ===== Pacote ZIP da tesouraria: janela de progresso e resumo ===== */
+.pk-barra { height: 8px; background: #E4EAE6; border-radius: 6px; overflow: hidden; }
+.pk-barra > div { height: 100%; width: 0; background: var(--verde-500); transition: width .2s ease; }
+.pk-resumo { margin: 6px 0 0 18px; padding: 0; font-size: 13px; line-height: 1.55; }
+
 /* Botao de icone da grade: o rotulo vive no title e no aria-label, nao no
    proprio botao. Sao as mesmas quatro acoes de antes, num terco da largura --
    com texto elas ocupavam 272px, a coluna fixa mais larga da tabela, e ainda

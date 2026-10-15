@@ -806,42 +806,292 @@ async function renderPagar() {
 
   const exportarPagarExcel = () => {
     if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando. Tente novamente em instantes.');
-    const PM_LABELS_XL = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
-    const wsData = [
-      ['ID', 'Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Documento', 'Forma de Pagamento', 'Chave PIX', 'Linha digitável', 'Valor', 'Status', 'Pagamento'],
-      ...lastFiltered.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
-        r.payment_method ? (PM_LABELS_XL[r.payment_method] || r.payment_method) : '', r.payment_method === 'pix' ? (r.pix_key || '') : '',
-        r.payment_method === 'boleto' ? boletoFormatarLinha(r.boleto_line) : '',
-        Number(r.amount), r.status === 'pago' ? 'Pago' : (r.due_date < todayISO() ? 'Vencido' : 'Pendente'), r.payment_date || ''])
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    for (let i = 1; i <= lastFiltered.length; i++) { const cell = ws['K' + (i + 1)]; if (cell) cell.z = '"R$" #,##0.00'; }
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Contas a Pagar');
-    XLSX.writeFile(wb, `contas_a_pagar_${todayISO()}.xlsx`);
+    XLSX.writeFile(pagarMontarExcel(lastFiltered), `contas_a_pagar_${todayISO()}.xlsx`);
     toast('Excel exportado.');
   };
 
-  const exportarPagarPDF = () => {
-    const parts = [];
-    if ($('#q').value) parts.push(`Busca: "${$('#q').value}"`);
-    if ($('#f-status').value) parts.push('Status: ' + ({ pendente: 'Pendentes', vencido: 'Vencidos', pago: 'Pagos' }[$('#f-status').value]));
-    if ($('#f-cat').value) parts.push('Categoria: ' + $('#f-cat').value);
-    if ($('#f-cc').value) parts.push('Centro de custo: ' + $('#f-cc').value);
-    if ($('#f-de').value || $('#f-ate').value) parts.push(`Período: ${$('#f-de').value ? brDate($('#f-de').value) : '—'} a ${$('#f-ate').value ? brDate($('#f-ate').value) : '—'}`);
-    exportPagarPDF(lastFiltered, parts.join('   ·   '));
-  };
+  const exportarPagarPDF = () => exportPagarPDF(lastFiltered, pagarFiltrosTexto('pt'));
 
   $('#btn-export').onclick = () => openModal('Exportar Contas a Pagar',
-    `<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>`,
+    '<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>' +
+    '<p style="font-size:12.5px; color:var(--muted); margin-top:8px">O <strong>pacote ZIP da tesouraria</strong> reúne, dos títulos filtrados, o PDF, o Excel, os boletos e as aprovações (cada aprovação uma vez só), mais um LEIAME.txt em espanhol.</p>',
     [
       { label: 'Cancelar', onClick: closeModal },
       { label: 'CSV', onClick: () => { closeModal(); exportarPagarCSV(); } },
       { label: 'Excel', onClick: () => { closeModal(); exportarPagarExcel(); } },
-      { label: 'PDF', cls: 'primary', onClick: () => { closeModal(); exportarPagarPDF(); } }
+      { label: 'PDF', onClick: () => { closeModal(); exportarPagarPDF(); } },
+      { label: 'Pacote ZIP (tesouraria)', cls: 'primary', onClick: () => { closeModal(); pagarGerarPacote(lastFiltered); } }
     ]);
 
   draw();
+}
+
+// ============================================================
+// Contas a Pagar — pacote ZIP para a tesouraria
+// ============================================================
+// Excel das contas filtradas. Com `refs` (pacote da tesouraria) ganha as colunas "Aprovação" e "Boleto".
+function pagarMontarExcel(rows, refs) {
+  const PM_LABELS_XL = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferência' };
+  const extra = !!refs;
+  const wsData = [
+    ['ID', 'Vencimento', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Documento', 'Forma de Pagamento', 'Chave PIX', 'Linha digitável', 'Valor', 'Status', 'Pagamento',
+      ...(extra ? ['Aprovação', 'Boleto'] : [])],
+    ...rows.map(r => [r.id, r.due_date, r.description, r.supplier_name || '', r.category, r.cost_center || '', r.document || '',
+      r.payment_method ? (PM_LABELS_XL[r.payment_method] || r.payment_method) : '', r.payment_method === 'pix' ? (r.pix_key || '') : '',
+      r.payment_method === 'boleto' ? boletoFormatarLinha(r.boleto_line) : '',
+      Number(r.amount), r.status === 'pago' ? 'Pago' : (r.due_date < todayISO() ? 'Vencido' : 'Pendente'), r.payment_date || '',
+      ...(extra ? [(refs[r.id] && refs[r.id].aprov) || '—', (refs[r.id] && refs[r.id].boleto) || '—'] : [])])
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  for (let i = 1; i <= rows.length; i++) { const cell = ws['K' + (i + 1)]; if (cell) cell.z = '"R$" #,##0.00'; }
+  ws['!cols'] = [6, 11, 46, 34, 18, 20, 14, 18, 26, 54, 14, 11, 12, 18, 10].map(w => ({ wch: w })).slice(0, extra ? 15 : 13);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Contas a Pagar');
+  return wb;
+}
+
+// Descrição dos filtros da tela, em português (cabeçalho do PDF) e em espanhol (LEIAME do pacote).
+function pagarFiltrosTexto(idioma) {
+  const es = idioma === 'es', p = [];
+  const v = id => ($('#' + id) ? $('#' + id).value : '');
+  if (v('q')) p.push((es ? 'Búsqueda: "' : 'Busca: "') + v('q') + '"');
+  if (v('f-status')) p.push((es ? 'Estatus: ' : 'Status: ') + (es ? { pendente: 'Pendientes', vencido: 'Vencidos', pago: 'Pagados' } : { pendente: 'Pendentes', vencido: 'Vencidos', pago: 'Pagos' })[v('f-status')]);
+  if (v('f-cat')) p.push((es ? 'Categoría: ' : 'Categoria: ') + v('f-cat'));
+  if (v('f-cc')) p.push((es ? 'Centro de costo: ' : 'Centro de custo: ') + v('f-cc'));
+  if (v('f-de') || v('f-ate')) p.push(`${es ? 'Periodo' : 'Período'}: ${v('f-de') ? brDate(v('f-de')) : '—'} ${es ? 'a' : 'a'} ${v('f-ate') ? brDate(v('f-ate')) : '—'}`);
+  return p.join(es ? ' · ' : '   ·   ');
+}
+
+// Nome de arquivo seguro para o ZIP (sem caracteres proibidos no Windows), preservando acentos.
+function pagarNomeArquivo(txt, max = 70) {
+  const t = String(txt == null ? '' : txt).replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max).replace(/[. ]+$/, '');
+  return t || 'sem nome';
+}
+const pagarExtensao = nome => { const m = /\.[A-Za-z0-9]{1,5}$/.exec(String(nome || '')); return m ? m[0].toLowerCase() : '.pdf'; };
+
+function pagarBaixarBlob(blob, nome) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nome; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
+
+// LEIAME.txt do pacote, em espanhol (México): é lido pela tesouraria. Texto simples, direto e cordial.
+function pagarLeiameES(d) {
+  const L = [], lin = (t = '') => L.push(t);
+  const total = rows => rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const detalle = r => `  • ID ${r.id} · ${brDate(r.due_date)} · ${r.description} · ${r.supplier_name || 'sin proveedor'} · ${brl(r.amount)}${r.status === 'pago' ? ' · YA PAGADO el ' + brDate(r.payment_date) : ''}`;
+  const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+  const FP = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferencia' };
+
+  lin('============================================================');
+  lin(' PAQUETE PARA TESORERÍA · CUENTAS POR PAGAR');
+  lin('============================================================');
+  lin(`Generado: ${d.generadoEn} · por ${d.usuario}`);
+  lin(`Empresa: ${d.empresa}`);
+  lin(`Filtros aplicados: ${d.filtros || 'ninguno (todos los pagos)'}`);
+  lin('Moneda de los montos: reales brasileños (R$). Formato: punto para miles y coma para decimales.');
+  lin();
+  lin('Hola, equipo de Tesorería:');
+  lin('Aquí está todo lo necesario para realizar los pagos de este periodo.');
+  lin('Les recomendamos leer primero este resumen; ahí marcamos cualquier detalle que falte.');
+  lin();
+
+  lin('RESUMEN');
+  const porPagar = d.rows.filter(r => r.status !== 'pago'), yaPagados = d.rows.filter(r => r.status === 'pago');
+  lin(`  • Pagos en este paquete: ${d.rows.length}`);
+  lin(`  • Por pagar: ${plural(porPagar.length, 'pago', 'pagos')} · ${brl(total(porPagar))}`);
+  if (yaPagados.length) lin(`  • Ya pagados (solo informativo, no hay que pagarlos de nuevo): ${plural(yaPagados.length, 'pago', 'pagos')} · ${brl(total(yaPagados))}`);
+  const porForma = {};
+  porPagar.forEach(r => { const k = r.payment_method || 'sin'; (porForma[k] = porForma[k] || []).push(r); });
+  Object.entries(porForma).forEach(([k, rs]) => lin(`    - ${k === 'sin' ? 'Sin forma de pago definida' : FP[k] || k}: ${plural(rs.length, 'pago', 'pagos')} · ${brl(total(rs))}`));
+  lin(`  • Boletos incluidos: ${d.boletosIncluidos} (carpeta Boletos)`);
+  lin(`  • Aprobaciones incluidas: ${d.aprovOrden.length} (carpeta Aprovacoes). Una misma aprobación puede cubrir varios pagos.`);
+  lin();
+
+  lin('CONTENIDO DEL PAQUETE');
+  lin(`  • ${d.nombrePdf} — listado de los pagos (reporte).`);
+  lin(`  • ${d.nombreXlsx} — el mismo listado en Excel; incluye la línea digitable de cada boleto.`);
+  lin('  • Boletos/ — un archivo por pago. Nombre: ID - descripción - proveedor.');
+  lin('  • Aprovacoes/ — aprobaciones de la dirección (Aprov-01, Aprov-02…).');
+  lin('  • En el PDF y en el Excel, la columna "Aprovação" indica qué aprobación respalda cada pago (por ejemplo, Aprov-01).');
+  lin();
+
+  lin('APROBACIONES Y LOS PAGOS QUE CUBREN');
+  if (!d.aprovOrden.length) {
+    lin('  Ningún pago de este paquete tiene una aprobación adjunta.');
+  } else {
+    d.aprovOrden.forEach(attId => {
+      const cubre = d.rows.filter(r => (d.aprovsDe.get(r.id) || []).some(a => a.id === attId));
+      const arch = d.archivos.get(attId);
+      lin();
+      lin(`${d.numero.get(attId)} — ${arch ? arch.file_name : ''}`);
+      lin(`  Cubre ${plural(cubre.length, 'pago', 'pagos')} de este paquete · Total cubierto: ${brl(total(cubre))}`);
+      cubre.forEach(r => lin(detalle(r)));
+    });
+  }
+  lin();
+
+  lin('PAGOS SIN APROBACIÓN');
+  if (!d.sinAprob.length) {
+    lin('  Todos los pagos que requieren aprobación la tienen adjunta. ¡Listo!');
+  } else {
+    lin(`  ¡Atención! ${plural(d.sinAprob.length, 'pago no tiene', 'pagos no tienen')} aprobación adjunta (${brl(total(d.sinAprob))}).`);
+    lin('  Antes de pagarlos, conviene confirmar la aprobación con quien envió este paquete:');
+    d.sinAprob.forEach(r => lin(detalle(r)));
+  }
+  lin();
+
+  lin('BOLETOS');
+  lin(`  La carpeta Boletos trae ${d.boletosIncluidos === 1 ? '1 archivo' : d.boletosIncluidos + ' archivos'}.`);
+  if (d.sinBoleto.length) {
+    lin(`  Hay ${plural(d.sinBoleto.length, 'pago', 'pagos')} por pagar con forma de pago "Boleto" que no incluye${d.sinBoleto.length === 1 ? '' : 'n'} el archivo del boleto:`);
+    d.sinBoleto.forEach(r => lin(detalle(r)));
+  } else {
+    lin('  Todos los pagos por pagar con forma de pago "Boleto" traen su archivo.');
+  }
+  lin();
+
+  if (d.fallas.length) {
+    lin('ARCHIVOS QUE NO SE PUDIERON DESCARGAR');
+    lin('  Estos archivos no entraron al paquete; pídanlos a quien lo generó:');
+    d.fallas.forEach(f => lin(`  • ${f}`));
+    lin();
+  }
+
+  lin('GLOSARIO (las columnas del PDF y del Excel están en portugués)');
+  lin('  Vencimento = Vencimiento · Descrição = Descripción · Fornecedor = Proveedor');
+  lin('  Forma de Pagamento = Forma de pago · Valor = Monto · Pagamento = Fecha de pago');
+  lin('  Linha digitável = Línea digitable del boleto · Aprovação = Aprobación · Pendente = Pendiente');
+  lin('  Vencido = Vencido · Pago = Pagado · Centro de Custo = Centro de costo');
+  lin();
+  lin('¡Gracias por su apoyo!');
+  return '﻿' + L.join('\r\n') + '\r\n';
+}
+
+// Gera o pacote ZIP da tesouraria com tudo o que está filtrado na tela:
+// PDF + Excel + boletos (um por título) + aprovações (cada uma uma vez só) + LEIAME.txt em espanhol (México).
+async function pagarGerarPacote(rows) {
+  if (!rows.length) return toast('Nenhum título nos filtros atuais para exportar.');
+  if (!window.JSZip || !window.XLSX || !window.jspdf) return toast('As bibliotecas de exportação ainda estão carregando. Tente novamente em instantes.');
+  let cancelado = false;
+  const status = m => { const el = document.getElementById('pk-status'); if (el) el.textContent = m; };
+  const prog = p => { const el = document.getElementById('pk-prog'); if (el) el.style.width = Math.max(0, Math.min(100, Math.round(p))) + '%'; };
+  openModal('Gerando o pacote da tesouraria', `
+    <p id="pk-status" style="margin-bottom:10px">Preparando…</p>
+    <div class="pk-barra"><div id="pk-prog"></div></div>
+    <p class="hint" style="margin-top:10px">Não feche esta janela até terminar. Anexos grandes levam alguns segundos.</p>`,
+    [{ label: 'Cancelar', onClick: () => { cancelado = true; closeModal(); } }]);
+  try {
+    status('Consultando os boletos e as aprovações dos títulos filtrados…'); prog(3);
+    const meta0 = await api('/api/payables/pacote', { method: 'POST', body: { ids: rows.map(r => r.id) } });
+    const nomeDe = new Map(meta0.map(m => [m.id, m.file_name]));
+
+    // Primeiro baixa os anexos (3 por vez), com progresso. Só o que baixou entra no ZIP e nas colunas do PDF/Excel:
+    // assim "Boleto: Sim" e "Aprov-01" nunca apontam para um arquivo que ficou de fora.
+    const ids = [...nomeDe.keys()];
+    const dados = new Map(), fallas = [];
+    let feitos = 0;
+    const fila = [...ids];
+    const trabalhar = async () => {
+      while (fila.length && !cancelado) {
+        const id = fila.shift();
+        try { const r = await api('/api/attachments/file/' + id); dados.set(id, r.data); }
+        catch (e) { fallas.push(`${nomeDe.get(id)} (${e.message})`); }
+        feitos++; status(`Baixando os anexos… ${feitos}/${ids.length}`); prog(5 + 70 * feitos / Math.max(1, ids.length));
+      }
+    };
+    await Promise.all([trabalhar(), trabalhar(), trabalhar()]);
+    if (cancelado) return;
+    const meta = meta0.filter(m => dados.has(m.id));
+
+    const boletosDe = new Map(), aprovsDe = new Map(), archivos = new Map();
+    meta.forEach(m => {
+      archivos.set(m.id, m);
+      const mapa = m.kind === 'boleto' ? boletosDe : aprovsDe;
+      if (!mapa.has(m.payable_id)) mapa.set(m.payable_id, []);
+      const lista = mapa.get(m.payable_id);
+      if (!lista.some(x => x.id === m.id)) lista.push(m);
+    });
+    // Aprov-01, Aprov-02… na ordem em que aparecem na tabela; uma aprovação compartilhada entra uma vez só.
+    const numero = new Map(), aprovOrden = [];
+    rows.forEach(r => (aprovsDe.get(r.id) || []).forEach(a => {
+      if (!numero.has(a.id)) { numero.set(a.id, 'Aprov-' + String(numero.size + 1).padStart(2, '0')); aprovOrden.push(a.id); }
+    }));
+    const exigeAprov = r => r.status !== 'pago' && String(r.due_date || '').slice(0, 10) >= PAGAR_APROV_A_PARTIR_DE;
+    const refs = {};
+    rows.forEach(r => {
+      const ap = (aprovsDe.get(r.id) || []).map(x => numero.get(x.id)).join(', ');
+      refs[r.id] = {
+        aprov: ap || (exigeAprov(r) ? 'Falta' : '—'),
+        boleto: (boletosDe.get(r.id) || []).length ? 'Sim' : (r.payment_method === 'boleto' && r.status !== 'pago' ? 'Falta' : '—')
+      };
+    });
+    const sinAprob = rows.filter(r => exigeAprov(r) && !(aprovsDe.get(r.id) || []).length);
+    const sinBoleto = rows.filter(r => r.status !== 'pago' && r.payment_method === 'boleto' && !(boletosDe.get(r.id) || []).length);
+
+    status('Gerando o PDF e o Excel…'); prog(80);
+    const hoje = todayISO();
+    const pdfBlob = await exportPagarPDF(rows, pagarFiltrosTexto('pt'), { blob: true, refs });
+    if (!pdfBlob) throw new Error('Não foi possível gerar o PDF.');
+    const xlsBytes = XLSX.write(pagarMontarExcel(rows, refs), { bookType: 'xlsx', type: 'array' });
+
+    status('Montando o ZIP…'); prog(86);
+    const zip = new JSZip();
+    const nombrePdf = `Contas_a_Pagar_${hoje}.pdf`, nombreXlsx = `Contas_a_Pagar_${hoje}.xlsx`;
+    zip.file(nombrePdf, pdfBlob);
+    zip.file(nombreXlsx, xlsBytes);
+    const usados = new Set();
+    const unico = (pasta, nome) => {
+      let n = nome, i = 2;
+      while (usados.has((pasta + n).toLowerCase())) { n = nome.replace(/(\.[^.]*)?$/, ` (${i})$1`); i++; }
+      usados.add((pasta + n).toLowerCase()); return pasta + n;
+    };
+    let boletosIncluidos = 0;
+    rows.forEach(r => (boletosDe.get(r.id) || []).forEach(b => {
+      if (!dados.has(b.id)) return;
+      const nome = `${r.id} - ${pagarNomeArquivo(r.description, 55)} - ${pagarNomeArquivo(r.supplier_name || 'sem fornecedor', 35)}${pagarExtensao(b.file_name)}`;
+      zip.file(unico('Boletos/', nome), dados.get(b.id), { base64: true }); boletosIncluidos++;
+    }));
+    let aprovIncluidas = 0;
+    aprovOrden.forEach(attId => {
+      if (!dados.has(attId)) return;
+      const arch = archivos.get(attId);
+      const base = pagarNomeArquivo(String(arch.file_name).replace(/\.[A-Za-z0-9]{1,5}$/, ''), 80);
+      zip.file(unico('Aprovacoes/', `${numero.get(attId)} - ${base}${pagarExtensao(arch.file_name)}`), dados.get(attId), { base64: true }); aprovIncluidas++;
+    });
+    const empresa = COMPANY_INFO.trade_name || COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
+    const ahora = new Date();
+    zip.file('LEIAME.txt', pagarLeiameES({
+      rows, filtros: pagarFiltrosTexto('es'), usuario: USER.name, empresa,
+      generadoEn: `${ahora.toLocaleDateString('pt-BR')} ${ahora.toLocaleTimeString('pt-BR').slice(0, 5)}`,
+      boletosIncluidos, aprovOrden: aprovOrden.filter(id => dados.has(id)), aprovsDe, archivos, numero, sinAprob, sinBoleto, fallas,
+      nombrePdf, nombreXlsx
+    }));
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }, m => prog(86 + m.percent * 0.13));
+    if (cancelado) return;
+    prog(100);
+    const nomeZip = `Pacote_Tesouraria_${hoje}.zip`;
+    pagarBaixarBlob(blob, nomeZip);
+
+    const mb = blob.size / 1048576;
+    const lista = (arr, f) => arr.slice(0, 6).map(f).join('') + (arr.length > 6 ? `<li>… e mais ${arr.length - 6}</li>` : '');
+    openModal('Pacote da tesouraria pronto', `
+      <p style="margin-bottom:10px"><strong>${esc(nomeZip)}</strong> foi baixado (${mb.toFixed(1).replace('.', ',')} MB).</p>
+      <ul class="pk-resumo">
+        <li><strong>${rows.length}</strong> título(s) · ${brl(rows.reduce((s, r) => s + Number(r.amount || 0), 0))}</li>
+        <li><strong>${boletosIncluidos}</strong> boleto(s) · <strong>${aprovIncluidas}</strong> aprovação(ões) distinta(s)</li>
+        <li>PDF, Excel e <strong>LEIAME.txt</strong> (em espanhol)</li>
+      </ul>
+      ${mb > 20 ? `<div class="alert-item warn" style="margin-top:10px">⚠️ O ZIP tem ${mb.toFixed(1).replace('.', ',')} MB e pode passar do limite de anexo do seu e-mail (em geral 20–25 MB). Filtre menos títulos e gere de novo, se precisar.</div>` : ''}
+      ${sinAprob.length ? `<div class="alert-item warn" style="margin-top:10px">⚠️ <strong>${sinAprob.length} título(s) sem aprovação</strong> (✘ na coluna Aprov.):<ul class="pk-resumo">${lista(sinAprob, r => `<li>${r.id} · ${esc(r.description)}</li>`)}</ul></div>` : ''}
+      ${sinBoleto.length ? `<div class="alert-item warn" style="margin-top:10px">⚠️ <strong>${sinBoleto.length} título(s) de boleto sem o arquivo do boleto</strong>:<ul class="pk-resumo">${lista(sinBoleto, r => `<li>${r.id} · ${esc(r.description)}</li>`)}</ul></div>` : ''}
+      ${fallas.length ? `<div class="alert-item late" style="margin-top:10px">Não foi possível baixar ${fallas.length} arquivo(s); eles ficaram de fora e estão listados no LEIAME.txt.</div>` : ''}
+      <p class="hint" style="margin-top:10px">O aviso de títulos sem aprovação também está no LEIAME.txt, para a tesouraria ver.</p>`,
+      [{ label: 'Fechar', cls: 'primary', onClick: closeModal }]);
+  } catch (e) {
+    console.error(e);
+    if (!cancelado) { closeModal(); toast('Não foi possível gerar o pacote: ' + e.message); }
+  }
 }
 
 function baixaPagar(r) {
@@ -14627,7 +14877,7 @@ const PM_LABELS_PDF = { boleto: 'Boleto', pix: 'PIX', transferencia: 'Transferê
 // Relatório de Contas a Pagar em PDF — layout corporativo com logo, cabeçalho
 // e rodapé com numeração de página. Exporta exatamente o conjunto filtrado
 // exibido na tela (mesmo critério usado na exportação em CSV).
-async function exportPagarPDF(rows, filtersLabel) {
+async function exportPagarPDF(rows, filtersLabel, opts = {}) {
   if (!window.jspdf) { toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.'); return; }
   const btn = $('#btn-pdf');
   const originalLabel = btn ? btn.textContent : null;
@@ -14690,19 +14940,20 @@ async function exportPagarPDF(rows, filtersLabel) {
       r.cost_center || '—',
       r.payment_method ? (PM_LABELS_PDF[r.payment_method] || r.payment_method) : '—',
       brl(r.amount),
-      r.status === 'pago' ? `Pago em ${brDate(r.payment_date)}` : (r.due_date < todayISO() ? 'Vencido' : 'Pendente')
+      r.status === 'pago' ? `Pago em ${brDate(r.payment_date)}` : (r.due_date < todayISO() ? 'Vencido' : 'Pendente'),
+      ...(opts.refs ? [(opts.refs[r.id] && opts.refs[r.id].aprov) || '—', (opts.refs[r.id] && opts.refs[r.id].boleto) || '—'] : [])
     ]);
 
     doc.autoTable({
       startY: y,
-      head: [['ID', 'Venc.', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Forma de Pagamento', 'Valor', 'Status']],
+      head: [['ID', 'Venc.', 'Descrição', 'Fornecedor', 'Categoria', 'Centro de Custo', 'Forma de Pagamento', 'Valor', 'Status', ...(opts.refs ? ['Aprovação', 'Boleto'] : [])]],
       body,
       margin: { left: MARGIN, right: MARGIN },
       styles: { font: 'helvetica', fontSize: 8, cellPadding: 2.2, textColor: [40, 46, 42], lineColor: [225, 231, 227], lineWidth: 0.15 },
       headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold', fontSize: 8.2 },
       alternateRowStyles: { fillColor: VERDE_CLARO },
       columnStyles: {
-        0: { cellWidth: 10, halign: 'right' }, 1: { cellWidth: 22 }, 7: { cellWidth: 22, halign: 'right' }, 8: { cellWidth: 24 }
+        0: { cellWidth: 10, halign: 'right' }, 1: { cellWidth: 22 }, 7: { cellWidth: 22, halign: 'right' }, 8: { cellWidth: 24 }, 9: { cellWidth: 22 }, 10: { cellWidth: 14 }
       },
       didParseCell: hook => {
         if (hook.section === 'body' && hook.column.index === 8) {
@@ -14734,6 +14985,7 @@ async function exportPagarPDF(rows, filtersLabel) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 68, 62);
     doc.text(`Pago: ${brl(totalPago)}   ·   Pendente/vencido: ${brl(totalPendente)}`, MARGIN + 5, yEnd + 12);
 
+    if (opts.blob) return doc.output('blob');
     doc.save(`contas_a_pagar_${todayISO()}.pdf`);
     toast('PDF gerado com sucesso.');
   } catch (e) {

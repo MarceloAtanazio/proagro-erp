@@ -1,0 +1,53 @@
+    const meta0 = await api('/api/payables/pacote', { method: 'POST', body: { ids: rows.map(r => r.id) } });
+    const nomeDe = new Map(meta0.map(m => [m.id, m.file_name]));
+
+    // Primeiro baixa os anexos (3 por vez), com progresso. Só o que baixou entra no ZIP e nas colunas do PDF/Excel:
+    // assim "Boleto: Sim" e "Aprov-01" nunca apontam para um arquivo que ficou de fora.
+    const ids = [...nomeDe.keys()];
+    const dados = new Map(), fallas = [];
+    let feitos = 0;
+    const fila = [...ids];
+    const trabalhar = async () => {
+      while (fila.length && !cancelado) {
+        const id = fila.shift();
+        try { const r = await api('/api/attachments/file/' + id); dados.set(id, r.data); }
+        catch (e) { fallas.push(`${nomeDe.get(id)} (${e.message})`); }
+        feitos++; status(`Baixando os anexos… ${feitos}/${ids.length}`); prog(5 + 70 * feitos / Math.max(1, ids.length));
+      }
+    };
+    await Promise.all([trabalhar(), trabalhar(), trabalhar()]);
+    if (cancelado) return;
+    const meta = meta0.filter(m => dados.has(m.id));
+
+    const boletosDe = new Map(), aprovsDe = new Map(), archivos = new Map();
+    meta.forEach(m => {
+      archivos.set(m.id, m);
+      const mapa = m.kind === 'boleto' ? boletosDe : aprovsDe;
+      if (!mapa.has(m.payable_id)) mapa.set(m.payable_id, []);
+      const lista = mapa.get(m.payable_id);
+      if (!lista.some(x => x.id === m.id)) lista.push(m);
+    });
+    // Aprov-01, Aprov-02… na ordem em que aparecem na tabela; uma aprovação compartilhada entra uma vez só.
+    const numero = new Map(), aprovOrden = [];
+    rows.forEach(r => (aprovsDe.get(r.id) || []).forEach(a => {
+      if (!numero.has(a.id)) { numero.set(a.id, 'Aprov-' + String(numero.size + 1).padStart(2, '0')); aprovOrden.push(a.id); }
+    }));
+    const exigeAprov = r => r.status !== 'pago' && String(r.due_date || '').slice(0, 10) >= PAGAR_APROV_A_PARTIR_DE;
+    const refs = {};
+    rows.forEach(r => {
+      const ap = (aprovsDe.get(r.id) || []).map(x => numero.get(x.id)).join(', ');
+      refs[r.id] = {
+        aprov: ap || (exigeAprov(r) ? 'Falta' : '—'),
+        boleto: (boletosDe.get(r.id) || []).length ? 'Sim' : (r.payment_method === 'boleto' && r.status !== 'pago' ? 'Falta' : '—')
+      };
+    });
+    const sinAprob = rows.filter(r => exigeAprov(r) && !(aprovsDe.get(r.id) || []).length);
+    const sinBoleto = rows.filter(r => r.status !== 'pago' && r.payment_method === 'boleto' && !(boletosDe.get(r.id) || []).length);
+
+    status('Gerando o PDF e o Excel…'); prog(80);
+    const hoje = todayISO();
+    const pdfBlob = await exportPagarPDF(rows, pagarFiltrosTexto('pt'), { blob: true, refs });
+    if (!pdfBlob) throw new Error('Não foi possível gerar o PDF.');
+    const xlsBytes = XLSX.write(pagarMontarExcel(rows, refs), { bookType: 'xlsx', type: 'array' });
+
+    status('Montando o ZIP…'); prog(86);
