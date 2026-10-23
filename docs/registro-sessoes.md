@@ -7699,3 +7699,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 18 verificações do backend (viagem fechada, em andamento, aprovar depois, dois excessos, reprovação antiga, estouro, valor inválido, não-admin, pendência já decidida), regressão da decisão única da pendência e 14 verificações na tela real com servidor simulado (confirmação do Reprovar, valor enviado, alerta, lista de origens, "Sim" pré-marcado). Fluxo logado real não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-23 — Sessão 173: Quadro de admissão — contratada (Larissa) sumia sem virar colaboradora
+
+**Solicitação:** a Larissa Dantas Pessoa terminou o processo de contratação, saiu do Quadro de admissão e não apareceu em Colaboradores, Organograma nem em nenhum outro lugar.
+
+**Causa:** ao sair da etapa "Contrato" o sistema cria o vínculo CLT, ativa a pessoa e cria o fornecedor da folha. O INSERT do vínculo usava o mesmo parâmetro `$1` como número (colaborador) e como texto (matrícula `$1::text`); o Postgres recusa isso ("inconsistent types deduced for parameter $1"). Era a primeira pessoa a passar por essa etapa em produção. O pior: a etapa era gravada **antes** do vínculo, então o erro deixava o processo andar sem criar nada, e o Onboarding concluiu a admissão com a pessoa ainda inativa e sem vínculo — por isso sumiu de todas as telas (Quadro mostra só "em andamento"; Colaboradores e Organograma só mostram ativos com vínculo).
+
+**O que mudou:** matrícula passa a ser o parâmetro `$17`; a mudança de etapa e o histórico só são gravados **depois** do vínculo, do ativo e do fornecedor, de modo que uma falha deixa o processo em "Contrato" e permite repetir. Teste com banco simulado reproduz o estado da produção no código antigo (etapa avançou, sem vínculo, inativa) e passa no novo.
+
+**Dados da Larissa:** `scripts/2026-10-23_reparo_larissa_vinculo.sql` cria o vínculo (admissão 26/10/2026, Assistente Administrativo, Administrativo, salário previsto), ativa o colaborador 37 e cria o fornecedor da folha; é idempotente. Execução em produção pendente de autorização (o assistente foi bloqueado de escrever direto no banco).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

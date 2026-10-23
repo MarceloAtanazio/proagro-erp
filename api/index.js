@@ -4121,12 +4121,6 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
     }
   }
 
-  await query('UPDATE erp_rh_admissoes SET etapa=$1, updated_at=now() WHERE id=$2', [destino, adm.id]);
-  const nota = (iDestino > iAtual && req.body.forcar ? '[avançou com pendência] ' : '') + (sanitize(req.body.observacao) || '');
-  await query(
-    'INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
-    [adm.id, adm.etapa, destino, nota || null, req.user.id]);
-
   // Ao SAIR de "contrato", o contrato está assinado: é aí que nasce o vínculo.
   // Antes disso não existe emprego, e criá-lo mais cedo mostraria a pessoa como
   // ativa sem contrato.
@@ -4143,11 +4137,11 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
         `INSERT INTO erp_rh_vinculos (colaborador_id, matricula, tipo, admissao, cargo, nivel, departamento,
             centro_custo, gestor_id, regime, modelo_trabalho, controle_ponto, experiencia_fim,
             prorrogacao_fim, salario, vr_dia, home_office_dia, created_by)
-         VALUES ($1,$1::text,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
+         VALUES ($1,$17,'clt',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
         [adm.colaborador_id, String(adm.admissao_prevista).slice(0, 10), adm.cargo_pretendido,
          adm.nivel_pretendido, adm.departamento, adm.centro_custo, adm.gestor_id,
          adm.regime, adm.modelo_trabalho, adm.modelo_trabalho !== 'externo' && adm.regime !== 'confianca',
-         d.experiencia_fim, d.prorrogacao_fim, adm.salario_previsto, adm.vr_dia, adm.home_office_dia, req.user.id]);
+         d.experiencia_fim, d.prorrogacao_fim, adm.salario_previsto, adm.vr_dia, adm.home_office_dia, req.user.id, String(adm.colaborador_id)]);
       vinculoId = v[0].id;
       await query('UPDATE erp_rh_admissoes SET vinculo_id=$1 WHERE id=$2', [vinculoId, adm.id]);
     }
@@ -4162,6 +4156,13 @@ app.post('/api/rh/admissoes/:id/mover', requireAuth, requireEdit('rh'), h(async 
     // repetiria o erro do desligamento, em que uma das duas não arquivava.
     await rhGarantirFornecedor(adm.colaborador_id, req.user.id);
   }
+  // A etapa só muda depois do vínculo: se ele falhar, o processo continua em "Contrato" e dá para repetir.
+  await query('UPDATE erp_rh_admissoes SET etapa=$1, updated_at=now() WHERE id=$2', [destino, adm.id]);
+  const nota = (iDestino > iAtual && req.body.forcar ? '[avançou com pendência] ' : '') + (sanitize(req.body.observacao) || '');
+  await query(
+    'INSERT INTO erp_rh_admissao_hist (admissao_id, de_etapa, para_etapa, observacao, movido_por) VALUES ($1,$2,$3,$4,$5)',
+    [adm.id, adm.etapa, destino, nota || null, req.user.id]);
+
   res.json({ ok: true, etapa: destino, vinculo_id: vinculoId });
 }));
 
