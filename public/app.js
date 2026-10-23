@@ -5942,6 +5942,7 @@ async function viaPendenciaAviso(box, colabId, liberadoEl, opts = {}) {
   if (!(r.total > 0)) return est;
   est.ativo = true; est.ids = r.solicitacoes.map(x => x.id); est.total = r.total;
   box.innerHTML = `<div class="alert-item warn" style="margin-bottom:12px">⚠️ Este colaborador tem <strong>${brl(r.total)}</strong> em pendência de viagem(ns) anterior(es) ainda não descontada.
+      <div style="margin-top:6px; font-size:12.5px; color:var(--ink-2)">${r.solicitacoes.map(x => `OT ${esc(x.ordem_trabalho || x.id)} — ${x.origem === 'excesso' ? 'excesso reprovado' : 'gasto acima do liberado'}: ${brl(x.valor_pendencia)}`).join('<br>')}</div>
       <div style="margin-top:8px; display:flex; align-items:center; gap:10px">
         <span style="font-size:13px">Descontar do valor liberado${opts.obrigatorio ? ' nesta transferência' : ' nesta solicitação'}?</span>
         <button type="button" class="btn sm" data-vp-sim>Sim</button>
@@ -6078,7 +6079,7 @@ async function formSolicitacao(existing) {
     if (!alerta) return;
     alerta.innerHTML = ''; pend = null;
     if (isEdit && !(USER.role === 'admin' && existing.status === 'em_approvals' && colabId === existing.colaborador_id)) return;
-    pend = await viaPendenciaAviso(alerta, colabId, $('#vs-liberado'), { padrao: isEdit ? null : true });
+    pend = await viaPendenciaAviso(alerta, colabId, $('#vs-liberado'), { padrao: true });
   };
   $('#vs-colab').onchange = checarPendencia;
   checarPendencia();
@@ -6146,7 +6147,7 @@ async function viewSolicitacao(id) {
   excessos.forEach(ex => {
     const st = excessoStatus[ex.chave];
     if (st === 'aprovado') alertBlocks.push(`<div class="alert-item ok">✅ Aprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`);
-    else if (st === 'reprovado') alertBlocks.push(`<div class="alert-item late">❌ Reprovado (excesso de ${brl(ex.valor)}): ${ex.msg}</div>`);
+    else if (st === 'reprovado') alertBlocks.push(`<div class="alert-item late">❌ Reprovado (excesso de ${brl(ex.valor)}): ${ex.msg}${(s.excessos_valores && s.excessos_valores[ex.chave]) ? ' — vira pendência a descontar na próxima OT do colaborador.' : ''}</div>`);
     else alertBlocks.push(`<div class="alert-item late">⚠️ ${ex.msg} Excesso de <strong>${brl(ex.valor)}</strong>${somenteLeitura ? ' (aguardando análise do administrador).' : ` — quer aprovar?
           <button class="btn sm primary" data-aprovar="${ex.chave}" type="button" style="margin-left:8px">Aprovar</button>
           <button class="btn sm danger-ghost" data-reprovar="${ex.chave}" type="button" style="margin-left:6px">Reprovar</button>`}</div>`);
@@ -6398,7 +6399,7 @@ async function viewSolicitacao(id) {
                  pendencia_info: { valor: dec.total, decisao: dec.decisao, ids: dec.ids } });
              } else aplicarStatus(novo, v);
            } }]);
-        viaPendenciaAviso($('#vp-box'), s.colaborador_id, $('#vs-lib-novo'), { padrao: null, obrigatorio: true }).then(e => { pendAg = e; });
+        viaPendenciaAviso($('#vp-box'), s.colaborador_id, $('#vs-lib-novo'), { padrao: true, obrigatorio: true }).then(e => { pendAg = e; });
         return;
       }
       aplicarStatus(novo);
@@ -6435,9 +6436,17 @@ async function viewSolicitacao(id) {
     try { await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.aprovar, status: 'aprovado' } }); toast('Excesso aprovado.'); viewSolicitacao(id); }
     catch (e) { toast(e.message); }
   });
-  document.querySelectorAll('[data-reprovar]').forEach(b => b.onclick = async () => {
-    try { await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.reprovar, status: 'reprovado' } }); toast('Excesso reprovado.'); viewSolicitacao(id); }
-    catch (e) { toast(e.message); }
+  document.querySelectorAll('[data-reprovar]').forEach(b => b.onclick = () => {
+    const ex = excessos.find(x => x.chave === b.dataset.reprovar) || {};
+    openModal('Reprovar excesso', `<p>Reprovar o excesso de <strong>${brl(ex.valor)}</strong>?</p>
+      <p class="hint" style="margin-top:8px">O valor vira uma <strong>pendência do colaborador</strong>: na próxima OT dele aparece "Descontar do valor liberado?", já marcado como <strong>Sim</strong>.</p>`,
+      [{ label: 'Cancelar', onClick: () => viewSolicitacao(id) },
+       { label: 'Reprovar', cls: 'primary', onClick: async () => {
+          try {
+            await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.reprovar, status: 'reprovado', valor: Math.round(Number(ex.valor) * 100) / 100 } });
+            closeModal(); toast('Excesso reprovado: o valor será descontado na próxima OT do colaborador.'); viewSolicitacao(id);
+          } catch (e) { modalError(e.message); }
+       } }]);
   });
 }
 

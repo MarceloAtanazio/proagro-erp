@@ -342,7 +342,8 @@ const AUDIT_MAP = {
   'DELETE /api/viaticos/km/:id': req => `Excluiu a comprovação de quilometragem ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/arquivar': req => `Arquivou a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/reabrir': req => `Reabriu (admin) a solicitação de viático ID ${req.params.id}`,
-  'POST /api/viaticos/solicitacoes/:id/excesso-status': req => `${req.body.status === 'aprovado' ? 'Aprovou' : 'Reprovou'} o excesso da TUD ("${req.body.chave}") na solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/excesso-status': req => `${req.body.status === 'aprovado' ? 'Aprovou' : 'Reprovou'} o excesso da TUD ("${req.body.chave}") na solicitação de viático ID ${req.params.id}` +
+    (req.body.status === 'reprovado' && Number(req.body.valor) > 0 ? ` — ${fmtBRL(req.body.valor)} viram pendência a descontar na próxima OT do colaborador` : ''),
   'DELETE /api/viaticos/solicitacoes/:id': req => `Excluiu a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/despesas': req => `Lançou despesa de viático (${req.body.categoria}, ${fmtBRL(req.body.valor)}) na solicitação ID ${req.params.id}`,
   'PUT /api/viaticos/despesas/:id': req => `Editou a despesa de viático ID ${req.params.id} (${req.body.categoria}, ${fmtBRL(req.body.valor)})`,
@@ -6403,10 +6404,12 @@ app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny
   if (escopo && !escopo.includes(Number(req.params.id))) {
     return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
   }
-  const rows = await query(`SELECT id, destino, data_fim, valor_pendencia FROM erp_viaticos_solicitacoes
-    WHERE colaborador_id=$1 AND status='divergente' AND pendencia_resolvida=false ORDER BY data_fim`, [req.params.id]);
+  // Duas origens: viagem que estourou o valor liberado (status "divergente") e viagem fechada SEM estouro em que um
+  // excesso da TUD foi reprovado (valor_pendencia guarda a soma dos excessos reprovados).
+  const rows = await query(`SELECT id, destino, ordem_trabalho, status, data_fim, valor_pendencia FROM erp_viaticos_solicitacoes
+    WHERE colaborador_id=$1 AND pendencia_resolvida=false AND (status='divergente' OR valor_pendencia > 0) ORDER BY data_fim`, [req.params.id]);
   const total = rows.reduce((s, r) => s + n(r.valor_pendencia), 0);
-  res.json({ total, solicitacoes: rows.map(r => ({ ...r, valor_pendencia: n(r.valor_pendencia) })) });
+  res.json({ total, solicitacoes: rows.map(r => ({ ...r, valor_pendencia: n(r.valor_pendencia), origem: r.status === 'divergente' ? 'estouro' : 'excesso' })) });
 }));
 
 // A pendência de viagem anterior é decidida UMA vez — descontar do valor liberado ou dispensar — e
@@ -6419,7 +6422,7 @@ async function encerrarPendencias(b, colaboradorId, naSolicitacaoId) {
   const decisao = b.pendencia_decisao === 'dispensar' ? 'dispensada' : 'descontada';
   await query(`UPDATE erp_viaticos_solicitacoes
       SET pendencia_resolvida=true, pendencia_decisao=$3, pendencia_decidida_em=now(), pendencia_decidida_na=$4
-    WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND status='divergente' AND pendencia_resolvida=false`,
+    WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND (status='divergente' OR valor_pendencia > 0) AND pendencia_resolvida=false`,
     [ids, colaboradorId, decisao, naSolicitacaoId]);
 }
 
@@ -6483,6 +6486,14 @@ app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viat
   res.json({ ok: true });
 }));
 
+// Soma dos excessos da TUD que foram REPROVADOS e tiveram o valor guardado na reprovação. Reprovações antigas, de
+// antes de o excesso virar pendência, não têm valor guardado e portanto não contam (sem cobrança retroativa).
+function somaExcessosReprovados(statusPorChave, valoresPorChave) {
+  const st = (statusPorChave && typeof statusPorChave === 'object') ? statusPorChave : {};
+  const vl = (valoresPorChave && typeof valoresPorChave === 'object') ? valoresPorChave : {};
+  return Math.round(Object.keys(vl).reduce((t, k) => t + (st[k] === 'reprovado' ? Number(vl[k]) || 0 : 0), 0) * 100) / 100;
+}
+
 // Fecha a solicitação: compara valor liberado x comprovado e resolve automaticamente
 // (devolvido / comprovado exato / divergente com pendência registrada).
 app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
@@ -6495,6 +6506,12 @@ app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viat
   if (Math.abs(dif) < 0.005) { status = 'comprovado'; }
   else if (dif > 0) { status = 'devolvido'; valor_devolvido = dif; }
   else { status = 'divergente'; valor_pendencia = Math.abs(dif); pendencia_resolvida = false; }
+  // Sem estouro, mas com excesso reprovado: o valor reprovado fica como pendência a descontar na próxima OT. No
+  // estouro o valor já está contido em valor_pendencia (comprovado − liberado), então não se soma de novo.
+  if (status !== 'divergente' && !s.pendencia_decisao) {
+    const ex = somaExcessosReprovados(s.excessos_status, s.excessos_valores);
+    if (ex > 0) { valor_pendencia = ex; pendencia_resolvida = false; }
+  }
   await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5`,
     [status, valor_devolvido, valor_pendencia, pendencia_resolvida, req.params.id]);
   res.json({ ok: true, status, comprovado, valor_devolvido, valor_pendencia });
@@ -6526,13 +6543,28 @@ app.post('/api/viaticos/solicitacoes/:id/excesso-status', requireAuth, requireAd
   const chave = String(req.body.chave || '').trim();
   const status = req.body.status;
   if (!chave || !['aprovado', 'reprovado'].includes(status)) return res.status(400).json({ error: 'Dados inválidos.' });
-  const s = (await query('SELECT excessos_status, status AS sol_status FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  const s = (await query('SELECT excessos_status, excessos_valores, status AS sol_status, pendencia_decisao FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
   const atual = (s.excessos_status && typeof s.excessos_status === 'object') ? s.excessos_status : {};
+  const valores = (s.excessos_valores && typeof s.excessos_valores === 'object') ? { ...s.excessos_valores } : {};
   atual[chave] = status;
-  await query('UPDATE erp_viaticos_solicitacoes SET excessos_status=$1 WHERE id=$2', [JSON.stringify(atual), req.params.id]);
+  // Reprovar guarda o valor do excesso (é ele que vira pendência); aprovar apaga. Quem manda o valor é um
+  // administrador (a rota exige admin), mas ele precisa ser um número razoável.
+  if (status === 'reprovado') {
+    const v = Number(req.body.valor);
+    if (isFinite(v) && v > 0 && v < 1000000) valores[chave] = Math.round(v * 100) / 100;
+  } else {
+    delete valores[chave];
+  }
+  await query('UPDATE erp_viaticos_solicitacoes SET excessos_status=$1, excessos_valores=$2 WHERE id=$3', [JSON.stringify(atual), JSON.stringify(valores), req.params.id]);
   if (status === 'aprovado' && s.sol_status === 'divergente') {
     await query(`UPDATE erp_viaticos_solicitacoes SET pendencia_resolvida=true WHERE id=$1`, [req.params.id]);
+  }
+  // Viagem já fechada SEM estouro: o excesso reprovado vira (ou deixa de ser) pendência na hora. Se ela ainda está
+  // em andamento, quem aplica é o fechamento. Pendência já decidida (descontada/dispensada) não é reaberta.
+  if (['comprovado', 'devolvido'].includes(s.sol_status) && !s.pendencia_decisao) {
+    const total = somaExcessosReprovados(atual, valores);
+    await query('UPDATE erp_viaticos_solicitacoes SET valor_pendencia=$1, pendencia_resolvida=$2 WHERE id=$3', [total, total === 0, req.params.id]);
   }
   res.json({ ok: true });
 }));

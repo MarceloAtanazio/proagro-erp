@@ -7686,3 +7686,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** no app real (`app.js` + `styles.css` + `index.html`) com servidor simulado: sem filtro (11 títulos, 3 aprovações, 3 boletos), com filtros de status e período (só os 9 filtrados; filtros descritos em espanhol), falha ao baixar um boleto (o pacote sai, o boleto fica de fora, o Excel mostra "Falta" e o LEIAME lista o arquivo) e filtro sem resultado (avisa e não gera). Conteúdo do ZIP aberto e conferido: nomes de arquivo, Excel (cabeçalhos e valores), PDF válido e LEIAME completo. Fluxo logado real, com os anexos de verdade, não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-23 — Sessão 172: Viáticos — excesso da TUD reprovado vira pendência
+
+**Solicitação:** a Mayara (OT 160) teve um excesso de alimentação reprovado e o Marcelo queria descontá-lo na OT 165 dela, mas o aviso "descontar ou não" não apareceu. Decisões: **sem cobrança retroativa** (só a partir de agora) e **desconto sempre na próxima OT**.
+
+**Diagnóstico:** a OT 160 foi fechada como "Devolvido (sobrou)" (liberado R$ 2.938,61, comprovado R$ 1.914,23). O sistema só cria pendência quando o comprovado passa do liberado; o "Reprovar" do excesso (alimentação de 15/10: R$ 150,45 contra TUD de R$ 130,00, ou seja, R$ 20,45) só ficava registrado, sem cobrança. O aviso de desconto depende da existência de pendência, por isso não apareceu.
+
+**O que mudou:** nova coluna `excessos_valores` guarda o valor de cada excesso no momento em que é **reprovado**; a soma dos reprovados vira a **pendência** do colaborador (`valor_pendencia`), inclusive quando a viagem já foi fechada sem estouro (`devolvido`/`comprovado`); se a viagem ainda está em andamento, o fechamento aplica. Aprovar depois desfaz; pendência já decidida (descontada/dispensada) não é reaberta; com estouro na mesma viagem vale só o estouro (não soma o excesso de novo). A consulta de pendência passa a devolver a origem (`excesso` ou `estouro`). Na tela: **Reprovar** pede confirmação e envia o valor; o alerta "Reprovado" informa que vira pendência na próxima OT; o aviso de desconto (Nova solicitação, Editar e Agendar transferência) lista de onde vem cada valor ("OT 160 — excesso reprovado: R$ 20,45") e vem com **"Sim, descontar" sempre pré-marcado**, sem perder o "Não". Sem valor liberado informado nada é decidido (a pendência segue aberta). **Nada retroativo:** reprovações antigas não têm valor guardado e portanto não geram cobrança (OT 160 da Mayara e OT 153 do Gustavo continuam sem pendência).
+
+**Verificação:** 18 verificações do backend (viagem fechada, em andamento, aprovar depois, dois excessos, reprovação antiga, estouro, valor inválido, não-admin, pendência já decidida), regressão da decisão única da pendência e 14 verificações na tela real com servidor simulado (confirmação do Reprovar, valor enviado, alerta, lista de origens, "Sim" pré-marcado). Fluxo logado real não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
