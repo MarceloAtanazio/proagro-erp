@@ -7712,3 +7712,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Dados da Larissa:** `scripts/2026-10-23_reparo_larissa_vinculo.sql` cria o vínculo (admissão 26/10/2026, Assistente Administrativo, Administrativo, salário previsto), ativa o colaborador 37 e cria o fornecedor da folha; é idempotente. Execução em produção pendente de autorização (o assistente foi bloqueado de escrever direto no banco).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-26 — Sessão 174: Viáticos — Configurações não abria para quem não é o administrador principal
+
+**Solicitação:** a Larissa, com edição em Viáticos e RH, não conseguia abrir "Configurações" em Viáticos.
+
+**Causa:** ao abrir, a tela carregava `/api/users` só para preencher "Vincular a um usuário" na ficha do colaborador; esse endpoint é exclusivo do administrador principal, então dava 403 e o modal não abria.
+
+**O que mudou:** novo `GET /api/viaticos/usuarios` (apenas id, nome e e-mail; exige edição em Viáticos) e a tela usa essa lista. `/api/users` continua restrito. Não se ignora o erro de propósito: com a lista vazia, salvar a ficha desvincularia o usuário do colaborador.
+
+**Verificação:** 5 verificações no backend (editor recebe a lista com só 3 campos; só leitura e sem permissão levam 403; `/api/users` segue 403) e regressões de pendência e admissão. Não testado logado como a Larissa.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

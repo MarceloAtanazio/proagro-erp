@@ -2238,6 +2238,12 @@ app.get('/api/colaboradores', requireAuth, requireViewAny(['viaticos']), h(async
   res.json(rows);
 }));
 
+// Só o necessário para o campo "Vincular a um usuário" da ficha do colaborador. /api/users é do administrador
+// principal; quem edita Viáticos não pode depender dele para abrir as Configurações.
+app.get('/api/viaticos/usuarios', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  res.json(await query('SELECT id, name, email FROM erp_users ORDER BY CASE WHEN active THEN 0 ELSE 1 END, name'));
+}));
+
 app.post('/api/colaboradores', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Nome é obrigatório.' });

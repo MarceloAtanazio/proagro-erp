@@ -8700,7 +8700,7 @@ function viaCelulaDocumentacao(c) {
 }
 
 async function renderViaticosConfig() {
-  const [colaboradores, tud, usuarios, viaConfig] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud'), api('/api/users'), api('/api/viaticos/config')]);
+  const [colaboradores, tud, usuarios, viaConfig] = await Promise.all([api('/api/colaboradores'), api('/api/viaticos/tud'), api('/api/viaticos/usuarios'), api('/api/viaticos/config')]);
 
   const tudGrid = tier => `<h4 style="margin:14px 0 8px">Tier ${tier}</h4>
     <div class="table-wrap"><table><thead><tr><th>Categoria de local</th><th class="num">Hospedagem (dia)</th><th class="num">Alimentação (dia)</th></tr></thead>
