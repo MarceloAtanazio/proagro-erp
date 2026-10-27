@@ -9144,9 +9144,13 @@ function scheduleUsersRefresh() {
   }, 60000);
 }
 
+let USERS_FILTRO = 'todos';   // todos | ativos | inativos
 async function renderUsuarios() {
-  const rows = await api('/api/users');
-  const byId = id => rows.find(u => String(u.id) === String(id));
+  const todos = await api('/api/users');
+  const nAtivos = todos.filter(u => u.active).length, nInativos = todos.length - nAtivos;
+  const rows = USERS_FILTRO === 'ativos' ? todos.filter(u => u.active)
+    : USERS_FILTRO === 'inativos' ? todos.filter(u => !u.active) : todos;
+  const byId = id => todos.find(u => String(u.id) === String(id));
 
   const permChips = u => {
     if (u.role === 'admin') return '<span class="badge ok">Acesso total</span>';
@@ -9166,7 +9170,18 @@ async function renderUsuarios() {
       <button class="btn primary" id="btn-new-user">+ Criar usuário</button>
     </div>
 
+    <div class="toolbar">
+      <label>Mostrar
+        <select id="users-filtro">
+          <option value="todos"${USERS_FILTRO === 'todos' ? ' selected' : ''}>Todos (${todos.length})</option>
+          <option value="ativos"${USERS_FILTRO === 'ativos' ? ' selected' : ''}>Ativos (${nAtivos})</option>
+          <option value="inativos"${USERS_FILTRO === 'inativos' ? ' selected' : ''}>Inativos (${nInativos})</option>
+        </select>
+      </label>
+    </div>
+
     <div class="user-list">
+      ${rows.length ? '' : '<div class="empty">Nenhum usuário nesta situação.</div>'}
       ${rows.map(u => {
         const initials = u.name.trim().split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase();
         const isSuper = u.email.toLowerCase() === 'm.atanazio@proagroseguros.com';
@@ -9196,6 +9211,7 @@ async function renderUsuarios() {
       }).join('')}
     </div>`;
 
+  $('#users-filtro').onchange = e => { USERS_FILTRO = e.target.value; renderUsuarios(); };
   $('#btn-new-user').onclick = openCreateUser;
   c.querySelectorAll('[data-perms]').forEach(b => b.onclick = () => openEditPerms(byId(b.dataset.perms)));
   c.querySelectorAll('[data-reset]').forEach(b => b.onclick = () => openReset(byId(b.dataset.reset)));

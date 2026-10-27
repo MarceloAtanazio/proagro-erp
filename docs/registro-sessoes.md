@@ -7751,3 +7751,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 4 verificações no backend (consulta devolve o campo, heartbeat grava, nada zera). Tela de Usuários não testada logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-28 — Sessão 177: Usuários — filtro Ativos / Inativos
+
+**Solicitação:** filtrar a lista de Usuários por ativos e inativos.
+
+**O que mudou:** seletor "Mostrar" com Todos, Ativos e Inativos, cada um com a contagem. O filtro é no navegador (a lista já vem completa) e a escolha fica guardada: a recarga automática de 60s e o ativar/desativar não devolvem a lista para "Todos". Sem usuários na situação escolhida, aparece "Nenhum usuário nesta situação". Ao desativar alguém com "Ativos" selecionado, a pessoa sai da lista (é o esperado). Sem mudança de backend nem de banco.
+
+**Verificação:** na tela real com servidor simulado (4 usuários, 2 ativos e 2 inativos): contagens "Todos (4) / Ativos (2) / Inativos (2)", cada filtro mostra só os usuários certos e voltar para Todos restaura a lista.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
