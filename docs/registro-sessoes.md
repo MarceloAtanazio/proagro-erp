@@ -7738,3 +7738,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** na tela real com servidor simulado e usuário de leitura: em Contas a Pagar, Novo título, baixa, editar e excluir ficaram bloqueados (inclusive após filtrar), clicar neles não abriu nada e os anexos abriram só com "Ver"; em Fornecedores, Novo fornecedor bloqueado. As demais páginas usam a mesma função e não foram abertas.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-27 — Sessão 176: Usuários — último acesso com data e hora
+
+**Solicitação:** registrar e mostrar em Usuários o último acesso de cada pessoa, com data e horário.
+
+**Causa/decisão:** a presença (`last_seen_at`) é zerada no logout para o usuário ficar Offline na hora, então não guarda o último acesso. Nova coluna `erp_users.ultimo_acesso_em`, nunca zerada, gravada no login e no heartbeat (no máximo 1x por minuto, já existente). A migração preenche o histórico com o mais recente entre a presença e o log de auditoria.
+
+**O que mudou:** `GET /api/users` devolve o campo; a tela de Usuários mostra "Último acesso: dd/mm/aaaa às hh:mm" (horário de Brasília) ou "nunca acessou". Migração aplicada em produção antes do código, porque o login passa a gravar na coluna.
+
+**Verificação:** 4 verificações no backend (consulta devolve o campo, heartbeat grava, nada zera). Tela de Usuários não testada logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

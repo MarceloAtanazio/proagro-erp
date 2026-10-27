@@ -9176,6 +9176,7 @@ async function renderUsuarios() {
             <div>
               <div class="user-name">${esc(u.name)} ${u.id === USER.id ? '<span style="color:var(--muted);font-weight:400">(você)</span>' : ''}</div>
               <div class="user-mail">${esc(u.email)} · cadastro: ${brDate(u.created_at.slice(0, 10))}</div>
+              <div class="user-mail">Último acesso: ${u.ultimo_acesso_em ? esc(new Date(u.ultimo_acesso_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', ' às')) : 'nunca acessou'}</div>
               <div style="margin-top:6px">${permChips(u)}</div>
             </div>
           </div>
