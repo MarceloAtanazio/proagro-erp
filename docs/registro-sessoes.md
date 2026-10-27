@@ -7725,3 +7725,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 5 verificações no backend (editor recebe a lista com só 3 campos; só leitura e sem permissão levam 403; `/api/users` segue 403) e regressões de pendência e admissão. Não testado logado como a Larissa.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-27 — Sessão 175: perfil somente leitura bloqueia os botões de gravação do Financeiro
+
+**Solicitação:** usuário com perfil só de leitura (Fabricio Camargo de Lima) deve continuar lendo as páginas, mas sem poder clicar em botões que inserem dados (novo título, lançamento, solicitar aporte etc.).
+
+**Situação encontrada:** a trava real já existia no backend (403 em qualquer escrita) e Viáticos, Suprimentos e RH já não desenhavam os botões para quem só lê. As páginas do Financeiro (Contas a Pagar, Receber, Fluxo de Caixa, Fornecedores, Contratos, Conciliação) e o Orçamento desenhavam tudo; o clique abria o formulário e só o "Salvar" era recusado.
+
+**O que mudou:** lista por página dos botões que gravam (`ESCRITA_SOMENTE_LEITURA`); em página somente leitura eles ficam desabilitados, esmaecidos, com a dica "Somente leitura". Um observador reaplica quando a tabela é redesenhada (filtros). No Orçamento os campos de valor também travam. Exportar, Limpar filtros e a consulta de anexos (Ver) continuam liberados. Admin e quem tem edição não mudam. Dashboard, Orçado x Realizado e Relatórios não têm botões de gravação.
+
+**Verificação:** na tela real com servidor simulado e usuário de leitura: em Contas a Pagar, Novo título, baixa, editar e excluir ficaram bloqueados (inclusive após filtrar), clicar neles não abriu nada e os anexos abriram só com "Ver"; em Fornecedores, Novo fornecedor bloqueado. As demais páginas usam a mesma função e não foram abertas.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

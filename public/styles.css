@@ -353,6 +353,7 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 }
 
 /* ===== Controle de acesso / permissões ===== */
+.ro-bloqueado, .ro-bloqueado:hover { opacity: .4; cursor: not-allowed; pointer-events: auto; }
 .ro-banner {
   display: flex; align-items: center; gap: 8px;
   background: var(--warn-050, #FBF3E0); color: var(--warn, #8A6414);
