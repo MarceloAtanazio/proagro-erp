@@ -308,7 +308,8 @@ function docxParagrafos(xml) {
       .map(m => {
         const rPr = /<w:rPr>([\s\S]*?)<\/w:rPr>/.exec(m[1]);
         const t = destag(m[1].replace(/<w:tab\b[^>]*\/>/g, '\t').replace(/<w:rPr>[\s\S]*?<\/w:rPr>/, ''));
-        return { texto: t, negrito: !!(rPr && ehNegrito(rPr[1])) };
+        // O estilo Título do Word já é negrito: o run não precisa repetir o <w:b/>.
+        return { texto: t, negrito: estiloTitulo || !!(rPr && ehNegrito(rPr[1])) };
       })
       .filter(r => r.texto !== '');
     // Runs vizinhos com a mesma formatação viram um só: o Word fatia texto sem
@@ -320,7 +321,9 @@ function docxParagrafos(xml) {
       else juntos.push({ ...r });
     }
     const texto = juntos.map(r => r.texto).join('');
-    const alinhamento = jc ? jc[1] : 'left';
+    // Sem <w:jc> no parágrafo, o Título 1 dessas minutas herda o centralizado do ESTILO — que este
+    // leitor não resolve. Lido como "left", o título saía encostado na margem em vez de centralizado.
+    const alinhamento = jc ? jc[1] : (estiloTitulo ? 'center' : 'left');
     const negrito = juntos.length > 0 && juntos.every(r => r.negrito);
     return {
       texto,
@@ -333,9 +336,65 @@ function docxParagrafos(xml) {
       // todo negrito, e tratá-lo como seção poria um sublinhado embaixo da
       // linha de assinatura, que já é um traço. O que separa os dois é o
       // CENTRALIZADO: título é centralizado, assinatura é à esquerda.
-      titulo: estiloTitulo || (negrito && alinhamento === 'center')
+      // Título com alinhamento explícito à esquerda não é título de seção: é o nome da empresa no bloco
+      // de assinaturas, que na minuta Externa também usa o estilo Título 1 e saía sublinhado como seção.
+      titulo: alinhamento === 'center' && (estiloTitulo || negrito)
     };
   }).filter((x, i, a) => x.texto !== '' || (i > 0 && a[i - 1].texto !== ''));  // colapsa vazios seguidos
 }
 
 module.exports.docxParagrafos = docxParagrafos;
+
+// ---------------------------------------------------------------------------
+// Padrão dos títulos de seção.
+//
+// Cada minuta chega de um jeito: na Presencial e na Híbrida os títulos trazem a formatação escrita no
+// próprio parágrafo (centralizado, Trebuchet MS 11 pt, negrito, sublinhado); na Externa eles dependem
+// do estilo "Título 1" do Word, com recuos, espaçamentos e fonte diferentes e o sublinhado desligado.
+// Como o contrato emitido tem de sair igual em todas, a emissão passa os títulos pelo mesmo padrão —
+// o que vale também para qualquer minuta cadastrada daqui para frente.
+// ---------------------------------------------------------------------------
+const ORDEM_PPR = ['pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr', 'widowControl', 'numPr',
+  'suppressLineNumbers', 'pBdr', 'shd', 'tabs', 'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct',
+  'topLinePunct', 'autoSpaceDE', 'autoSpaceDN', 'bidi', 'adjustRightInd', 'snapToGrid', 'spacing', 'ind',
+  'contextualSpacing', 'mirrorIndents', 'suppressOverlap', 'jc', 'textDirection', 'textAlignment',
+  'textboxTightWrap', 'outlineLvl', 'divId', 'cnfStyle', 'rPr', 'sectPr', 'pPrChange'];
+// Marca de parágrafo e texto do título: a mesma formatação, conforme a Presencial.
+const RPR_TITULO = '<w:rPr><w:rFonts w:ascii="Trebuchet MS" w:hAnsi="Trebuchet MS" w:cs="Times New Roman"/><w:b/><w:bCs/>'
+  + '<w:color w:val="000000"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:u w:val="single"/><w:lang w:val="pt-BR"/></w:rPr>';
+const PPR_PROPRIAS = {
+  spacing: '<w:spacing w:before="0" w:line="276" w:lineRule="auto"/>',
+  ind: '<w:ind w:left="0" w:right="0" w:firstLine="0"/>',
+  contextualSpacing: '<w:contextualSpacing/>',
+  jc: '<w:jc w:val="center"/>',
+  rPr: RPR_TITULO
+};
+// "DO OBJETO", "DA REMUNERAÇÃO", "DAS DISPOSIÇÕES FINAIS", "CONTRATO DE TRABALHO", "FOLHA DE ASSINATURAS"…
+// Cláusulas ("CLÁUSULA 1ª: …") e o nome da empresa no bloco de assinaturas não entram.
+const RE_TITULO_SECAO = /^(CONTRATO DE TRABALHO|FOLHA DE ASSINATURAS|D[AOE]S?\s+[A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9][A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9 ,.\-–\/()ºª]*)$/;
+
+function padronizarTitulos(xml) {
+  return xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, p => {
+    const texto = destag((p.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, ''))).replace(/\s+/g, ' ').trim();
+    if (!RE_TITULO_SECAO.test(texto)) return p;
+    const pPr = /<w:pPr>([\s\S]*?)<\/w:pPr>/.exec(p);
+    const estilo = pPr && /<w:pStyle\s+w:val="([^"]+)"/.exec(pPr[1]);
+    const ehTitulo = !!(estilo && /^(T[íi]?tulo|Heading)\d?/i.test(estilo[1]))
+      || (/<w:jc\s+w:val="center"/.test(pPr ? pPr[1] : '') && /<w:b\s*\/>/.test(p));
+    if (!ehTitulo) return p;
+
+    // Mantém o que não é formatação visual do título (estilo, numeração, quebra, seção…) e refaz o resto.
+    const filhos = pPr ? [...pPr[1].matchAll(/<w:([A-Za-z]+)\b(?:[^>]*\/>|[^>]*>[\s\S]*?<\/w:\1>)/g)].map(m => ({ nome: m[1], xml: m[0] })) : [];
+    const mantidos = filhos.filter(f => !PPR_PROPRIAS[f.nome] && !['tabs', 'mirrorIndents'].includes(f.nome));
+    const novos = [...mantidos, ...Object.entries(PPR_PROPRIAS).map(([nome, x]) => ({ nome, xml: x }))]
+      .sort((a, b) => (ORDEM_PPR.indexOf(a.nome) < 0 ? 99 : ORDEM_PPR.indexOf(a.nome)) - (ORDEM_PPR.indexOf(b.nome) < 0 ? 99 : ORDEM_PPR.indexOf(b.nome)));
+    const novoPPr = '<w:pPr>' + novos.map(f => f.xml).join('') + '</w:pPr>';
+    let q = pPr ? p.replace(pPr[0], () => novoPPr) : p.replace(/^(<w:p(?:\s[^>]*)?>)/, (_, ab) => ab + novoPPr);
+    // Cada trecho de texto do título recebe a mesma formatação (sem espaçamento de caracteres, que o
+    // conversor de PDF deixou nos runs da minuta Externa).
+    q = q.replace(/(<w:r(?:\s[^>]*)?>)(<w:rPr>[\s\S]*?<\/w:rPr>)?/g, (_, ab) => ab + RPR_TITULO);
+    return q;
+  });
+}
+
+module.exports.padronizarTitulos = padronizarTitulos;

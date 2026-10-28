@@ -3746,7 +3746,7 @@ app.delete('/api/rh/dependentes/:id', requireAuth, requireEdit('rh'), h(async (r
 // RH — processo de admissão (Kanban), minutas e emissão de contrato
 // Migração: 2026-09-08-rh-fase2-admissao.sql
 // ============================================================
-const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, inteiroEmTexto, brl: docxBrl, docxParagrafos } = require('../src/docx-merge');
+const { zipLer, zipEscrever, acharSlots, mesclar, reaisEmTexto, inteiroEmTexto, brl: docxBrl, docxParagrafos, padronizarTitulos } = require('../src/docx-merge');
 
 // As seis etapas, na ordem que a empresa segue. `exige` é o que precisa estar
 // resolvido para SAIR da etapa — é isso que impede o processo de avançar com
@@ -4647,7 +4647,8 @@ app.post('/api/rh/admissoes/:id/contrato', requireAuth, requireEdit('rh'), h(asy
 
   const entradas = zipLer(p.minuta.data);
   const doc = entradas.find(e => e.nome === 'word/document.xml');
-  const novoXml = mesclar(p.xml, p.slotsReais, p.valores.map(v => v.valor));
+  // Títulos de seção no padrão da empresa, qualquer que seja a minuta (ver padronizarTitulos).
+  const novoXml = padronizarTitulos(mesclar(p.xml, p.slotsReais, p.valores.map(v => v.valor)));
   doc.dados = Buffer.from(novoXml, 'utf8');
   const docx = zipEscrever(entradas);
   const valores = p.valores;

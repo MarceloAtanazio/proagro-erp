@@ -7762,3 +7762,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** na tela real com servidor simulado (4 usuários, 2 ativos e 2 inativos): contagens "Todos (4) / Ativos (2) / Inativos (2)", cada filtro mostra só os usuários certos e voltar para Todos restaura a lista.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-28 — Sessão 178: Minuta Externa — títulos centralizados e no padrão na emissão
+
+**Solicitação:** a minuta "Contrato de Trabalho - Técnico de Campo - Controle de Ponto - Jornada Externa" saía com os títulos desconfigurados na emissão; centralizar e manter o padrão.
+
+**Causa:** nas minutas Presencial e Híbrida cada título traz a formatação no próprio parágrafo (centralizado, Trebuchet MS 11 pt, negrito, sublinhado). Na Externa os títulos só usam o estilo "Título 1" do Word, com recuos de 101–140, espaçamento diferente, fonte padrão e o sublinhado desligado. O PDF lê só a formatação direta: 12 dos 13 títulos saíam à esquerda (só "DA POSSIBILIDADE…" estava centralizado) e o nome da empresa no bloco de assinaturas, que usa o mesmo estilo, saía como título sublinhado.
+
+**O que mudou:** a emissão passa os títulos de seção (CONTRATO DE TRABALHO, DO/DA/DOS/DAS…, FOLHA DE ASSINATURAS) pelo mesmo padrão em qualquer minuta, tanto no .docx quanto no PDF: centralizado, Trebuchet MS 11 pt, negrito, sublinhado, sem recuo. Cláusulas e texto não são tocados. O PDF passou a entender o centro herdado do estilo Título e a não tratar título à esquerda (nome da empresa) como seção. Vale também para minutas cadastradas no futuro; não precisa recadastrar a minuta no sistema.
+
+**Verificação:** sobre os 7 .docx reais da pasta de minutas: o texto não muda, o XML continua bem formado, na Externa os 13 títulos ficam centralizados no padrão e a empresa da assinatura deixa de ser título, e nas outras seis minutas o que o PDF lê continua idêntico. Emissão logada de verdade não testada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
