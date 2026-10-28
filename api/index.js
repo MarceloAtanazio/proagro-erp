@@ -267,6 +267,9 @@ const AUDIT_MAP = {
   // Recursos Humanos — dados pessoais e remuneração deixam rastro nomeado.
   'PUT /api/rh/colaboradores/:id': req => `Editou a ficha de RH do colaborador ID ${req.params.id} (${Object.keys(req.body || {}).length} campo(s))`,
   'POST /api/rh/colaboradores/:id/vinculos': (req, body) => `Abriu vínculo (${req.body.cargo || 'sem cargo'}, admissão ${req.body.admissao}) para o colaborador ID ${req.params.id}${body && body.id ? ` — vínculo ${body.id}` : ''}`,
+  'POST /api/rh/colaboradores/:id/movimentacoes': req => `Registrou ${req.body.tipo || 'movimentação'} (vigência ${req.body.vigencia_inicio}) do colaborador ID ${req.params.id}`,
+  'DELETE /api/rh/movimentacoes/:id': req => `Cancelou a movimentação de carreira ID ${req.params.id}`,
+  'POST /api/rh/dissidio': req => `Registrou dissídio (vigência ${req.body.vigencia_inicio}) para ${(req.body.itens || []).length} colaborador(es)`,
   'PUT /api/rh/vinculos/:id': req => `Editou o vínculo ID ${req.params.id}${req.body.desligamento ? ` — DESLIGAMENTO em ${req.body.desligamento}` : ''}`,
   'DELETE /api/rh/vinculos/:id': req => `Excluiu o vínculo ID ${req.params.id}`,
   'POST /api/rh/colaboradores/:id/dependentes': req => `Cadastrou dependente do colaborador ID ${req.params.id}`,
@@ -2517,6 +2520,15 @@ function rhDatasExperiencia(admissaoISO) {
   return { experiencia_fim: soma(45), prorrogacao_fim: soma(90) };
 }
 
+// Aplica as movimentações de carreira cuja data já chegou. Vale para qualquer tela de RH: quem abre a ficha no dia
+// 1º já vê o cargo e o salário novos. No máximo uma vez a cada 30s por instância; falha aqui nunca derruba a tela.
+let rhMovUltimaRodada = 0;
+app.use('/api/rh', (req, res, next) => {
+  if (Date.now() - rhMovUltimaRodada < 30000) return next();
+  rhMovUltimaRodada = Date.now();
+  rhAplicarMovimentacoes().catch(e => console.error('[rhAplicarMovimentacoes]', e)).then(() => next());
+});
+
 // ---- Lista de colaboradores (tela de RH) ----
 app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const rows = await query(`
@@ -2885,6 +2897,169 @@ app.post('/api/rh/colaboradores/:id/vinculos', requireAuth, requireEdit('rh'), h
   await rhRegistrarVigencia(ins[0].id, ins[0], String(corpo.admissao).slice(0, 10),
     'Vigência inicial (admissão)', req.user.id);
   res.json({ ok: true, id: ins[0].id });
+}));
+
+// ---- Movimentações de carreira: promoção, mérito, dissídio ----
+//
+// O vínculo guarda o cargo e o salário DE HOJE, e editar por lá sobrescreve e carimba a vigência com a data
+// do dia — não dá para registrar uma promoção que começa no mês que vem, nem um dissídio que vale desde
+// agosto, e o cargo antigo não deixava rastro. Aqui cada mudança é uma linha com a data em que passa a
+// valer: se já chegou, é aplicada na hora (atualiza o vínculo e grava a vigência de salário na data
+// certa, que é o que o histórico financeiro lê); se está no futuro, fica agendada e é aplicada sozinha
+// quando a data chega.
+const RH_MOV_TIPOS = ['promocao', 'merito', 'dissidio', 'ajuste'];
+const RH_MOV_ROTULO = { promocao: 'Promoção', merito: 'Mérito', dissidio: 'Dissídio', ajuste: 'Ajuste' };
+const rhMovValor = v => { const x = rhNumOuNulo(v); return x != null && x > 0 && x < 10000000 ? Math.round(x * 100) / 100 : null; };
+
+async function rhAplicarMovimentacoes() {
+  const hoje = hojeISO();
+  const vencidas = await query(
+    `SELECT id FROM erp_rh_movimentacoes WHERE status='agendada' AND vigencia_inicio <= $1
+      ORDER BY vigencia_inicio, id`, [hoje]);
+  let aplicadas = 0;
+  for (const { id } of vencidas) {
+    // Reivindica a linha antes de mexer: duas requisições simultâneas não aplicam a mesma duas vezes.
+    const m = (await query(
+      `UPDATE erp_rh_movimentacoes SET status='aplicada', aplicada_em=now()
+        WHERE id=$1 AND status='agendada' RETURNING *`, [id]))[0];
+    if (!m) continue;
+    try {
+      const v = (await query('SELECT * FROM erp_rh_vinculos WHERE id=$1', [m.vinculo_id]))[0];
+      const vig = String(m.vigencia_inicio).slice(0, 10);
+      if (!v || (v.desligamento && String(v.desligamento).slice(0, 10) < vig)) {
+        await query(`UPDATE erp_rh_movimentacoes SET status='cancelada', obs=$2 WHERE id=$1`,
+          [m.id, 'Vínculo encerrado antes da vigência.']);
+        continue;
+      }
+      const ult = (await query('SELECT max(vigencia_inicio) AS d FROM erp_rh_salario_hist WHERE vinculo_id=$1', [v.id]))[0];
+      // Uma movimentação com data anterior a uma vigência já existente entra no histórico, mas não
+      // sobrescreve o que está em vigor hoje.
+      const maisRecente = !ult || !ult.d || vig >= String(ult.d).slice(0, 10);
+      const emForca = (await query(
+        `SELECT salario FROM erp_rh_salario_hist WHERE vinculo_id=$1 AND vigencia_inicio <= $2
+          ORDER BY vigencia_inicio DESC, id DESC LIMIT 1`, [v.id, vig]))[0];
+      const salAnt = emForca && emForca.salario != null ? emForca.salario : v.salario;
+      await query(`UPDATE erp_rh_movimentacoes SET salario_anterior=$2, cargo_anterior=$3, departamento_anterior=$4 WHERE id=$1`,
+        [m.id, salAnt, v.cargo, v.departamento]);
+      if (maisRecente) {
+        await query(
+          `UPDATE erp_rh_vinculos SET cargo=COALESCE($2,cargo), departamento=COALESCE($3,departamento),
+                  salario=COALESCE($4,salario), updated_at=now() WHERE id=$1`,
+          [v.id, m.cargo_novo, m.departamento_novo, m.salario_novo]);
+      }
+      if (m.salario_novo != null) {
+        await rhRegistrarVigencia(v.id, { ...v, salario: m.salario_novo }, vig,
+          `${RH_MOV_ROTULO[m.tipo] || 'Alteração'}${m.motivo ? ' — ' + m.motivo : ''}`, m.registrado_por);
+      }
+      aplicadas++;
+    } catch (e) {
+      // Falhou no meio: devolve para a fila em vez de deixar "aplicada" sem efeito.
+      await query(`UPDATE erp_rh_movimentacoes SET status='agendada', aplicada_em=NULL WHERE id=$1`, [m.id]).catch(() => {});
+      throw e;
+    }
+  }
+  return aplicadas;
+}
+
+const rhMovPodeEscrever = (req, res) => {
+  if (!rhVeRemuneracao(req.user)) { res.status(403).json({ error: 'Exige a permissão “RH · remuneração e benefícios”.' }); return false; }
+  return true;
+};
+
+app.get('/api/rh/colaboradores/:id/movimentacoes', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const id = Number(req.params.id);
+  const colab = (await query('SELECT id, usuario_id FROM erp_colaboradores WHERE id=$1', [id]))[0];
+  if (!colab) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  if (!(rhVeRemuneracao(req.user) || rhEhProprio(req.user, colab))) return res.status(403).json({ error: 'Sem acesso à remuneração.' });
+  res.json(await query(
+    `SELECT m.id, m.tipo, m.vigencia_inicio, m.status, m.cargo_novo, m.cargo_anterior, m.departamento_novo,
+            m.departamento_anterior, m.salario_novo, m.salario_anterior, m.percentual, m.motivo, m.obs, m.aplicada_em
+       FROM erp_rh_movimentacoes m WHERE m.colaborador_id=$1 AND m.status <> 'cancelada'
+      ORDER BY m.vigencia_inicio DESC, m.id DESC`, [id]));
+}));
+
+app.post('/api/rh/colaboradores/:id/movimentacoes', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhMovPodeEscrever(req, res)) return;
+  const id = Number(req.params.id);
+  const b = req.body || {};
+  if (!RH_MOV_TIPOS.includes(b.tipo)) return res.status(400).json({ error: 'Escolha o tipo da movimentação.' });
+  if (!isDate(b.vigencia_inicio)) return res.status(400).json({ error: 'Informe a data a partir da qual vale.' });
+  const v = (await query('SELECT * FROM erp_rh_vinculos WHERE colaborador_id=$1 AND desligamento IS NULL ORDER BY admissao DESC LIMIT 1', [id]))[0];
+  if (!v) return res.status(409).json({ error: 'Este colaborador não tem contrato em vigor.' });
+  if (b.vigencia_inicio < String(v.admissao).slice(0, 10)) return res.status(400).json({ error: 'A data não pode ser anterior à admissão.' });
+  const cargo = sanitize(b.cargo_novo) || null, depto = sanitize(b.departamento_novo) || null;
+  const salario = b.salario_novo === undefined || b.salario_novo === null || b.salario_novo === '' ? null : rhMovValor(b.salario_novo);
+  if (b.salario_novo !== undefined && b.salario_novo !== null && b.salario_novo !== '' && salario == null)
+    return res.status(400).json({ error: 'Salário novo inválido.' });
+  const mudaCargo = cargo && cargo !== v.cargo, mudaDepto = depto && depto !== v.departamento;
+  if (!mudaCargo && !mudaDepto && salario == null) return res.status(400).json({ error: 'Informe o que muda: cargo, departamento ou salário.' });
+  const dup = await query(
+    `SELECT 1 FROM erp_rh_movimentacoes WHERE vinculo_id=$1 AND tipo=$2 AND vigencia_inicio=$3 AND status <> 'cancelada'`,
+    [v.id, b.tipo, b.vigencia_inicio]);
+  if (dup.length) return res.status(409).json({ error: 'Já existe uma movimentação deste tipo para esta pessoa nesta data.' });
+  const perc = rhNumOuNulo(b.percentual);
+  const ins = await query(
+    `INSERT INTO erp_rh_movimentacoes (vinculo_id, colaborador_id, tipo, vigencia_inicio, cargo_novo, departamento_novo,
+        salario_novo, percentual, motivo, registrado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+    [v.id, id, b.tipo, b.vigencia_inicio, mudaCargo ? cargo : null, mudaDepto ? depto : null, salario,
+     perc != null && Math.abs(perc) < 1000 ? perc : null, sanitize(b.motivo) || null, req.user.id]);
+  const aplicadas = await rhAplicarMovimentacoes();
+  res.json({ ok: true, id: ins[0].id, aplicada: b.vigencia_inicio <= hojeISO() && aplicadas > 0 });
+}));
+
+app.delete('/api/rh/movimentacoes/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhMovPodeEscrever(req, res)) return;
+  const r = await query(`UPDATE erp_rh_movimentacoes SET status='cancelada', obs='Cancelada antes de valer.'
+                          WHERE id=$1 AND status='agendada' RETURNING id`, [Number(req.params.id)]);
+  if (!r.length) return res.status(409).json({ error: 'Só dá para cancelar uma movimentação ainda agendada.' });
+  res.json({ ok: true });
+}));
+
+// Base da tela de dissídio: quem tem contrato em vigor e o salário de hoje.
+app.get('/api/rh/dissidio/base', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhMovPodeEscrever(req, res)) return;
+  res.json(await query(
+    `SELECT c.id AS colaborador_id, v.id AS vinculo_id, c.name, v.cargo, v.admissao, v.salario, v.sindicato, v.cct
+       FROM erp_rh_vinculos v JOIN erp_colaboradores c ON c.id = v.colaborador_id
+      WHERE v.desligamento IS NULL AND c.ativo = true AND c.arquivado_em IS NULL
+      ORDER BY v.admissao, c.name`));
+}));
+
+// Dissídio coletivo: uma movimentação por pessoa, todas com a mesma vigência e o mesmo motivo. O percentual
+// é informativo (cada pessoa tem o seu, proporcional à admissão); o que vale é o salário novo.
+app.post('/api/rh/dissidio', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  if (!rhMovPodeEscrever(req, res)) return;
+  const b = req.body || {};
+  if (!isDate(b.vigencia_inicio)) return res.status(400).json({ error: 'Informe a data-base do dissídio (desde quando vale).' });
+  const motivo = sanitize(b.motivo);
+  if (!motivo) return res.status(400).json({ error: 'Informe o motivo (ex.: Dissídio EAA 2025/2026).' });
+  const itens = Array.isArray(b.itens) ? b.itens : [];
+  if (!itens.length) return res.status(400).json({ error: 'Nenhuma pessoa selecionada.' });
+  if (itens.length > 500) return res.status(400).json({ error: 'Itens demais.' });
+  const prontos = [];
+  for (const it of itens) {
+    const v = (await query(
+      `SELECT v.id, v.admissao, v.salario, c.name FROM erp_rh_vinculos v JOIN erp_colaboradores c ON c.id=v.colaborador_id
+        WHERE v.colaborador_id=$1 AND v.desligamento IS NULL ORDER BY v.admissao DESC LIMIT 1`, [Number(it.colaborador_id)]))[0];
+    if (!v) return res.status(409).json({ error: `Colaborador ${it.colaborador_id} não tem contrato em vigor.` });
+    const sal = rhMovValor(it.salario_novo);
+    if (sal == null) return res.status(400).json({ error: `Salário novo inválido para ${v.name}.` });
+    if (String(v.admissao).slice(0, 10) > b.vigencia_inicio) return res.status(400).json({ error: `${v.name} foi admitido(a) depois da data-base.` });
+    const dup = await query(
+      `SELECT 1 FROM erp_rh_movimentacoes WHERE vinculo_id=$1 AND tipo='dissidio' AND vigencia_inicio=$2 AND status <> 'cancelada'`,
+      [v.id, b.vigencia_inicio]);
+    if (dup.length) return res.status(409).json({ error: `${v.name} já tem dissídio registrado nesta data-base.` });
+    prontos.push({ v, colaborador_id: Number(it.colaborador_id), sal, perc: rhNumOuNulo(it.percentual) });
+  }
+  for (const p of prontos) {
+    await query(
+      `INSERT INTO erp_rh_movimentacoes (vinculo_id, colaborador_id, tipo, vigencia_inicio, salario_novo, percentual, motivo, registrado_por)
+       VALUES ($1,$2,'dissidio',$3,$4,$5,$6,$7)`,
+      [p.v.id, p.colaborador_id, b.vigencia_inicio, p.sal, p.perc != null && Math.abs(p.perc) < 1000 ? p.perc : null, motivo, req.user.id]);
+  }
+  const aplicadas = await rhAplicarMovimentacoes();
+  res.json({ ok: true, registrados: prontos.length, aplicadas });
 }));
 
 app.put('/api/rh/vinculos/:id', requireAuth, requireEdit('rh'), h(async (req, res) => {

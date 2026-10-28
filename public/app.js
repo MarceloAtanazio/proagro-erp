@@ -12816,6 +12816,7 @@ async function rhPessoas(c) {
         <option value="ok" ${saved.doc === 'ok' ? 'selected' : ''}>Completa</option></select>
       <button class="btn" id="btn-clear">Limpar filtros</button>
       <div class="spacer"></div>
+      ${canEditPage('rh') && rhTemRemuneracao() ? '<button class="btn" id="btn-dissidio">Dissídio coletivo</button>' : ''}
       <button class="btn primary" id="btn-novo">+ Novo colaborador</button>
     </div>
     <div id="rh-cards"></div>
@@ -12924,6 +12925,8 @@ async function rhPessoas(c) {
   rhLigarAbas();
   // Pela lista entra quem já é funcionário; candidato entra pelo Quadro.
   $('#btn-novo').onclick = () => rhFormNovoColaborador(false);
+  const bdis = $('#btn-dissidio');
+  if (bdis) bdis.onclick = () => rhFormDissidio(() => renderRH());
   draw();
 }
 
@@ -13450,6 +13453,7 @@ function rhAbaVinculo(painel, d, id) {
         ${linha('Clube Saúde', v.clube_saude ? 'Sim' : 'Não')}
         ${linha('Seguro de vida', v.seguro_vida ? 'Sim' : 'Não')}
       </div></div>` : '<div class="rh-nota">🔒 Remuneração e benefícios não estão visíveis para o seu acesso.</div>'}
+    ${rem ? '<div class="rh-sec" id="rh-carreira"></div>' : ''}
     ${rhQuadroCusto(d.custo)}
     ${rem ? '<div class="rh-sec rh-resc" id="rh-rescisao"></div>' : ''}
     ${rhHistoricoVinculos(historico, rem, id, ed)}`;
@@ -13466,6 +13470,8 @@ function rhAbaVinculo(painel, d, id) {
   if (bc) bc.onclick = () => rhFormEncargos(() => abrirFichaRH(id, 'vinculo'));
   const br = painel.querySelector('#rh-rescisao');
   if (br) rhQuadroRescisao(br, id);
+  const bcar = painel.querySelector('#rh-carreira');
+  if (bcar) rhQuadroCarreira(bcar, id, ed, v);
   rhLigarCorrigirDesligamento(painel, historico, id);
 }
 
@@ -14128,6 +14134,177 @@ function rhFormCorrigirDesligamento(colabId, v) {
           closeModal(); toast('Registro corrigido.'); abrirFichaRH(colabId, 'vinculo');
         } catch (e) { modalError(e.message); }
      }}]);
+}
+
+// ---------------- Carreira: promoções, mérito e dissídio ----------------
+//
+// O vínculo guarda o cargo e o salário de hoje. Aqui cada mudança é uma linha com a data em que passa a valer:
+// agendada (data no futuro) ou aplicada. O servidor aplica as agendadas sozinho quando a data chega.
+const RH_MOV_TIPO = { promocao: 'Promoção', merito: 'Mérito', dissidio: 'Dissídio', ajuste: 'Ajuste' };
+
+async function rhQuadroCarreira(box, colabId, ed, v) {
+  let lista = [];
+  try { lista = await api(`/api/rh/colaboradores/${colabId}/movimentacoes`); } catch { box.innerHTML = ''; return; }
+  const agendadas = lista.filter(m => m.status === 'agendada');
+  const mudanca = (de, para, fmt) => (para == null ? '' : (de != null && String(de) !== String(para)
+    ? `${esc(fmt(de))} → <strong>${esc(fmt(para))}</strong>` : `<strong>${esc(fmt(para))}</strong>`));
+  box.innerHTML = `<h4>Carreira e remuneração <span class="rh-lgpd">restrito</span>
+      ${ed ? '<button class="btn sm" id="rh-mov-nova">+ Registrar movimentação</button>' : ''}</h4>
+    ${agendadas.map(m => `<div class="rh-nota aviso">📅 ${RH_MOV_TIPO[m.tipo] || 'Movimentação'} agendada para
+      <strong>${rhData(m.vigencia_inicio)}</strong>:
+      ${[m.cargo_novo ? 'cargo <strong>' + esc(m.cargo_novo) + '</strong>' : '',
+         m.salario_novo != null ? 'salário <strong>' + brl(Number(m.salario_novo)) + '</strong>' : ''].filter(Boolean).join(' · ')}.
+      Entra em vigor sozinha nessa data.</div>`).join('')}
+    ${lista.length ? `<div class="table-wrap"><table class="tbl-rh-dep">
+      <thead><tr><th>Vigência</th><th>Tipo</th><th>Cargo</th><th class="num">Salário</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${lista.map(m => `<tr>
+        <td class="venc-cell">${rhData(m.vigencia_inicio)}</td>
+        <td>${esc(RH_MOV_TIPO[m.tipo] || m.tipo)}${m.motivo ? `<div class="hint" style="margin:0">${esc(m.motivo)}</div>` : ''}</td>
+        <td>${m.cargo_novo ? mudanca(m.cargo_anterior, m.cargo_novo, x => x) : '—'}</td>
+        <td class="num">${m.salario_novo != null ? mudanca(m.salario_anterior, m.salario_novo, x => brl(Number(x))) : '—'}${
+          m.percentual != null ? `<div class="hint" style="margin:0">${Number(m.percentual).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%</div>` : ''}</td>
+        <td><span class="badge ${m.status === 'agendada' ? 'pend' : 'ok'}">${m.status === 'agendada' ? 'Agendada' : 'Aplicada'}</span></td>
+        <td class="actions">${ed && m.status === 'agendada' ? `<button class="btn sm danger-ghost" data-mov-cancelar="${m.id}">Cancelar</button>` : ''}</td>
+      </tr>`).join('')}</tbody></table></div>`
+      : '<div class="empty">Nenhuma promoção, mérito ou dissídio registrado. O salário e o cargo atuais estão acima.</div>'}`;
+  const nova = box.querySelector('#rh-mov-nova');
+  if (nova) nova.onclick = () => rhFormMovimentacao(colabId, v);
+  box.querySelectorAll('[data-mov-cancelar]').forEach(b => b.onclick = async () => {
+    if (!confirm('Cancelar esta movimentação agendada?')) return;
+    try { await api('/api/rh/movimentacoes/' + b.dataset.movCancelar, { method: 'DELETE' }); toast('Movimentação cancelada.'); abrirFichaRH(colabId, 'vinculo'); }
+    catch (e) { toast(e.message); }
+  });
+}
+
+function rhFormMovimentacao(colabId, v) {
+  const proxMes = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 1).toLocaleDateString('en-CA'); })();
+  openModal('Registrar movimentação de carreira', `
+    <p class="hint" style="margin-top:0">Se a data já chegou, vale na hora. Se for futura, fica agendada e entra em vigor sozinha nesse dia —
+      até lá o cargo e o salário de hoje continuam como estão.</p>
+    <div class="form-row">
+      ${fldSel('mv-tipo', 'Tipo', [{ v: 'promocao', t: 'Promoção' }, { v: 'merito', t: 'Mérito' }, { v: 'dissidio', t: 'Dissídio (individual)' }, { v: 'ajuste', t: 'Ajuste' }], 'promocao')}
+      ${fld('mv-vigencia', 'Vale a partir de *', 'date', proxMes)}
+    </div>
+    <div class="form-row">
+      ${fldSel('mv-cargo', 'Cargo', rhOpcoesCargo(v.cargo, false), v.cargo || '')}
+      ${fld('mv-depto', 'Departamento', 'text', v.departamento || '')}
+    </div>
+    <div class="form-row">
+      ${fld('mv-salario', 'Novo salário base (R$)', 'number', '', 'step="0.01" min="0" placeholder="' + (v.salario != null ? 'hoje: ' + v.salario : '') + '"')}
+      ${fld('mv-motivo', 'Motivo', 'text', '', 'placeholder="Ex.: Promoção a Gerente"')}
+    </div>
+    <div class="rh-nota" id="mv-resumo"></div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar', cls: 'primary', onClick: async () => {
+        const sal = $('#mv-salario').value;
+        const base = Number(v.salario) || 0;
+        const body = { tipo: $('#mv-tipo').value, vigencia_inicio: $('#mv-vigencia').value, cargo_novo: $('#mv-cargo').value,
+          departamento_novo: $('#mv-depto').value, salario_novo: sal === '' ? null : Number(sal), motivo: $('#mv-motivo').value };
+        if (sal !== '' && base > 0) body.percentual = Math.round((Number(sal) / base - 1) * 100 * 10000) / 10000;
+        if (!body.vigencia_inicio) return modalError('Informe a data a partir da qual vale.');
+        try {
+          const r = await api(`/api/rh/colaboradores/${colabId}/movimentacoes`, { method: 'POST', body });
+          closeModal(); toast(r.aplicada ? 'Movimentação aplicada.' : 'Movimentação agendada.');
+          abrirFichaRH(colabId, 'vinculo');
+        } catch (e) { modalError(e.message); }
+     }}], { wide: true });
+  const resumo = () => {
+    const sal = $('#mv-salario').value, base = Number(v.salario) || 0, vig = $('#mv-vigencia').value;
+    const partes = [];
+    if (vig) partes.push(vig <= todayISO() ? 'Vale <strong>imediatamente</strong>.' : `Fica <strong>agendada</strong> para ${rhData(vig)}.`);
+    if (sal !== '' && base > 0) partes.push(`Salário: ${brl(base)} → <strong>${brl(Number(sal))}</strong> (${((Number(sal) / base - 1) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%).`);
+    $('#mv-resumo').innerHTML = partes.join(' ');
+  };
+  ['mv-salario', 'mv-vigencia'].forEach(x => { $('#' + x).oninput = resumo; });
+  resumo();
+}
+
+// Dissídio coletivo: um percentual por pessoa (proporcional à admissão), uma data-base e um motivo para todos.
+async function rhFormDissidio(aoSalvar) {
+  let base = [];
+  try { base = await api('/api/rh/dissidio/base'); } catch (e) { return toast(e.message); }
+  const r2 = x => Math.round(x * 100) / 100;
+  openModal('Dissídio coletivo', `
+    <p class="hint" style="margin-top:0">Informe a data-base e, para cada pessoa, o percentual <em>ou</em> o valor do reajuste. Cada um vira uma movimentação
+      de salário com vigência na data-base (pode ser retroativa); quem fica de fora não é alterado.</p>
+    <div class="form-row">
+      ${fld('ds-vigencia', 'Data-base (vale desde) *', 'date', '')}
+      ${fld('ds-motivo', 'Motivo *', 'text', '', 'placeholder="Dissídio EAA 2025/2026"')}
+    </div>
+    <div class="toolbar" style="margin:8px 0">
+      <label>Mesmo percentual para os marcados <input type="number" id="ds-pct-todos" step="0.01" min="0" style="width:90px"></label>
+      <button class="btn sm" id="ds-aplicar-todos" type="button">Aplicar</button>
+      <div class="spacer"></div><span id="ds-total" class="hint"></span>
+    </div>
+    <div class="table-wrap"><table class="tbl-rh-dep" id="ds-tab">
+      <thead><tr><th></th><th>Colaborador</th><th>Admissão</th><th class="num">Salário atual</th><th class="num">%</th><th class="num">Reajuste (R$)</th><th class="num">Novo salário</th></tr></thead>
+      <tbody>${base.map(p => `<tr data-linha="${p.colaborador_id}" data-sal="${Number(p.salario) || 0}" data-adm="${esc(String(p.admissao).slice(0, 10))}">
+        <td><input type="checkbox" data-sel></td>
+        <td>${esc(p.name)}<div class="hint" style="margin:0">${esc(rhTxt(p.cargo))}</div></td>
+        <td class="venc-cell">${rhData(p.admissao)}</td>
+        <td class="num">${p.salario != null ? brl(Number(p.salario)) : '—'}</td>
+        <td class="num"><input type="number" data-pct step="0.01" style="width:80px"></td>
+        <td class="num"><input type="number" data-val step="0.01" style="width:100px"></td>
+        <td class="num" data-novo>—</td></tr>`).join('')}</tbody></table></div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar dissídio', cls: 'primary', onClick: async () => {
+        const vigencia = $('#ds-vigencia').value, motivo = $('#ds-motivo').value.trim();
+        if (!vigencia) return modalError('Informe a data-base.');
+        if (!motivo) return modalError('Informe o motivo.');
+        const itens = [...document.querySelectorAll('#ds-tab tr[data-linha]')].filter(tr => tr.querySelector('[data-sel]').checked).map(tr => {
+          const sal = Number(tr.dataset.sal), val = Number(tr.querySelector('[data-val]').value) || 0;
+          return { colaborador_id: Number(tr.dataset.linha), salario_novo: r2(sal + val), percentual: Number(tr.querySelector('[data-pct]').value) || null };
+        });
+        if (!itens.length) return modalError('Marque ao menos uma pessoa com reajuste.');
+        if (!confirm(`Registrar dissídio para ${itens.length} pessoa(s), com vigência desde ${rhData(vigencia)}?`)) return;
+        try {
+          const r = await api('/api/rh/dissidio', { method: 'POST', body: { vigencia_inicio: vigencia, motivo, itens } });
+          closeModal(); toast(`Dissídio registrado para ${r.registrados} pessoa(s).`);
+          if (aoSalvar) aoSalvar();
+        } catch (e) { modalError(e.message); }
+     }}], { xwide: true });
+
+  const recalcula = (tr, origem) => {
+    const sal = Number(tr.dataset.sal), pct = tr.querySelector('[data-pct]'), val = tr.querySelector('[data-val]');
+    if (origem === 'pct') val.value = pct.value === '' ? '' : r2(sal * Number(pct.value) / 100);
+    if (origem === 'val') pct.value = val.value === '' || !sal ? '' : r2(Number(val.value) / sal * 100);
+    const v = Number(val.value) || 0;
+    tr.querySelector('[data-novo]').textContent = v ? brl(r2(sal + v)) : '—';
+    if (v) tr.querySelector('[data-sel]').checked = true;
+    totais();
+  };
+  const totais = () => {
+    const sel = [...document.querySelectorAll('#ds-tab tr[data-linha]')].filter(tr => tr.querySelector('[data-sel]').checked);
+    const imp = sel.reduce((s, tr) => s + (Number(tr.querySelector('[data-val]').value) || 0), 0);
+    $('#ds-total').innerHTML = `${sel.length} marcado(s) · acréscimo mensal <strong>${brl(r2(imp))}</strong>`;
+  };
+  // Quem foi admitido depois da data-base não tem dissídio nessa data.
+  const bloqueios = () => {
+    const vig = $('#ds-vigencia').value;
+    document.querySelectorAll('#ds-tab tr[data-linha]').forEach(tr => {
+      const fora = !!vig && tr.dataset.adm > vig;
+      tr.querySelectorAll('input').forEach(i => { i.disabled = fora; });
+      if (fora) tr.querySelector('[data-sel]').checked = false;
+      tr.style.opacity = fora ? .45 : '';
+      tr.title = fora ? 'Admitido(a) depois da data-base' : '';
+    });
+    totais();
+  };
+  document.querySelectorAll('#ds-tab tr[data-linha]').forEach(tr => {
+    tr.querySelector('[data-pct]').oninput = () => recalcula(tr, 'pct');
+    tr.querySelector('[data-val]').oninput = () => recalcula(tr, 'val');
+    tr.querySelector('[data-sel]').onchange = totais;
+  });
+  $('#ds-vigencia').onchange = bloqueios;
+  $('#ds-aplicar-todos').onclick = () => {
+    const p = $('#ds-pct-todos').value;
+    if (p === '') return;
+    document.querySelectorAll('#ds-tab tr[data-linha]').forEach(tr => {
+      if (!tr.querySelector('[data-sel]').checked || tr.querySelector('[data-sel]').disabled) return;
+      tr.querySelector('[data-pct]').value = p; recalcula(tr, 'pct');
+    });
+  };
+  totais();
 }
 
 async function rhFormVinculo(colabId, v, d) {

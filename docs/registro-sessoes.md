@@ -7799,3 +7799,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** backend (10 verificações: prévia da minuta e do contrato, campos preenchidos, cidade informada, títulos e assinaturas no padrão, nada é gravado, 403 sem dados sensíveis) e na tela real com dados simulados (contagens, filtro, PDF válido no iframe, voltar com valores mantidos). Emissão logada de verdade não testada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-30 — Sessão 181: RH — promoções, mérito e dissídio com data de vigência
+
+**Solicitação:** registrar no sistema o dissídio 2025/2026 (retroativo a 01/08, acertado na folha de outubro) e as promoções de 01/11 (Diego → Gerente de Subscrição; Marcelo → Gerente Administrativo, ambos R$ 19.045,00).
+
+**Situação anterior:** só havia o histórico de salário, gravado com a data de hoje ao editar o vínculo — sem data futura nem retroativa, sem rastro de cargo e sem dissídio.
+
+**O que mudou:** nova tabela `erp_rh_movimentacoes`. Cada movimentação (promoção, mérito, dissídio, ajuste) tem a data em que passa a valer: se já chegou, é aplicada na hora (atualiza cargo/departamento/salário do contrato e grava a vigência de salário NA DATA, que é o que o histórico financeiro lê); se está no futuro, fica agendada e é aplicada sozinha quando a data chega (rodada automática em qualquer tela de RH, no máximo a cada 30 s). O cargo e o salário anteriores ficam guardados. Aba Vínculo: "Carreira e remuneração" (linha do tempo, agendadas, cancelar, + Registrar movimentação). Lista de Colaboradores: botão "Dissídio coletivo" (data-base, motivo, percentual ou valor por pessoa; quem entrou depois da data-base fica de fora; repetir o mesmo dissídio é recusado). Só quem edita RH e tem a permissão de remuneração.
+
+**Verificação:** 23 verificações no backend (dissídio retroativo aplicado na hora e vigência gravada na data-base, promoção futura agendada sem mexer no contrato, entrada em vigor na data, cancelamento, duplicidade, anterioridade à admissão, permissões) e conferência na tela dos valores da planilha. Migração aplicada em produção antes do código.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

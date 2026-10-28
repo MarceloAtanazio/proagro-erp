@@ -1,0 +1,3 @@
+  'POST /api/rh/colaboradores/:id/movimentacoes': req => `Registrou ${req.body.tipo || 'movimentação'} (vigência ${req.body.vigencia_inicio}) do colaborador ID ${req.params.id}`,
+  'DELETE /api/rh/movimentacoes/:id': req => `Cancelou a movimentação de carreira ID ${req.params.id}`,
+  'POST /api/rh/dissidio': req => `Registrou dissídio (vigência ${req.body.vigencia_inicio}) para ${(req.body.itens || []).length} colaborador(es)`,

@@ -1,0 +1,9 @@
+// Aplica as movimentações de carreira cuja data já chegou. Vale para qualquer tela de RH: quem abre a ficha no dia
+// 1º já vê o cargo e o salário novos. No máximo uma vez a cada 30s por instância; falha aqui nunca derruba a tela.
+let rhMovUltimaRodada = 0;
+app.use('/api/rh', (req, res, next) => {
+  if (Date.now() - rhMovUltimaRodada < 30000) return next();
+  rhMovUltimaRodada = Date.now();
+  rhAplicarMovimentacoes().catch(e => console.error('[rhAplicarMovimentacoes]', e)).then(() => next());
+});
+
