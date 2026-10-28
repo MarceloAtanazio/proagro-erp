@@ -10539,6 +10539,8 @@ const RH_PDF = {
   aposTitulo: 0.95,
   // O nome fica logo abaixo do traço de assinatura, não a um parágrafo dele.
   aposLinhaAssinatura: 0.05,
+  // Espaço para assinar, acima de cada traço de assinatura.
+  antesLinhaAssinatura: 2.6,
   // As testemunhas descem, para não colarem na assinatura do empregado.
   antesTestemunhas: 2.2,
   cabecalhoDireita: 'CONTRATO DE TRABALHO — PROAGRO BRASIL'
@@ -10661,6 +10663,8 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
   for (const p of paragrafos) {
     if (!p.texto) { y += alturaLinha * 0.45; continue; }
     const centrado = p.alinhamento === 'center';
+    // Traço de assinatura: abre espaço para assinar e não se separa do nome embaixo (traço + 2 linhas de nome).
+    if (ehLinhaAssinatura(p.texto)) { cabe(alturaLinha * (RH_PDF.antesLinhaAssinatura + 3.2)); y += alturaLinha * RH_PDF.antesLinhaAssinatura; }
     // As testemunhas descem: sem isso encostam na assinatura do empregado.
     if (/^Testemunhas/i.test(p.texto.trim())) y += alturaLinha * RH_PDF.antesTestemunhas;
 

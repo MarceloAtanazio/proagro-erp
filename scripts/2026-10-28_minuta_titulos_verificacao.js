@@ -37,6 +37,13 @@ for (const f of arquivos) {
   ok('o texto do documento não muda', destag(xml.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, '')) === destag(novo.replace(/<w:rPr>[\s\S]*?<\/w:rPr>/g, '')), null);
   ok('o XML continua bem formado', bemFormado(novo), null);
   const antes = docxParagrafos(xml), depois = docxParagrafos(novo);
+  // Bloco de assinaturas: igual em todas as minutas (traço de 63 sublinhados + nome embaixo, duas vezes; testemunhas em duas colunas).
+  const ia = depois.findIndex(p => /^FOLHA DE ASSINATURAS/.test(p.texto));
+  const bloco = depois.slice(ia);
+  ok('assinaturas: nenhum parágrafo só de números (posição de desenho vazando como texto)', !depois.some(p => /^d{5,}$/.test(p.texto.trim())), depois.filter(p => /^d{5,}$/.test(p.texto.trim())).map(p => p.texto));
+  const tracos = bloco.map((p, i) => [p, i]).filter(([p]) => /^_{5,}$/.test(p.texto));
+  ok('assinaturas: dois traços do mesmo tamanho (63), cada um logo acima de um nome', tracos.length === 2 && tracos.every(([p, i]) => p.texto.length === 63 && bloco[i + 1] && /[A-ZÁÉÍÓÚÂÊÔÃÕÇ]/.test(bloco[i + 1].texto) && bloco[i + 1].alinhamento === 'left'), tracos.map(([p, i]) => [p.texto.length, (bloco[i + 1] || {}).texto]));
+  ok('assinaturas: testemunhas em duas colunas (1) / 2), Nome:, CPF:)', ['1)', 'Nome:', 'CPF:'].every(t => bloco.some(p => p.texto.startsWith(t) && p.texto.includes('	'))), null);
   const titulosDepois = depois.filter(p => RE_TIT.test(p.texto.trim()) && p.titulo);
   if (/Técnico de Campo - Controle de Ponto - Jornada Externa/.test(f)) {
     const todos = depois.filter(p => RE_TIT.test(p.texto.trim()));

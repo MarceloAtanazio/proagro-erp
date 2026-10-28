@@ -289,6 +289,10 @@ if (require.main === module) cli(process.argv);
 // dois em caixa alta no começo, e só um é título de seção.
 // ---------------------------------------------------------------------------
 const ehNegrito = s => /<w:b\s*\/>|<w:b\s+w:val="(?:1|true|on)"/.test(s);
+const DESENHOS = /<mc:AlternateContent>[\s\S]*?<\/mc:AlternateContent>|<w:drawing>[\s\S]*?<\/w:drawing>|<w:pict>[\s\S]*?<\/w:pict>/g;
+const TRACO_ASSINATURA = 63;     // sublinhados do traço de assinatura (o das minutas Presencial e Híbrida)
+// Uma forma é "traço" quando é fina (menos de ~0,6 mm de altura) e comprida (mais de ~3 cm).
+const ehLinhaDesenhada = p => [...p.matchAll(/<wp:extent\s+cx="(\d+)"\s+cy="(\d+)"/g)].some(m => Number(m[2]) < 21600 && Number(m[1]) > 1080000);
 
 function docxParagrafos(xml) {
   const paras = [...xml.matchAll(/<w:p(?:\s[^>]*)?>([\s\S]*?)<\/w:p>/g)].map(m => m[1]);
@@ -307,7 +311,9 @@ function docxParagrafos(xml) {
     const runs = [...p.matchAll(/<w:r(?:\s[^>]*)?>([\s\S]*?)<\/w:r>/g)]
       .map(m => {
         const rPr = /<w:rPr>([\s\S]*?)<\/w:rPr>/.exec(m[1]);
-        const t = destag(m[1].replace(/<w:tab\b[^>]*\/>/g, '\t').replace(/<w:rPr>[\s\S]*?<\/w:rPr>/, ''));
+        // Desenhos (as linhas de assinatura da minuta Externa são formas) guardam números de posição em
+        // <wp:posOffset>; sem tirá-los, "1079296" e "204369" saíam no PDF como se fossem texto.
+        const t = destag(m[1].replace(DESENHOS, '').replace(/<w:tab\b[^>]*\/>/g, '\t').replace(/<w:rPr>[\s\S]*?<\/w:rPr>/, ''));
         // O estilo Título do Word já é negrito: o run não precisa repetir o <w:b/>.
         return { texto: t, negrito: estiloTitulo || !!(rPr && ehNegrito(rPr[1])) };
       })
@@ -320,6 +326,11 @@ function docxParagrafos(xml) {
       if (ult && ult.negrito === r.negrito) ult.texto += r.texto;
       else juntos.push({ ...r });
     }
+    // Traço de assinatura desenhado como forma (uma linha fina e comprida, sem texto): vira o mesmo traço de
+    // sublinhados das outras minutas, para o PDF sair igual em todas.
+    if (!juntos.length && ehLinhaDesenhada(p)) juntos.push({ texto: '_'.repeat(TRACO_ASSINATURA), negrito: true });
+    // Traço feito de sublinhados: um só comprimento em todas as minutas (a de Confiança usava um mais curto).
+    if (juntos.length === 1 && /^_{5,}$/.test(juntos[0].texto.trim())) juntos[0].texto = '_'.repeat(TRACO_ASSINATURA);
     const texto = juntos.map(r => r.texto).join('');
     // Sem <w:jc> no parágrafo, o Título 1 dessas minutas herda o centralizado do ESTILO — que este
     // leitor não resolve. Lido como "left", o título saía encostado na margem em vez de centralizado.

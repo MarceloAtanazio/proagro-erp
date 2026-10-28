@@ -7775,3 +7775,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** sobre os 7 .docx reais da pasta de minutas: o texto não muda, o XML continua bem formado, na Externa os 13 títulos ficam centralizados no padrão e a empresa da assinatura deixa de ser título, e nas outras seis minutas o que o PDF lê continua idêntico. Emissão logada de verdade não testada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-30 — Sessão 179: Contrato — bloco de assinaturas do PDF igual e bem estruturado em todas as minutas
+
+**Solicitação:** na minuta "Técnico de Campo - Controle de Ponto - Jornada Externa" os campos de assinatura saíam quebrados; arrumar linhas e nomes e verificar todas as minutas.
+
+**Causa:** nas minutas Externa e no modelo "Empregado Regular - Técnico de Campo" os traços de assinatura são formas desenhadas no Word. O gerador de PDF lia os números de posição do desenho como texto (apareciam "1079296204369" e "1079296197182") e não desenhava o traço. As outras cinco minutas usam traços de sublinhado; a de Confiança com um traço mais curto (43 em vez de 63) e o rótulo "EMPRESA".
+
+**O que mudou:** o PDF ignora o conteúdo de desenhos e converte a forma-traço no mesmo traço de 63 sublinhados das demais; todos os traços passam a ter o mesmo comprimento. Cada traço ganha espaço acima para assinar (2,6 linhas) e fica na mesma página que o nome embaixo; as testemunhas continuam em duas colunas. O .docx emitido não muda (no Word as linhas desenhadas já aparecem certas).
+
+**Verificação:** nas 7 minutas reais: nenhum parágrafo só de números, dois traços de 63 sublinhados cada um logo acima de um nome, testemunhas em duas colunas. PDF gerado e conferido na tela para Externa, Presencial e Confiança: bloco idêntico. Emissão logada de verdade não testada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
