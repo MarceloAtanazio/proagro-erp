@@ -1,0 +1,17 @@
+// Pré-visualização da minuta como ela é: os trechos de preenchimento ficam do jeito que estão no modelo. Passa pelo mesmo
+// padrão de títulos da emissão, então o que se vê aqui é o que sai no contrato.
+app.get('/api/rh/minutas/:id/previa', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const r = await query('SELECT id, nome, file_name, data FROM erp_rh_minutas WHERE id=$1', [Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Minuta não encontrada.' });
+  let xml = null;
+  try {
+    const doc = zipLer(r[0].data).find(e => e.nome === 'word/document.xml');
+    xml = doc ? doc.dados.toString('utf8') : null;
+  } catch { xml = null; }
+  if (!xml) return res.status(415).json({ error: 'Não consegui ler o .docx da minuta.' });
+  res.json({
+    minuta: { id: r[0].id, nome: r[0].nome, file_name: r[0].file_name },
+    paragrafos: docxParagrafos(padronizarTitulos(xml)).filter(p => p.texto)
+  });
+}));
+

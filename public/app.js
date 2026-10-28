@@ -10199,6 +10199,7 @@ async function rhAbrirCard(id) {
         : '<div class="rh-nota aviso">Não há minuta cadastrada para este regime e modelo de trabalho. Cadastre na aba <strong>Minutas</strong>.</div>'}
       <div class="rh-acoes-linha">
         <button class="btn" id="rh-previa" ${d.minuta ? '' : 'disabled'}>Ver o que será preenchido</button>
+        <button class="btn" id="rh-previa-doc" ${d.minuta ? '' : 'disabled'}>Pré-visualizar contrato</button>
         <button class="btn primary" id="rh-emitir" ${d.minuta && ed ? '' : 'disabled'}>Emitir contrato</button>
       </div></div>` : ''}
 
@@ -10315,6 +10316,11 @@ async function rhAbrirCard(id) {
   const irDossie = $('#rh-ir-dossie');
   if (irDossie) irDossie.onclick = () => { closeModal(); abrirFichaRH(a.colaborador_id, 'dossie'); };
   const bp = $('#rh-previa'); if (bp) bp.onclick = () => rhPreviaContrato(id);
+  const bpd = $('#rh-previa-doc'); if (bpd) bpd.onclick = async () => {
+    bpd.disabled = true;
+    try { await rhPreviaDocumento(id, a.colaborador_nome, { municipio: 'São Paulo', uf: 'SP', data: todayISO() }, () => rhAbrirCard(id)); }
+    catch (e) { toast(e.message); } finally { bpd.disabled = false; }
+  };
   const be = $('#rh-emitir'); if (be) be.onclick = () => rhEmitirContrato(id, a.colaborador_nome);
   const addCv = $('#rh-add-curriculo');
   if (addCv) addCv.onclick = () => rhAnexarCurriculo(id);
@@ -10462,17 +10468,24 @@ async function rhPreviaContrato(id) {
     [{ label: 'Fechar', onClick: () => rhAbrirCard(id) }], { xwide: true });
 }
 
-function rhEmitirContrato(id, nome) {
+function rhEmitirContrato(id, nome, v = {}) {
   const hoje = todayISO();
   openModal('Emitir contrato', `
     <p style="font-size:13.5px;color:var(--ink-2)">Os dados vêm da ficha e do processo. Aqui só o
     local e a data da assinatura, que vão no fecho do documento.</p>
     <div class="form-row">
-      ${fld('em-municipio', 'Cidade da assinatura', 'text', 'São Paulo')}
-      ${fldSel('em-uf', 'UF', rhOpcoes(RH_UF), 'SP')}
-      ${fld('em-data', 'Data', 'date', hoje)}
+      ${fld('em-municipio', 'Cidade da assinatura', 'text', v.municipio || 'São Paulo')}
+      ${fldSel('em-uf', 'UF', rhOpcoes(RH_UF), v.uf || 'SP')}
+      ${fld('em-data', 'Data', 'date', v.data || hoje)}
     </div>`,
     [{ label: 'Cancelar', onClick: () => rhAbrirCard(id) },
+     { label: 'Pré-visualizar', onClick: async (ev) => {
+        const btn = ev && ev.target;
+        const vals = { municipio: $('#em-municipio').value, uf: $('#em-uf').value, data: $('#em-data').value };
+        if (btn) { btn.disabled = true; btn.textContent = 'Montando…'; }
+        try { await rhPreviaDocumento(id, nome, vals, () => rhEmitirContrato(id, nome, vals)); }
+        catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Pré-visualizar'; } }
+     }},
      { label: 'Gerar', cls: 'primary', onClick: async (ev) => {
         const btn = ev && ev.target;
         if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
@@ -10547,7 +10560,7 @@ const RH_PDF = {
 };
 const rhPt = pt => pt * 25.4 / 72;   // pontos → mm
 
-function rhContratoPDF(paragrafos, nomeArquivo) {
+function rhContratoPDF(paragrafos, nomeArquivo, opcoes) {
   if (!window.jspdf) return toast('A biblioteca de PDF ainda está carregando. Tente novamente em instantes.');
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -10721,19 +10734,49 @@ function rhContratoPDF(paragrafos, nomeArquivo) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(140, 150, 143);
     doc.text(`${i} de ${total}`, pageW - M, pageH - 11, { align: 'right' });
   }
+  if (opcoes && opcoes.retornar) return doc;
   doc.save(nomeArquivo);
+}
+
+// Pré-visualização do PDF dentro do sistema, sem baixar nada. O mesmo gerador do PDF final: o que aparece aqui é o que será baixado.
+// `aoVoltar` (opcional): para onde o botão "Voltar" leva — a tela de emissão, o card… Sem ele, só fecha.
+function rhMostrarPrevia(titulo, paragrafos, arquivo, aoVoltar) {
+  const doc = rhContratoPDF(paragrafos, arquivo, { retornar: true });
+  if (!doc) return;
+  const url = URL.createObjectURL(doc.output('blob'));
+  const sair = () => { URL.revokeObjectURL(url); if (aoVoltar) aoVoltar(); else closeModal(); };
+  openModal(titulo, `
+    <iframe src="${url}" title="Pré-visualização" style="width:100%;height:70vh;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>
+    <p class="hint" style="margin:8px 0 0">Se o PDF não aparecer aqui, <a href="${url}" target="_blank" rel="noopener">abra em uma nova aba</a>.</p>`,
+    [{ label: aoVoltar ? 'Voltar' : 'Fechar', onClick: sair },
+     { label: 'Baixar PDF', cls: 'primary', onClick: () => doc.save(arquivo) }], { xwide: true });
+}
+
+// Contrato preenchido com os dados da ficha e a assinatura informada, sem emitir nada.
+async function rhPreviaDocumento(id, nome, vals, aoVoltar) {
+  const qs = new URLSearchParams({ municipio: vals.municipio, uf: vals.uf, data: vals.data }).toString();
+  const r = await api(`/api/rh/admissoes/${id}/contrato/documento?${qs}`);
+  rhMostrarPrevia(`Pré-visualização do contrato — ${nome}`, r.paragrafos, 'Previa do contrato.pdf', aoVoltar);
 }
 
 
 // ---------------- Minutas ----------------
+let RH_MINUTAS_FILTRO = 'todas';   // todas | ativas | aposentadas
 async function rhMinutas(c) {
-  const lista = await api('/api/rh/minutas');
+  const todas = await api('/api/rh/minutas');
+  const nAtivas = todas.filter(m => m.ativa).length;
+  const lista = RH_MINUTAS_FILTRO === 'ativas' ? todas.filter(m => m.ativa)
+    : RH_MINUTAS_FILTRO === 'aposentadas' ? todas.filter(m => !m.ativa) : todas;
   c.innerHTML = rhAbasTopo() + `
     <div class="rh-nota">As minutas são os modelos <strong>.docx</strong> da empresa. Os campos a
       preencher são os trechos em <strong>realce amarelo</strong> — é o realce que marca o campo,
       não o texto dentro dele. Uma minuta ativa por combinação de regime e modelo de trabalho.</div>
     <div class="rh-acoes-linha" style="margin-bottom:14px">
-      <button class="btn primary" id="rh-add-minuta">+ Cadastrar minuta</button></div>
+      <button class="btn primary" id="rh-add-minuta">+ Cadastrar minuta</button>
+      <label style="margin-left:14px">Mostrar <select id="rh-min-filtro">
+        <option value="todas"${RH_MINUTAS_FILTRO === 'todas' ? ' selected' : ''}>Todas (${todas.length})</option>
+        <option value="ativas"${RH_MINUTAS_FILTRO === 'ativas' ? ' selected' : ''}>Ativas (${nAtivas})</option>
+        <option value="aposentadas"${RH_MINUTAS_FILTRO === 'aposentadas' ? ' selected' : ''}>Aposentadas (${todas.length - nAtivas})</option></select></label></div>
     <div class="table-wrap"><table class="tbl-rh-dep">
       <thead><tr><th>Minuta</th><th>Regime</th><th>Modelo de trabalho</th><th>Campos</th>
         <th>Arquivo</th><th>Situação</th><th></th></tr></thead>
@@ -10744,11 +10787,20 @@ async function rhMinutas(c) {
         <td>${m.n_slots} realces${m.pendentes ? ` · <span class="conc-nao" title="trechos sem campo definido — a emissão recusa">${m.pendentes} sem campo</span>` : ''}</td>
         <td>${esc(m.file_name)} <span class="rh-sub">${fmtSize(m.byte_size)}</span></td>
         <td>${m.ativa ? '<span class="badge ok">Ativa</span>' : '<span class="badge pend">Aposentada</span>'}</td>
-        <td class="actions"><button class="btn sm" data-mapa="${m.id}">Mapa</button>${m.ativa ? ` <button class="btn-ic perigo" data-del-min="${m.id}" title="Aposentar" aria-label="Aposentar">🗑</button>` : ''}</td>
-      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">Nenhuma minuta cadastrada.</div></td></tr>'}</tbody>
+        <td class="actions"><button class="btn sm" data-previa-min="${m.id}">Pré-visualizar</button> <button class="btn sm" data-mapa="${m.id}">Mapa</button>${m.ativa ? ` <button class="btn-ic perigo" data-del-min="${m.id}" title="Aposentar" aria-label="Aposentar">🗑</button>` : ''}</td>
+      </tr>`).join('') || `<tr><td colspan="7"><div class="empty">${todas.length ? 'Nenhuma minuta nesta situação.' : 'Nenhuma minuta cadastrada.'}</div></td></tr>`}</tbody>
     </table></div>`;
   rhLigarAbas();
   $('#rh-add-minuta').onclick = rhFormMinuta;
+  $('#rh-min-filtro').onchange = e => { RH_MINUTAS_FILTRO = e.target.value; rhMinutas(c); };
+  c.querySelectorAll('[data-previa-min]').forEach(b => b.onclick = async () => {
+    const m = todas.find(x => String(x.id) === b.dataset.previaMin);
+    b.disabled = true;
+    try {
+      const r = await api(`/api/rh/minutas/${m.id}/previa`);
+      rhMostrarPrevia(`Pré-visualização — ${m.nome}`, r.paragrafos, m.file_name.replace(/\.docx$/i, '') + ' (prévia).pdf');
+    } catch (e) { toast(e.message); } finally { b.disabled = false; }
+  });
   c.querySelectorAll('[data-mapa]').forEach(b => b.onclick = () => rhFormMapaMinuta(Number(b.dataset.mapa)));
   c.querySelectorAll('[data-del-min]').forEach(b => b.onclick = () =>
     confirmDelete('minuta', '/api/rh/minutas/' + b.dataset.delMin, renderRH));

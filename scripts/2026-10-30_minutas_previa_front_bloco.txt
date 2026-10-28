@@ -1,0 +1,21 @@
+// Pré-visualização do PDF dentro do sistema, sem baixar nada. O mesmo gerador do PDF final: o que aparece aqui é o que será baixado.
+// `aoVoltar` (opcional): para onde o botão "Voltar" leva — a tela de emissão, o card… Sem ele, só fecha.
+function rhMostrarPrevia(titulo, paragrafos, arquivo, aoVoltar) {
+  const doc = rhContratoPDF(paragrafos, arquivo, { retornar: true });
+  if (!doc) return;
+  const url = URL.createObjectURL(doc.output('blob'));
+  const sair = () => { URL.revokeObjectURL(url); if (aoVoltar) aoVoltar(); else closeModal(); };
+  openModal(titulo, `
+    <iframe src="${url}" title="Pré-visualização" style="width:100%;height:70vh;border:1px solid var(--line);border-radius:8px;background:#fff"></iframe>
+    <p class="hint" style="margin:8px 0 0">Se o PDF não aparecer aqui, <a href="${url}" target="_blank" rel="noopener">abra em uma nova aba</a>.</p>`,
+    [{ label: aoVoltar ? 'Voltar' : 'Fechar', onClick: sair },
+     { label: 'Baixar PDF', cls: 'primary', onClick: () => doc.save(arquivo) }], { xwide: true });
+}
+
+// Contrato preenchido com os dados da ficha e a assinatura informada, sem emitir nada.
+async function rhPreviaDocumento(id, nome, vals, aoVoltar) {
+  const qs = new URLSearchParams({ municipio: vals.municipio, uf: vals.uf, data: vals.data }).toString();
+  const r = await api(`/api/rh/admissoes/${id}/contrato/documento?${qs}`);
+  rhMostrarPrevia(`Pré-visualização do contrato — ${nome}`, r.paragrafos, 'Previa do contrato.pdf', aoVoltar);
+}
+

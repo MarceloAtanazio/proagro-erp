@@ -4414,6 +4414,23 @@ app.get('/api/rh/minutas/:id/mapa', requireAuth, requireViewAny(['rh']), h(async
   });
 }));
 
+// Pré-visualização da minuta como ela é: os trechos de preenchimento ficam do jeito que estão no modelo. Passa pelo mesmo
+// padrão de títulos da emissão, então o que se vê aqui é o que sai no contrato.
+app.get('/api/rh/minutas/:id/previa', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const r = await query('SELECT id, nome, file_name, data FROM erp_rh_minutas WHERE id=$1', [Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Minuta não encontrada.' });
+  let xml = null;
+  try {
+    const doc = zipLer(r[0].data).find(e => e.nome === 'word/document.xml');
+    xml = doc ? doc.dados.toString('utf8') : null;
+  } catch { xml = null; }
+  if (!xml) return res.status(415).json({ error: 'Não consegui ler o .docx da minuta.' });
+  res.json({
+    minuta: { id: r[0].id, nome: r[0].nome, file_name: r[0].file_name },
+    paragrafos: docxParagrafos(padronizarTitulos(xml)).filter(p => p.texto)
+  });
+}));
+
 app.put('/api/rh/minutas/:id/mapa', requireAuth, requireEdit('rh'), h(async (req, res) => {
   const r = await query('SELECT slots FROM erp_rh_minutas WHERE id=$1', [Number(req.params.id)]);
   if (!r.length) return res.status(404).json({ error: 'Minuta não encontrada.' });
@@ -4621,6 +4638,31 @@ app.get('/api/rh/admissoes/:id/contrato/previa', requireAuth, requireViewAny(['r
     // emissão é trecho sem campo definido, e isso o cadastro da minuta resolve.
     pronta: p.semCampo.length === 0,
     hoje: hojeISO()
+  });
+}));
+
+// Pré-visualização do contrato preenchido: o mesmo caminho da emissão (mesmo mapa, mesmos valores, mesmo padrão de
+// títulos), mas SEM registrar nada — não grava "contrato emitido em" nem mexe no processo. O que se vê é o que a emissão entrega.
+app.get('/api/rh/admissoes/:id/contrato/documento', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'A emissão usa CPF, RG e endereço — exige a permissão de dados sensíveis.' });
+  const { adm, colab } = dados;
+  const p = await rhPrepararEmissao(adm, colab, rhAssinaturaDe(req.query));
+  if (!p) return res.status(400).json({ error: 'Não há minuta cadastrada para esta combinação de regime e modelo de trabalho. Cadastre em Recursos Humanos → Minutas.' });
+  if (!p.xml) return res.status(415).json({ error: 'Não consegui ler o .docx da minuta.' });
+  if (p.semCampo.length) {
+    return res.status(409).json({
+      error: `Esta minuta tem ${p.semCampo.length} trecho(s) em realce sem campo definido. Abra Recursos Humanos → Minutas → Mapa e diga o que entra em cada um.`,
+      semCampo: p.semCampo
+    });
+  }
+  const novoXml = padronizarTitulos(mesclar(p.xml, p.slotsReais, p.valores.map(v => v.valor)));
+  res.json({
+    ok: true,
+    minuta: { id: p.minuta.id, nome: p.minuta.nome },
+    vazios: p.vazios,
+    paragrafos: docxParagrafos(novoXml).filter(x => x.texto)
   });
 }));
 

@@ -7788,3 +7788,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** nas 7 minutas reais: nenhum parágrafo só de números, dois traços de 63 sublinhados cada um logo acima de um nome, testemunhas em duas colunas. PDF gerado e conferido na tela para Externa, Presencial e Confiança: bloco idêntico. Emissão logada de verdade não testada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-30 — Sessão 180: Minutas — filtro de situação e pré-visualização do contrato
+
+**Solicitação:** filtro de ativas/inativas na aba Minutas e botão para pré-visualizar o contrato, tanto em Minutas quanto na hora de emitir.
+
+**O que mudou:** (1) Minutas: seletor "Mostrar" com Todas, Ativas e Aposentadas, cada um com a contagem (mesmo padrão do filtro de Usuários); o padrão é Todas. (2) Botão **Pré-visualizar** em cada minuta: abre, dentro do sistema, o PDF do modelo como está (trechos de preenchimento do jeito que estão no .docx), já no padrão de títulos e assinaturas da emissão. (3) Na emissão do contrato há **Pré-visualizar** ao lado de Gerar: monta o contrato preenchido com os dados da ficha e a cidade/UF/data informadas e mostra o PDF, sem emitir — não grava "contrato emitido em" nem mexe no processo; "Voltar" retorna à emissão com os mesmos valores. O card do processo ganhou o mesmo botão ("Pré-visualizar contrato"). Em todas as prévias há "Baixar PDF". Se faltar campo no mapa da minuta, a prévia avisa o mesmo que a emissão.
+
+**Verificação:** backend (10 verificações: prévia da minuta e do contrato, campos preenchidos, cidade informada, títulos e assinaturas no padrão, nada é gravado, 403 sem dados sensíveis) e na tela real com dados simulados (contagens, filtro, PDF válido no iframe, voltar com valores mantidos). Emissão logada de verdade não testada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

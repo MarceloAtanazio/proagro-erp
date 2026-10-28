@@ -1,0 +1,25 @@
+// Pré-visualização do contrato preenchido: o mesmo caminho da emissão (mesmo mapa, mesmos valores, mesmo padrão de
+// títulos), mas SEM registrar nada — não grava "contrato emitido em" nem mexe no processo. O que se vê é o que a emissão entrega.
+app.get('/api/rh/admissoes/:id/contrato/documento', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const dados = await rhCarregarAdmissao(req.params.id);
+  if (!dados) return res.status(404).json({ error: 'Processo não encontrado.' });
+  if (!rhVeSensivel(req.user)) return res.status(403).json({ error: 'A emissão usa CPF, RG e endereço — exige a permissão de dados sensíveis.' });
+  const { adm, colab } = dados;
+  const p = await rhPrepararEmissao(adm, colab, rhAssinaturaDe(req.query));
+  if (!p) return res.status(400).json({ error: 'Não há minuta cadastrada para esta combinação de regime e modelo de trabalho. Cadastre em Recursos Humanos → Minutas.' });
+  if (!p.xml) return res.status(415).json({ error: 'Não consegui ler o .docx da minuta.' });
+  if (p.semCampo.length) {
+    return res.status(409).json({
+      error: `Esta minuta tem ${p.semCampo.length} trecho(s) em realce sem campo definido. Abra Recursos Humanos → Minutas → Mapa e diga o que entra em cada um.`,
+      semCampo: p.semCampo
+    });
+  }
+  const novoXml = padronizarTitulos(mesclar(p.xml, p.slotsReais, p.valores.map(v => v.valor)));
+  res.json({
+    ok: true,
+    minuta: { id: p.minuta.id, nome: p.minuta.nome },
+    vazios: p.vazios,
+    paragrafos: docxParagrafos(novoXml).filter(x => x.texto)
+  });
+}));
+
