@@ -7812,3 +7812,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 23 verificações no backend (dissídio retroativo aplicado na hora e vigência gravada na data-base, promoção futura agendada sem mexer no contrato, entrada em vigor na data, cancelamento, duplicidade, anterioridade à admissão, permissões) e conferência na tela dos valores da planilha. Migração aplicada em produção antes do código.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-29 — Sessão 182: Exame admissional — anexar o ASO
+
+**Solicitação:** na hora de registrar a realização do exame médico, poder anexar o ASO da pessoa.
+
+**O que mudou:** o card de admissão, na etapa Exame admissional, ganhou a seção "ASO — Atestado de Saúde Ocupacional" logo abaixo dos Marcos da etapa, com Anexar ASO (PDF ou imagem, até 3 MB), Ver e Excluir. O arquivo é gravado no dossiê do colaborador (tipo "aso", que já existia no catálogo de documentos): aparece depois em Dossiê → Arquivos e entra na conta de "sem ASO" da conformidade de RH, e continua lá depois da contratação. Como é dado de saúde, a seção exige a permissão "RH · dados pessoais sensíveis" (sem ela mostra um aviso de acesso restrito). Não é obrigatório para avançar de etapa. Sem mudança de backend nem de banco.
+
+**Verificação:** na tela real com dados simulados: a seção aparece depois dos marcos, o envio grava com tipo "aso", o card recarrega listando o arquivo com Ver e Excluir, e sem a permissão aparece o aviso e some o botão. Anexo real em produção não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

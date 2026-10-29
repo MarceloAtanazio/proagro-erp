@@ -10212,6 +10212,8 @@ async function rhAbrirCard(id) {
         : fld('ad-' + f.c, f.r, 'date', a[f.c] ? String(a[f.c]).slice(0, 10) : '')).join('')}
       </div></div>` : ''}
 
+    ${a.etapa === 'exame_admissional' ? '<div class="rh-sec" id="rh-aso-sec"><h4>ASO — Atestado de Saúde Ocupacional</h4><div class="ec-anexo-vazio">Carregando…</div></div>' : ''}
+
     ${/* Os resultados de técnica/psicotécnico se preenchem no "Marcos desta
           etapa" enquanto o card está em Avaliações — aqui só o próprio bloco
           some quando não se aplica mais editar. Os laudos e, uma vez que a
@@ -10324,6 +10326,7 @@ async function rhAbrirCard(id) {
   const be = $('#rh-emitir'); if (be) be.onclick = () => rhEmitirContrato(id, a.colaborador_nome);
   const addCv = $('#rh-add-curriculo');
   if (addCv) addCv.onclick = () => rhAnexarCurriculo(id);
+  rhCarregarAso(a.colaborador_id, id, ed, d.pode.sensivel);
   const addAval = $('#rh-add-aval');
   if (addAval) addAval.onclick = () => rhAnexarAvaliacao(id, d.tipos_avaliacao);
   document.querySelectorAll('[data-ver-aval]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.verAval)));
@@ -14584,6 +14587,56 @@ function rhAnexarAvaliacao(admissaoId, tipos) {
             file_name: f.name, mime_type: f.type || 'application/octet-stream',
             kind: 'outro', doc_tipo: $('#av-tipo').value, data } });
           closeModal(); toast('Laudo anexado.'); rhAbrirCard(admissaoId);
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
+     }}]);
+}
+
+// ASO do exame admissional. É dado de saúde, então exige a trava de dado sensível (a mesma do dossiê). Fica no dossiê do
+// COLABORADOR (rh_doc, tipo "aso"): o documento é da pessoa, aparece em Dossiê → Arquivos e conta na conformidade de RH.
+async function rhCarregarAso(colabId, admissaoId, ed, sensivel) {
+  const box = $('#rh-aso-sec');
+  if (!box) return;
+  const titulo = '<h4>ASO — Atestado de Saúde Ocupacional</h4>';
+  if (!sensivel) {
+    box.innerHTML = titulo + '<div class="rh-nota">🔒 O ASO é dado de saúde: exige a permissão “RH · dados pessoais sensíveis”.</div>';
+    return;
+  }
+  let lista = [];
+  try { lista = (await api('/api/attachments/rh_doc/' + colabId)).filter(x => x.doc_tipo === 'aso'); }
+  catch (e) { box.innerHTML = titulo + `<div class="ec-anexo-vazio">${esc(e.message)}</div>`; return; }
+  box.innerHTML = titulo +
+    (lista.length ? lista.map(x => `<div class="ec-anexo-item">
+        <span>🩺</span>
+        <div class="ec-anexo-nome" title="${esc(x.file_name)}">${esc(x.file_name)}</div>
+        <small>${fmtSize(x.byte_size)} · ${rhData(x.created_at)}</small>
+        <button class="btn sm" data-ver-aso="${x.id}" type="button">Ver</button>
+        ${ed ? `<button class="btn sm danger-ghost" data-del-aso="${x.id}" type="button">Excluir</button>` : ''}
+      </div>`).join('') : '<div class="ec-anexo-vazio">Nenhum ASO anexado ainda.</div>') +
+    (ed ? `<div class="rh-acoes"><button class="btn sm" id="rh-add-aso" type="button">📎 Anexar ASO</button></div>` : '') +
+    '<div class="rh-nota">O ASO também fica no <strong>Dossiê</strong> do colaborador, junto dos demais documentos.</div>';
+  box.querySelectorAll('[data-ver-aso]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.verAso)));
+  box.querySelectorAll('[data-del-aso]').forEach(b => b.onclick = () =>
+    confirmDelete('ASO', '/api/attachments/' + b.dataset.delAso, () => rhAbrirCard(admissaoId)));
+  const add = box.querySelector('#rh-add-aso');
+  if (add) add.onclick = () => rhAnexarAso(colabId, admissaoId);
+}
+
+function rhAnexarAso(colabId, admissaoId) {
+  openModal('Anexar ASO', `
+    <div class="field"><label for="aso-file">Arquivo do ASO</label><input type="file" id="aso-file"
+      accept=".pdf,.jpg,.jpeg,.png,.webp"></div>
+    <div class="rh-nota">PDF ou imagem, até 3 MB. O tipo real é conferido pelo conteúdo, não pela extensão.</div>`,
+    [{ label: 'Cancelar', onClick: () => rhAbrirCard(admissaoId) },
+     { label: 'Anexar', cls: 'primary', onClick: async (ev) => {
+        const f = $('#aso-file').files[0];
+        if (!f) return modalError('Escolha um arquivo.');
+        if (f.size > 3 * 1024 * 1024) return modalError('Arquivo acima do limite de 3 MB.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+        try {
+          const data = await readFileAsBase64(f);
+          await api(`/api/attachments/rh_doc/${colabId}`, { method: 'POST', body: {
+            file_name: f.name, mime_type: f.type || 'application/octet-stream', kind: 'outro', doc_tipo: 'aso', data } });
+          closeModal(); toast('ASO anexado.'); rhAbrirCard(admissaoId);
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Anexar'; } }
      }}]);
 }
