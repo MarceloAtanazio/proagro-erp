@@ -7823,3 +7823,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** na tela real com dados simulados: a seção aparece depois dos marcos, o envio grava com tipo "aso", o card recarrega listando o arquivo com Ver e Excluir, e sem a permissão aparece o aviso e some o botão. Anexo real em produção não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-10-29 — Sessão 183: Contrato assinado — anexar no card e registrar no dossiê
+
+**Solicitação:** o mesmo anexo do ASO para o contrato assinado, registrando o documento no dossiê.
+
+**O que mudou:** no card de admissão, nas etapas Contrato, Contas e Acessos e Onboarding, nova seção "Contrato assinado" (abaixo dos Marcos da etapa) com Anexar contrato assinado (PDF ou imagem, até 3 MB), Ver e Excluir. O arquivo é gravado no dossiê do colaborador como "Contrato de trabalho assinado" (tipo que já existia): aparece em Dossiê → Arquivos, deixa de contar em "sem contrato assinado" na conformidade de RH e continua lá depois da contratação. Exige a permissão de dados pessoais sensíveis (o contrato traz CPF, RG e endereço). Anexar não preenche sozinho o campo "Assinado em" — esse marco continua sendo registrado à mão, porque é ele que libera a próxima etapa. O código do anexo do ASO foi generalizado: as duas seções usam as mesmas funções, configuradas por tipo de documento.
+
+**Verificação:** na tela real com dados simulados: Contrato (seção aparece depois dos marcos, envio grava com tipo "contrato_assinado", card recarrega com Ver/Excluir), Exame admissional (ASO continua igual e sem a seção do contrato), Onboarding (contrato assinado aparece), Carta Oferta (nenhuma seção) e sem a permissão (aviso, sem botão). Anexo real em produção não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
