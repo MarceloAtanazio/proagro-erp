@@ -2579,6 +2579,46 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
 // árvore em si é montada no CLIENTE, a partir da lista plana: é o mesmo
 // desenho que o resto do RH já usa (a tela recebe linhas e monta a estrutura),
 // e evita mandar uma árvore serializada que ninguém mais consome.
+// ---- Aniversários ----
+//
+// Quem faz aniversário e quando: a próxima ocorrência de cada colaborador ATIVO (não arquivado, não candidato em admissão), já com
+// os dias que faltam, calculada no servidor com a data de Brasília — a tela e os avisos em pop-up leem o mesmo número. A idade que
+// a pessoa faz é dado de nascimento completo, então só vai para quem tem a permissão de dados sensíveis; os demais veem dia e mês.
+// 29/02 comemora em 28/02 nos anos que não são bissextos.
+const rhBissexto = a => (a % 4 === 0 && a % 100 !== 0) || a % 400 === 0;
+function rhProximoAniversario(nascimentoISO, hojeISO_) {
+  const [ny, nm, nd] = nascimentoISO.split('-').map(Number);
+  const [hy] = hojeISO_.split('-').map(Number);
+  const ocorrencia = ano => {
+    const d = (nm === 2 && nd === 29 && !rhBissexto(ano)) ? 28 : nd;
+    return `${ano}-${String(nm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  };
+  let ano = hy, prox = ocorrencia(ano);
+  if (prox < hojeISO_) { ano++; prox = ocorrencia(ano); }
+  const dias = Math.round((Date.parse(prox + 'T00:00:00Z') - Date.parse(hojeISO_ + 'T00:00:00Z')) / 86400000);
+  return { proximo: prox, dias, idade: ano - ny, dia: Number(prox.slice(8, 10)), mes: nm };
+}
+
+app.get('/api/rh/aniversarios', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
+  const hoje = hojeISO();
+  const verIdade = rhVeSensivel(req.user);
+  const rows = await query(
+    `SELECT c.id, c.name, c.data_nascimento, v.cargo, v.nivel, v.departamento
+       FROM erp_colaboradores c
+       LEFT JOIN erp_rh_vinculos v ON v.colaborador_id = c.id AND v.desligamento IS NULL
+      WHERE c.ativo = true AND c.arquivado_em IS NULL AND c.data_nascimento IS NOT NULL
+      ORDER BY c.name`);
+  const lista = rows
+    .filter(r => /^\d{4}-\d{2}-\d{2}/.test(String(r.data_nascimento)))
+    .map(r => {
+      const p = rhProximoAniversario(String(r.data_nascimento).slice(0, 10), hoje);
+      return { id: r.id, name: r.name, cargo: r.cargo || null, nivel: r.nivel || null, departamento: r.departamento || null,
+        dia: p.dia, mes: p.mes, proximo: p.proximo, dias: p.dias, ...(verIdade ? { idade: p.idade } : {}) };
+    })
+    .sort((a, b) => a.dias - b.dias || a.name.localeCompare(b.name, 'pt-BR'));
+  res.json({ hoje, aniversariantes: lista });
+}));
+
 app.get('/api/rh/organograma', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const pessoas = await query(`
     SELECT c.id, c.name, v.cargo, v.nivel, v.departamento, v.gestor_id

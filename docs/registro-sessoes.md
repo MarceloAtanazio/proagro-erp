@@ -7834,3 +7834,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** na tela real com dados simulados: Contrato (seção aparece depois dos marcos, envio grava com tipo "contrato_assinado", card recarrega com Ver/Excluir), Exame admissional (ASO continua igual e sem a seção do contrato), Onboarding (contrato assinado aparece), Carta Oferta (nenhuma seção) e sem a permissão (aviso, sem botão). Anexo real em produção não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-03 — Sessão 185: RH — aba Aniversários com aviso em pop-up
+
+**Solicitação:** nova aba em Recursos Humanos com os aniversários dos funcionários e alertas em pop-up dias antes e no dia.
+
+**O que mudou:** nova aba **Aniversários** (depois de Benefícios): cards "Hoje", "Próximos 7 dias" e "Ainda em <mês>", busca por nome/cargo/departamento, filtro por mês e a tabela ordenada por quem faz aniversário primeiro, com "hoje / amanhã / em N dias". A lista vem de `GET /api/rh/aniversarios`: colaboradores ativos (não arquivados, não candidatos) com data de nascimento; os dias que faltam são calculados no servidor com a data de Brasília (29/02 comemora em 28/02 nos anos não bissextos). A idade que a pessoa faz só aparece para quem tem a permissão de dados pessoais sensíveis. **Pop-up:** quando alguém com acesso a RH abre o sistema (e de novo a cada 3 h, se ficar aberto de um dia para o outro), aparece o aviso "Aniversário hoje!" / "Aniversários chegando". Cada pessoa é avisada UMA vez por ano em cada momento: quando o aniversário entra na antecedência escolhida (1, 3, 7, 15 ou 30 dias; padrão 7), na véspera e no dia. Na aba dá para ligar/desligar o aviso, trocar a antecedência e "Mostrar o aviso agora". As preferências e o que já foi avisado ficam no navegador de cada usuário. Sem mudança no banco.
+
+**Limite:** o aviso só existe com o sistema aberto — o ERP não tem serviço em segundo plano nem envio de e-mail.
+
+**Verificação:** 13 verificações no backend (dias e próxima data conferidos por um cálculo independente, 29/02, ordem, idade só com dado sensível, 403 sem RH) e na tela real simulada (aba e cards, busca, mês, pop-up uma vez sem repetir, véspera, dia, avisos desligados, antecedência menor que os dias que faltam). Aviso real com usuários em produção não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

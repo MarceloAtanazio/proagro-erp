@@ -1894,3 +1894,7 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .rh-fin-nat.folha { border-color: #BFD9C9; color: var(--verde-600, #2E7D4F); background: rgba(46,125,79,.06); }
 .rh-fin-nat.beneficio { border-color: #C6D4E4; color: #3B5E86; background: rgba(59,94,134,.06); }
 .rh-fin-nat.outros { border-color: var(--line); color: var(--ink-2); }
+
+/* Aniversários (RH): lista do pop-up e linha de quem faz aniversário hoje */
+.rh-niver-lista { margin: 0; padding-left: 18px; line-height: 1.8; }
+.rh-niver-hoje td { background: var(--verde-050); font-weight: 600; }

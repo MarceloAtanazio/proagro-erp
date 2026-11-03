@@ -1,0 +1,105 @@
+// ---------------- Aniversários ----------------
+//
+// A aba lista a próxima ocorrência de cada colaborador ativo. O aviso em pop-up é feito AQUI, no navegador, quando alguém com acesso
+// a RH abre o sistema: o ERP não tem serviço rodando em segundo plano para disparar nada com o sistema fechado. Para não virar
+// ruído, cada aviso aparece UMA vez por pessoa e por ano: quando o aniversário entra na janela de antecedência, na véspera, e no dia.
+// O que já foi avisado fica guardado neste navegador (localStorage), por usuário.
+const NIVER_MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const rhNiverChave = sufixo => `proagro-niver-${USER ? USER.id : 0}${sufixo || ''}`;
+function rhNiverPrefs() {
+  try { return { ativo: true, dias: 7, ...JSON.parse(localStorage.getItem(rhNiverChave()) || '{}') }; } catch { return { ativo: true, dias: 7 }; }
+}
+function rhNiverSalvarPrefs(p) { try { localStorage.setItem(rhNiverChave(), JSON.stringify(p)); } catch { /* sem armazenamento: vale só nesta sessão */ } }
+function rhNiverAvisados() { try { return JSON.parse(localStorage.getItem(rhNiverChave('-avisados')) || '{}'); } catch { return {}; } }
+function rhNiverMarcar(chaves) {
+  const av = rhNiverAvisados();
+  chaves.forEach(k => { av[k] = 1; });
+  // Só os do ano corrente e do próximo importam; o resto é lixo de anos passados.
+  const ano = new Date().getFullYear();
+  Object.keys(av).forEach(k => { const a = Number(k.split('|')[1]); if (a < ano) delete av[k]; });
+  try { localStorage.setItem(rhNiverChave('-avisados'), JSON.stringify(av)); } catch { /* ver acima */ }
+}
+const rhNiverQuando = a => a.dias === 0 ? '🎂 hoje' : a.dias === 1 ? 'amanhã' : `em ${a.dias} dias`;
+const rhNiverData = a => `${String(a.dia).padStart(2, '0')}/${String(a.mes).padStart(2, '0')}`;
+const rhNiverLinha = a => `<li><strong>${esc(a.name)}</strong>${a.cargo ? ` <span class="rh-sub">${esc(a.cargo)}</span>` : ''}
+  — ${a.dias === 0 ? '<strong>hoje</strong>' : `${rhNiverData(a)} (${rhNiverQuando(a)})`}${a.idade ? ` · faz ${a.idade} anos` : ''}</li>`;
+
+// Pop-up de aniversários. `forcar` ignora o que já foi avisado e as preferências (botão "Mostrar o aviso agora").
+async function rhChecarAniversarios(forcar, tentativa = 0) {
+  if (!USER || !canViewPage('rh')) return;
+  const p = rhNiverPrefs();
+  if (!p.ativo && !forcar) return;
+  // Outro modal aberto (troca de senha obrigatória, formulário…) tem prioridade: tenta de novo daqui a pouco.
+  if ($('#modal-back').classList.contains('open')) {
+    if (tentativa < 12) setTimeout(() => rhChecarAniversarios(forcar, tentativa + 1), 15000);
+    return;
+  }
+  let r;
+  try { r = await api('/api/rh/aniversarios'); } catch { return; }
+  const av = rhNiverAvisados();
+  const ano = a => a.proximo.slice(0, 4);
+  const noDia = r.aniversariantes.filter(a => a.dias === 0 && (forcar || !av[`${a.id}|${ano(a)}|dia`]));
+  const antes = r.aniversariantes.filter(a => a.dias > 0 && a.dias <= p.dias
+    && (forcar || !av[`${a.id}|${ano(a)}|antes`] || (a.dias === 1 && !av[`${a.id}|${ano(a)}|vespera`])));
+  if (!noDia.length && !antes.length) {
+    if (forcar) toast(`Nenhum aniversário hoje nem nos próximos ${p.dias} dias.`);
+    return;
+  }
+  if (!forcar) {
+    // Quem aparece agora na véspera já foi avisado "antes" junto: marca os dois para não repetir.
+    rhNiverMarcar([...noDia.map(a => `${a.id}|${ano(a)}|dia`), ...antes.flatMap(a => [`${a.id}|${ano(a)}|antes`, ...(a.dias === 1 ? [`${a.id}|${ano(a)}|vespera`] : [])])]);
+  }
+  openModal(noDia.length ? '🎂 Aniversário hoje!' : '🎈 Aniversários chegando', `
+    ${noDia.length ? `<p style="margin:0 0 6px">Hoje é aniversário de:</p><ul class="rh-niver-lista">${noDia.map(rhNiverLinha).join('')}</ul>` : ''}
+    ${antes.length ? `<p style="margin:${noDia.length ? '14px' : '0'} 0 6px">${noDia.length ? 'E nos próximos dias' : 'Nos próximos dias'}:</p>
+      <ul class="rh-niver-lista">${antes.map(rhNiverLinha).join('')}</ul>` : ''}`,
+    [{ label: 'Fechar', onClick: closeModal },
+     { label: 'Ver aniversários', cls: 'primary', onClick: () => { closeModal(); RH_ABA = 'aniversarios'; if (location.hash === '#rh') renderRH(); else location.hash = '#rh'; } }]);
+}
+
+async function rhAniversarios(c) {
+  const r = await api('/api/rh/aniversarios');
+  const lista = r.aniversariantes;
+  const p = rhNiverPrefs();
+  const mesAtual = Number(r.hoje.slice(5, 7));
+  const hoje = lista.filter(a => a.dias === 0), semana = lista.filter(a => a.dias > 0 && a.dias <= 7), noMes = lista.filter(a => a.mes === mesAtual && a.proximo.slice(0, 4) === r.hoje.slice(0, 4) && a.proximo >= r.hoje);
+  const temIdade = lista.some(a => a.idade);
+  const nomes = l => l.length ? l.map(a => `${esc(a.name)}${l === hoje ? '' : ` <span class="rh-sub">${rhNiverData(a)}</span>`}`).join('<br>') : '<span class="rh-sub">ninguém</span>';
+  c.innerHTML = rhAbasTopo() + `
+    <div class="grid kpis" style="margin-bottom:14px">
+      <div class="card kpi ${hoje.length ? 'green' : ''}"><div class="label">🎂 Hoje</div><div class="value" style="font-size:15px;line-height:1.5">${nomes(hoje)}</div></div>
+      <div class="card kpi"><div class="label">Próximos 7 dias</div><div class="value" style="font-size:15px;line-height:1.5">${nomes(semana)}</div></div>
+      <div class="card kpi blue"><div class="label">Ainda em ${NIVER_MESES[mesAtual - 1]}</div><div class="value">${noMes.length}</div></div>
+    </div>
+    <div class="toolbar" id="niver-barra">
+      <input type="search" id="nv-q" placeholder="Buscar nome, cargo, departamento…">
+      <select id="nv-mes"><option value="">Todos os meses</option>${NIVER_MESES.map((m, i) => `<option value="${i + 1}">${m[0].toUpperCase() + m.slice(1)}</option>`).join('')}</select>
+      <div class="spacer"></div>
+      <label class="check-chip"><input type="checkbox" id="nv-ativo" ${p.ativo ? 'checked' : ''}> Avisar por pop-up</label>
+      <label>com <select id="nv-dias">${[1, 3, 7, 15, 30].map(n => `<option value="${n}" ${p.dias === n ? 'selected' : ''}>${n} dia${n > 1 ? 's' : ''}</option>`).join('')}</select> de antecedência</label>
+      <button class="btn" id="nv-testar" type="button">Mostrar o aviso agora</button>
+    </div>
+    <p class="hint" style="margin:0 0 10px">O aviso aparece em pop-up quando você abre o sistema: uma vez quando o aniversário entra na antecedência escolhida, na véspera e no dia.
+      A escolha vale para este navegador.${temIdade ? '' : ' A idade só aparece para quem tem a permissão de dados pessoais sensíveis.'}</p>
+    <div class="table-wrap"><table class="tbl-rh-dep" id="nv-tab"></table></div>`;
+  rhLigarAbas();
+  const desenha = () => {
+    const q = $('#nv-q').value.toLowerCase().trim(), mes = Number($('#nv-mes').value) || 0;
+    const vis = lista.filter(a => (!mes || a.mes === mes) && (!q || [a.name, a.cargo, a.departamento].some(x => String(x || '').toLowerCase().includes(q))));
+    // Com mês escolhido, a lista é do calendário (dia do mês); sem mês, é a ordem de quem faz aniversário primeiro.
+    if (mes) vis.sort((a, b) => a.dia - b.dia || a.name.localeCompare(b.name, 'pt-BR'));
+    $('#nv-tab').innerHTML = `<thead><tr><th>Aniversariante</th><th>Cargo</th><th>Departamento</th><th>Data</th><th>Quando</th>${temIdade ? '<th class="num">Faz</th>' : ''}</tr></thead>
+      <tbody>${vis.map(a => `<tr class="${a.dias === 0 ? 'rh-niver-hoje' : ''}">
+        <td>${a.dias === 0 ? '🎂 ' : ''}${esc(a.name)}</td><td>${esc(rhTxt(a.cargo))}</td><td>${esc(rhTxt(a.departamento))}</td>
+        <td class="venc-cell">${rhNiverData(a)}</td>
+        <td>${a.dias === 0 ? '<span class="badge ok">hoje</span>' : a.dias <= 7 ? `<span class="badge pend">${rhNiverQuando(a)}</span>` : rhNiverQuando(a)}</td>
+        ${temIdade ? `<td class="num">${a.idade ? a.idade + ' anos' : '—'}</td>` : ''}</tr>`).join('')
+        || `<tr><td colspan="${temIdade ? 6 : 5}"><div class="empty">Nenhum aniversariante encontrado.</div></td></tr>`}</tbody>`;
+  };
+  $('#nv-q').oninput = desenha; $('#nv-mes').onchange = desenha;
+  $('#nv-ativo').onchange = e => { rhNiverSalvarPrefs({ ...rhNiverPrefs(), ativo: e.target.checked }); toast(e.target.checked ? 'Avisos por pop-up ligados.' : 'Avisos por pop-up desligados.'); };
+  $('#nv-dias').onchange = e => { rhNiverSalvarPrefs({ ...rhNiverPrefs(), dias: Number(e.target.value) }); toast(`Aviso com ${e.target.value} dia(s) de antecedência.`); };
+  $('#nv-testar').onclick = () => rhChecarAniversarios(true);
+  desenha();
+}
+
