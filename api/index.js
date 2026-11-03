@@ -6671,10 +6671,18 @@ app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny
   }
   // Duas origens: viagem que estourou o valor liberado (status "divergente") e viagem fechada SEM estouro em que um
   // excesso da TUD foi reprovado (valor_pendencia guarda a soma dos excessos reprovados).
-  const rows = await query(`SELECT id, destino, ordem_trabalho, status, data_fim, valor_pendencia FROM erp_viaticos_solicitacoes
+  const rows = await query(`SELECT id, destino, ordem_trabalho, status, data_fim, valor_pendencia, excessos_status, excessos_valores,
+      (SELECT COALESCE(SUM(r.valor),0) FROM erp_viaticos_reprovadas r WHERE r.solicitacao_id = erp_viaticos_solicitacoes.id) AS reprovadas_flash
+    FROM erp_viaticos_solicitacoes
     WHERE colaborador_id=$1 AND pendencia_resolvida=false AND (status='divergente' OR valor_pendencia > 0) ORDER BY data_fim`, [req.params.id]);
   const total = rows.reduce((s, r) => s + n(r.valor_pendencia), 0);
-  res.json({ total, solicitacoes: rows.map(r => ({ ...r, valor_pendencia: n(r.valor_pendencia), origem: r.status === 'divergente' ? 'estouro' : 'excesso' })) });
+  res.json({ total, solicitacoes: rows.map(r => {
+    const fl = n(r.reprovadas_flash), ex = somaExcessosReprovados(r.excessos_status, r.excessos_valores);
+    const origem = r.status === 'divergente' ? (fl > 0 ? 'estouro+flash' : 'estouro')
+      : fl > 0 ? (ex > 0 ? 'excesso+flash' : 'flash') : 'excesso';
+    return { id: r.id, destino: r.destino, ordem_trabalho: r.ordem_trabalho, status: r.status, data_fim: r.data_fim,
+      valor_pendencia: n(r.valor_pendencia), valor_reprovado_flash: fl, origem };
+  }) });
 }));
 
 // A pendência de viagem anterior é decidida UMA vez — descontar do valor liberado ou dispensar — e
@@ -6759,6 +6767,66 @@ function somaExcessosReprovados(statusPorChave, valoresPorChave) {
   return Math.round(Object.keys(vl).reduce((t, k) => t + (st[k] === 'reprovado' ? Number(vl[k]) || 0 : 0), 0) * 100) / 100;
 }
 
+// ---- Despesas reprovadas no Flash ----
+//
+// No Excel do Flash a coluna "Prestação de contas" traz "Finalizada" ou "Reprovado". A reprovada NÃO é comprovada: fica
+// fora do comprovado (então já está dentro do "a devolver ao Flash" = liberado − comprovado), mas o colaborador USOU o
+// valor — por isso ela é registrada aqui e vira pendência a descontar na próxima OT dele.
+async function somaReprovadasFlash(solId) {
+  const r = await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_reprovadas WHERE solicitacao_id=$1', [solId]);
+  return Math.round(n(r[0].v) * 100) / 100;
+}
+
+// Viagem já fechada SEM estouro: quando as reprovadas mudam, a pendência é recalculada na hora (excesso da TUD reprovado +
+// reprovadas do Flash). Pendência já decidida (descontada/dispensada) não é reaberta. Viagem com estouro (divergente) só é
+// recalculada ao fechar de novo — o estouro tem regra própria.
+async function recalcularPendenciaReprovadas(solId) {
+  const s = (await query('SELECT status, pendencia_decisao, excessos_status, excessos_valores FROM erp_viaticos_solicitacoes WHERE id=$1', [solId]))[0];
+  if (!s || s.pendencia_decisao || !['comprovado', 'devolvido'].includes(s.status)) return;
+  const total = Math.round((somaExcessosReprovados(s.excessos_status, s.excessos_valores) + await somaReprovadasFlash(solId)) * 100) / 100;
+  await query('UPDATE erp_viaticos_solicitacoes SET valor_pendencia=$1, pendencia_resolvida=$2 WHERE id=$3', [total, total === 0, solId]);
+}
+
+app.get('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const escopo = await viaticosEscopo(req.user);
+  if (escopo) {
+    const dona = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)', [req.params.id, escopo]);
+    if (!dona.length) return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
+  }
+  const rows = await query('SELECT id, data, descricao, categoria, valor FROM erp_viaticos_reprovadas WHERE solicitacao_id=$1 ORDER BY data, id', [req.params.id]);
+  res.json(rows.map(r => ({ ...r, valor: n(r.valor) })));
+}));
+
+app.post('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const b = req.body || {};
+  if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
+  const valor = Math.round(Number(b.valor) * 100) / 100;
+  if (!isFinite(valor) || valor <= 0 || valor >= 1000000) return res.status(400).json({ error: 'Valor inválido.' });
+  const sol = await query('SELECT id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]);
+  if (!sol.length) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  // Mesma idempotência da importação das despesas: o par (arquivo, linha) identifica a ORIGEM, então reimportar o mesmo
+  // arquivo não duplica, e o índice parcial é a garantia real (não uma consulta prévia).
+  const lote = typeof b.import_batch === 'string' && /^[a-f0-9]{16,64}$/.test(b.import_batch) ? b.import_batch : null;
+  const linha = lote !== null && Number.isInteger(Number(b.import_linha)) ? Number(b.import_linha) : null;
+  if (lote !== null && linha === null) return res.status(400).json({ error: 'Importação inválida: lote informado sem o número da linha.' });
+  const ins = await query(
+    `INSERT INTO erp_viaticos_reprovadas (solicitacao_id, data, descricao, categoria, valor, import_batch, import_linha, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ON CONFLICT (solicitacao_id, import_batch, import_linha) WHERE import_batch IS NOT NULL DO NOTHING
+     RETURNING id`,
+    [req.params.id, b.data, sanitize(b.descricao) || null, sanitize(b.categoria) || null, valor, lote, linha, req.user.id]);
+  if (!ins.length) return res.json({ ok: true, duplicada: true });
+  await recalcularPendenciaReprovadas(Number(req.params.id));
+  res.json({ ok: true, id: ins[0].id, duplicada: false });
+}));
+
+app.delete('/api/viaticos/reprovadas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const r = await query('DELETE FROM erp_viaticos_reprovadas WHERE id=$1 RETURNING solicitacao_id', [req.params.id]);
+  if (!r.length) return res.status(404).json({ error: 'Registro não encontrado.' });
+  await recalcularPendenciaReprovadas(r[0].solicitacao_id);
+  res.json({ ok: true });
+}));
+
 // Fecha a solicitação: compara valor liberado x comprovado e resolve automaticamente
 // (devolvido / comprovado exato / divergente com pendência registrada).
 app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
@@ -6776,6 +6844,11 @@ app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viat
   if (status !== 'divergente' && !s.pendencia_decisao) {
     const ex = somaExcessosReprovados(s.excessos_status, s.excessos_valores);
     if (ex > 0) { valor_pendencia = ex; pendencia_resolvida = false; }
+  }
+  // Despesas reprovadas no Flash: o colaborador usou o valor, então se somam à pendência (com ou sem estouro).
+  if (!s.pendencia_decisao) {
+    const fl = await somaReprovadasFlash(s.id);
+    if (fl > 0) { valor_pendencia = Math.round((valor_pendencia + fl) * 100) / 100; pendencia_resolvida = false; }
   }
   await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5`,
     [status, valor_devolvido, valor_pendencia, pendencia_resolvida, req.params.id]);

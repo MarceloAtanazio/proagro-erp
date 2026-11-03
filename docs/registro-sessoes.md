@@ -7847,3 +7847,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 13 verificações no backend (dias e próxima data conferidos por um cálculo independente, 29/02, ordem, idade só com dado sensível, 403 sem RH) e na tela real simulada (aba e cards, busca, mês, pop-up uma vez sem repetir, véspera, dia, avisos desligados, antecedência menor que os dias que faltam). Aviso real com usuários em produção não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-03 — Sessão 186: Viáticos — despesas reprovadas no Flash (descontar na próxima OT)
+
+**Solicitação:** na OT 41 do Alcenir o Excel do Flash traz despesas reprovadas; elas devem contar no que foi devolvido ao Flash (o colaborador usou o valor) e ser registradas para desconto na próxima OT dele.
+
+**Diagnóstico:** o arquivo da OT 41 tem depósito de R$ 6.470,00, finalizadas R$ 5.248,77 (já importadas), uma reprovada (iFood, R$ 7,95) e estorno de R$ 1.213,28. O importador descartava a linha "Reprovado" em silêncio. O "a devolver ao Flash" (liberado − comprovado = R$ 1.221,23) já embute os R$ 7,95, mas nada era registrado nem descontado. Achado: o importador publicado não protegia contra reimportação do mesmo arquivo (duplicaria as despesas).
+
+**O que mudou:** nova tabela `erp_viaticos_reprovadas`. O importador mostra as reprovadas numa área própria ("Reprovadas no Flash", marcadas), registra-as à parte (não entram no comprovado; o hash do arquivo impede duplicar) e reconhece o que já está lançado (mesma data e valor), deixando-o desmarcado. A tela da solicitação lista as reprovadas e mostra a composição do "A devolver ao Flash" (sobra + reprovadas). Ao finalizar a comprovação o total reprovado vira pendência do colaborador, somada ao excesso da TUD ou ao estouro, se houver; o aviso da próxima OT mostra a origem ("despesa reprovada no Flash") com "Sim, descontar" pré-marcado. Em viagem já fechada, registrar ou excluir uma reprovada recalcula a pendência na hora; pendência já decidida não é reaberta. Migração aplicada antes do código.
+
+**Verificação:** 20 verificações no backend (caso da OT 41, soma com excesso e com estouro, fechada, decidida, idempotência, permissões), regressões de pendência e excesso, e na tela real com o Excel da OT 41 (12 já lançadas reconhecidas, só a reprovada enviada).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
