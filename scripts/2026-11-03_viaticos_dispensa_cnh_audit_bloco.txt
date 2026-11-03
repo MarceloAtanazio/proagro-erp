@@ -1,0 +1,1 @@
+  'PUT /api/colaboradores/:id/dispensa-cnh-veiculo': req => `${req.body && req.body.dispensa === true ? 'Dispensou' : 'Reativou'} o cadastro de CNH, CRLV e seguro do colaborador de viáticos ID ${req.params.id}`,

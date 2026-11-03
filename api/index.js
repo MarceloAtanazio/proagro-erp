@@ -325,6 +325,7 @@ const AUDIT_MAP = {
 
   // Viáticos
   'POST /api/colaboradores': req => `Cadastrou o colaborador de viáticos "${req.body.name}" (Tier ${req.body.tier})`,
+  'PUT /api/colaboradores/:id/dispensa-cnh-veiculo': req => `${req.body && req.body.dispensa === true ? 'Dispensou' : 'Reativou'} o cadastro de CNH, CRLV e seguro do colaborador de viáticos ID ${req.params.id}`,
   'PUT /api/colaboradores/:id': req => `Editou o colaborador de viáticos ID ${req.params.id} ("${req.body.name}", Tier ${req.body.tier}${req.body.ativo === false ? ', inativado' : ''})`,
   'DELETE /api/colaboradores/:id': req => `Excluiu o colaborador de viáticos ID ${req.params.id}`,
   'POST /api/viaticos/tud': req => `Atualizou a TUD (Tier ${req.body.tier}, ${req.body.categoria_local}, ${req.body.tipo_despesa}) para ${fmtBRL(req.body.valor_diaria)}/dia`,
@@ -2290,6 +2291,15 @@ app.put('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async 
      b.cnh_validade || null, sanitize(b.cnh_restricoes) || null, b.motorista_apto !== false,
      sanitize(b.motorista_observacao) || null, req.params.id]);
   res.json({ ok: true });
+}));
+
+// Dispensa do cadastro de CNH, CRLV e seguro (a pessoa não usa carro a serviço). Rota própria, e não mais um campo no PUT do colaborador:
+// o PUT regrava todas as colunas a partir do corpo, e quem chama sem o campo (como o botão Inativar) zeraria a dispensa sem querer.
+app.put('/api/colaboradores/:id/dispensa-cnh-veiculo', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const dispensa = !!req.body && req.body.dispensa === true;
+  const r = await query('UPDATE erp_colaboradores SET dispensa_cnh_veiculo=$1 WHERE id=$2 RETURNING id', [dispensa, req.params.id]);
+  if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  res.json({ ok: true, dispensa });
 }));
 
 app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
@@ -6430,6 +6440,12 @@ function viaPedagioTotalServer(bloco) {
 // requisição na mão passaria por cima — e é o servidor que grava.
 // Alterar a regra aqui pede a mesma alteração lá.
 function viaBloqueiosDirecao(colab) {
+  // Cadastro de CNH, CRLV e seguro DISPENSADO pelo administrador (a pessoa não usa carro a serviço): não há o que cobrar, e o carro
+  // (próprio e alugado) fica indisponível até o cadastro ser reativado. Avião, ônibus e táxi/Uber não passam por esta regra.
+  if (colab && colab.dispensa_cnh_veiculo === true) {
+    const m = 'cadastro de CNH, CRLV e seguro desativado — a pessoa não usa carro a serviço';
+    return { cnh: [m], proprio: [m], podeAlugar: false, podeCarroProprio: false };
+  }
   const hoje = hojeISO();
   const txt = v => (v == null ? '' : String(v).trim());
   // Coluna DATE não tem fuso: o pg a entrega como meia-noite UTC. Convertê-la

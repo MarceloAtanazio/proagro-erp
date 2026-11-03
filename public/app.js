@@ -7545,6 +7545,10 @@ function viaPainelDocumentacao(av, opts = {}) {
   const noWizard = opts.contexto === 'wizard';
   const blocos = [];
 
+  if (av.inativo) {
+    return noWizard ? `<div class="alert-item" style="margin-bottom:14px">ℹ️ Seu cadastro de CNH, CRLV e seguro está <strong>desativado</strong>: nesta solicitação use avião, ônibus ou táxi/Uber. Para viajar de carro, peça ao administrador para ativar o cadastro e informar a CNH, o CRLV e o seguro.</div>` : '';
+  }
+
   if (!av.podeAlugar) {
     blocos.push(`<div class="alert-item late"><strong>🚫 Você não está habilitado a dirigir a serviço.</strong>
       Nem carro próprio, nem aluguel de carro. Motivo: ${esc(av.bloqueiosCNH.join('; '))}.
@@ -7578,6 +7582,7 @@ function viaResumoEquipeDoc(colaboradores) {
   const semDirigir = [], soAluguel = [], vencendo = [];
   colaboradores.forEach(c => {
     const av = viaAvaliarDocumentacao(c);
+    if (av.inativo) return;   // dispensado: não é pendência
     if (!av.podeAlugar) semDirigir.push({ c, motivos: av.bloqueiosCNH });
     else if (!av.podeCarroProprio) soAluguel.push({ c, motivos: av.bloqueiosProprio.filter(b => !av.bloqueiosCNH.includes(b)) });
     av.vencendo.forEach(v => vencendo.push({ nome: c.name, doc: v.nome, data: v.data, dias: v.dias }));
@@ -7615,8 +7620,8 @@ function viaBarraDocumentacao(meuCadastro, colaboradores) {
   const eq = (Array.isArray(colaboradores) && colaboradores.length) ? viaResumoEquipeDoc(colaboradores) : null;
 
   const chips = [];
-  if (avProprio && !avProprio.podeAlugar) chips.push('<span class="badge late">Você não está habilitado a dirigir</span>');
-  else if (avProprio && !avProprio.podeCarroProprio) chips.push('<span class="badge warn">Seu veículo próprio está indisponível</span>');
+  if (avProprio && !avProprio.inativo && !avProprio.podeAlugar) chips.push('<span class="badge late">Você não está habilitado a dirigir</span>');
+  else if (avProprio && !avProprio.inativo && !avProprio.podeCarroProprio) chips.push('<span class="badge warn">Seu veículo próprio está indisponível</span>');
   if (eq && eq.semDirigir.length) chips.push(`<span class="badge late">${eq.semDirigir.length} não habilitado(s)</span>`);
   if (eq && eq.soAluguel.length) chips.push(`<span class="badge warn">${eq.soAluguel.length} só aluguel</span>`);
   if (eq && eq.vencendo.length) chips.push(`<span class="badge warn">${eq.vencendo.length} vencendo</span>`);
@@ -8721,6 +8726,15 @@ const viaDiasAte = dataStr => dataStr ? Math.round((new Date(dataStr) - new Date
 // combustível da rota.
 function viaAvaliarDocumentacao(c) {
   c = c || {};
+  // Cadastro de CNH, CRLV e seguro DISPENSADO pelo administrador: a pessoa não usa carro a serviço, então não há pendência a cobrar nem
+  // vencimento a avisar. Carro (próprio e alugado) fica indisponível até o cadastro ser reativado; os outros meios seguem livres.
+  // Espelha viaBloqueiosDirecao em api/index.js.
+  if (c.dispensa_cnh_veiculo === true) {
+    const m = 'cadastro de CNH, CRLV e seguro desativado — peça ao administrador para ativar se for viajar de carro';
+    const vazio = { data: null, dias: null, vencido: false, vencendo: false };
+    return { inativo: true, cnh: vazio, crlv: vazio, seguro: vazio, temSeguro: false, bloqueiosCNH: [m], bloqueiosProprio: [m],
+      avisos: [], vencendo: [], podeAlugar: false, podeCarroProprio: false };
+  }
   const hoje = todayISO();
   const aval = d => ({ data: d || null, dias: viaDiasAte(d), vencido: !!d && d < hoje,
     vencendo: !!d && d >= hoje && viaDiasAte(d) <= VIA_DIAS_ALERTA_DOC });
@@ -8791,6 +8805,10 @@ function viaStatusValidadeDoc(dataStr, diasAlerta = VIA_DIAS_ALERTA_DOC) {
 // separado, que acompanha qualquer um dos três estados.
 function viaStatusDocumentacaoColaborador(c) {
   const av = viaAvaliarDocumentacao(c);
+  if (av.inativo) {
+    return { label: 'Dispensado', cls: 'off', vence: null,
+      title: 'Cadastro de CNH, CRLV e seguro dispensado: esta pessoa não usa carro a serviço (não é pendência). Viaja de avião, ônibus ou táxi/Uber. Desmarque a dispensa para voltar a cobrar o cadastro.' };
+  }
   const vence = av.vencendo.length ? {
     texto: `⏳ ${av.vencendo.length}`,
     title: 'Vence em menos de 2 meses: ' + av.vencendo.map(v => `${v.nome} em ${brDate(v.data)} (${v.dias <= 0 ? 'hoje' : v.dias + ' dias'})`).join('; ') + '.'
@@ -8886,8 +8904,11 @@ async function renderViaticosConfig() {
       </select>
       <span class="hint" style="margin:0">Inativar preserva o histórico e os dados do colaborador — só o esconde das novas solicitações. Excluir apaga o cadastro.</span>
     </div>
+    <p class="hint" style="margin:10px 0 0"><strong>Dispensar CNH, CRLV e seguro:</strong> para quem não usa carro a serviço. A pessoa deixa de constar como pendente e continua podendo
+      viajar de avião, ônibus ou táxi/Uber; só o carro (próprio e alugado) fica indisponível até o cadastro ser ativado. Os dados já informados ficam guardados.</p>
     <div class="table-wrap" style="margin-top:10px"><table class="tbl-colaboradores">
-      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th>Documentação</th><th class="actions">Ações</th></tr></thead>
+      <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th>Documentação</th>
+        <th class="c-inc" title="Para quem não usa carro a serviço: não cobra CNH, CRLV nem seguro">Dispensar CNH, CRLV e seguro</th><th class="actions">Ações</th></tr></thead>
       <tbody id="cb-tbody"></tbody>
     </table></div>`;
 
@@ -8907,12 +8928,13 @@ async function renderViaticosConfig() {
         <td class="nowrap">${esc(c.name)}</td><td>${esc(c.cargo || '—')}</td><td>${c.tier}</td>
         <td>${c.ativo ? '<span class="badge ok">Sim</span>' : '<span class="badge off">Não</span>'}</td>
         <td class="nowrap">${viaCelulaDocumentacao(c)}</td>
+        <td class="c-inc"><input type="checkbox" data-dispensa-colab="${c.id}" ${c.dispensa_cnh_veiculo ? 'checked' : ''} aria-label="Dispensar CNH, CRLV e seguro de ${esc(c.name)}"></td>
         <td class="actions"><div class="btn-group">
           <button class="btn sm" data-editar-colab="${c.id}">Editar</button>
           <button class="btn sm" data-toggle-colab="${c.id}">${c.ativo ? 'Inativar' : 'Ativar'}</button>
           <button class="btn sm danger-ghost" data-del-colab="${c.id}">Excluir</button>
         </div></td></tr>`;
-    }).join('') || `<tr><td colspan="6"><div class="empty">${
+    }).join('') || `<tr><td colspan="7"><div class="empty">${
       modo === 'inativos' ? 'Nenhum colaborador inativo.' : modo === 'ativos' ? 'Nenhum colaborador ativo.' : 'Nenhum colaborador cadastrado.'
     }</div></td></tr>`;
     ligarAcoesColaboradores();
@@ -8969,6 +8991,14 @@ async function renderViaticosConfig() {
     renderViaticosConfig();
   });
   document.querySelectorAll('[data-del-colab]').forEach(b => b.onclick = () => confirmDelete('este colaborador', `/api/colaboradores/${b.dataset.delColab}`, renderViaticosConfig));
+  document.querySelectorAll('[data-dispensa-colab]').forEach(chk => chk.onchange = async () => {
+    const c = colaboradores.find(x => x.id == chk.dataset.dispensaColab);
+    try {
+      await api(`/api/colaboradores/${c.id}/dispensa-cnh-veiculo`, { method: 'PUT', body: { dispensa: chk.checked } });
+      toast(chk.checked ? `Cadastro de CNH, CRLV e seguro de ${c.name} dispensado.` : `Cadastro de CNH, CRLV e seguro de ${c.name} reativado.`);
+      renderViaticosConfig();
+    } catch (e) { toast(e.message); chk.checked = !chk.checked; }
+  });
   }
 
   // Restaura o filtro escolhido na sessão e desenha a lista.
@@ -9093,6 +9123,9 @@ async function formEditarColaborador(c, usuarios) {
       ${fldSel('ec-municipio', 'Município (cidade-base)', [{ v: '', t: c.cidade_base_uf ? '— selecione —' : '— escolha o estado primeiro —' }], '')}
     </div>
 
+    <label class="check-chip" style="margin:12px 0 4px"><input type="checkbox" id="ec-dispensa" ${c.dispensa_cnh_veiculo ? 'checked' : ''}> Dispensar CNH, CRLV e seguro (esta pessoa não usa carro a serviço)</label>
+    <p class="hint" id="ec-dispensa-nota" style="margin:0 0 10px; ${c.dispensa_cnh_veiculo ? '' : 'display:none'}">Cadastro dispensado: não vira pendência e a pessoa continua podendo viajar de avião, ônibus ou táxi/Uber. O carro (próprio e alugado) fica indisponível até desmarcar. Os dados já informados ficam guardados.</p>
+    <div id="ec-docs-carro" style="${c.dispensa_cnh_veiculo ? 'display:none' : ''}">
     <div class="ec-sec">
       <div class="ec-sec-head">
         <h4>🪪 Habilitação do motorista (CNH)</h4>
@@ -9141,6 +9174,7 @@ async function formEditarColaborador(c, usuarios) {
         <p class="hint" style="margin:0 0 4px">Marcando "possui seguro", seguradora, nº da apólice e vigência passam a ser obrigatórios — sem os três o campo não serve de controle.</p>
       </div>
       <div class="ec-anexos" id="ec-anexos-seguro"></div>
+    </div>
     </div>`;
 
   openModal(`Editar colaborador — ${esc(c.name)}`, body,
@@ -9162,9 +9196,19 @@ async function formEditarColaborador(c, usuarios) {
             cnh_validade: $('#ec-cnh-validade').value || null, cnh_restricoes: $('#ec-cnh-restricoes').value || null,
             motorista_apto: $('#ec-motorista-apto').checked, motorista_observacao: $('#ec-motorista-obs').value || null
           }});
+          // A dispensa tem rota própria (o PUT acima não a carrega): só chama se mudou.
+          if (!!c.dispensa_cnh_veiculo !== $('#ec-dispensa').checked) {
+            await api(`/api/colaboradores/${c.id}/dispensa-cnh-veiculo`, { method: 'PUT', body: { dispensa: $('#ec-dispensa').checked } });
+          }
           closeModal(); toast('Colaborador atualizado.'); renderViaticosConfig();
         } catch (e) { modalError(e.message); }
      }}], { xwide: true });
+
+  $('#ec-dispensa').onchange = () => {
+    const d = $('#ec-dispensa').checked;
+    $('#ec-docs-carro').style.display = d ? 'none' : '';
+    $('#ec-dispensa-nota').style.display = d ? '' : 'none';
+  };
 
   // ---- Validadores ao vivo: o estado de cada seção aparece no cabeçalho dela,
   // então dá pra ver de longe qual documento está vencido ou faltando.

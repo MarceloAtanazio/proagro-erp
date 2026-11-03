@@ -7871,3 +7871,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 7 verificações no backend (faltam exatamente os dois; só o contrato quando há ASO; completo com os dois; mulher sem reservista; candidato continua com 11 itens e sem exigir ASO/contrato na Documentação) e regressões.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-03 — Sessão 188: Viáticos — dispensar CNH, CRLV e seguro do carro
+
+**Solicitação:** na configuração de Viáticos, poder ticar para inativar CNH, CRLV e seguro do carro de quem não precisa desse cadastro, para não constar como pendente; a pessoa continua podendo viajar por outros meios a serviço da empresa. Decisão do Marcelo: a CNH continua obrigatória no Dossiê de RH (é documento de identificação); a dispensa vale só para Viáticos.
+
+**O que mudou:** nova coluna `erp_colaboradores.dispensa_cnh_veiculo` e um tique "Dispensar CNH, CRLV e seguro" na tabela de colaboradores (Viáticos → Configurações) e na ficha do colaborador (que esconde as três seções enquanto ligado; os dados informados ficam guardados). Dispensado = selo "Dispensado", fora de "não habilitado", "só aluguel" e "vencendo" (barra de documentação e resumo da equipe), sem aviso de documento vencendo. O carro (próprio e alugado) fica indisponível nas solicitações dessa pessoa — na tela e no servidor (`viaBloqueiosDirecao`) —, com a mensagem de cadastro desativado e o pedido de ativação ao administrador; avião, ônibus e táxi/Uber seguem normais. Desmarcar reativa a cobrança. A dispensa tem rota própria (`PUT /api/colaboradores/:id/dispensa-cnh-veiculo`): o PUT do colaborador regrava todas as colunas e o botão Inativar, que não carrega o campo, a apagaria sem querer. Fica registrada no log de auditoria.
+
+**Verificação:** 17 verificações no backend (dossiê e dispensa: liga, reativa, só booleano true, 404, 403 sem permissão, regra de direção com cadastro completo/vazio/dispensado/desligado) e na tela simulada (selos, resumo da equipe, mensagem do assistente, tique na tabela nos dois sentidos, ficha escondendo as seções, Inativar sem o campo). Migração aplicada antes do código.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

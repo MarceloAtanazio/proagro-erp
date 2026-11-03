@@ -1,0 +1,9 @@
+// Dispensa do cadastro de CNH, CRLV e seguro (a pessoa não usa carro a serviço). Rota própria, e não mais um campo no PUT do colaborador:
+// o PUT regrava todas as colunas a partir do corpo, e quem chama sem o campo (como o botão Inativar) zeraria a dispensa sem querer.
+app.put('/api/colaboradores/:id/dispensa-cnh-veiculo', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const dispensa = !!req.body && req.body.dispensa === true;
+  const r = await query('UPDATE erp_colaboradores SET dispensa_cnh_veiculo=$1 WHERE id=$2 RETURNING id', [dispensa, req.params.id]);
+  if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  res.json({ ok: true, dispensa });
+}));
+
