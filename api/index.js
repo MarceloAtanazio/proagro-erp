@@ -6503,11 +6503,14 @@ function viaBloqueiosDirecao(colab) {
   return { cnh, proprio, podeAlugar: cnh.length === 0, podeCarroProprio: proprio.length === 0 };
 }
 
-function viaRecalcularPrevisao(b, colab, tud) {
+function viaRecalcularPrevisao(b, colab, tud, complementar) {
   const categoriaLocal = viaCalcularCategoriaLocalServer(b.destinos, !!b.internacional);
   const ini = new Date(b.data_inicio), fim = new Date(b.data_fim);
-  const dias = Math.max(1, Math.round((fim - ini) / 86400000) + 1);
-  const noitesPeriodo = Math.max(0, dias - 1);
+  // OT complementar: o dia de saída é o último dia da OT de origem, cuja alimentação já foi prevista lá. Conta-se só o que vem depois
+  // (alimentação de cada dia seguinte e a hospedagem de cada noite, inclusive a do último dia da origem). Mesma regra em viaDiasNoites (app.js).
+  const diff = Math.max(0, Math.round((fim - ini) / 86400000));
+  const dias = complementar ? diff : Math.max(1, diff + 1);
+  const noitesPeriodo = complementar ? diff : Math.max(0, dias - 1);
   const hospDevida = viaHospedagemDevidaServer(b.destinos, colab.cidade_base_uf, colab.cidade_base_municipio);
   const noites = hospDevida ? noitesPeriodo : 0;
 
@@ -6554,6 +6557,30 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   if (!colabRows.length) return res.status(403).json({ error: 'Seu usuário não está vinculado a um colaborador de viáticos.' });
   const colab = colabRows[0];
   const b = req.body;
+  // OT complementar: parte de uma OT do próprio colaborador que ainda está de pé. O servidor impõe o número, a data de saída e (na extensão) os
+  // destinos — o que vem do navegador não decide isso.
+  let pai = null, complTipo = null, partida = null;
+  if (b.solicitacao_pai_id != null && b.solicitacao_pai_id !== '') {
+    const iso = v => (v == null ? '' : typeof v === 'string' ? v.slice(0, 10) : new Date(v).toISOString().slice(0, 10));
+    const pr = await query('SELECT id, colaborador_id, ordem_trabalho, status, destinos, data_fim FROM erp_viaticos_solicitacoes WHERE id=$1', [b.solicitacao_pai_id]);
+    if (!pr.length || pr[0].colaborador_id !== colab.id) return res.status(404).json({ error: 'OT de origem não encontrada.' });
+    pai = pr[0];
+    if (!['transferencia_agendada', 'liberado', 'em_viagem'].includes(pai.status)) {
+      return res.status(400).json({ error: 'Só dá para criar complementar de uma OT em curso (liberada ou em viagem).' });
+    }
+    complTipo = b.complementar_tipo;
+    if (!['extensao', 'novo_destino'].includes(complTipo)) return res.status(400).json({ error: 'Informe o tipo da complementar: estender no local ou novo destino.' });
+    const dpai = Array.isArray(pai.destinos) ? pai.destinos : [];
+    if (!dpai.length) return res.status(400).json({ error: 'A OT de origem não tem destino cadastrado.' });
+    const ult = dpai[dpai.length - 1];
+    partida = { uf: ult.uf, municipio: ult.municipio };
+    const raizOt = String(pai.ordem_trabalho || pai.id).replace(/ - Complementar( \d+)?$/i, '');
+    const ja = await query('SELECT id FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1 AND ordem_trabalho LIKE $2',
+      [colab.id, raizOt.replace(/[\\%_]/g, '\\$&') + ' - Complementar%']);
+    b.ordem_trabalho = raizOt + ' - Complementar' + (ja.length ? ' ' + (ja.length + 1) : '');
+    b.data_inicio = iso(pai.data_fim);
+    if (complTipo === 'extensao') b.destinos = dpai;
+  }
   // No autosserviço todos os campos são obrigatórios — a solicitação vai direto
   // para aprovação e uma sem OT, motivo ou objetivo chega sem contexto nenhum.
   // A tela já barra, mas a regra não pode depender só dela.
@@ -6563,13 +6590,14 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   if (!sanitize(b.objetivo)) return res.status(400).json({ error: 'Descreva o objetivo da viagem.' });
   if (!isDate(b.data_inicio) || !isDate(b.data_fim)) return res.status(400).json({ error: 'Datas do período inválidas.' });
   if (b.data_fim < b.data_inicio) return res.status(400).json({ error: 'Data final não pode ser antes da inicial.' });
+  if (pai && b.data_fim <= b.data_inicio) return res.status(400).json({ error: 'A complementar precisa terminar depois da data final da OT de origem (' + b.data_inicio.split('-').reverse().join('/') + ').' });
   if (!Array.isArray(b.destinos) || !b.destinos.length) return res.status(400).json({ error: 'Informe ao menos um destino.' });
   for (const d of b.destinos) {
     if (!d || typeof d.uf !== 'string' || d.uf.length !== 2 || !sanitize(d.municipio)) return res.status(400).json({ error: 'Lista de destinos inválida.' });
   }
-  // Ao menos um meio de transporte, senão a previsão sai só com diárias.
+  // Ao menos um meio de transporte, senão a previsão sai só com diárias. Na extensão no local a pessoa já está lá: o transporte é opcional.
   const tp = (b.transporte_detalhes && typeof b.transporte_detalhes === 'object') ? b.transporte_detalhes : {};
-  if (!['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].some(k => tp[k])) {
+  if (complTipo !== 'extensao' && !['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].some(k => tp[k])) {
     return res.status(400).json({ error: 'Selecione ao menos um meio de transporte.' });
   }
   // Documentação: só dirige a serviço quem está habilitado. Vale para carro
@@ -6586,7 +6614,7 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   // grava e quem a aprovação vê é o recálculo abaixo, a partir dos destinos,
   // período e itens de transporte brutos (auditoria 2026-07-29, achado A4).
   const tud = await query('SELECT tier, categoria_local, tipo_despesa, valor_diaria FROM erp_viaticos_tud');
-  const { categoriaLocal, cat } = viaRecalcularPrevisao(b, colab, tud);
+  const { categoriaLocal, cat } = viaRecalcularPrevisao(b, colab, tud, !!pai);
   // O total da previsão é o `valor_solicitado`: é o que o colaborador pediu e o
   // número que a Tesouraria precisa ver para agendar a transferência. Sem isso
   // gravado, a solicitação aparecia zerada na lista (o cálculo ficava só dentro
@@ -6596,11 +6624,12 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
 
   const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
     (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, objetivo, data_inicio, data_fim,
-     valor_solicitado, valor_liberado, previsao_por_categoria, transporte_detalhes, notes, created_by, origem)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,'colaborador') RETURNING id`,
+     valor_solicitado, valor_liberado, previsao_por_categoria, transporte_detalhes, notes, created_by, origem,
+     solicitacao_pai_id, complementar_tipo, partida_uf, partida_municipio)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0,$11,$12,$13,$14,'colaborador',$15,$16,$17,$18) RETURNING id`,
     [colab.id, colab.tier, categoriaLocal, sanitize(b.ordem_trabalho), JSON.stringify(b.destinos || []), sanitize(b.motivo),
      sanitize(b.objetivo), b.data_inicio, b.data_fim, totalSolicitado, JSON.stringify(cat), JSON.stringify(b.transporte_detalhes || {}),
-     sanitize(b.notes), req.user.id]);
+     sanitize(b.notes), req.user.id, pai ? pai.id : null, complTipo, partida ? partida.uf : null, partida ? partida.municipio : null]);
   res.json({ ok: true, id: ins[0].id });
 }));
 

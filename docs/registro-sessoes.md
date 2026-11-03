@@ -7906,3 +7906,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 9 verificações no backend (descontadas na OT, outras OTs abertas sem a fechada, sem a de outro colaborador e sem a própria, origem, 404, 403) e na tela simulada com o caso do Alcenir (bruto R$ 2.216,00 − R$ 7,95 = R$ 2.208,05; Sim/Não; copiar "2208,05"; registro com pendencia_ids e decisão "descontar"; modo consulta; não administrador). Registro real em produção não testado.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-04 — Sessão 191: Viáticos — OT complementar (estender no local ou novo destino a partir do local atual)
+
+**Solicitação:** quem precisa estender a OT em curso, ou partir do local atual para um novo destino e depois voltar à base, tinha de criar tudo do zero e a base virava o ponto de partida — gerando valores desnecessários. Decisões do Marcelo: número "OT 41 - Complementar"; a data inicial vira a data final da OT de origem; sem controle de saldo (o que o colaborador não gastou da OT original volta sozinho à conta); o colaborador cria a complementar quando precisar, com o fluxo de aprovação normal.
+
+**O que mudou:** botão **Complementar** na linha da OT do próprio colaborador quando ela está liberada, com transferência agendada ou em viagem. O assistente começa perguntando **Estender no local** ou **Novo destino**. A saída fica travada no fim da OT de origem; o número é gerado pelo servidor ("41 - Complementar", "41 - Complementar 2"…); na extensão os destinos são os da origem e o transporte é opcional; no novo destino a retirada do carro alugado e a rota partem do último destino da origem, e não da cidade-base. A previsão conta dias = noites = data final − saída, porque o dia de saída já teve a alimentação prevista na OT de origem (sem pagar duas vezes). Mesma regra no servidor (`viaRecalcularPrevisao`) e na tela (`viaDiasNoites`, usada também na comprovação e no PDF). Migração: colunas `solicitacao_pai_id`, `complementar_tipo`, `partida_uf`, `partida_municipio` em `erp_viaticos_solicitacoes`.
+
+**Limites:** o cálculo automático da rota de carro próprio considera ida e volta ao ponto de partida; para voltar direto à base, usar "informar km manualmente". A hospedagem devida continua medida pela cidade-base real do colaborador.
+
+**Verificação:** 21 verificações no backend (numeração, data de saída e destinos impostos pelo servidor, previsão de extensão e de novo destino, complementar de complementar, recusas: OT fechada, de outra pessoa, inexistente, tipo inválido, datas, sem transporte no novo destino; OT comum intacta) e na tela simulada (botão só na OT elegível, extensão e novo destino de ponta a ponta, envio com `solicitacao_pai_id`).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

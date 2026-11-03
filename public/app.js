@@ -5853,12 +5853,14 @@ async function renderViaticos() {
             <button class="btn sm" data-transf="${s.id}" title="Confere as ocorrências anteriores e registra o valor a transferir no Flash">Transferência</button>
             <button class="btn sm" data-edit="${s.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>`}
+            ${meuColaborador && s.colaborador_id === meuColaborador.id && ['transferencia_agendada', 'liberado', 'em_viagem'].includes(s.status) ? `<button class="btn sm" data-compl="${s.id}" title="Estender esta OT no local ou partir daqui para um novo destino">Complementar</button>` : ''}
           </td>
         </tr>`;
       }).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
     $('#tbl').querySelectorAll('[data-transf]').forEach(b => b.onclick = () => viaTransferenciaModal(sols.find(s => s.id == b.dataset.transf)));
+    $('#tbl').querySelectorAll('[data-compl]').forEach(b => b.onclick = () => renderSolicitacaoAutosservico(sols.find(s => s.id == b.dataset.compl)));
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       const s = filtered.find(x => x.id == b.dataset.del);
       if (s && s.status === 'divergente' && !s.pendencia_resolvida) {
@@ -6244,7 +6246,7 @@ async function viewSolicitacao(id) {
   // cobre mais de uma noite numa linha só.
   const limite = s.data_expiracao_flash || s.data_fim;
   const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
-  const { dias, noites: noitesPeriodo } = viaDiasNoites(s.data_inicio, s.data_fim);
+  const { dias, noites: noitesPeriodo } = viaDiasNoites(s.data_inicio, s.data_fim, !!s.solicitacao_pai_id);
   // Mesma regra da previsão: viagem toda na cidade-sede não tem hospedagem.
   const hospDevida = viaHospedagemDevida(s.destinos, s.colaborador_cidade_base_uf, s.colaborador_cidade_base_municipio);
   const noites = hospDevida ? noitesPeriodo : 0;
@@ -6948,7 +6950,7 @@ let VIA_WIZ = null;
 // renderViaticos() abrir o assistente assim que a tela terminar de montar.
 let VIA_ABRIR_WIZARD_AO_ENTRAR = false;
 
-async function renderSolicitacaoAutosservico() {
+async function renderSolicitacaoAutosservico(pai) {
   const c = $('#content');
   let colab;
   try {
@@ -6975,7 +6977,45 @@ async function renderSolicitacaoAutosservico() {
       carro_proprio_rota: { distancia_km: '', combustivel_valor: '', pedagio_valor: '', estacionamento_qtd: 1, estacionamento_valor: '', trechos: [], manual_override: false }
     }
   };
+  if (pai) {
+    // OT complementar: ligada à OT de origem. Saída = fim da origem (travada); parte do último destino dela.
+    const dest = Array.isArray(pai.destinos) ? pai.destinos : [];
+    const ult = dest[dest.length - 1];
+    const raizOt = String(pai.ordem_trabalho || pai.id).replace(/ - Complementar( \d+)?$/i, '');
+    const ini = String(pai.data_fim).slice(0, 10), d = new Date(ini + 'T12:00:00'); d.setDate(d.getDate() + 1);
+    VIA_WIZ.complementar = { pai_id: pai.id, tipo: null, raiz: raizOt, destinos_pai: dest.map(x => ({ uf: x.uf, municipio: x.municipio })), partida: ult ? { uf: ult.uf, municipio: ult.municipio } : null };
+    VIA_WIZ.ordem_trabalho = raizOt + ' - Complementar';
+    VIA_WIZ.data_inicio = ini; VIA_WIZ.data_fim = d.toISOString().slice(0, 10);
+    VIA_WIZ.motivo = pai.motivo || ''; VIA_WIZ.objetivo = '';
+    if (!ult) { toast('A OT de origem não tem destino cadastrado.'); return renderViaticos(); }
+    return viaWizComplTipo();
+  }
   viaWizStep1();
+}
+
+// Escolha do tipo de complementar (só quando o assistente foi aberto a partir de uma OT em curso).
+function viaWizComplTipo() {
+  const w = VIA_WIZ, k = w.complementar, c = $('#content');
+  c.innerHTML = `
+    <div class="via-wiz-container">
+      ${viaWizProgress(1)}
+      <div class="card">
+        <h3 style="margin-bottom:6px">OT complementar de ${esc(k.raiz)}</h3>
+        <p class="hint" style="margin-bottom:14px">Você está em <strong>${esc(k.partida.municipio)}/${esc(k.partida.uf)}</strong>. A complementar começa em <strong>${brDate(w.data_inicio)}</strong>
+          (o fim da OT de origem) e parte daí — não da sua cidade-base. O que a OT de origem já previu não é cobrado de novo.</p>
+        <div class="field-row">
+          <button type="button" class="btn" data-tipo="extensao" style="flex:1; text-align:left; padding:14px"><strong>⏱️ Estender no local</strong><br><small>Continuar em ${esc(k.destinos_pai.map(d => d.municipio + '/' + d.uf).join(', '))} por mais dias.</small></button>
+          <button type="button" class="btn" data-tipo="novo_destino" style="flex:1; text-align:left; padding:14px"><strong>📍 Novo destino</strong><br><small>Ir de ${esc(k.partida.municipio)} para outra cidade e depois voltar.</small></button>
+        </div>
+      </div>
+    </div>`;
+  c.querySelectorAll('[data-tipo]').forEach(b => b.onclick = () => {
+    k.tipo = b.dataset.tipo;
+    w.destinos = k.tipo === 'extensao' ? k.destinos_pai.map(d => ({ ...d })) : [];
+    w.internacional = false;
+    w.categoria_local = viaCalcularCategoriaLocal(w.destinos, false);
+    viaWizStep1();
+  });
 }
 
 function viaWizProgress(atual) {
@@ -7000,14 +7040,24 @@ document.addEventListener('click', e => {
 // que é o que o hotel cobra: 03/08 a 05/08 = 3 dias de alimentação e 2 noites.
 // A regra vale nas DUAS pontas — tanto no valor previsto quanto no teto da TUD
 // usado para apontar excesso na comprovação.
-function viaDiasNoites(dataInicio, dataFim) {
+//
+// OT COMPLEMENTAR: o dia de saída é o último dia da OT de origem, cuja alimentação já foi prevista lá. Conta-se só o que vem depois: dias e
+// noites = data final − saída (ex.: 10/11 a 13/11 = 3 dias de alimentação e 3 noites, a primeira delas a do dia 10). Igual a viaRecalcularPrevisao.
+function viaDiasNoites(dataInicio, dataFim, complementar) {
   const ini = new Date(dataInicio), fim = new Date(dataFim);
   if (isNaN(ini) || isNaN(fim)) return { dias: 0, noites: 0 };
-  const dias = Math.max(1, Math.round((fim - ini) / 86400000) + 1);
+  const diff = Math.max(0, Math.round((fim - ini) / 86400000));
+  if (complementar) return { dias: diff, noites: diff };
+  const dias = Math.max(1, diff + 1);
   return { dias, noites: Math.max(0, dias - 1) };
 }
-function viaWizDias(w) { return viaDiasNoites(w.data_inicio, w.data_fim).dias; }
-function viaWizNoites(w) { return viaDiasNoites(w.data_inicio, w.data_fim).noites; }
+function viaWizDias(w) { return viaDiasNoites(w.data_inicio, w.data_fim, !!w.complementar).dias; }
+function viaWizNoites(w) { return viaDiasNoites(w.data_inicio, w.data_fim, !!w.complementar).noites; }
+// De onde a pessoa parte: a cidade-base, ou — na OT complementar — o último destino da OT de origem (ela já está lá).
+function viaPontoPartida(w) {
+  if (w.complementar && w.complementar.partida) return { uf: w.complementar.partida.uf, municipio: w.complementar.partida.municipio };
+  return { uf: w.colab.cidade_base_uf, municipio: w.colab.cidade_base_municipio };
+}
 
 // Compara município/UF tolerando acento, caixa e espaço extra — a cidade-base
 // e os destinos vêm do mesmo dataset, mas registros antigos podem ter grafia
@@ -7438,6 +7488,7 @@ function viaWizValidarEtapa2(v) {
   if (!v.destinos || !v.destinos.length) return { msg: 'Adicione ao menos um destino (cidade da Ordem de Trabalho).', foco: 'w2-mun' };
   if (!v.data_inicio || !v.data_fim) return { msg: 'Preencha as datas de saída e de retorno.', foco: !v.data_inicio ? 'w2-inicio' : 'w2-fim' };
   if (v.data_fim < v.data_inicio) return { msg: 'Data de retorno não pode ser antes da saída.', foco: 'w2-fim' };
+  if (v.complementar && v.data_fim <= v.data_inicio) return { msg: 'A complementar precisa terminar depois do fim da OT de origem (' + brDate(v.data_inicio) + ').', foco: 'w2-fim' };
   if (!v.motivo) return { msg: 'Selecione o motivo da viagem.', foco: 'w2-motivo' };
   if (!MOTIVO_OPTIONS.includes(v.motivo)) return { msg: 'Motivo inválido.', foco: 'w2-motivo' };
   if (!String(v.objetivo || '').trim()) return { msg: 'Descreva o objetivo da viagem.', foco: 'w2-objetivo' };
@@ -7447,9 +7498,10 @@ function viaWizValidarEtapa2(v) {
 // Etapa 3: além das travas de combinação, cada transporte marcado precisa ter os
 // dados que formam o custo dele — antes era possível marcar "Avião" e avançar
 // sem nenhum trecho, e a previsão saía zerada.
-function viaWizValidarEtapa3(t, colab) {
+function viaWizValidarEtapa3(t, colab, opcional) {
   const marcados = ['aviao', 'onibus', 'aluguel_carro', 'carro_proprio', 'taxi_uber'].filter(k => t[k]);
-  if (!marcados.length) return { msg: 'Selecione ao menos um meio de transporte.' };
+  // Extensão no local: a pessoa já está lá, o transporte é opcional.
+  if (!marcados.length) return opcional ? null : { msg: 'Selecione ao menos um meio de transporte.' };
 
   // Última barreira antes de avançar: a trava visual pode ter sido contornada
   // (cadastro alterado com a tela aberta, ou o estado vindo de outra sessão).
@@ -7536,7 +7588,8 @@ function viaWizStep2() {
       ${viaWizProgress(2)}
       <div class="card">
         <h3 style="margin-bottom:14px">Dados da viagem</h3>
-        ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho)}
+        ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho, w.complementar ? 'disabled' : '')}
+        ${w.complementar ? '<p class="hint" style="margin:-6px 0 10px">Complementar de uma OT em curso: o número é gerado automaticamente (se houver outra complementar da mesma OT, entra 2, 3…).</p>' : ''}
         <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
           <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
             ${fldSel('w2-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
@@ -7551,8 +7604,8 @@ function viaWizStep2() {
           <div class="via-cat-badge" id="w2-cat-badge"></div>
         </div>
         <div class="field-row">
-          ${fld('w2-inicio', 'Data de saída', 'date', w.data_inicio)}
-          ${fld('w2-fim', 'Data de retorno', 'date', w.data_fim)}
+          ${fld('w2-inicio', w.complementar ? 'Data de saída (= fim da OT de origem)' : 'Data de saída', 'date', w.data_inicio, w.complementar ? 'disabled' : '')}
+          ${fld('w2-fim', 'Data de retorno', 'date', w.data_fim, w.complementar ? `min="${w.data_inicio}"` : '')}
         </div>
         ${fldSel('w2-motivo', 'Motivo', [{ v: '', t: '— selecione —' }, ...MOTIVO_OPTIONS.map(m => ({ v: m, t: m }))], w.motivo)}
         <div class="field"><label>Objetivo da viagem</label><textarea id="w2-objetivo" rows="3" placeholder="Descreva o que será feito na viagem.">${esc(w.objetivo)}</textarea></div>
@@ -7577,12 +7630,14 @@ function viaWizStep2() {
   const renderDestinos = () => {
     const box = $('#w2-destinos-list');
     box.innerHTML = w.destinos.length
-      ? `<div class="chip-row">${w.destinos.map((d, i) => `<span class="chip">${esc(d.municipio)}/${esc(d.uf)} <button type="button" data-rm="${i}">×</button></span>`).join('')}</div>`
+      ? `<div class="chip-row">${w.destinos.map((d, i) => `<span class="chip">${esc(d.municipio)}/${esc(d.uf)} ${w.complementar && w.complementar.tipo === 'extensao' ? '' : `<button type="button" data-rm="${i}">×</button>`}</span>`).join('')}</div>`
       : '<span style="color:var(--muted); font-size:13px">Nenhuma cidade adicionada ainda.</span>';
     box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { w.destinos.splice(Number(b.dataset.rm), 1); renderDestinos(); renderCategoria(); });
     renderCategoria();
   };
   $('#w2-uf').onchange = popularMunicipios; popularMunicipios(); renderDestinos();
+  // Extensão no local: os destinos são os da OT de origem — não se edita.
+  if (w.complementar && w.complementar.tipo === 'extensao') { $('#w2-add-dest').closest('.field-row').style.display = 'none'; $('#w2-internacional').closest('label').style.display = 'none'; }
   $('#w2-add-dest').onclick = () => {
     const uf = $('#w2-uf').value, municipio = $('#w2-mun').value;
     if (!municipio) return toast('Selecione um município.');
@@ -7595,7 +7650,7 @@ function viaWizStep2() {
     // Todos os campos desta etapa são obrigatórios: uma solicitação sem OT,
     // motivo ou objetivo chegava na aprovação sem contexto nenhum.
     const erro = viaWizValidarEtapa2({
-      ordem_trabalho: $('#w2-ot').value, destinos: w.destinos,
+      ordem_trabalho: $('#w2-ot').value, destinos: w.destinos, complementar: w.complementar,
       data_inicio: $('#w2-inicio').value, data_fim: $('#w2-fim').value,
       motivo: $('#w2-motivo').value, objetivo: $('#w2-objetivo').value
     });
@@ -7797,6 +7852,7 @@ function viaWizStep3() {
         <div class="card">
           <h3 style="margin-bottom:6px">Transporte</h3>
           <p class="hint" style="margin-bottom:14px">Marque o que se aplica a esta viagem — dá pra combinar (ex.: avião pra chegar + carro alugado no destino). Combinações não permitidas ficam bloqueadas: Carro Próprio não combina com nada, e Avião e Ônibus não combinam entre si.</p>
+          ${w.complementar ? `<div class="alert-item warn" style="margin-bottom:12px">↪️ <strong>OT complementar</strong> — ${w.complementar.tipo === 'extensao' ? 'você já está no local: marque só o que for realmente usar (táxi/Uber, por exemplo). Pode seguir sem transporte.' : `você parte de <strong>${esc(w.complementar.partida.municipio)}/${esc(w.complementar.partida.uf)}</strong>, não da cidade-base. O cálculo automático da rota considera ida e volta ao ponto de partida; se for voltar direto para a base, marque “informar km manualmente” e ajuste.`}</div>` : ''}
           ${avisoDoc}
           <div class="via-transport-grid">
             <label class="via-transport-tile"><input type="checkbox" id="w3-aviao" ${w.transporte.aviao ? 'checked' : ''}><span class="vt-icon">✈️</span><span class="vt-name">Avião</span></label>
@@ -7832,7 +7888,7 @@ function viaWizStep3() {
   $('#wiz-next').onclick = () => {
     const conflitos = viaTransporteConflitos();
     if (conflitos.length) { toast(`Combinação de transportes não permitida: ${conflitos.join('; ')}. Ajuste antes de avançar.`); return; }
-    const erro = viaWizValidarEtapa3(w.transporte, w.colab);
+    const erro = viaWizValidarEtapa3(w.transporte, w.colab, !!w.complementar && w.complementar.tipo === 'extensao');
     if (erro) return viaWizAvisar(erro);
     viaWizStep4();
   };
@@ -7929,7 +7985,8 @@ function viaRenderAluguelBlock() {
   // Retirada/devolução por Estado + Município (não mais digitação livre): evita
   // erro de grafia e devolve um ponto que o cálculo de rota já sabe resolver,
   // do mesmo jeito que faz com os destinos da OT.
-  const temBase = !!(w.colab.cidade_base_uf && w.colab.cidade_base_municipio);
+  const pp = viaPontoPartida(w);
+  const temBase = !!(pp.uf && pp.municipio);
   const ufOpcoes = [{ v: '', t: '— selecione —' }, ...BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome }))];
   const munOpcoes = (uf, atual) => uf
     ? [{ v: '', t: '— selecione —' }, ...(BR_LOCALIDADES.municipios[uf] || []).map(m => ({ v: m, t: m }))]
@@ -7945,7 +8002,7 @@ function viaRenderAluguelBlock() {
           <div class="field"><label for="al-diaria-${i}">Valor da diária (R$)</label><input id="al-diaria-${i}" type="text" inputmode="decimal" placeholder="0,00" value="${esc(a.valor_diaria || '')}"></div>
           ${fld(`al-dias-${i}`, 'Nº de diárias', 'number', a.dias || 1, 'min="1"')}
         </div>
-        ${temBase ? `<label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-localbase-${i}" ${a.local_base ? 'checked' : ''}> 🏠 Retirada e devolução na cidade-base (${esc(w.colab.cidade_base_municipio)}/${esc(w.colab.cidade_base_uf)})</label>` : ''}
+        ${temBase ? `<label class="check-chip" style="margin-bottom:10px"><input type="checkbox" id="al-localbase-${i}" ${a.local_base ? 'checked' : ''}> 🏠 Retirada e devolução ${w.complementar ? 'no local de partida' : 'na cidade-base'} (${esc(pp.municipio)}/${esc(pp.uf)})</label>` : ''}
         <div class="field-row">
           ${fldSel(`al-retuf-${i}`, 'Estado (retirada)', ufOpcoes, a.retirada_uf || '')}
           ${fldSel(`al-retmun-${i}`, 'Município (retirada)', munOpcoes(a.retirada_uf, a.retirada_municipio), a.retirada_municipio || '')}
@@ -8029,9 +8086,10 @@ function viaRenderAluguelBlock() {
     if (chkBase) chkBase.onchange = e => {
       a.local_base = e.target.checked;
       if (a.local_base) {
-        a.retirada_uf = a.devolucao_uf = w.colab.cidade_base_uf;
-        a.retirada_municipio = a.devolucao_municipio = w.colab.cidade_base_municipio;
-        a.retirada_local = a.devolucao_local = `${w.colab.cidade_base_municipio}/${w.colab.cidade_base_uf}`;
+        const pp = viaPontoPartida(w);
+        a.retirada_uf = a.devolucao_uf = pp.uf;
+        a.retirada_municipio = a.devolucao_municipio = pp.municipio;
+        a.retirada_local = a.devolucao_local = `${pp.municipio}/${pp.uf}`;
         a.retirada_coord = null;
       } else {
         a.retirada_uf = a.devolucao_uf = ''; a.retirada_municipio = a.devolucao_municipio = '';
@@ -8152,7 +8210,7 @@ function viaRenderProprioBlock() {
   $('#w3-proprio-estac-valor').oninput = e => rota.estacionamento_valor = e.target.value;
   $('#w3-proprio-manual').onchange = e => { rota.manual_override = e.target.checked; viaRenderProprioBlock(); };
   $('#w3-proprio-calc').onclick = () => viaExecutarCalculoRota(
-    { uf: colab.cidade_base_uf, municipio: colab.cidade_base_municipio }, w.destinos, colab, w.preco_combustivel,
+    viaPontoPartida(w), w.destinos, colab, w.preco_combustivel,
     'w3-proprio-status', 'proprio', rota.trechos || [], (km, trechos, meta) => {
       rota.manual_override = false;
       rota.distancia_km = km.toFixed(1);
@@ -8267,7 +8325,7 @@ function viaLinhasDetalhamento(r) {
 // documento leem daqui.
 function viaMemoriaCategorias(w, cat) {
   const t = w.transporte || {}, m = {};
-  const { dias, noites: noitesPeriodo } = viaDiasNoites(w.data_inicio, w.data_fim);
+  const { dias, noites: noitesPeriodo } = viaDiasNoites(w.data_inicio, w.data_fim, !!w.complementar);
   const hospDevida = viaHospedagemDevida(w.destinos, w.colab.cidade_base_uf, w.colab.cidade_base_municipio);
   const noites = hospDevida ? noitesPeriodo : 0;
   // Valor unitário: usa a TUD quando disponível (fluxo do assistente) e, no PDF
@@ -8640,7 +8698,7 @@ function viaWizStep5() {
   $('#wiz-enviar').onclick = async () => {
     // Revalida tudo antes de enviar: dá para chegar aqui, voltar, apagar um
     // campo e avançar de novo pelos botões das etapas.
-    const erro = viaWizValidarEtapa2(w) || viaWizValidarEtapa3(w.transporte);
+    const erro = viaWizValidarEtapa2(w) || viaWizValidarEtapa3(w.transporte, null, !!w.complementar && w.complementar.tipo === 'extensao');
     if (erro) return toast(`Não é possível enviar: ${erro.msg}`);
     try {
       await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
@@ -8651,7 +8709,8 @@ function viaWizStep5() {
         ordem_trabalho: w.ordem_trabalho, categoria_local: w.categoria_local, destinos: w.destinos,
         internacional: !!w.internacional,
         data_inicio: w.data_inicio, data_fim: w.data_fim, motivo: w.motivo, objetivo: w.objetivo,
-        previsao_por_categoria: r.cat, transporte_detalhes: w.transporte, notes: ''
+        previsao_por_categoria: r.cat, transporte_detalhes: w.transporte, notes: '',
+        ...(w.complementar ? { solicitacao_pai_id: w.complementar.pai_id, complementar_tipo: w.complementar.tipo } : {})
       }});
       toast('Solicitação enviada! Ela segue para aprovação.');
       renderViaticos();
@@ -8672,8 +8731,9 @@ async function viaBaixarPdfSolicitacao(s) {
   }
   const cat = s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object' ? s.previsao_por_categoria : {};
   const total = Object.values(cat).reduce((a, b) => a + (Number(b) || 0), 0);
-  const { dias } = viaDiasNoites(s.data_inicio, s.data_fim);
+  const { dias } = viaDiasNoites(s.data_inicio, s.data_fim, !!s.solicitacao_pai_id);
   const w = {
+    complementar: s.solicitacao_pai_id ? { tipo: s.complementar_tipo } : null,
     ordem_trabalho: s.ordem_trabalho, categoria_local: s.categoria_local,
     destinos: Array.isArray(s.destinos) ? s.destinos : [],
     data_inicio: s.data_inicio, data_fim: s.data_fim,
