@@ -7860,3 +7860,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 20 verificações no backend (caso da OT 41, soma com excesso e com estouro, fechada, decidida, idempotência, permissões), regressões de pendência e excesso, e na tela real com o Excel da OT 41 (12 já lançadas reconhecidas, só a reprovada enviada).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-03 — Sessão 187: Dossiê — ASO e Contrato de trabalho assinado obrigatórios
+
+**Solicitação:** tornar obrigatórios no Dossiê do colaborador, em Recursos Humanos, o ASO e o Contrato de trabalho assinado.
+
+**O que mudou:** os dois tipos passam a ser obrigatórios. Todo colaborador ativo sem eles aparece com "documento(s) faltando" na lista de Colaboradores, no cabeçalho da ficha e no PDF da ficha (o total do checklist sobe de 11 para 13; mulheres, que não têm reservista, de 10 para 12). Como o ASO só existe depois do exame admissional e o contrato depois da assinatura, **não** são cobrados do candidato em admissão: o checklist do card e do Quadro continua com os mesmos itens e a etapa Documentação não passa a exigi-los (senão ninguém sairia dela). No Painel, o indicador "Dossiê incompleto" também os deixa de fora, porque eles já têm indicadores próprios ("Sem ASO" e "Sem contrato no dossiê") — contar nos dois somaria a mesma falta duas vezes. O anexo pelo card (exame admissional e contrato) grava no dossiê e cumpre a obrigatoriedade. Sem mudança no banco.
+
+**Verificação:** 7 verificações no backend (faltam exatamente os dois; só o contrato quando há ASO; completo com os dois; mulher sem reservista; candidato continua com 11 itens e sem exigir ASO/contrato na Documentação) e regressões.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

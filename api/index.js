@@ -2304,8 +2304,9 @@ app.delete('/api/colaboradores/:id', requireAuth, requireEdit('viaticos'), h(asy
 // Desenho em docs/rh-desenho.md. Migração: 2026-09-08-rh-fase1.sql
 // ============================================================
 
-// Tipos de documento do dossiê. Os 11 primeiros são os obrigatórios definidos
-// pela empresa; os demais existem para arquivar sem virar pendência.
+// Tipos de documento do dossiê. Os marcados `obrigatorio` são os exigidos pela empresa; os demais existem para arquivar sem virar
+// pendência. `posAdmissao`: o documento só passa a existir depois de uma etapa do processo (o ASO no exame admissional, o contrato
+// na assinatura), então é cobrado do colaborador, mas NÃO do candidato em admissão — não trava a Documentação.
 const RH_DOC_TIPOS = [
   { cod: 'rg',                   nome: 'RG',                                  obrigatorio: true },
   { cod: 'cpf',                  nome: 'CPF',                                 obrigatorio: true },
@@ -2322,8 +2323,8 @@ const RH_DOC_TIPOS = [
   // Este não é anexo, é campo: fica cumprido quando banco, agência e conta
   // estiverem preenchidos na ficha — exigir um PDF seria burocracia inútil.
   { cod: 'dados_bancarios',      nome: 'Dados Bancários',                     obrigatorio: true, porCampos: ['banco_numero', 'agencia', 'conta'] },
-  { cod: 'aso',                  nome: 'ASO (saúde ocupacional)',             obrigatorio: false },
-  { cod: 'contrato_assinado',    nome: 'Contrato de trabalho assinado',       obrigatorio: false },
+  { cod: 'aso',                  nome: 'ASO (saúde ocupacional)',             obrigatorio: true, posAdmissao: true },
+  { cod: 'contrato_assinado',    nome: 'Contrato de trabalho assinado',       obrigatorio: true, posAdmissao: true },
   { cod: 'carta_oferta',         nome: 'Carta oferta assinada',               obrigatorio: false },
   { cod: 'termo_equipamento',    nome: 'Termo de entrega de equipamento',     obrigatorio: false },
   { cod: 'declaracao',           nome: 'Declaração ou termo',                 obrigatorio: false },
@@ -2443,11 +2444,13 @@ async function podeVerDossieRH(user, colaboradorId) {
   return !!r.length && r[0].usuario_id === user.id;
 }
 
-function rhChecklist(colab, anexos) {
+// `opcoes.semPosAdmissao`: deixa de fora os documentos que só existem depois do processo de admissão (ver RH_DOC_TIPOS).
+function rhChecklist(colab, anexos, opcoes = {}) {
   const porTipo = {};
   (anexos || []).forEach(a => { if (a.doc_tipo) porTipo[a.doc_tipo] = (porTipo[a.doc_tipo] || 0) + 1; });
   return RH_DOC_TIPOS
     .filter(d => d.obrigatorio)
+    .filter(d => !(opcoes.semPosAdmissao && d.posAdmissao))
     .filter(d => !d.somenteSexo || d.somenteSexo === colab.sexo)
     .map(d => {
       const nAnexos = porTipo[d.cod] || 0;
@@ -4102,7 +4105,7 @@ async function rhCarregarAdmissao(id) {
   const anexos = await query(
     `SELECT doc_tipo FROM erp_attachments WHERE entity_type='rh_doc' AND entity_id=$1`, [adm.colaborador_id]);
   const mapa = await rhMapaPara(adm.regime, adm.modelo_trabalho);
-  return { adm, colab, checklist: rhChecklist(colab, anexos), mapa };
+  return { adm, colab, checklist: rhChecklist(colab, anexos, { semPosAdmissao: true }), mapa };
 }
 
 // ---- Criar colaborador a PARTIR DO RH ----
@@ -4212,7 +4215,7 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
   const AVAL_CONTAM = ['avaliacao_tecnica', 'psicotecnico'];
   const cards = rows.map(r => {
     const tipos = Array.isArray(r.tipos) ? r.tipos : [];
-    const chk = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })));
+    const chk = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })), { semPosAdmissao: true });
     const pend = rhPendencias(r, r, chk, mapaDe(r.regime, r.modelo_trabalho));
     const base = rhFiltrar(r, req.user, r);
     delete base.tipos;
@@ -5143,7 +5146,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
      WHERE ${RH_SQL_COLAB_ATIVO}
      GROUP BY c.id`);
   const semDocCompleto = docs.filter(d => {
-    const chk = rhChecklist(d, (Array.isArray(d.tipos) ? d.tipos : []).map(t => ({ doc_tipo: t })));
+    const chk = rhChecklist(d, (Array.isArray(d.tipos) ? d.tipos : []).map(t => ({ doc_tipo: t })), { semPosAdmissao: true });
     return chk.some(x => !x.ok);
   }).length;
   const expVencendo = comVinculo.filter(r => r.prorrogacao_fim
