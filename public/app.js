@@ -5850,6 +5850,7 @@ async function renderViaticos() {
           <td class="actions">${READONLY
             ? `<button class="btn sm primary" data-view="${s.id}">Ver detalhes</button>`
             : `<button class="btn sm primary" data-view="${s.id}">${['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status) ? 'Ver' : 'Comprovar'}</button>
+            <button class="btn sm" data-transf="${s.id}" title="Confere as ocorrências anteriores e registra o valor a transferir no Flash">Transferência</button>
             <button class="btn sm" data-edit="${s.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>`}
           </td>
@@ -5857,6 +5858,7 @@ async function renderViaticos() {
       }).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
+    $('#tbl').querySelectorAll('[data-transf]').forEach(b => b.onclick = () => viaTransferenciaModal(sols.find(s => s.id == b.dataset.transf)));
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       const s = filtered.find(x => x.id == b.dataset.del);
       if (s && s.status === 'divergente' && !s.pendencia_resolvida) {
@@ -6115,6 +6117,89 @@ async function formSolicitacao(existing) {
   };
   $('#vs-colab').onchange = checarPendencia;
   checarPendencia();
+}
+
+// ---------------- Transferência ----------------
+//
+// Painel para conferir e REGISTRAR o valor a transferir no Flash. O ERP não se integra ao Flash: a transferência é feita lá, e aqui se registra o
+// valor LIBERADO — que é a base da comprovação (liberado − comprovado = devolvido ou estouro). O painel junta as ocorrências anteriores do
+// colaborador (pendências em aberto, com a OT e a origem de cada uma), calcula o líquido (bruto − desconto) e, ao registrar, grava o líquido e a
+// decisão sobre a pendência de uma vez — o mesmo número que a pessoa acabou de conferir, sem redigitar em "Editar".
+// Em OT que já teve o valor registrado (ou fechada) o painel é só consulta.
+async function viaTransferenciaModal(s) {
+  const solicitado = viaTotalSolicitado(s);
+  const registrada = Number(s.valor_liberado) > 0;
+  const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
+  const ehAdmin = !!USER && USER.role === 'admin';
+  const podeRegistrar = ehAdmin && !registrada && !finalizada;
+  let ctx;
+  try { ctx = await api(`/api/viaticos/solicitacoes/${s.id}/transferencia`); } catch (e) { return toast(e.message); }
+  const titulo = `Transferência — ${s.colaborador_name} · OT ${s.ordem_trabalho || s.id}`;
+  const kpis = `<div class="grid kpis" style="margin-bottom:12px">
+      <div class="card kpi"><div class="label">Solicitado</div><div class="value">${brl(solicitado)}</div></div>
+      <div class="card kpi ${registrada ? 'blue' : ''}"><div class="label">Valor liberado no Flash</div><div class="value">${registrada ? brl(s.valor_liberado) : '—'}</div>
+        ${registrada ? '' : '<div style="font-size:11.5px; color:var(--muted)">ainda não registrado</div>'}</div>
+      <div class="card kpi"><div class="label">Situação</div><div class="value" style="font-size:15px">${esc(VIA_STATUS_LABEL[s.status] || s.status)}</div></div></div>`;
+  const outras = (ctx.outras_abertas || []).length ? `<div class="alert-item warn" style="margin-top:12px">⏳ <strong>Outras OTs deste colaborador ainda não fechadas:</strong>
+      <ul style="margin:6px 0 0 18px">${ctx.outras_abertas.map(o => `<li>OT ${esc(o.ordem_trabalho || o.id)} — ${esc(VIA_STATUS_LABEL[o.status] || o.status)}${o.valor_liberado ? `, liberado ${brl(o.valor_liberado)}` : ''}</li>`).join('')}</ul>
+      <div style="font-size:12.5px; margin-top:6px">A pendência de cada uma só nasce quando ela for <strong>fechada</strong> e vale para a <strong>próxima transferência</strong> feita depois disso (pode acumular mais de uma).
+      Este valor pode mudar até lá.</div></div>` : '';
+
+  // ---- consulta: OT já com valor registrado, fechada, ou usuário que não é administrador ----
+  if (!podeRegistrar) {
+    const desc = ctx.descontadas || [];
+    const totalDesc = desc.filter(d => d.decisao === 'descontada').reduce((t, d) => t + d.valor, 0);
+    openModal(titulo, `${kpis}
+      ${registrada ? `<p style="font-size:13.5px; color:var(--ink-2); margin:0 0 8px">Valor <strong>${brl(s.valor_liberado)}</strong> registrado como transferido no Flash${totalDesc > 0 ? ` (já com o desconto de <strong>${brl(totalDesc)}</strong> de ocorrências anteriores; bruto ${brl(Number(s.valor_liberado) + totalDesc)})` : ''}.</p>`
+        : `<div class="alert-item">${finalizada ? 'Esta OT já foi fechada sem valor liberado registrado.' : 'Somente um administrador registra a transferência.'}</div>`}
+      ${desc.length ? `<div style="font-size:13px; margin-top:6px"><strong>Ocorrências anteriores tratadas nesta transferência:</strong><ul style="margin:6px 0 0 18px">${desc.map(d =>
+        `<li>OT ${esc(d.ordem_trabalho || d.id)} — ${esc(VIA_ORIGEM_PEND[d.origem] || 'pendência')}: ${brl(d.valor)} — <strong>${d.decisao === 'descontada' ? 'descontada' : 'dispensada'}</strong></li>`).join('')}</ul></div>` : ''}
+      ${outras}`,
+      [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true });
+    return;
+  }
+
+  // ---- registro ----
+  openModal(titulo, `${kpis}
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 8px">Confira as ocorrências anteriores, informe o <strong>valor bruto</strong> (o que seria transferido sem desconto) e transfira no Flash o
+      <strong>valor líquido</strong> mostrado abaixo. Ao registrar, o líquido fica gravado como valor liberado desta OT.</p>
+    <div id="tr-box"></div>
+    <div class="field">${fld('tr-valor', 'Valor bruto da transferência', 'number', solicitado || '', 'step="0.01" min="0"')}</div>
+    <div class="alert-item ok" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+      <span><strong>Valor a transferir no Flash:</strong> <span id="tr-liquido" style="font-size:20px; font-weight:700"></span></span>
+      <button class="btn sm" id="tr-copiar" type="button">Copiar valor</button>
+    </div>
+    ${outras}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Registrar transferência', cls: 'primary', onClick: async (ev) => {
+        const { v, dec, liquido } = calc();
+        if (!isFinite(v) || v <= 0) return modalError('Informe o valor bruto da transferência (maior que zero).');
+        if (dec.erro) return modalError(dec.erro);
+        if (!confirm(`Registrar ${brl(liquido)} como valor transferido no Flash para ${s.colaborador_name}?${dec.decisao === 'descontar' ? `\nIncluindo o desconto de ${brl(dec.total)} de ocorrências anteriores.` : dec.decisao === 'dispensar' ? `\nAs ocorrências anteriores (${brl(dec.total)}) serão DISPENSADAS, sem desconto.` : ''}`)) return;
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Registrando…'; }
+        const body = { status: 'transferencia_agendada', valor_liberado: liquido };
+        if (dec.decisao) { body.pendencia_ids = dec.ids; body.pendencia_decisao = dec.decisao; }
+        try {
+          await api(`/api/viaticos/solicitacoes/${s.id}/status`, { method: 'POST', body });
+          closeModal(); toast(`Transferência registrada: ${brl(liquido)}.`); renderViaticos();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Registrar transferência'; } }
+     } }], { wide: true });
+
+  const el = $('#tr-valor');
+  const est = await viaPendenciaAviso($('#tr-box'), s.colaborador_id, el, { padrao: true, obrigatorio: true });
+  const calc = () => {
+    const v = Number(el.value);
+    const dec = est.resolver(isFinite(v) ? v : 0);
+    return { v, dec, liquido: dec.erro || dec.liquido === undefined ? (isFinite(v) ? v : 0) : dec.liquido };
+  };
+  const pinta = () => { $('#tr-liquido').textContent = brl(calc().liquido); };
+  el.addEventListener('input', pinta);
+  $('#tr-box').addEventListener('click', () => setTimeout(pinta, 0));   // Sim / Não mudam o líquido
+  $('#tr-copiar').onclick = async () => {
+    const txt = calc().liquido.toFixed(2).replace('.', ',');
+    try { await navigator.clipboard.writeText(txt); toast(`Valor copiado: ${txt}`); } catch { toast(`Valor a transferir: ${txt}`); }
+  };
+  pinta();
 }
 
 // De onde vem cada pendência a descontar na próxima OT (o servidor diz a origem).

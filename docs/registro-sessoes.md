@@ -7893,3 +7893,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 15 verificações no backend (pendente sem contar como falta, declarado, anexado, falta de verdade separada da pendência, candidato avança sem CNH, rota só para a CNH, 400/404/403) e na tela simulada (cores, botões nos dois sentidos, sem botão para quem só visualiza). Migração aplicada antes do código.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-04 — Sessão 190: Viáticos — botão "Transferência" (conferir e registrar o valor a transferir no Flash)
+
+**Solicitação:** um botão entre "Comprovar" e "Editar" para pegar as ocorrências anteriores do colaborador, verificar e dar o valor a transferir na plataforma Flash. Decisões do Marcelo: o painel registra sempre; o nome é "Transferência"; aparece também em OT já transferida (consulta). Regra confirmada: transferência com OT anterior ainda aberta segue; a pendência dela só vale a partir do fechamento e entra na próxima transferência, acumulando se houver mais de uma.
+
+**O que mudou:** botão **Transferência** na linha de cada OT. O painel mostra o solicitado, as pendências anteriores em aberto (com a OT e a origem de cada uma: gasto acima do liberado, excesso reprovado, despesa reprovada no Flash), pede o **valor bruto** (padrão: o solicitado), tem o Sim/Não de desconto e mostra em destaque o **valor líquido a transferir no Flash**, com "Copiar valor". **Registrar transferência** (só administrador) grava o líquido como valor liberado e a decisão sobre a pendência de uma vez, pela rota de status que já existia — o mesmo número conferido, sem redigitar em "Editar" — e muda a OT para Transferência Agendada. Também lista as outras OTs do colaborador ainda não fechadas, avisando que a pendência delas só nasce no fechamento e valerá para a próxima transferência. Em OT que já tem valor registrado, fechada ou para quem não é administrador, o painel é só consulta e mostra o que foi descontado ou dispensado nela (bruto, desconto e líquido). Rota nova `GET /api/viaticos/solicitacoes/:id/transferencia`. Sem mudança no banco.
+
+**Limites:** o ERP não se integra ao Flash — a transferência é feita lá e o valor liberado é o que se registra aqui (base da comprovação: liberado − comprovado). O valor só sai certo se as comprovações anteriores (reprovadas importadas, OT fechada) estiverem em dia.
+
+**Verificação:** 9 verificações no backend (descontadas na OT, outras OTs abertas sem a fechada, sem a de outro colaborador e sem a própria, origem, 404, 403) e na tela simulada com o caso do Alcenir (bruto R$ 2.216,00 − R$ 7,95 = R$ 2.208,05; Sim/Não; copiar "2208,05"; registro com pendencia_ids e decisão "descontar"; modo consulta; não administrador). Registro real em produção não testado.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

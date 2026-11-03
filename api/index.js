@@ -6864,6 +6864,36 @@ app.delete('/api/viaticos/reprovadas/:id', requireAuth, requireEdit('viaticos'),
   res.json({ ok: true });
 }));
 
+// ---- Painel "Transferência" da OT ----
+//
+// O que cerca o valor a transferir no Flash: (1) o que já foi descontado/dispensado NESTA transferência, quando a OT já teve o valor registrado
+// (a decisão grava em `pendencia_decidida_na` a OT em que foi tomada); (2) as OUTRAS OTs do colaborador ainda não fechadas — a pendência delas
+// só nasce no fechamento e passa a valer para a PRÓXIMA transferência feita depois disso (pode acumular mais de uma). As pendências ABERTAS, que
+// podem ser descontadas agora, continuam vindo de GET /api/viaticos/colaboradores/:id/pendencia.
+function viaOrigemPendenciaServer(status, flash, excesso) {
+  return status === 'divergente' ? (flash > 0 ? 'estouro+flash' : 'estouro')
+    : flash > 0 ? (excesso > 0 ? 'excesso+flash' : 'flash') : 'excesso';
+}
+app.get('/api/viaticos/solicitacoes/:id/transferencia', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const s = (await query('SELECT id, colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  const decididas = await query(
+    `SELECT id, ordem_trabalho, status, valor_pendencia, pendencia_decisao, excessos_status, excessos_valores,
+            (SELECT COALESCE(SUM(r.valor),0) FROM erp_viaticos_reprovadas r WHERE r.solicitacao_id = erp_viaticos_solicitacoes.id) AS reprovadas_flash
+       FROM erp_viaticos_solicitacoes WHERE pendencia_decidida_na=$1 ORDER BY data_fim, id`, [s.id]);
+  const abertas = await query(
+    `SELECT id, ordem_trabalho, status, valor_liberado, data_inicio, data_fim FROM erp_viaticos_solicitacoes
+      WHERE colaborador_id=$1 AND id <> $2 AND status IN ('transferencia_agendada','liberado','em_viagem','aguardando_comprovacao')
+      ORDER BY data_inicio, id`, [s.colaborador_id, s.id]);
+  res.json({
+    descontadas: decididas.map(r => ({
+      id: r.id, ordem_trabalho: r.ordem_trabalho, valor: n(r.valor_pendencia), decisao: r.pendencia_decisao,
+      origem: viaOrigemPendenciaServer(r.status, n(r.reprovadas_flash), somaExcessosReprovados(r.excessos_status, r.excessos_valores))
+    })),
+    outras_abertas: abertas.map(r => ({ id: r.id, ordem_trabalho: r.ordem_trabalho, status: r.status, valor_liberado: n(r.valor_liberado), data_inicio: r.data_inicio, data_fim: r.data_fim }))
+  });
+}));
+
 // Fecha a solicitação: compara valor liberado x comprovado e resolve automaticamente
 // (devolvido / comprovado exato / divergente com pendência registrada).
 app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
