@@ -1,0 +1,9 @@
+<td class="actions via-acoes">${READONLY
+            ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
+            : `<button class="btn-ic ok" data-view="${s.id}" title="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}" aria-label="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}">${viaSolFechada(s) ? '👁' : '✓'}</button>
+            <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
+            <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
+            ${meuColaborador && s.colaborador_id === meuColaborador.id && ['transferencia_agendada', 'liberado', 'em_viagem'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local ou partir daqui para um novo destino" aria-label="Complementar">↪</button>` : ''}
+            ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn-ic perigo" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)" aria-label="Cancelar">⊘</button>` : ''}
+            ${READONLY ? '' : `<button class="btn-ic exc" data-del="${s.id}" title="Excluir" aria-label="Excluir">🗑</button>`}
+          </td>

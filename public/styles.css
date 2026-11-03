@@ -1903,3 +1903,12 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 .rh-check-item.pendente { background: var(--warn-050); color: var(--ink); }
 .rh-check-item.pendente .mk, .rh-check-item.pendente .via { color: var(--warn); }
 .rh-pend.aviso { color: var(--warn); background: var(--warn-050); border-color: #E8D3A6; }
+
+/* Viáticos: ações da lista em ícones (padrão .btn-ic). Comprovar/Ver em verde cheio; Excluir em vermelho, afastado dos demais para não ser clicado
+   sem querer; Cancelar fica neutro e só avermelha ao passar o mouse (.perigo). */
+td.via-acoes { white-space: nowrap; }
+td.via-acoes .btn-ic { margin: 0 0 0 3px; }
+td.via-acoes .btn-ic.ok { background: var(--verde-700); border-color: var(--verde-700); color: #fff; }
+td.via-acoes .btn-ic.ok:hover { background: var(--verde-500); border-color: var(--verde-500); }
+td.via-acoes .btn-ic.exc { margin-left: 12px; color: var(--danger); border-color: var(--danger); }
+td.via-acoes .btn-ic.exc:hover { background: var(--danger-050); }

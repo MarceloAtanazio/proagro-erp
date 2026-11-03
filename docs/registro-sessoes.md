@@ -7930,3 +7930,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 12 verificações no backend (motivo, Approvals, valor transferido virando pendência, saída hoje, em viagem, já cancelada, OT de outro, editor, 404) e na tela simulada (botão só nas OTs elegíveis, motivo obrigatório, aviso do valor, filtro "Cancelada").
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-05 — Sessão 193: Viáticos — ações da lista em ícones e exclusão com duas perguntas
+
+**Solicitação:** transformar os botões de ação da lista de Viáticos em ícones para otimizar o espaço; Comprovar em verde, Excluir em vermelho, e uma segunda pergunta de certeza ao excluir.
+
+**O que mudou:** as ações viram ícones no padrão `.btn-ic` (o mesmo do Contas a Pagar), cada um com dica ao passar o mouse e rótulo para leitor de tela: Comprovar/Ver em verde cheio, Transferência, Editar, Complementar e Cancelar em contorno (Cancelar avermelha ao passar o mouse) e Excluir em vermelho, afastado dos demais. Excluir agora pergunta duas vezes: "Deseja realmente excluir…" e "Tem certeza absoluta?", lembrando que é permanente e sugerindo Cancelar. O aviso de pendência em aberto continua antes dessas perguntas. Sem mudança no banco; só a lista de Viáticos.
+
+**Verificação:** na tela simulada (administrador e colaborador só-leitura): ícones e rótulos corretos, perfil só-leitura sem Excluir, o DELETE só é enviado após a segunda confirmação e "Não, manter" não envia nada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

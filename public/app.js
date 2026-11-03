@@ -5847,14 +5847,14 @@ async function renderViaticos() {
           <td class="num">${brl(s.valor_liberado)}${!s.valor_liberado && viaTotalSolicitado(s) > 0 ? '<br><small style="color:var(--muted)">a transferir</small>' : ''}</td>
           <td class="num">${brl(s.valor_comprovado)}${s.anexos_count ? ` <small style="color:var(--muted)">(📎${s.anexos_count})</small>` : ''}</td>
           <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
-          <td class="actions">${READONLY
-            ? `<button class="btn sm primary" data-view="${s.id}">Ver detalhes</button>`
-            : `<button class="btn sm primary" data-view="${s.id}">${['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status) ? 'Ver' : 'Comprovar'}</button>
-            <button class="btn sm" data-transf="${s.id}" title="Confere as ocorrências anteriores e registra o valor a transferir no Flash">Transferência</button>
-            <button class="btn sm" data-edit="${s.id}">Editar</button>
-            <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>`}
-            ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn sm danger-ghost" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)">Cancelar</button>` : ''}
-            ${meuColaborador && s.colaborador_id === meuColaborador.id && ['transferencia_agendada', 'liberado', 'em_viagem'].includes(s.status) ? `<button class="btn sm" data-compl="${s.id}" title="Estender esta OT no local ou partir daqui para um novo destino">Complementar</button>` : ''}
+          <td class="actions via-acoes">${READONLY
+            ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
+            : `<button class="btn-ic ok" data-view="${s.id}" title="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}" aria-label="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}">${viaSolFechada(s) ? '👁' : '✓'}</button>
+            <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
+            <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
+            ${meuColaborador && s.colaborador_id === meuColaborador.id && ['transferencia_agendada', 'liberado', 'em_viagem'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local ou partir daqui para um novo destino" aria-label="Complementar">↪</button>` : ''}
+            ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn-ic perigo" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)" aria-label="Cancelar">⊘</button>` : ''}
+            ${READONLY ? '' : `<button class="btn-ic exc" data-del="${s.id}" title="Excluir" aria-label="Excluir">🗑</button>`}
           </td>
         </tr>`;
       }).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
@@ -5872,9 +5872,9 @@ async function renderViaticos() {
           <p style="font-size:13.5px; color:var(--ink-2)">Excluir agora <strong>apaga esse registro de dívida permanentemente</strong> — não fica
           rastro em nenhum outro lugar do sistema. Tem certeza que quer excluir mesmo assim?</p>`,
           [{ label: 'Cancelar', onClick: closeModal },
-           { label: 'Excluir mesmo assim', cls: 'danger-ghost', onClick: () => { closeModal(); confirmDelete('a solicitação', `/api/viaticos/solicitacoes/${s.id}`, renderViaticos); } }]);
+           { label: 'Excluir mesmo assim', cls: 'danger-ghost', onClick: () => { closeModal(); viaConfirmarExclusao(s); } }]);
       }
-      confirmDelete('a solicitação', `/api/viaticos/solicitacoes/${b.dataset.del}`, renderViaticos);
+      viaConfirmarExclusao(s || filtered.find(x => x.id == b.dataset.del) || { id: b.dataset.del });
     });
   };
 
@@ -6211,6 +6211,23 @@ const VIA_ORIGEM_PEND = { estouro: 'gasto acima do liberado', excesso: 'excesso 
   cancelamento: 'OT cancelada com valor já transferido', 'excesso+flash': 'excesso e despesa reprovada no Flash', 'estouro+flash': 'gasto acima do liberado e despesa reprovada no Flash' };
 
 // Cancelável = antes de a viagem começar. Em Approvals vale sempre; Transferência Agendada e Liberado só antes da data de saída (igual ao servidor).
+function viaSolFechada(s) { return ['comprovado', 'devolvido', 'divergente', 'arquivado', 'cancelada'].includes(s.status); }
+// Excluir pede confirmação DUAS vezes: é permanente (leva junto as despesas lançadas) e fica ao lado de botões de uso diário.
+function viaConfirmarExclusao(s) {
+  const nome = `${esc(s.colaborador_name)} · OT ${esc(s.ordem_trabalho || s.id)}`;
+  openModal('Confirmar exclusão', `<p>Deseja realmente excluir a solicitação <strong>${nome}</strong>?</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Excluir', cls: 'danger-ghost', onClick: () => {
+        closeModal();
+        openModal('⚠️ Tem certeza absoluta?', `<p style="font-size:13.5px; color:var(--ink-2)">Excluir <strong>apaga a solicitação e as despesas lançadas nela, de forma permanente</strong> — não dá para desfazer.</p>
+          <p style="font-size:13.5px; color:var(--ink-2)">Se a viagem só não vai mais acontecer, use <strong>Cancelar</strong> (⊘): a OT fica no histórico.</p>`,
+          [{ label: 'Não, manter', onClick: closeModal },
+           { label: 'Sim, excluir definitivamente', cls: 'danger-ghost', onClick: async () => {
+              try { await api(`/api/viaticos/solicitacoes/${s.id}`, { method: 'DELETE' }); closeModal(); toast('Excluído com sucesso.'); renderViaticos(); }
+              catch (e) { modalError(e.message); }
+           } }]);
+     } }]);
+}
 function viaPodeCancelar(s) {
   if (s.status === 'em_approvals') return true;
   return ['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() < String(s.data_inicio).slice(0, 10);
