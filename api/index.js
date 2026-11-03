@@ -265,6 +265,7 @@ const AUDIT_MAP = {
     return `Anexou um documento (${req.body.file_name || ''})${tipoRH} ${onde} ID ${req.params.id}`;
   },
   // Recursos Humanos — dados pessoais e remuneração deixam rastro nomeado.
+  'PUT /api/rh/colaboradores/:id/declaracao-documento': req => `${req.body && req.body.nao_possui === true ? 'Declarou que NÃO POSSUI' : 'Desfez a declaração de que não possui'} ${req.body && req.body.doc} — colaborador ID ${req.params.id}`,
   'PUT /api/rh/colaboradores/:id': req => `Editou a ficha de RH do colaborador ID ${req.params.id} (${Object.keys(req.body || {}).length} campo(s))`,
   'POST /api/rh/colaboradores/:id/vinculos': (req, body) => `Abriu vínculo (${req.body.cargo || 'sem cargo'}, admissão ${req.body.admissao}) para o colaborador ID ${req.params.id}${body && body.id ? ` — vínculo ${body.id}` : ''}`,
   'POST /api/rh/colaboradores/:id/movimentacoes': req => `Registrou ${req.body.tipo || 'movimentação'} (vigência ${req.body.vigencia_inicio}) do colaborador ID ${req.params.id}`,
@@ -2321,7 +2322,8 @@ const RH_DOC_TIPOS = [
   { cod: 'rg',                   nome: 'RG',                                  obrigatorio: true },
   { cod: 'cpf',                  nome: 'CPF',                                 obrigatorio: true },
   { cod: 'certidao',             nome: 'Certidão de Nascimento ou Casamento', obrigatorio: true },
-  { cod: 'cnh',                  nome: 'CNH',                                 obrigatorio: true },
+  // CNH: nem todo cidadão tem habilitação. Não é falta — fica "pendente" (brando) até haver arquivo ou a declaração "não possui".
+  { cod: 'cnh',                  nome: 'CNH',                                 obrigatorio: true, brando: true, declaravel: 'nao_possui_cnh' },
   { cod: 'titulo_eleitor',       nome: 'Título de Eleitor',                   obrigatorio: true },
   { cod: 'pis',                  nome: 'PIS',                                 obrigatorio: true },
   { cod: 'ctps',                 nome: 'Carteira de Trabalho (CTPS)',         obrigatorio: true },
@@ -2465,8 +2467,10 @@ function rhChecklist(colab, anexos, opcoes = {}) {
     .map(d => {
       const nAnexos = porTipo[d.cod] || 0;
       const viaCampos = !!(d.porCampos && d.porCampos.every(c => String(colab[c] == null ? '' : colab[c]).trim()));
-      return { cod: d.cod, nome: d.nome, anexos: nAnexos, ok: nAnexos > 0 || viaCampos,
-               via: d.porCampos ? 'campos' : 'anexo' };
+      const viaDeclaracao = !!(d.declaravel && colab[d.declaravel] === true);
+      return { cod: d.cod, nome: d.nome, anexos: nAnexos, ok: nAnexos > 0 || viaCampos || viaDeclaracao,
+               via: d.porCampos ? 'campos' : (viaDeclaracao && nAnexos === 0 ? 'declaracao' : 'anexo'),
+               brando: !!d.brando, declaravel: !!d.declaravel };
     });
 }
 
@@ -2546,7 +2550,7 @@ app.use('/api/rh', (req, res, next) => {
 app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const rows = await query(`
     SELECT c.id, c.name, c.nome_social, c.ativo, c.usuario_id, c.sexo, c.email_corporativo, c.celular,
-           c.cpf, c.banco_numero, c.agencia, c.conta, c.arquivado_em, c.arquivado_motivo,
+           c.cpf, c.banco_numero, c.agencia, c.conta, c.nao_possui_cnh, c.arquivado_em, c.arquivado_motivo,
            v.id AS vinculo_id, v.tipo, v.matricula, v.admissao, v.desligamento, v.cargo, v.nivel,
            v.departamento, v.regime, v.modelo_trabalho, v.experiencia_fim, v.prorrogacao_fim,
            v.salario, v.periculosidade_pct, v.vr_dia, v.home_office_dia,
@@ -2578,8 +2582,9 @@ app.get('/api/rh/colaboradores', requireAuth, requireViewAny(['rh']), h(async (r
     const check = rhChecklist(r, tipos.map(t => ({ doc_tipo: t })));
     const base = rhFiltrar(r, req.user, r);
     delete base.tipos;
-    return { ...base, checklist_total: check.length, checklist_ok: check.filter(x => x.ok).length,
-             checklist_faltam: check.filter(x => !x.ok).map(x => x.nome) };
+    return { ...base, checklist_total: check.length, checklist_ok: check.filter(x => x.ok || x.brando).length,
+             checklist_faltam: check.filter(x => !x.ok && !x.brando).map(x => x.nome),
+             checklist_pendentes: check.filter(x => !x.ok && x.brando).map(x => x.nome) };
   });
   res.json(out);
 }));
@@ -2859,6 +2864,19 @@ app.put('/api/rh/colaboradores/:id', requireAuth, requireEdit('rh'), h(async (re
   const set = cols.map((c, i) => c + '=' + D + (i + 1)).join(', ');
   await query(`UPDATE erp_colaboradores SET ${set} WHERE id=` + D + (cols.length + 1), [...vals, id]);
   res.json({ ok: true, campos: cols.length });
+}));
+
+// ---- Declaração "não possui" de um documento do dossiê ----
+// Hoje só a CNH (nem todo cidadão tem habilitação). A coluna vem de uma lista fechada: o corpo da requisição não escolhe o que gravar.
+const RH_DOC_DECLARAVEIS = { cnh: 'nao_possui_cnh' };
+app.put('/api/rh/colaboradores/:id/declaracao-documento', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const b = req.body || {};
+  const coluna = Object.prototype.hasOwnProperty.call(RH_DOC_DECLARAVEIS, b.doc) ? RH_DOC_DECLARAVEIS[b.doc] : null;
+  if (!coluna) return res.status(400).json({ error: 'Este documento não aceita a declaração "não possui".' });
+  const naoPossui = b.nao_possui === true;
+  const r = await query(`UPDATE erp_colaboradores SET ${coluna}=$1 WHERE id=$2 RETURNING id`, [naoPossui, Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  res.json({ ok: true, doc: b.doc, nao_possui: naoPossui });
 }));
 
 // ---- Vínculos ----
@@ -4060,7 +4078,7 @@ function rhPendencias(adm, colab, checklist, mapa) {
       // pronto: os documentos anexados E os dados da ficha preenchidos. Sair
       // daqui com CPF em branco só adiaria o erro para a emissão.
       const p = [];
-      const faltam = (checklist || []).filter(x => !x.ok).map(x => x.nome);
+      const faltam = (checklist || []).filter(x => !x.ok && !x.brando).map(x => x.nome);
       if (faltam.length) p.push('Documentos obrigatórios pendentes: ' + faltam.join(', '));
       const dados = rhDadosContratoFaltando(adm, colab, mapa);
       if (dados.length) p.push('Dados do contrato em branco: ' + dados.join(', '));
@@ -4195,7 +4213,7 @@ app.post('/api/rh/colaboradores', requireAuth, requireEdit('rh'), h(async (req, 
 // ---- O quadro ----
 app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, res) => {
   const rows = await query(`
-    SELECT a.*, c.name AS colaborador_nome, c.sexo, g.name AS gestor_nome, u.name AS responsavel_nome,
+    SELECT a.*, c.name AS colaborador_nome, c.sexo, c.nao_possui_cnh, g.name AS gestor_nome, u.name AS responsavel_nome,
            (SELECT COALESCE(json_agg(DISTINCT x.doc_tipo), '[]'::json) FROM erp_attachments x
              WHERE x.entity_type='rh_doc' AND x.entity_id=c.id AND x.doc_tipo IS NOT NULL) AS tipos,
            -- Currículo e avaliações vivem presos ao PROCESSO (rh_admissao_doc),
@@ -4232,7 +4250,7 @@ app.get('/api/rh/admissoes', requireAuth, requireViewAny(['rh']), h(async (req, 
     delete base.tipos_avaliacao;
     const mot = rhMotivoEncerrar(r.cancelamento_tipo);
     const tiposAval = Array.isArray(r.tipos_avaliacao) ? r.tipos_avaliacao : [];
-    return { ...base, checklist_total: chk.length, checklist_ok: chk.filter(x => x.ok).length,
+    return { ...base, checklist_total: chk.length, checklist_ok: chk.filter(x => x.ok || x.brando).length,
              pendencias: pend, liberado: pend.length === 0,
              motivo_nome: mot ? mot.nome : null, parte: mot ? mot.parte : null,
              tem_curriculo: tiposAval.includes('curriculo'),
@@ -5149,7 +5167,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
 
   // ---------- compliance trabalhista ----------
   const docs = await query(`
-    SELECT c.id, c.sexo, c.banco_numero, c.agencia, c.conta,
+    SELECT c.id, c.sexo, c.banco_numero, c.agencia, c.conta, c.nao_possui_cnh,
            COALESCE(json_agg(DISTINCT a.doc_tipo) FILTER (WHERE a.doc_tipo IS NOT NULL), '[]'::json) AS tipos
       FROM erp_colaboradores c
       LEFT JOIN erp_attachments a ON a.entity_type='rh_doc' AND a.entity_id = c.id
@@ -5157,7 +5175,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
      GROUP BY c.id`);
   const semDocCompleto = docs.filter(d => {
     const chk = rhChecklist(d, (Array.isArray(d.tipos) ? d.tipos : []).map(t => ({ doc_tipo: t })), { semPosAdmissao: true });
-    return chk.some(x => !x.ok);
+    return chk.some(x => !x.ok && !x.brando);
   }).length;
   const expVencendo = comVinculo.filter(r => r.prorrogacao_fim
     && String(r.prorrogacao_fim).slice(0, 10) >= hoje

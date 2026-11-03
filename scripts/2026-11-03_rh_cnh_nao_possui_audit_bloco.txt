@@ -1,0 +1,1 @@
+  'PUT /api/rh/colaboradores/:id/declaracao-documento': req => `${req.body && req.body.nao_possui === true ? 'Declarou que NÃO POSSUI' : 'Desfez a declaração de que não possui'} ${req.body && req.body.doc} — colaborador ID ${req.params.id}`,

@@ -1,0 +1,22 @@
+// Item do checklist do dossiê. Documento "brando" (a CNH: nem todo cidadão tem habilitação) não é falta: fica AMARELO, "pendente", e quem
+// edita pode declarar "não possui", que dá o item por resolvido (e dá para desfazer). Falta de verdade continua vermelha.
+function rhCheckItemHtml(x, ed, textoOk, textoFalta) {
+  const classe = x.ok ? 'ok' : x.brando ? 'pendente' : 'falta';
+  const marca = x.ok ? '✔' : x.brando ? '⚠' : '✘';
+  const via = x.ok ? (x.via === 'declaracao' ? 'não possui' : textoOk(x)) : (x.brando ? 'pendente' : textoFalta(x));
+  const acao = !ed || !x.declaravel ? ''
+    : x.ok && x.via === 'declaracao' ? ` · <button class="rh-link" type="button" data-nao-possui="${x.cod}:0">desfazer</button>`
+    : !x.ok ? ` · <button class="rh-link" type="button" data-nao-possui="${x.cod}:1">não possui</button>` : '';
+  return `<div class="rh-check-item ${classe}"><span class="mk">${marca}</span><span class="nm">${esc(x.nome)}</span><span class="via">${via}${acao}</span></div>`;
+}
+function rhLigarNaoPossui(raiz, colabId, depois) {
+  raiz.querySelectorAll('[data-nao-possui]').forEach(b => b.onclick = async () => {
+    const [doc, v] = b.dataset.naoPossui.split(':');
+    try {
+      await api(`/api/rh/colaboradores/${colabId}/declaracao-documento`, { method: 'PUT', body: { doc, nao_possui: v === '1' } });
+      toast(v === '1' ? 'Marcado como “não possui”.' : 'Declaração desfeita.');
+      depois();
+    } catch (e) { toast(e.message); }
+  });
+}
+

@@ -7882,3 +7882,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 17 verificações no backend (dossiê e dispensa: liga, reativa, só booleano true, 404, 403 sem permissão, regra de direção com cadastro completo/vazio/dispensado/desligado) e na tela simulada (selos, resumo da equipe, mensagem do assistente, tique na tabela nos dois sentidos, ficha escondendo as seções, Inativar sem o campo). Migração aplicada antes do código.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-03 — Sessão 189: Dossiê — CNH como pendência branda e opção "não possui"
+
+**Solicitação:** a CNH aparecia em vermelho como falta no Dossiê, mas nem todo cidadão tem habilitação; colocar em amarelo como pendente ou permitir marcar "não possui".
+
+**O que mudou:** a CNH passa a ser um item "brando": enquanto não há arquivo nem declaração aparece em **amarelo**, "pendente", e **não conta como documento faltando** — nem na lista de Colaboradores (a barra fecha e o título lembra "Pendente (opcional): CNH"), nem no cabeçalho da ficha (selo amarelo "pendente: CNH"), nem no "Dossiê incompleto" do Painel, e não trava a etapa Documentação do candidato em admissão. Quem edita RH pode clicar em **não possui** (no Dossiê e no card): o item vira ✔ "não possui" e dá para **desfazer**. Falta de verdade (RG, CPF, ASO, contrato assinado…) continua vermelha. Nova coluna `erp_colaboradores.nao_possui_cnh` e rota `PUT /api/rh/colaboradores/:id/declaracao-documento`, de lista fechada de documentos (hoje só a CNH), com registro no log de auditoria. Anexar a CNH também resolve o item.
+
+**Verificação:** 15 verificações no backend (pendente sem contar como falta, declarado, anexado, falta de verdade separada da pendência, candidato avança sem CNH, rota só para a CNH, 400/404/403) e na tela simulada (cores, botões nos dois sentidos, sem botão para quem só visualiza). Migração aplicada antes do código.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

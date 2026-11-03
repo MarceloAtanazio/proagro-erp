@@ -1898,3 +1898,8 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
 /* Aniversários (RH): lista do pop-up e linha de quem faz aniversário hoje */
 .rh-niver-lista { margin: 0; padding-left: 18px; line-height: 1.8; }
 .rh-niver-hoje td { background: var(--verde-050); font-weight: 600; }
+
+/* Checklist do dossiê: pendência BRANDA (ex.: CNH, que nem todo cidadão tem) em amarelo — não é falta */
+.rh-check-item.pendente { background: var(--warn-050); color: var(--ink); }
+.rh-check-item.pendente .mk, .rh-check-item.pendente .via { color: var(--warn); }
+.rh-pend.aviso { color: var(--warn); background: var(--warn-050); border-color: #E8D3A6; }

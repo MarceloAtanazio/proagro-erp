@@ -10212,6 +10212,28 @@ function rhKanbanCard(a, arrastavel) {
 }
 
 // ---------------- Card ----------------
+// Item do checklist do dossiê. Documento "brando" (a CNH: nem todo cidadão tem habilitação) não é falta: fica AMARELO, "pendente", e quem
+// edita pode declarar "não possui", que dá o item por resolvido (e dá para desfazer). Falta de verdade continua vermelha.
+function rhCheckItemHtml(x, ed, textoOk, textoFalta) {
+  const classe = x.ok ? 'ok' : x.brando ? 'pendente' : 'falta';
+  const marca = x.ok ? '✔' : x.brando ? '⚠' : '✘';
+  const via = x.ok ? (x.via === 'declaracao' ? 'não possui' : textoOk(x)) : (x.brando ? 'pendente' : textoFalta(x));
+  const acao = !ed || !x.declaravel ? ''
+    : x.ok && x.via === 'declaracao' ? ` · <button class="rh-link" type="button" data-nao-possui="${x.cod}:0">desfazer</button>`
+    : !x.ok ? ` · <button class="rh-link" type="button" data-nao-possui="${x.cod}:1">não possui</button>` : '';
+  return `<div class="rh-check-item ${classe}"><span class="mk">${marca}</span><span class="nm">${esc(x.nome)}</span><span class="via">${via}${acao}</span></div>`;
+}
+function rhLigarNaoPossui(raiz, colabId, depois) {
+  raiz.querySelectorAll('[data-nao-possui]').forEach(b => b.onclick = async () => {
+    const [doc, v] = b.dataset.naoPossui.split(':');
+    try {
+      await api(`/api/rh/colaboradores/${colabId}/declaracao-documento`, { method: 'PUT', body: { doc, nao_possui: v === '1' } });
+      toast(v === '1' ? 'Marcado como “não possui”.' : 'Declaração desfeita.');
+      depois();
+    } catch (e) { toast(e.message); }
+  });
+}
+
 async function rhAbrirCard(id) {
   let d, vagas;
   try {
@@ -10321,9 +10343,7 @@ async function rhAbrirCard(id) {
         </div></div>`
         : '<div class="rh-nota">🔒 CPF, RG e endereço exigem a permissão “RH · dados pessoais sensíveis” — sem ela não dá para preparar o contrato.</div>'}
       <div class="rh-sec"><h4>Documentos obrigatórios</h4>
-      <div class="rh-check">${d.checklist.map(x => `<div class="rh-check-item ${x.ok ? 'ok' : 'falta'}">
-        <span class="mk">${x.ok ? '✔' : '✘'}</span><span class="nm">${esc(x.nome)}</span>
-        <span class="via">${x.ok ? 'ok' : (x.via === 'campos' ? 'preencher acima' : 'falta anexar')}</span></div>`).join('')}</div>
+      <div class="rh-check">${d.checklist.map(x => rhCheckItemHtml(x, ed, () => 'ok', y => (y.via === 'campos' ? 'preencher acima' : 'falta anexar'))).join('')}</div>
       <div class="rh-acoes"><button class="btn sm" id="rh-ir-dossie">Abrir o dossiê para anexar</button></div></div>` : ''}
 
     ${a.etapa === 'contrato' ? `<div class="rh-sec"><h4>Contrato</h4>
@@ -10459,6 +10479,7 @@ async function rhAbrirCard(id) {
   const be = $('#rh-emitir'); if (be) be.onclick = () => rhEmitirContrato(id, a.colaborador_nome);
   const addCv = $('#rh-add-curriculo');
   if (addCv) addCv.onclick = () => rhAnexarCurriculo(id);
+  rhLigarNaoPossui($('#modal-body'), a.colaborador_id, () => rhAbrirCard(id));
   rhDocsDaEtapa(a.etapa).forEach(cod => rhCarregarDocAdm(cod, a.colaborador_id, id, ed, d.pode.sensivel));
   const addAval = $('#rh-add-aval');
   if (addAval) addAval.onclick = () => rhAnexarAvaliacao(id, d.tipos_avaliacao);
@@ -13128,7 +13149,7 @@ async function rhPessoas(c) {
           <td>${esc(rhTxt(r.departamento))}</td>
           <td class="venc-cell">${rhData(r.admissao)}</td>
           <td>${sitBadge}</td>
-          <td class="docs-cell" title="${esc(falta ? 'Falta: ' + r.checklist_faltam.join(', ') : 'Documentação completa')}">
+          <td class="docs-cell" title="${esc(falta ? 'Falta: ' + r.checklist_faltam.join(', ') : ((r.checklist_pendentes || []).length ? 'Completa. Pendente (opcional): ' + r.checklist_pendentes.join(', ') : 'Documentação completa'))}">
             <div class="rh-barra"><i style="width:${pct}%" class="${falta ? (pct < 50 ? 'ruim' : 'meio') : 'bom'}"></i></div>
             <span class="rh-barra-txt">${r.checklist_ok}/${r.checklist_total}</span></td>
           <td class="actions">
@@ -13201,7 +13222,9 @@ async function abrirFichaRH(id, aba) {
     { k: 'financeiro', t: 'Financeiro' }
   ];
   const atual = aba && abas.some(a => a.k === aba) ? aba : 'ident';
-  const falta = d.checklist.filter(x => !x.ok);
+  const faltaTodas = d.checklist.filter(x => !x.ok);
+  const falta = faltaTodas.filter(x => !x.brando);          // falta de verdade
+  const pendentesBrandas = faltaTodas.filter(x => x.brando); // ex.: CNH (nem todo mundo tem)
 
   c.innerHTML = `
     <div class="rh-ficha">
@@ -13216,7 +13239,8 @@ async function abrirFichaRH(id, aba) {
         <button class="btn sm" id="rh-ficha-pdf" title="Ficha completa com todos os dados e os indicadores do colaborador">⬇ Ficha em PDF</button>
         ${falta.length
           ? `<span class="rh-pend" title="${esc(falta.map(f => f.nome).join(', '))}">⚠ ${falta.length} documento(s) faltando</span>`
-          : '<span class="rh-pend ok">✔ Documentação completa</span>'}
+          : (pendentesBrandas.length ? '' : '<span class="rh-pend ok">✔ Documentação completa</span>')}
+        ${pendentesBrandas.length ? `<span class="rh-pend aviso" title="Anexe o documento ou marque “não possui” no Dossiê">⚠ pendente: ${esc(pendentesBrandas.map(f => f.nome).join(', '))}</span>` : ''}
       </div>
       ${!pode.sensivel ? '<div class="rh-nota">🔒 Você vê a ficha básica. CPF, RG, endereço, filiação e dependentes exigem a permissão “RH · dados pessoais sensíveis”.</div>' : ''}
       ${!pode.remuneracao ? '<div class="rh-nota">🔒 Salário e benefícios exigem a permissão “RH · remuneração e benefícios”.</div>' : ''}
@@ -14738,13 +14762,11 @@ function rhAbaDossie(painel, d, id) {
 
   painel.innerHTML = `
     <div class="rh-sec"><h4>Checklist de admissão</h4>
-      <div class="rh-check">${d.checklist.map(x => `
-        <div class="rh-check-item ${x.ok ? 'ok' : 'falta'}">
-          <span class="mk">${x.ok ? '✔' : '✘'}</span>
-          <span class="nm">${esc(x.nome)}</span>
-          <span class="via">${x.ok ? (x.via === 'campos' ? 'preenchido na ficha' : x.anexos + ' arquivo(s)') : (x.via === 'campos' ? 'preencher na aba Contato' : 'falta anexar')}</span>
-        </div>`).join('')}</div>
-      <div class="rh-nota">O reservista só aparece para colaboradores do sexo masculino, e “Dados Bancários” é cumprido pelos campos da ficha — não por anexo.</div>
+      <div class="rh-check">${d.checklist.map(x => rhCheckItemHtml(x, ed,
+        y => (y.via === 'campos' ? 'preenchido na ficha' : y.anexos + ' arquivo(s)'),
+        y => (y.via === 'campos' ? 'preencher na aba Contato' : 'falta anexar'))).join('')}</div>
+      <div class="rh-nota">O reservista só aparece para colaboradores do sexo masculino, e “Dados Bancários” é cumprido pelos campos da ficha — não por anexo.
+        A CNH não é obrigatória para todo mundo: fica <strong>pendente</strong> (amarelo) e, se a pessoa não tem habilitação, use <strong>não possui</strong>.</div>
     </div>
     <div class="rh-sec"><h4>Arquivos ${ed ? '<button class="btn sm" id="rh-add-doc">+ Anexar documento</button>' : ''}</h4>
       ${d.dossie.length ? `<div class="rh-docs">${Object.keys(porTipo).map(t => `
@@ -14762,6 +14784,7 @@ function rhAbaDossie(painel, d, id) {
 
   const add = painel.querySelector('#rh-add-doc');
   if (add) add.onclick = () => rhAnexarDoc(id, d.tipos_documento);
+  rhLigarNaoPossui(painel, id, () => abrirFichaRH(id, 'dossie'));
   painel.querySelectorAll('[data-ver]').forEach(b => b.onclick = () => colabVerAnexo(Number(b.dataset.ver)));
   painel.querySelectorAll('[data-del-doc]').forEach(b => b.onclick = () =>
     confirmDelete('documento', '/api/attachments/' + b.dataset.delDoc, () => abrirFichaRH(id, 'dossie')));

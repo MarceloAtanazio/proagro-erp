@@ -1,0 +1,13 @@
+// ---- Declaração "não possui" de um documento do dossiê ----
+// Hoje só a CNH (nem todo cidadão tem habilitação). A coluna vem de uma lista fechada: o corpo da requisição não escolhe o que gravar.
+const RH_DOC_DECLARAVEIS = { cnh: 'nao_possui_cnh' };
+app.put('/api/rh/colaboradores/:id/declaracao-documento', requireAuth, requireEdit('rh'), h(async (req, res) => {
+  const b = req.body || {};
+  const coluna = Object.prototype.hasOwnProperty.call(RH_DOC_DECLARAVEIS, b.doc) ? RH_DOC_DECLARAVEIS[b.doc] : null;
+  if (!coluna) return res.status(400).json({ error: 'Este documento não aceita a declaração "não possui".' });
+  const naoPossui = b.nao_possui === true;
+  const r = await query(`UPDATE erp_colaboradores SET ${coluna}=$1 WHERE id=$2 RETURNING id`, [naoPossui, Number(req.params.id)]);
+  if (!r.length) return res.status(404).json({ error: 'Colaborador não encontrado.' });
+  res.json({ ok: true, doc: b.doc, nao_possui: naoPossui });
+}));
+
