@@ -5720,11 +5720,11 @@ function viaTotalSolicitado(s) {
 
 const VIA_STATUS_LABEL = {
   em_approvals: 'Em Approvals', transferencia_agendada: 'Transferência Agendada', liberado: 'Liberado', em_viagem: 'Em viagem', aguardando_comprovacao: 'Aguardando comprovação',
-  comprovado: 'Comprovado', devolvido: 'Devolvido (sobrou)', divergente: 'Divergente (estourou)', arquivado: 'Arquivado'
+  comprovado: 'Comprovado', devolvido: 'Devolvido (sobrou)', divergente: 'Divergente (estourou)', arquivado: 'Arquivado', cancelada: 'Cancelada'
 };
 const VIA_STATUS_BADGE = {
   em_approvals: 'warn', transferencia_agendada: 'pend', liberado: 'off', em_viagem: 'pend', aguardando_comprovacao: 'warn',
-  comprovado: 'ok', devolvido: 'ok', divergente: 'late', arquivado: 'off'
+  comprovado: 'ok', devolvido: 'ok', divergente: 'late', arquivado: 'off', cancelada: 'off'
 };
 
 async function renderViaticos() {
@@ -5853,6 +5853,7 @@ async function renderViaticos() {
             <button class="btn sm" data-transf="${s.id}" title="Confere as ocorrências anteriores e registra o valor a transferir no Flash">Transferência</button>
             <button class="btn sm" data-edit="${s.id}">Editar</button>
             <button class="btn sm danger-ghost" data-del="${s.id}">Excluir</button>`}
+            ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn sm danger-ghost" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)">Cancelar</button>` : ''}
             ${meuColaborador && s.colaborador_id === meuColaborador.id && ['transferencia_agendada', 'liberado', 'em_viagem'].includes(s.status) ? `<button class="btn sm" data-compl="${s.id}" title="Estender esta OT no local ou partir daqui para um novo destino">Complementar</button>` : ''}
           </td>
         </tr>`;
@@ -5860,6 +5861,7 @@ async function renderViaticos() {
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
     $('#tbl').querySelectorAll('[data-transf]').forEach(b => b.onclick = () => viaTransferenciaModal(sols.find(s => s.id == b.dataset.transf)));
+    $('#tbl').querySelectorAll('[data-cancelar]').forEach(b => b.onclick = () => viaCancelarModal(sols.find(s => s.id == b.dataset.cancelar)));
     $('#tbl').querySelectorAll('[data-compl]').forEach(b => b.onclick = () => renderSolicitacaoAutosservico(sols.find(s => s.id == b.dataset.compl)));
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
       const s = filtered.find(x => x.id == b.dataset.del);
@@ -6206,7 +6208,32 @@ async function viaTransferenciaModal(s) {
 
 // De onde vem cada pendência a descontar na próxima OT (o servidor diz a origem).
 const VIA_ORIGEM_PEND = { estouro: 'gasto acima do liberado', excesso: 'excesso reprovado', flash: 'despesa reprovada no Flash',
-  'excesso+flash': 'excesso e despesa reprovada no Flash', 'estouro+flash': 'gasto acima do liberado e despesa reprovada no Flash' };
+  cancelamento: 'OT cancelada com valor já transferido', 'excesso+flash': 'excesso e despesa reprovada no Flash', 'estouro+flash': 'gasto acima do liberado e despesa reprovada no Flash' };
+
+// Cancelável = antes de a viagem começar. Em Approvals vale sempre; Transferência Agendada e Liberado só antes da data de saída (igual ao servidor).
+function viaPodeCancelar(s) {
+  if (s.status === 'em_approvals') return true;
+  return ['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() < String(s.data_inicio).slice(0, 10);
+}
+function viaCancelarModal(s) {
+  const lib = Number(s.valor_liberado) || 0;
+  openModal(`Cancelar OT ${esc(s.ordem_trabalho || s.id)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">Use quando a solicitação foi feita por engano ou a viagem não vai mais acontecer.
+      A OT não é apagada: fica no histórico como <strong>Cancelada</strong>, com o motivo.</p>
+    ${lib > 0 ? `<div class="alert-item warn" style="margin-bottom:10px">⚠️ Já foram transferidos <strong>${brl(lib)}</strong> para esta OT. Ao cancelar, esse valor vira uma
+      <strong>pendência de devolução</strong> e aparece no painel Transferência da próxima OT para ser descontado.</div>` : ''}
+    <div class="field"><label for="cn-motivo">Motivo do cancelamento</label><textarea id="cn-motivo" rows="3" placeholder="Ex.: solicitação duplicada, viagem desnecessária…"></textarea></div>`,
+    [{ label: 'Voltar', onClick: closeModal },
+     { label: 'Cancelar a OT', cls: 'danger', onClick: async (ev) => {
+        const motivo = $('#cn-motivo').value.trim();
+        if (!motivo) return modalError('Informe o motivo do cancelamento.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Cancelando…'; }
+        try {
+          await api(`/api/viaticos/solicitacoes/${s.id}/cancelar`, { method: 'POST', body: { motivo }, autosservico: true });
+          closeModal(); toast('OT cancelada.'); renderViaticos();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Cancelar a OT'; } }
+     } }]);
+}
 
 async function viewSolicitacao(id) {
   const [s, despesas, tud, km, reprovadasFlash] = await Promise.all([

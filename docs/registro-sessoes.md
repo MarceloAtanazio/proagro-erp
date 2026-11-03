@@ -7919,3 +7919,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 21 verificações no backend (numeração, data de saída e destinos impostos pelo servidor, previsão de extensão e de novo destino, complementar de complementar, recusas: OT fechada, de outra pessoa, inexistente, tipo inválido, datas, sem transporte no novo destino; OT comum intacta) e na tela simulada (botão só na OT elegível, extensão e novo destino de ponta a ponta, envio com `solicitacao_pai_id`).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-05 — Sessão 192: Viáticos — cancelar a OT antes da viagem
+
+**Solicitação:** botão de cancelar na página do solicitante, para solicitação errada ou desnecessária. Decisões do Marcelo: cancelável até antes de a viagem começar; novo status "Cancelada" com motivo, sem excluir.
+
+**O que mudou:** botão **Cancelar** na linha da OT (solicitante e quem edita Viáticos). Em Approvals cancela sempre; Transferência Agendada e Liberado só antes da data de saída; depois disso o servidor recusa e orienta falar com o administrador. Motivo obrigatório; a OT fica no histórico como **Cancelada**, com quem, quando e por quê. Se já houve valor transferido, ele vira pendência de devolução aberta (origem "cancelamento"), a descontar na próxima OT pelo painel Transferência. Migração: status `cancelada` e colunas `cancelada_em`, `cancelada_por`, `cancelamento_motivo`.
+
+**Verificação:** 12 verificações no backend (motivo, Approvals, valor transferido virando pendência, saída hoje, em viagem, já cancelada, OT de outro, editor, 404) e na tela simulada (botão só nas OTs elegíveis, motivo obrigatório, aviso do valor, filtro "Cancelada").
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

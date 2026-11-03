@@ -335,6 +335,7 @@ const AUDIT_MAP = {
   'DELETE /api/viaticos/tud/:id': req => `Excluiu uma faixa da TUD (ID ${req.params.id})`,
   'POST /api/viaticos/solicitacoes': (req, body) =>
     `Criou solicitação de viático (ID ${body && body.id}) para o colaborador ID ${req.body.colaborador_id}` + auditPendencia(req.body.pendencia_info),
+  'POST /api/viaticos/solicitacoes/:id/cancelar': req => `Cancelou a solicitação de viático ID ${req.params.id}: ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
   'POST /api/viaticos/solicitacoes/autosservico': (req, body) => `Colaborador enviou uma solicitação de viático via autosserviço (ID ${body && body.id})`,
   'PUT /api/viaticos/solicitacoes/:id': req => `Editou a solicitação de viático ID ${req.params.id}` + auditPendencia(req.body.pendencia_info),
   'POST /api/viaticos/solicitacoes/:id/status': req => `Alterou manualmente o status da solicitação de viático ID ${req.params.id} para "${req.body.status}"` +
@@ -6744,7 +6745,7 @@ app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny
   const total = rows.reduce((s, r) => s + n(r.valor_pendencia), 0);
   res.json({ total, solicitacoes: rows.map(r => {
     const fl = n(r.reprovadas_flash), ex = somaExcessosReprovados(r.excessos_status, r.excessos_valores);
-    const origem = r.status === 'divergente' ? (fl > 0 ? 'estouro+flash' : 'estouro')
+    const origem = r.status === 'cancelada' ? 'cancelamento' : r.status === 'divergente' ? (fl > 0 ? 'estouro+flash' : 'estouro')
       : fl > 0 ? (ex > 0 ? 'excesso+flash' : 'flash') : 'excesso';
     return { id: r.id, destino: r.destino, ordem_trabalho: r.ordem_trabalho, status: r.status, data_fim: r.data_fim,
       valor_pendencia: n(r.valor_pendencia), valor_reprovado_flash: fl, origem };
@@ -6825,6 +6826,31 @@ app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viat
   res.json({ ok: true });
 }));
 
+// Cancelamento pelo solicitante (ou por quem edita Viáticos): só ANTES de a viagem começar. Em Approvals vale sempre (não há dinheiro);
+// Transferência Agendada e Liberado só antes da data de saída. O valor já transferido, se houver, vira pendência de devolução — o mesmo
+// mecanismo das demais (aparece no painel Transferência da próxima OT, para descontar ou dispensar). Não apaga nada: fica no histórico.
+app.post('/api/viaticos/solicitacoes/:id/cancelar', requireAuth, h(async (req, res) => {
+  const motivo = sanitize(req.body && req.body.motivo);
+  if (!motivo) return res.status(400).json({ error: 'Informe o motivo do cancelamento.' });
+  const s = (await query(`SELECT s.id, s.colaborador_id, s.status, s.data_inicio, s.valor_liberado, c.usuario_id
+      FROM erp_viaticos_solicitacoes s JOIN erp_colaboradores c ON c.id=s.colaborador_id WHERE s.id=$1`, [req.params.id]))[0];
+  if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  if (!(s.usuario_id === req.user.id || req.user.role === 'admin' || canEdit(req.user, 'viaticos'))) {
+    return res.status(403).json({ error: 'Só o solicitante ou quem edita Viáticos pode cancelar esta OT.' });
+  }
+  if (!['em_approvals', 'transferencia_agendada', 'liberado'].includes(s.status)) {
+    return res.status(400).json({ error: s.status === 'cancelada' ? 'Esta OT já está cancelada.' : 'Só dá para cancelar antes da viagem começar. Para esta OT, fale com o administrador.' });
+  }
+  const iso = v => (v == null ? '' : typeof v === 'string' ? v.slice(0, 10) : new Date(v).toISOString().slice(0, 10));
+  if (s.status !== 'em_approvals' && hojeISO() >= iso(s.data_inicio)) {
+    return res.status(400).json({ error: 'A viagem já começou: só dá para cancelar antes da data de saída. Fale com o administrador.' });
+  }
+  const lib = n(s.valor_liberado);
+  await query(`UPDATE erp_viaticos_solicitacoes SET status='cancelada', status_manual=true, cancelada_em=now(), cancelada_por=$2, cancelamento_motivo=$3,
+      valor_devolvido=0, valor_pendencia=$4, pendencia_resolvida=$5 WHERE id=$1`, [s.id, req.user.id, motivo, lib, lib <= 0]);
+  res.json({ ok: true, pendencia: lib });
+}));
+
 // Soma dos excessos da TUD que foram REPROVADOS e tiveram o valor guardado na reprovação. Reprovações antigas, de
 // antes de o excesso virar pendência, não têm valor guardado e portanto não contam (sem cobrança retroativa).
 function somaExcessosReprovados(statusPorChave, valoresPorChave) {
@@ -6900,7 +6926,7 @@ app.delete('/api/viaticos/reprovadas/:id', requireAuth, requireEdit('viaticos'),
 // só nasce no fechamento e passa a valer para a PRÓXIMA transferência feita depois disso (pode acumular mais de uma). As pendências ABERTAS, que
 // podem ser descontadas agora, continuam vindo de GET /api/viaticos/colaboradores/:id/pendencia.
 function viaOrigemPendenciaServer(status, flash, excesso) {
-  return status === 'divergente' ? (flash > 0 ? 'estouro+flash' : 'estouro')
+  return status === 'cancelada' ? 'cancelamento' : status === 'divergente' ? (flash > 0 ? 'estouro+flash' : 'estouro')
     : flash > 0 ? (excesso > 0 ? 'excesso+flash' : 'flash') : 'excesso';
 }
 app.get('/api/viaticos/solicitacoes/:id/transferencia', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
