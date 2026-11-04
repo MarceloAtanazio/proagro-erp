@@ -20,7 +20,9 @@ require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: {
   if (/^(INSERT INTO erp_audit_log|UPDATE erp_users)/.test(s)) return [];
   if (s.includes('FROM erp_rh_movimentacoes')) return [];
   if (s.startsWith('SELECT id, colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1')) return SOL.filter(x => x.id == p[0]).map(x => ({ id: x.id, colaborador_id: x.colaborador_id }));
-  if (s.startsWith('SELECT id, ordem_trabalho, status, valor_pendencia, pendencia_decisao, excessos_status, excessos_valores,')) return SOL.filter(x => x.pendencia_decidida_na == p[0]).map(x => ({ ...x, reprovadas_flash: x.flash }));
+  // (atualizado em 05/11: o painel agora lê os abatimentos e, para as antigas, a marca pendencia_decidida_na)
+  if (s.includes('FROM erp_viaticos_pendencia_abatimentos a JOIN')) return [];
+  if (s.includes('FROM erp_viaticos_solicitacoes o WHERE o.pendencia_decidida_na=$1 AND NOT EXISTS')) return SOL.filter(x => x.pendencia_decidida_na == p[0]).map(x => ({ ...x, reprovadas_flash: x.flash, decisao_ant: x.pendencia_decisao }));
   if (s.startsWith('SELECT id, ordem_trabalho, status, valor_liberado, data_inicio, data_fim FROM erp_viaticos_solicitacoes')) {
     return SOL.filter(x => x.colaborador_id == p[0] && x.id != p[1] && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(x.status));
   }

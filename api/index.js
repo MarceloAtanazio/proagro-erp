@@ -6739,16 +6739,19 @@ app.get('/api/viaticos/colaboradores/:id/pendencia', requireAuth, requireViewAny
   // Duas origens: viagem que estourou o valor liberado (status "divergente") e viagem fechada SEM estouro em que um
   // excesso da TUD foi reprovado (valor_pendencia guarda a soma dos excessos reprovados).
   const rows = await query(`SELECT id, destino, ordem_trabalho, status, data_fim, valor_pendencia, excessos_status, excessos_valores,
-      (SELECT COALESCE(SUM(r.valor),0) FROM erp_viaticos_reprovadas r WHERE r.solicitacao_id = erp_viaticos_solicitacoes.id) AS reprovadas_flash
+      (SELECT COALESCE(SUM(r.valor),0) FROM erp_viaticos_reprovadas r WHERE r.solicitacao_id = erp_viaticos_solicitacoes.id) AS reprovadas_flash,
+      (SELECT COALESCE(SUM(a.valor),0) FROM erp_viaticos_pendencia_abatimentos a WHERE a.solicitacao_origem_id = erp_viaticos_solicitacoes.id AND a.decisao='descontada') AS abatido
     FROM erp_viaticos_solicitacoes
     WHERE colaborador_id=$1 AND pendencia_resolvida=false AND (status='divergente' OR valor_pendencia > 0) ORDER BY data_fim`, [req.params.id]);
-  const total = rows.reduce((s, r) => s + n(r.valor_pendencia), 0);
-  res.json({ total, solicitacoes: rows.map(r => {
+  // O que resta de cada uma depois dos descontos parciais já feitos; a que não tem mais nada a descontar não entra.
+  const abertas = rows.map(r => ({ ...r, restante: Math.round((n(r.valor_pendencia) - n(r.abatido)) * 100) / 100 })).filter(r => r.restante > 0.005);
+  const total = Math.round(abertas.reduce((s, r) => s + r.restante, 0) * 100) / 100;
+  res.json({ total, solicitacoes: abertas.map(r => {
     const fl = n(r.reprovadas_flash), ex = somaExcessosReprovados(r.excessos_status, r.excessos_valores);
     const origem = r.status === 'cancelada' ? 'cancelamento' : r.status === 'divergente' ? (fl > 0 ? 'estouro+flash' : 'estouro')
       : fl > 0 ? (ex > 0 ? 'excesso+flash' : 'flash') : 'excesso';
     return { id: r.id, destino: r.destino, ordem_trabalho: r.ordem_trabalho, status: r.status, data_fim: r.data_fim,
-      valor_pendencia: n(r.valor_pendencia), valor_reprovado_flash: fl, origem };
+      valor_pendencia: r.restante, valor_original: n(r.valor_pendencia), ja_abatido: n(r.abatido), valor_reprovado_flash: fl, origem };
   }) });
 }));
 
@@ -6760,10 +6763,34 @@ async function encerrarPendencias(b, colaboradorId, naSolicitacaoId) {
     .map(Number).filter(Number.isInteger);
   if (!ids.length) return;
   const decisao = b.pendencia_decisao === 'dispensar' ? 'dispensada' : 'descontada';
-  await query(`UPDATE erp_viaticos_solicitacoes
-      SET pendencia_resolvida=true, pendencia_decisao=$3, pendencia_decidida_em=now(), pendencia_decidida_na=$4
-    WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND (status='divergente' OR valor_pendencia > 0) AND pendencia_resolvida=false`,
-    [ids, colaboradorId, decisao, naSolicitacaoId]);
+  // DESCONTO PARCIAL: quando o valor da transferência não cobre toda a pendência, desconta-se só o que cabe (`pendencia_desconto`, em R$) e o resto
+  // CONTINUA EM ABERTO para a próxima transferência. Cada desconto fica em erp_viaticos_pendencia_abatimentos; o que resta é valor_pendencia − abatido.
+  // Sem `pendencia_desconto` (chamadas antigas) desconta tudo, como antes. Dispensar sempre encerra o que resta.
+  const sobraInicial = (b.pendencia_desconto === undefined || b.pendencia_desconto === null || b.pendencia_desconto === '') ? Infinity
+    : (isFinite(Number(b.pendencia_desconto)) ? Math.max(0, Number(b.pendencia_desconto)) : 0);
+  let sobra = sobraInicial;
+  const abertas = await query(
+    `SELECT id, valor_pendencia, (SELECT COALESCE(SUM(a.valor),0) FROM erp_viaticos_pendencia_abatimentos a
+        WHERE a.solicitacao_origem_id = erp_viaticos_solicitacoes.id AND a.decisao='descontada') AS abatido
+       FROM erp_viaticos_solicitacoes
+      WHERE id = ANY($1::int[]) AND colaborador_id=$2 AND (status='divergente' OR valor_pendencia > 0) AND pendencia_resolvida=false
+      ORDER BY data_fim, id`, [ids, colaboradorId]);
+  for (const r of abertas) {
+    const restante = Math.round((n(r.valor_pendencia) - n(r.abatido)) * 100) / 100;
+    let aplicado = decisao === 'dispensada' ? restante : Math.min(restante, sobra);
+    aplicado = Math.round(aplicado * 100) / 100;
+    if (decisao === 'descontada' && restante > 0.005 && aplicado <= 0.005) continue;   // nada coube: segue em aberto
+    if (restante > 0.005 && aplicado > 0.005) {
+      await query(`INSERT INTO erp_viaticos_pendencia_abatimentos (solicitacao_origem_id, solicitacao_destino_id, valor, decisao) VALUES ($1,$2,$3,$4)`,
+        [r.id, naSolicitacaoId, aplicado, decisao]);
+    }
+    if (decisao === 'descontada' && sobra !== Infinity) sobra = Math.round((sobra - aplicado) * 100) / 100;
+    if (aplicado >= restante - 0.005) {
+      await query(`UPDATE erp_viaticos_solicitacoes
+          SET pendencia_resolvida=true, pendencia_decisao=$2, pendencia_decidida_em=now(), pendencia_decidida_na=$3 WHERE id=$1`,
+        [r.id, decisao, naSolicitacaoId]);
+    }
+  }
 }
 
 app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
@@ -7000,17 +7027,22 @@ function viaOrigemPendenciaServer(status, flash, excesso) {
 app.get('/api/viaticos/solicitacoes/:id/transferencia', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const s = (await query('SELECT id, colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
-  const decididas = await query(
-    `SELECT id, ordem_trabalho, status, valor_pendencia, pendencia_decisao, excessos_status, excessos_valores,
-            (SELECT COALESCE(SUM(r.valor),0) FROM erp_viaticos_reprovadas r WHERE r.solicitacao_id = erp_viaticos_solicitacoes.id) AS reprovadas_flash
-       FROM erp_viaticos_solicitacoes WHERE pendencia_decidida_na=$1 ORDER BY data_fim, id`, [s.id]);
+  const campos = `o.id, o.ordem_trabalho, o.status, o.valor_pendencia, o.excessos_status, o.excessos_valores,
+            (SELECT COALESCE(SUM(r.valor),0) FROM erp_viaticos_reprovadas r WHERE r.solicitacao_id = o.id) AS reprovadas_flash`;
+  // Descontos (inclusive parciais) registrados nesta OT + os antigos, de antes dos descontos parciais, que só têm a marca pendencia_decidida_na.
+  const novas = await query(`SELECT ${campos}, a.valor AS valor_abatido, a.decisao AS decisao_abat FROM erp_viaticos_pendencia_abatimentos a
+      JOIN erp_viaticos_solicitacoes o ON o.id = a.solicitacao_origem_id WHERE a.solicitacao_destino_id=$1 ORDER BY o.data_fim, o.id`, [s.id]);
+  const antigas = await query(`SELECT ${campos}, o.pendencia_decisao AS decisao_ant FROM erp_viaticos_solicitacoes o WHERE o.pendencia_decidida_na=$1
+      AND NOT EXISTS (SELECT 1 FROM erp_viaticos_pendencia_abatimentos a WHERE a.solicitacao_origem_id = o.id AND a.solicitacao_destino_id=$1) ORDER BY o.data_fim, o.id`, [s.id]);
+  const decididas = [...novas.map(r => ({ ...r, valor_efetivo: n(r.valor_abatido), decisao: r.decisao_abat })),
+                     ...antigas.map(r => ({ ...r, valor_efetivo: n(r.valor_pendencia), decisao: r.decisao_ant }))];
   const abertas = await query(
     `SELECT id, ordem_trabalho, status, valor_liberado, data_inicio, data_fim FROM erp_viaticos_solicitacoes
       WHERE colaborador_id=$1 AND id <> $2 AND status IN ('transferencia_agendada','liberado','em_viagem','aguardando_comprovacao')
       ORDER BY data_inicio, id`, [s.colaborador_id, s.id]);
   res.json({
     descontadas: decididas.map(r => ({
-      id: r.id, ordem_trabalho: r.ordem_trabalho, valor: n(r.valor_pendencia), decisao: r.pendencia_decisao,
+      id: r.id, ordem_trabalho: r.ordem_trabalho, valor: r.valor_efetivo, decisao: r.decisao,
       origem: viaOrigemPendenciaServer(r.status, n(r.reprovadas_flash), somaExcessosReprovados(r.excessos_status, r.excessos_valores))
     })),
     outras_abertas: abertas.map(r => ({ id: r.id, ordem_trabalho: r.ordem_trabalho, status: r.status, valor_liberado: n(r.valor_liberado), data_inicio: r.data_inicio, data_fim: r.data_fim }))
@@ -7626,7 +7658,7 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
   const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado FROM erp_viaticos_solicitacoes
     WHERE status IN ('liberado','em_viagem','aguardando_comprovacao')${filtroColab}`, paramsColab);
   const vencidas = aguardando.filter(r => r.data_expiracao_flash && r.data_expiracao_flash < today);
-  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false${filtroColab}`, paramsColab);
+  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia - COALESCE((SELECT SUM(a.valor) FROM erp_viaticos_pendencia_abatimentos a WHERE a.solicitacao_origem_id = erp_viaticos_solicitacoes.id AND a.decisao='descontada'),0)),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false${filtroColab}`, paramsColab);
 
   // Fila de aprovação de quilometragem. Só para quem aprova (mesma regra do
   // saldo da carteira): para o colaborador, "3 a aprovar" seria ruído sobre uma

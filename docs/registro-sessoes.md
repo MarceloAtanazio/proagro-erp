@@ -7941,3 +7941,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** na tela simulada (administrador e colaborador só-leitura): ícones e rótulos corretos, perfil só-leitura sem Excluir, o DELETE só é enviado após a segunda confirmação e "Não, manter" não envia nada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-05 — Sessão 194: Viáticos — desconto parcial de pendência (o restante segue para a próxima transferência)
+
+**Solicitação:** na OT 40 do Leonardo, a pendência de R$ 256,50 (OT 38) seria descontada de uma transferência de R$ 220,00 e a diferença de R$ 36,50 "não seria cobrada". O Marcelo quer que todo saldo de excesso siga para uma futura transferência.
+
+**O que mudou:** o desconto passa a ser parcial: desconta-se o que cabe no valor da transferência e a pendência continua em aberto com o restante. Cada desconto fica registrado na nova tabela `erp_viaticos_pendencia_abatimentos` (OT de origem, OT que recebeu o desconto, valor e decisão); o restante é valor_pendencia − abatido, calculado na hora, porque outras rotinas do fechamento recalculam valor_pendencia. Com várias pendências, a mais antiga é abatida primeiro; dispensar encerra o que resta. O aviso diz "restam R$ X em aberto, que serão descontados da próxima transferência"; o painel Transferência mostra o que foi abatido em cada transferência; o card "Divergentes" soma só o restante. Pendências encerradas antes continuam no painel com o valor cheio; chamadas sem `pendencia_desconto` continuam descontando tudo.
+
+**Verificação:** 17 verificações no backend (caso 220 contra 256,50 com restante de 36,50 e quitação na próxima, duas pendências, valor que cobre tudo, desconto zero, dispensar o restante, painel e pendências antigas) e o cálculo do aviso na tela simulada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
