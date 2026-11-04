@@ -6432,7 +6432,7 @@ async function viewSolicitacao(id) {
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
-  if (s.complementar_tipo !== 'custo_extra') botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
+  botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
   if (somenteLeitura) {
     // consulta pura — nenhuma ação além de fechar
   } else if (!finalizada) {
@@ -7068,7 +7068,7 @@ async function renderSolicitacaoAutosservico(pai) {
     const ult = dest[dest.length - 1];
     const raizOt = String(pai.ordem_trabalho || pai.id).replace(/ - (Complementar|Custo extra)( \d+)?$/i, '');
     const ini = String(pai.data_fim).slice(0, 10), d = new Date(ini + 'T12:00:00'); d.setDate(d.getDate() + 1);
-    VIA_WIZ.complementar = { pai_id: pai.id, tipo: null, status_pai: pai.status, raiz: raizOt, destinos_pai: dest.map(x => ({ uf: x.uf, municipio: x.municipio })), partida: ult ? { uf: ult.uf, municipio: ult.municipio } : null };
+    VIA_WIZ.complementar = { pai_id: pai.id, pai, tipo: null, status_pai: pai.status, raiz: raizOt, destinos_pai: dest.map(x => ({ uf: x.uf, municipio: x.municipio })), partida: ult ? { uf: ult.uf, municipio: ult.municipio } : null };
     VIA_WIZ.ordem_trabalho = raizOt + ' - Complementar';
     VIA_WIZ.data_inicio = ini; VIA_WIZ.data_fim = d.toISOString().slice(0, 10);
     VIA_WIZ.motivo = pai.motivo || ''; VIA_WIZ.objetivo = '';
@@ -7093,10 +7093,10 @@ function viaWizComplTipo() {
           ? `<p class="hint" style="margin-bottom:14px">A viagem desta OT já terminou, então só dá para pedir um <strong>custo extra</strong> (uma despesa avulsa, como remarcação de passagem ou taxa).</p>`
           : `<p class="hint" style="margin-bottom:14px">Você está em <strong>${esc(k.partida.municipio)}/${esc(k.partida.uf)}</strong>. A complementar começa em <strong>${brDate(w.data_inicio)}</strong>
           (o fim da OT de origem) e parte daí — não da sua cidade-base. O que a OT de origem já previu não é cobrado de novo.</p>`}
-        <div class="field-row">
-          ${soCusto ? '' : `<button type="button" class="btn" data-tipo="extensao" style="flex:1; text-align:left; padding:14px"><strong>⏱️ Estender no local</strong><br><small>Continuar em ${esc(k.destinos_pai.map(d => d.municipio + '/' + d.uf).join(', '))} por mais dias.</small></button>
-          <button type="button" class="btn" data-tipo="novo_destino" style="flex:1; text-align:left; padding:14px"><strong>📍 Novo destino</strong><br><small>Ir de ${esc(k.partida.municipio)} para outra cidade e depois voltar.</small></button>`}
-          <button type="button" class="btn" data-tipo="custo_extra" style="flex:1; text-align:left; padding:14px"><strong>🧾 Só um custo extra</strong><br><small>Remarcação de passagem, bagagem, taxa ou multa… só o valor desse custo, sem diária de hospedagem e alimentação.</small></button>
+        <div class="via-compl-opcoes">
+          ${soCusto ? '' : `<button type="button" class="btn via-compl-card" data-tipo="extensao"><span class="via-compl-tit">⏱️ Estender no local</span><span class="via-compl-desc">Continuar em ${esc(k.destinos_pai.map(d => d.municipio + '/' + d.uf).join(', '))} por mais dias.</span></button>
+          <button type="button" class="btn via-compl-card" data-tipo="novo_destino"><span class="via-compl-tit">📍 Novo destino</span><span class="via-compl-desc">Ir de ${esc(k.partida.municipio)} para outra cidade e depois voltar.</span></button>`}
+          <button type="button" class="btn via-compl-card" data-tipo="custo_extra"><span class="via-compl-tit">🧾 Só um custo extra</span><span class="via-compl-desc">Remarcação de passagem, bagagem, taxa ou multa… Só o valor desse custo, sem diária de hospedagem e alimentação.</span></button>
         </div>
       </div>
     </div>`;
@@ -7138,14 +7138,24 @@ function viaWizCustoExtra() {
         <div id="ce-desc-wrap" style="display:${ce.tipo === 'outro' ? 'block' : 'none'}">${fld('ce-desc', 'Qual custo? *', 'text', ce.descricao, 'maxlength="120" placeholder="Ex.: troca de nome no bilhete"')}</div>
         ${fld('ce-valor', 'Valor (R$) *', 'number', ce.valor, 'step="0.01" min="0.01" inputmode="decimal"')}
         <div class="field"><label for="ce-just">Por que esse custo é necessário? *</label><textarea id="ce-just" rows="3" maxlength="400" placeholder="Ex.: a passagem foi comprada com a data errada e precisa ser remarcada.">${esc(ce.justificativa)}</textarea></div>
-        <div class="alert-item warn" style="margin-top:6px">ℹ️ O pedido segue para aprovação como qualquer OT. Pendências de OTs anteriores, se houver, são conferidas na transferência.</div>
+        <div class="alert-item warn" style="margin-top:6px">ℹ️ O pedido segue para aprovação como qualquer OT. Use <strong>Gerar PDF</strong> para anexar o pedido no Approvals. Pendências de OTs anteriores, se houver, são conferidas na transferência.</div>
       </div>
       <div class="wiz-actions"><button class="btn" id="ce-voltar">Voltar</button>
-        <button class="btn primary" id="ce-enviar">Enviar solicitação</button></div>
+        <div style="display:flex; gap:10px"><button class="btn" id="ce-pdf">Gerar PDF</button><button class="btn primary" id="ce-enviar">Enviar solicitação</button></div></div>
     </div>`;
   const ler = () => { ce.tipo = $('#ce-tipo').value; ce.descricao = $('#ce-desc').value; ce.valor = $('#ce-valor').value; ce.justificativa = $('#ce-just').value; };
   $('#ce-tipo').onchange = () => { ler(); $('#ce-desc-wrap').style.display = ce.tipo === 'outro' ? 'block' : 'none'; };
   $('#ce-voltar').onclick = () => { ler(); k.tipo = null; viaWizComplTipo(); };
+  $('#ce-pdf').onclick = async (ev) => {
+    ler();
+    const erro = viaCustoExtraErro(ce);
+    if (erro) { toast(erro.msg); const el = $('#' + erro.foco); if (el) el.focus(); return; }
+    const btn = ev.currentTarget, txt = btn.textContent; btn.disabled = true; btn.textContent = 'Gerando…';
+    try {
+      await viaGerarPdfCustoExtra({ colab: w.colab, ot: null, otOrigem: k.raiz, pai: k.pai, tipo: ce.tipo, descricao: ce.tipo === 'outro' ? ce.descricao : '',
+        valor: Number(String(ce.valor).replace(',', '.')), justificativa: ce.justificativa, destinos: k.destinos_pai });
+    } finally { btn.disabled = false; btn.textContent = txt; }
+  };
   $('#ce-enviar').onclick = async (ev) => {
     ler();
     const erro = viaCustoExtraErro(ce);
@@ -8867,7 +8877,7 @@ function viaWizStep5() {
 
 // "Tem PDF" = solicitação criada pelo assistente de autosserviço (novo
 // modelo, que gera o PDF). As criadas pelo admin (modelo antigo) não têm.
-function viaTemPdfSolicitacao(s) { return !!s && s.origem === 'colaborador' && s.complementar_tipo !== 'custo_extra'; }
+function viaTemPdfSolicitacao(s) { return !!s && s.origem === 'colaborador'; }
 
 // Regenera e baixa o PDF de uma solicitação já salva, a partir dos dados
 // gravados (mesmo conteúdo emitido na solicitação — inclui o trajeto/mapa,
@@ -8875,6 +8885,19 @@ function viaTemPdfSolicitacao(s) { return !!s && s.origem === 'colaborador' && s
 async function viaBaixarPdfSolicitacao(s) {
   if (!viaTemPdfSolicitacao(s)) {
     return toast('Esta solicitação não possui PDF (foi criada antes do novo modelo de autosserviço).');
+  }
+  if (s.complementar_tipo === 'custo_extra') {
+    toast('Gerando PDF…');
+    let pai = null;
+    try { pai = (await api('/api/viaticos/solicitacoes')).find(x => x.id === s.solicitacao_pai_id) || null; } catch (e) { /* segue sem o detalhe da OT de origem */ }
+    const m = String(s.objetivo || '').match(/^Custo extra — (.+?)(?: \(([^)]*)\))?: ([\s\S]*)$/);
+    const prevCusto = s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object' ? s.previsao_por_categoria : {};
+    return viaGerarPdfCustoExtra({
+      colab: { name: s.colaborador_name, cargo: s.colaborador_cargo || '', tier: s.tier },
+      ot: s.ordem_trabalho, otOrigem: pai ? (pai.ordem_trabalho || pai.id) : String(s.ordem_trabalho || '').replace(/ - Custo extra( \d+)?$/i, ''),
+      pai, tipo: s.custo_extra_tipo, tipoRotulo: m ? m[1] : '', descricao: (m && m[2]) || '', valor: viaTotalSolicitado(s),
+      justificativa: m ? m[3] : (s.objetivo || ''), categoria: Object.keys(prevCusto)[0], destinos: Array.isArray(s.destinos) ? s.destinos : [], dataEmissao: s.created_at
+    });
   }
   const cat = s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object' ? s.previsao_por_categoria : {};
   const total = Object.values(cat).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -8899,6 +8922,120 @@ async function viaBaixarPdfSolicitacao(s) {
   };
   toast('Gerando PDF…');
   await viaGerarPDF(w, { cat, total, dias, memoria: viaMemoriaCategorias(w, cat) }, { dataEmissao: s.created_at });
+}
+
+// Categoria da despesa de cada tipo de custo extra (espelha CUSTO_EXTRA_TIPOS em api/index.js).
+const VIA_CUSTO_EXTRA_CAT = { remarcacao_aviao: 'passagem_aviao', remarcacao_onibus: 'passagem_onibus', bagagem: 'outro', taxa_multa: 'outro', pedagio: 'pedagio', estacionamento: 'estacionamento', outro: 'outro' };
+
+// PDF da OT de custo extra: o que a aprovação precisa para decidir sem abrir o sistema — quem pede, a OT de origem (período, destinos, o que já foi
+// previsto), o custo pedido (tipo, detalhe, valor, justificativa) e o total da OT com o custo extra. Antes do envio o número da OT de custo extra
+// ainda não existe (o servidor numera); o PDF baixado depois, pela OT, traz o número oficial.
+async function viaGerarPdfCustoExtra(d) {
+  if (!window.jspdf) return toast('Biblioteca de PDF ainda carregando. Tente novamente em instantes.');
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
+    const MARGIN = 14, util = pageW - MARGIN * 2;
+    const dataDoc = d.dataEmissao ? new Date(d.dataEmissao) : new Date();
+    const pai = d.pai || null;
+    const dia = v => (v ? brDate(String(v).slice(0, 10)) : '—');
+    const tipoRotulo = (VIA_CUSTO_EXTRA_TIPOS.find(t => t.v === d.tipo) || {}).t || d.tipoRotulo || 'Custo extra';
+    const catKey = VIA_CUSTO_EXTRA_CAT[d.tipo] || d.categoria || 'outro';
+    const valor = Number(d.valor) || 0;
+    const destinos = (Array.isArray(pai && pai.destinos) && pai.destinos.length ? pai.destinos : (d.destinos || [])).map(x => `${x.municipio}/${x.uf}`).join(', ') || '—';
+    const titulo = (t, y) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...VERDE); doc.text(t, MARGIN, y); };
+    const estilo = { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42] };
+    const colRotulo = { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 38 };
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 30, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', pageW - MARGIN - logoW, 10, logoW, logoH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30, 38, 32);
+    doc.text('Solicitação de Custo Extra', MARGIN, 18);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...CINZA);
+    doc.text('OT complementar de custo avulso — sem diárias de hospedagem e alimentação', MARGIN, 23.5);
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 27, pageW - MARGIN, 27);
+
+    let y = 34;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid', styles: estilo,
+      body: [
+        ['Nome do Solicitante', d.colab.name, 'Data', dataDoc.toLocaleDateString('pt-BR')],
+        ['Cargo', d.colab.cargo || '—', 'Tier', d.colab.tier || '—'],
+        ['OT de origem', String(d.otOrigem || '—'), 'OT do custo extra', d.ot ? String(d.ot) : 'definida no envio'],
+        ['Período da OT de origem', pai ? `${dia(pai.data_inicio)} a ${dia(pai.data_fim)}` : '—', 'Situação da OT de origem', pai ? (VIA_STATUS_LABEL[pai.status] || pai.status) : '—'],
+        ['Destinos da OT', destinos, 'Motivo', (pai && pai.motivo) || '—']
+      ],
+      columnStyles: { 0: colRotulo, 2: colRotulo }
+    });
+    y = doc.lastAutoTable.finalY + 9;
+
+    titulo('Custo extra solicitado', y); y += 4;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid', styles: estilo,
+      body: [
+        ['Tipo do custo', tipoRotulo],
+        ['Detalhe', d.descricao || '—'],
+        ['Categoria da despesa', DESP_CAT_LABEL[catKey] || catKey],
+        ['Valor solicitado', { content: brl(valor), styles: { fontStyle: 'bold', fontSize: 11, textColor: VERDE } }]
+      ],
+      columnStyles: { 0: colRotulo }
+    });
+    y = doc.lastAutoTable.finalY + 9;
+
+    titulo('Justificativa', y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    const just = doc.splitTextToSize(d.justificativa || '—', util - 6);
+    const justH = Math.max(12, just.length * 4.5 + 6);
+    doc.setDrawColor(210, 218, 213); doc.rect(MARGIN, y, util, justH);
+    doc.text(just, MARGIN + 3, y + 6);
+    y += justH + 9;
+
+    // O que a OT de origem já previu: a aprovação vê o contexto e o total com o custo extra.
+    const prev = pai && pai.previsao_por_categoria && typeof pai.previsao_por_categoria === 'object' ? pai.previsao_por_categoria : {};
+    const linhas = Object.entries(prev).filter(([, v]) => Number(v) > 0);
+    if (pai && linhas.length) {
+      const totalPai = viaTotalSolicitado(pai);
+      if (y > 215) { doc.addPage(); y = 20; }
+      titulo('OT de origem — o que já foi previsto', y); y += 4;
+      doc.autoTable({
+        startY: y, margin: { left: MARGIN, right: MARGIN }, styles: { ...estilo, overflow: 'linebreak' },
+        head: [['Descrição', 'Total (R$)']], headStyles: { fillColor: VERDE, textColor: 255 },
+        body: linhas.map(([k, v]) => [DESP_CAT_LABEL[k] || k, brl(Number(v))]),
+        foot: [['Total da OT de origem', { content: brl(totalPai), styles: { halign: 'right' } }]],
+        footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
+        columnStyles: { 1: { halign: 'right', cellWidth: 40 } }
+      });
+      y = doc.lastAutoTable.finalY + 9;
+      if (y > 235) { doc.addPage(); y = 20; }
+      titulo('Resumo do pedido', y); y += 4;
+      doc.autoTable({
+        startY: y, margin: { left: MARGIN, right: MARGIN }, styles: estilo, theme: 'grid',
+        body: [['Total da OT de origem', brl(totalPai)], ['Custo extra solicitado', brl(valor)]],
+        foot: [['Total da OT com o custo extra', brl(totalPai + valor)]],
+        footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold', fontSize: 10.5 },
+        columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 40 } },
+        didParseCell: h => { if (h.column.index === 1) h.cell.styles.halign = 'right'; }
+      });
+      y = doc.lastAutoTable.finalY + 12;
+    }
+
+    if (y > 255) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    const decl = doc.splitTextToSize(`Declaro que o custo acima é necessário à execução da OT ${d.otOrigem || ''} e que apresentarei o comprovante na prestação de contas, nos termos das normas de viagem da ${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}.`, util);
+    doc.text(decl, MARGIN, y); y += decl.length * 4 + 10;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    doc.text(`Assinado eletronicamente por ${d.colab.name} em ${dataDoc.toLocaleDateString('pt-BR')}`, MARGIN, y);
+
+    const safeName = String(d.colab.name || 'colaborador').replace(/\s+/g, '_');
+    const safeOt = String(d.ot || (String(d.otOrigem || 'sem_OT') + '_custo_extra')).replace(/\s+/g, '_');
+    doc.save(`Custo_Extra_${safeOt}_${safeName}.pdf`);
+    toast('PDF gerado — confira e envie manualmente ao Approvals por enquanto.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
 }
 
 async function viaGerarPDF(w, r, opts = {}) {

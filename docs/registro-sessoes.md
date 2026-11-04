@@ -7965,3 +7965,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 28 verificações no backend (número, categorias, período, valores inválidos, origem em cada estado, outro colaborador, ignorar o que o navegador manda) e o teste da complementar antiga segue passando; na tela simulada: cartões por estado da origem, validações do formulário, corpo do POST, botão ↪ só onde cabe e sem Baixar PDF na OT de custo extra.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-06 — Sessão 196: Viáticos — cartões do complementar e PDF do custo extra
+
+**Solicitação:** depois de testar o custo extra, o Marcelo pediu duas melhorias: o texto dos cartões do passo 1 estava todo quebrado, e o custo extra precisava de um PDF discriminando a OT e o extra pedido, para enviar à aprovação.
+
+**O que mudou:** (1) Os cartões viram uma grade responsiva (três lado a lado, empilham em tela estreita), com título e descrição em blocos; o problema era o .btn ser flex e transformar cada pedaço do texto em uma coluna. (2) PDF do custo extra: solicitante, OT de origem (período, destinos, situação), custo pedido (tipo, detalhe, categoria da despesa, valor), justificativa, o que a OT de origem já previu e o total da OT com o custo extra. Botão "Gerar PDF" no formulário, antes do envio (o número da OT de custo extra ainda não existe: sai "definida no envio"), e "Baixar PDF" no detalhe da OT, com o número oficial; o botão do detalhe, que a Sessão 195 havia ocultado, voltou. Sem mudança no banco.
+
+**Verificação:** na tela simulada, três cartões com a mesma altura e título em uma linha; o PDF do formulário e o do detalhe saem em uma página, com as somas conferidas (R$ 1.000,00 + R$ 320,50 = R$ 1.320,50) e o objetivo salvo lido de volta, inclusive com ":" na justificativa; o PDF foi aberto e conferido visualmente.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

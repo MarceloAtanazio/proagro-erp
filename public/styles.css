@@ -1912,3 +1912,11 @@ td.via-acoes .btn-ic.ok { background: var(--verde-700); border-color: var(--verd
 td.via-acoes .btn-ic.ok:hover { background: var(--verde-500); border-color: var(--verde-500); }
 td.via-acoes .btn-ic.exc { margin-left: 12px; color: var(--danger); border-color: var(--danger); }
 td.via-acoes .btn-ic.exc:hover { background: var(--danger-050); }
+
+/* Viáticos: cartões de escolha do complementar (estender / novo destino / só um custo extra). O .btn é flex e quebrava cada pedaço do texto em uma
+   coluna: aqui é uma grade responsiva e título e descrição são blocos. */
+.via-compl-opcoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.btn.via-compl-card { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 6px; text-align: left; white-space: normal; padding: 16px; height: 100%; }
+.btn.via-compl-card:hover { border-color: var(--verde-700); background: var(--verde-050, #EAF5EC); }
+.via-compl-tit { font-size: 14.5px; font-weight: 700; color: var(--ink, #1E2620); }
+.via-compl-desc { font-size: 12.5px; font-weight: 400; color: var(--muted); line-height: 1.45; }

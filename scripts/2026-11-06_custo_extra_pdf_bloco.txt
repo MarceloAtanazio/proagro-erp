@@ -1,0 +1,114 @@
+// Categoria da despesa de cada tipo de custo extra (espelha CUSTO_EXTRA_TIPOS em api/index.js).
+const VIA_CUSTO_EXTRA_CAT = { remarcacao_aviao: 'passagem_aviao', remarcacao_onibus: 'passagem_onibus', bagagem: 'outro', taxa_multa: 'outro', pedagio: 'pedagio', estacionamento: 'estacionamento', outro: 'outro' };
+
+// PDF da OT de custo extra: o que a aprovação precisa para decidir sem abrir o sistema — quem pede, a OT de origem (período, destinos, o que já foi
+// previsto), o custo pedido (tipo, detalhe, valor, justificativa) e o total da OT com o custo extra. Antes do envio o número da OT de custo extra
+// ainda não existe (o servidor numera); o PDF baixado depois, pela OT, traz o número oficial.
+async function viaGerarPdfCustoExtra(d) {
+  if (!window.jspdf) return toast('Biblioteca de PDF ainda carregando. Tente novamente em instantes.');
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114];
+    const MARGIN = 14, util = pageW - MARGIN * 2;
+    const dataDoc = d.dataEmissao ? new Date(d.dataEmissao) : new Date();
+    const pai = d.pai || null;
+    const dia = v => (v ? brDate(String(v).slice(0, 10)) : '—');
+    const tipoRotulo = (VIA_CUSTO_EXTRA_TIPOS.find(t => t.v === d.tipo) || {}).t || d.tipoRotulo || 'Custo extra';
+    const catKey = VIA_CUSTO_EXTRA_CAT[d.tipo] || d.categoria || 'outro';
+    const valor = Number(d.valor) || 0;
+    const destinos = (Array.isArray(pai && pai.destinos) && pai.destinos.length ? pai.destinos : (d.destinos || [])).map(x => `${x.municipio}/${x.uf}`).join(', ') || '—';
+    const titulo = (t, y) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...VERDE); doc.text(t, MARGIN, y); };
+    const estilo = { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42] };
+    const colRotulo = { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 38 };
+
+    doc.setFillColor(...VERDE); doc.rect(0, 0, pageW, 3, 'F');
+    const logoW = 30, logoH = logoW * (139 / 600);
+    doc.addImage(LOGO_PROAGRO_PNG, 'PNG', pageW - MARGIN - logoW, 10, logoW, logoH);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30, 38, 32);
+    doc.text('Solicitação de Custo Extra', MARGIN, 18);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...CINZA);
+    doc.text('OT complementar de custo avulso — sem diárias de hospedagem e alimentação', MARGIN, 23.5);
+    doc.setDrawColor(210, 218, 213); doc.setLineWidth(0.3); doc.line(MARGIN, 27, pageW - MARGIN, 27);
+
+    let y = 34;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid', styles: estilo,
+      body: [
+        ['Nome do Solicitante', d.colab.name, 'Data', dataDoc.toLocaleDateString('pt-BR')],
+        ['Cargo', d.colab.cargo || '—', 'Tier', d.colab.tier || '—'],
+        ['OT de origem', String(d.otOrigem || '—'), 'OT do custo extra', d.ot ? String(d.ot) : 'definida no envio'],
+        ['Período da OT de origem', pai ? `${dia(pai.data_inicio)} a ${dia(pai.data_fim)}` : '—', 'Situação da OT de origem', pai ? (VIA_STATUS_LABEL[pai.status] || pai.status) : '—'],
+        ['Destinos da OT', destinos, 'Motivo', (pai && pai.motivo) || '—']
+      ],
+      columnStyles: { 0: colRotulo, 2: colRotulo }
+    });
+    y = doc.lastAutoTable.finalY + 9;
+
+    titulo('Custo extra solicitado', y); y += 4;
+    doc.autoTable({
+      startY: y, margin: { left: MARGIN, right: MARGIN }, theme: 'grid', styles: estilo,
+      body: [
+        ['Tipo do custo', tipoRotulo],
+        ['Detalhe', d.descricao || '—'],
+        ['Categoria da despesa', DESP_CAT_LABEL[catKey] || catKey],
+        ['Valor solicitado', { content: brl(valor), styles: { fontStyle: 'bold', fontSize: 11, textColor: VERDE } }]
+      ],
+      columnStyles: { 0: colRotulo }
+    });
+    y = doc.lastAutoTable.finalY + 9;
+
+    titulo('Justificativa', y); y += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    const just = doc.splitTextToSize(d.justificativa || '—', util - 6);
+    const justH = Math.max(12, just.length * 4.5 + 6);
+    doc.setDrawColor(210, 218, 213); doc.rect(MARGIN, y, util, justH);
+    doc.text(just, MARGIN + 3, y + 6);
+    y += justH + 9;
+
+    // O que a OT de origem já previu: a aprovação vê o contexto e o total com o custo extra.
+    const prev = pai && pai.previsao_por_categoria && typeof pai.previsao_por_categoria === 'object' ? pai.previsao_por_categoria : {};
+    const linhas = Object.entries(prev).filter(([, v]) => Number(v) > 0);
+    if (pai && linhas.length) {
+      const totalPai = viaTotalSolicitado(pai);
+      if (y > 215) { doc.addPage(); y = 20; }
+      titulo('OT de origem — o que já foi previsto', y); y += 4;
+      doc.autoTable({
+        startY: y, margin: { left: MARGIN, right: MARGIN }, styles: { ...estilo, overflow: 'linebreak' },
+        head: [['Descrição', 'Total (R$)']], headStyles: { fillColor: VERDE, textColor: 255 },
+        body: linhas.map(([k, v]) => [DESP_CAT_LABEL[k] || k, brl(Number(v))]),
+        foot: [['Total da OT de origem', { content: brl(totalPai), styles: { halign: 'right' } }]],
+        footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold' },
+        columnStyles: { 1: { halign: 'right', cellWidth: 40 } }
+      });
+      y = doc.lastAutoTable.finalY + 9;
+      if (y > 235) { doc.addPage(); y = 20; }
+      titulo('Resumo do pedido', y); y += 4;
+      doc.autoTable({
+        startY: y, margin: { left: MARGIN, right: MARGIN }, styles: estilo, theme: 'grid',
+        body: [['Total da OT de origem', brl(totalPai)], ['Custo extra solicitado', brl(valor)]],
+        foot: [['Total da OT com o custo extra', brl(totalPai + valor)]],
+        footStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold', fontSize: 10.5 },
+        columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 40 } },
+        didParseCell: h => { if (h.column.index === 1) h.cell.styles.halign = 'right'; }
+      });
+      y = doc.lastAutoTable.finalY + 12;
+    }
+
+    if (y > 255) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...CINZA);
+    const decl = doc.splitTextToSize(`Declaro que o custo acima é necessário à execução da OT ${d.otOrigem || ''} e que apresentarei o comprovante na prestação de contas, nos termos das normas de viagem da ${COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME}.`, util);
+    doc.text(decl, MARGIN, y); y += decl.length * 4 + 10;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42);
+    doc.text(`Assinado eletronicamente por ${d.colab.name} em ${dataDoc.toLocaleDateString('pt-BR')}`, MARGIN, y);
+
+    const safeName = String(d.colab.name || 'colaborador').replace(/\s+/g, '_');
+    const safeOt = String(d.ot || (String(d.otOrigem || 'sem_OT') + '_custo_extra')).replace(/\s+/g, '_');
+    doc.save(`Custo_Extra_${safeOt}_${safeName}.pdf`);
+    toast('PDF gerado — confira e envie manualmente ao Approvals por enquanto.');
+  } catch (e) {
+    console.error(e); toast('Não foi possível gerar o PDF: ' + e.message);
+  }
+}
+
