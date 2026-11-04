@@ -7952,3 +7952,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 17 verificações no backend (caso 220 contra 256,50 com restante de 36,50 e quitação na próxima, duas pendências, valor que cobre tudo, desconto zero, dispensar o restante, painel e pendências antigas) e o cálculo do aviso na tela simulada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-06 — Sessão 195: Viáticos — OT de custo extra (pedir só um custo avulso, sem diárias)
+
+**Solicitação:** o Fabricio comprou a passagem errada e precisava remarcar, mas o complementar só oferecia "estender no local" e "novo destino", que sempre calculam hospedagem e alimentação junto. O Marcelo pediu um jeito de cobrir esses furos pequenos e seguiu a recomendação: valor livre, permitido até a OT aguardando comprovação, com desconto de pendência igual às demais.
+
+**O que mudou:** o passo 1 do complementar ganha o cartão "Só um custo extra", com formulário de uma etapa: tipo do custo (remarcação de passagem aérea ou de ônibus, bagagem extra, taxa ou multa, pedágio, estacionamento, outro), valor e justificativa (descrição obrigatória em "Outro"). O servidor impõe o resto: número "<OT> - Custo extra" (numeração própria, "2", "3"…), período da OT de origem (esticado até hoje se preciso, para a comprovação aceitar a data da nota), destinos da origem e a categoria da despesa que a comprovação já conhece (remarcação aérea → passagem_aviao, bagagem/taxa/outro → outro, pedágio → pedagio…). Vale com a origem liberada, em viagem ou aguardando comprovação (multa e taxa às vezes só aparecem no fim); nesta última, é o único tipo oferecido. Teto de R$ 50.000 por pedido; não se pede custo extra a partir de outra OT de custo extra. A OT de custo extra não gera PDF de viagem e a comprovação dela não prevê hospedagem. O comprovante (nota, e-mail da companhia) é anexado na comprovação, como as demais despesas: a solicitação não tem anexo hoje.
+
+**Banco:** migração 2026-11-06-viaticos-custo-extra.sql (coluna custo_extra_tipo e o tipo custo_extra na restrição de complementar_tipo).
+
+**Verificação:** 28 verificações no backend (número, categorias, período, valores inválidos, origem em cada estado, outro colaborador, ignorar o que o navegador manda) e o teste da complementar antiga segue passando; na tela simulada: cartões por estado da origem, validações do formulário, corpo do POST, botão ↪ só onde cabe e sem Baixar PDF na OT de custo extra.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

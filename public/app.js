@@ -5852,7 +5852,7 @@ async function renderViaticos() {
             : `<button class="btn-ic ok" data-view="${s.id}" title="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}" aria-label="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}">${viaSolFechada(s) ? '👁' : '✓'}</button>
             <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
             <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
-            ${meuColaborador && s.colaborador_id === meuColaborador.id && ['transferencia_agendada', 'liberado', 'em_viagem'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local ou partir daqui para um novo destino" aria-label="Complementar">↪</button>` : ''}
+            ${meuColaborador && s.colaborador_id === meuColaborador.id && s.complementar_tipo !== 'custo_extra' && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local, ir a um novo destino ou pedir só um custo extra (ex.: remarcação de passagem)" aria-label="Complementar">↪</button>` : ''}
             ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn-ic perigo" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)" aria-label="Cancelar">⊘</button>` : ''}
             ${READONLY ? '' : `<button class="btn-ic exc" data-del="${s.id}" title="Excluir" aria-label="Excluir">🗑</button>`}
           </td>
@@ -6308,7 +6308,7 @@ async function viewSolicitacao(id) {
   // cobre mais de uma noite numa linha só.
   const limite = s.data_expiracao_flash || s.data_fim;
   const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
-  const { dias, noites: noitesPeriodo } = viaDiasNoites(s.data_inicio, s.data_fim, !!s.solicitacao_pai_id);
+  const { dias, noites: noitesPeriodo } = s.complementar_tipo === 'custo_extra' ? { dias: 0, noites: 0 } : viaDiasNoites(s.data_inicio, s.data_fim, !!s.solicitacao_pai_id);
   // Mesma regra da previsão: viagem toda na cidade-sede não tem hospedagem.
   const hospDevida = viaHospedagemDevida(s.destinos, s.colaborador_cidade_base_uf, s.colaborador_cidade_base_municipio);
   const noites = hospDevida ? noitesPeriodo : 0;
@@ -6432,7 +6432,7 @@ async function viewSolicitacao(id) {
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
-  botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
+  if (s.complementar_tipo !== 'custo_extra') botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
   if (somenteLeitura) {
     // consulta pura — nenhuma ação além de fechar
   } else if (!finalizada) {
@@ -7066,9 +7066,9 @@ async function renderSolicitacaoAutosservico(pai) {
     // OT complementar: ligada à OT de origem. Saída = fim da origem (travada); parte do último destino dela.
     const dest = Array.isArray(pai.destinos) ? pai.destinos : [];
     const ult = dest[dest.length - 1];
-    const raizOt = String(pai.ordem_trabalho || pai.id).replace(/ - Complementar( \d+)?$/i, '');
+    const raizOt = String(pai.ordem_trabalho || pai.id).replace(/ - (Complementar|Custo extra)( \d+)?$/i, '');
     const ini = String(pai.data_fim).slice(0, 10), d = new Date(ini + 'T12:00:00'); d.setDate(d.getDate() + 1);
-    VIA_WIZ.complementar = { pai_id: pai.id, tipo: null, raiz: raizOt, destinos_pai: dest.map(x => ({ uf: x.uf, municipio: x.municipio })), partida: ult ? { uf: ult.uf, municipio: ult.municipio } : null };
+    VIA_WIZ.complementar = { pai_id: pai.id, tipo: null, status_pai: pai.status, raiz: raizOt, destinos_pai: dest.map(x => ({ uf: x.uf, municipio: x.municipio })), partida: ult ? { uf: ult.uf, municipio: ult.municipio } : null };
     VIA_WIZ.ordem_trabalho = raizOt + ' - Complementar';
     VIA_WIZ.data_inicio = ini; VIA_WIZ.data_fim = d.toISOString().slice(0, 10);
     VIA_WIZ.motivo = pai.motivo || ''; VIA_WIZ.objetivo = '';
@@ -7079,28 +7079,90 @@ async function renderSolicitacaoAutosservico(pai) {
 }
 
 // Escolha do tipo de complementar (só quando o assistente foi aberto a partir de uma OT em curso).
+// Terceira opção, "Só um custo extra": um custo avulso (ex.: remarcar passagem), sem diária de hospedagem nem de alimentação. É a única que vale
+// também com a viagem já encerrada (OT aguardando comprovação) — multa e taxa às vezes só aparecem no fim.
 function viaWizComplTipo() {
   const w = VIA_WIZ, k = w.complementar, c = $('#content');
+  const soCusto = k.status_pai === 'aguardando_comprovacao';
   c.innerHTML = `
     <div class="via-wiz-container">
       ${viaWizProgress(1)}
       <div class="card">
         <h3 style="margin-bottom:6px">OT complementar de ${esc(k.raiz)}</h3>
-        <p class="hint" style="margin-bottom:14px">Você está em <strong>${esc(k.partida.municipio)}/${esc(k.partida.uf)}</strong>. A complementar começa em <strong>${brDate(w.data_inicio)}</strong>
-          (o fim da OT de origem) e parte daí — não da sua cidade-base. O que a OT de origem já previu não é cobrado de novo.</p>
+        ${soCusto
+          ? `<p class="hint" style="margin-bottom:14px">A viagem desta OT já terminou, então só dá para pedir um <strong>custo extra</strong> (uma despesa avulsa, como remarcação de passagem ou taxa).</p>`
+          : `<p class="hint" style="margin-bottom:14px">Você está em <strong>${esc(k.partida.municipio)}/${esc(k.partida.uf)}</strong>. A complementar começa em <strong>${brDate(w.data_inicio)}</strong>
+          (o fim da OT de origem) e parte daí — não da sua cidade-base. O que a OT de origem já previu não é cobrado de novo.</p>`}
         <div class="field-row">
-          <button type="button" class="btn" data-tipo="extensao" style="flex:1; text-align:left; padding:14px"><strong>⏱️ Estender no local</strong><br><small>Continuar em ${esc(k.destinos_pai.map(d => d.municipio + '/' + d.uf).join(', '))} por mais dias.</small></button>
-          <button type="button" class="btn" data-tipo="novo_destino" style="flex:1; text-align:left; padding:14px"><strong>📍 Novo destino</strong><br><small>Ir de ${esc(k.partida.municipio)} para outra cidade e depois voltar.</small></button>
+          ${soCusto ? '' : `<button type="button" class="btn" data-tipo="extensao" style="flex:1; text-align:left; padding:14px"><strong>⏱️ Estender no local</strong><br><small>Continuar em ${esc(k.destinos_pai.map(d => d.municipio + '/' + d.uf).join(', '))} por mais dias.</small></button>
+          <button type="button" class="btn" data-tipo="novo_destino" style="flex:1; text-align:left; padding:14px"><strong>📍 Novo destino</strong><br><small>Ir de ${esc(k.partida.municipio)} para outra cidade e depois voltar.</small></button>`}
+          <button type="button" class="btn" data-tipo="custo_extra" style="flex:1; text-align:left; padding:14px"><strong>🧾 Só um custo extra</strong><br><small>Remarcação de passagem, bagagem, taxa ou multa… só o valor desse custo, sem diária de hospedagem e alimentação.</small></button>
         </div>
       </div>
     </div>`;
   c.querySelectorAll('[data-tipo]').forEach(b => b.onclick = () => {
     k.tipo = b.dataset.tipo;
+    if (k.tipo === 'custo_extra') return viaWizCustoExtra();
     w.destinos = k.tipo === 'extensao' ? k.destinos_pai.map(d => ({ ...d })) : [];
     w.internacional = false;
     w.categoria_local = viaCalcularCategoriaLocal(w.destinos, false);
     viaWizStep1();
   });
+}
+
+// Tipos de custo extra (a chave é a mesma do servidor: CUSTO_EXTRA_TIPOS em api/index.js).
+const VIA_CUSTO_EXTRA_TIPOS = [
+  { v: 'remarcacao_aviao', t: 'Remarcação de passagem aérea' }, { v: 'remarcacao_onibus', t: 'Remarcação de passagem de ônibus' },
+  { v: 'bagagem', t: 'Bagagem extra' }, { v: 'taxa_multa', t: 'Taxa ou multa' }, { v: 'pedagio', t: 'Pedágio extra' },
+  { v: 'estacionamento', t: 'Estacionamento extra' }, { v: 'outro', t: 'Outro custo' }
+];
+function viaCustoExtraErro(ce) {
+  if (!ce.tipo) return { msg: 'Escolha o tipo do custo.', foco: 'ce-tipo' };
+  if (ce.tipo === 'outro' && String(ce.descricao || '').trim().length < 3) return { msg: 'Descreva qual é o custo.', foco: 'ce-desc' };
+  const v = Number(String(ce.valor).replace(',', '.'));
+  if (!isFinite(v) || v <= 0) return { msg: 'Informe o valor do custo.', foco: 'ce-valor' };
+  if (v > 50000) return { msg: 'Valor acima de R$ 50.000,00: fale com o administrador.', foco: 'ce-valor' };
+  if (String(ce.justificativa || '').trim().length < 5) return { msg: 'Explique por que esse custo é necessário.', foco: 'ce-just' };
+  return null;
+}
+function viaWizCustoExtra() {
+  const w = VIA_WIZ, k = w.complementar, c = $('#content');
+  const ce = k.custo || (k.custo = { tipo: '', descricao: '', valor: '', justificativa: '' });
+  c.innerHTML = `
+    <div class="via-wiz-container">
+      <div class="via-wiz-topbar"><button type="button" class="via-wiz-cancelar" data-via-cancelar>← Voltar para Viáticos</button></div>
+      <div class="card">
+        <h3 style="margin-bottom:6px">Custo extra da OT ${esc(k.raiz)}</h3>
+        <p class="hint" style="margin-bottom:14px">Peça só o valor de um custo avulso — <strong>sem diária de hospedagem nem de alimentação</strong>. A nota ou o recibo (por exemplo, o e-mail da companhia com a taxa de remarcação) você anexa depois, na comprovação, como as demais despesas.</p>
+        ${fldSel('ce-tipo', 'Que custo é esse?', [{ v: '', t: '— selecione —' }, ...VIA_CUSTO_EXTRA_TIPOS], ce.tipo)}
+        <div id="ce-desc-wrap" style="display:${ce.tipo === 'outro' ? 'block' : 'none'}">${fld('ce-desc', 'Qual custo? *', 'text', ce.descricao, 'maxlength="120" placeholder="Ex.: troca de nome no bilhete"')}</div>
+        ${fld('ce-valor', 'Valor (R$) *', 'number', ce.valor, 'step="0.01" min="0.01" inputmode="decimal"')}
+        <div class="field"><label for="ce-just">Por que esse custo é necessário? *</label><textarea id="ce-just" rows="3" maxlength="400" placeholder="Ex.: a passagem foi comprada com a data errada e precisa ser remarcada.">${esc(ce.justificativa)}</textarea></div>
+        <div class="alert-item warn" style="margin-top:6px">ℹ️ O pedido segue para aprovação como qualquer OT. Pendências de OTs anteriores, se houver, são conferidas na transferência.</div>
+      </div>
+      <div class="wiz-actions"><button class="btn" id="ce-voltar">Voltar</button>
+        <button class="btn primary" id="ce-enviar">Enviar solicitação</button></div>
+    </div>`;
+  const ler = () => { ce.tipo = $('#ce-tipo').value; ce.descricao = $('#ce-desc').value; ce.valor = $('#ce-valor').value; ce.justificativa = $('#ce-just').value; };
+  $('#ce-tipo').onchange = () => { ler(); $('#ce-desc-wrap').style.display = ce.tipo === 'outro' ? 'block' : 'none'; };
+  $('#ce-voltar').onclick = () => { ler(); k.tipo = null; viaWizComplTipo(); };
+  $('#ce-enviar').onclick = async (ev) => {
+    ler();
+    const erro = viaCustoExtraErro(ce);
+    if (erro) { toast(erro.msg); const el = $('#' + erro.foco); if (el) el.focus(); return; }
+    const btn = ev.currentTarget; btn.disabled = true;
+    try {
+      await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
+        solicitacao_pai_id: k.pai_id, complementar_tipo: 'custo_extra',
+        custo_extra_tipo: ce.tipo, custo_extra_descricao: ce.tipo === 'outro' ? ce.descricao : '', custo_extra_valor: Number(String(ce.valor).replace(',', '.')),
+        custo_extra_justificativa: ce.justificativa,
+        // o servidor define número, período, destinos e a categoria da despesa; estes campos só passam pela validação
+        ordem_trabalho: k.raiz, data_inicio: w.data_inicio, data_fim: w.data_fim, motivo: w.motivo, objetivo: ce.justificativa, destinos: k.destinos_pai, transporte_detalhes: {}, notes: ''
+      } });
+      toast('Solicitação enviada! Ela segue para aprovação.');
+      renderViaticos();
+    } catch (e) { btn.disabled = false; toast(e.message); }
+  };
 }
 
 function viaWizProgress(atual) {
@@ -8805,7 +8867,7 @@ function viaWizStep5() {
 
 // "Tem PDF" = solicitação criada pelo assistente de autosserviço (novo
 // modelo, que gera o PDF). As criadas pelo admin (modelo antigo) não têm.
-function viaTemPdfSolicitacao(s) { return !!s && s.origem === 'colaborador'; }
+function viaTemPdfSolicitacao(s) { return !!s && s.origem === 'colaborador' && s.complementar_tipo !== 'custo_extra'; }
 
 // Regenera e baixa o PDF de uma solicitação já salva, a partir dos dados
 // gravados (mesmo conteúdo emitido na solicitação — inclui o trajeto/mapa,

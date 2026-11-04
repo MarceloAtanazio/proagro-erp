@@ -26,7 +26,7 @@ require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: {
   if (s.includes('FROM erp_rh_movimentacoes')) return [];
   if (s.startsWith('SELECT * FROM erp_colaboradores WHERE usuario_id=$1')) return [COLAB[p[0]]].filter(Boolean);
   if (s.startsWith('SELECT tier, categoria_local, tipo_despesa, valor_diaria FROM erp_viaticos_tud')) return TUD;
-  if (s.startsWith('SELECT id, colaborador_id, ordem_trabalho, status, destinos, data_fim FROM erp_viaticos_solicitacoes WHERE id=$1')) return [SOL[p[0]]].filter(Boolean);
+  if (s.startsWith('SELECT id, colaborador_id, ordem_trabalho, status, destinos, data_fim, data_inicio, motivo, categoria_local, complementar_tipo FROM erp_viaticos_solicitacoes WHERE id=$1')) return [SOL[p[0]]].filter(Boolean);
   if (s.startsWith('SELECT id FROM erp_viaticos_solicitacoes WHERE colaborador_id=$1 AND ordem_trabalho LIKE $2')) { JA.push(p); return INS.filter(i => i.colab === p[0] && i.ot.startsWith(p[1].replace(/\\([\\%_])/g, '$1').replace(/%$/, ''))).map(i => ({ id: i.id })); }
   if (s.startsWith('INSERT INTO erp_viaticos_solicitacoes')) {
     const r = { id: 500 + INS.length, colab: p[0], ot: p[3], destinos: JSON.parse(p[4]), ini: p[7], fim: p[8], total: p[9], cat: JSON.parse(p[10]), pai: p[14], tipo: p[15], pu: p[16], pm: p[17] };
