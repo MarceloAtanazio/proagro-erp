@@ -6253,14 +6253,16 @@ function viaCancelarModal(s) {
 }
 
 async function viewSolicitacao(id) {
-  const [s, despesas, tud, km, reprovadasFlash] = await Promise.all([
+  const [s, despesas, tud, km, reprovadasFlash, conferir] = await Promise.all([
     api('/api/viaticos/solicitacoes').then(all => all.find(x => x.id === id)),
     api(`/api/viaticos/solicitacoes/${id}/despesas`), api('/api/viaticos/tud'),
     // A quilometragem não pode derrubar o modal inteiro se falhar: ela é uma
     // seção a mais numa tela que já funcionava sem ela.
     api(`/api/viaticos/km?solicitacao_id=${id}`).catch(() => ({ registros: [], taxa_vigente: 0.70 })),
     // Despesas reprovadas no Flash: seção a mais, não pode derrubar a tela.
-    api(`/api/viaticos/solicitacoes/${id}/reprovadas`).catch(() => [])
+    api(`/api/viaticos/solicitacoes/${id}/reprovadas`).catch(() => []),
+    // Estorno do Flash / diferença a conferir: também é seção a mais, não pode derrubar a tela.
+    api(`/api/viaticos/solicitacoes/${id}/conferir`).catch(() => null)
   ]);
   const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
   // Usuário só-leitura abre o mesmo modal em modo consulta: vê os dados
@@ -6271,11 +6273,22 @@ async function viewSolicitacao(id) {
   // Reprovadas no Flash: ficam FORA do comprovado, então já estão dentro do "a devolver ao Flash" (liberado − comprovado); aqui
   // a tela só mostra a composição e lista as linhas.
   const totRepr = reprovadasFlash.reduce((t, r) => t + Number(r.valor || 0), 0);
-  const detalheDevolvido = totRepr > 0 && dif - totRepr > -0.005
-    ? `<div style="font-size:11.5px; color:var(--muted)">sobra ${brl(Math.max(0, dif - totRepr))} + reprovadas ${brl(totRepr)}</div>` : '';
+  // A reprovada saiu da conta do Flash e será abatida na próxima OT: NÃO volta ao saldo.
+  const saldoCard = dif >= 0 ? Math.max(0, Math.round((dif - totRepr) * 100) / 100) : dif;
+  const detalheDevolvido = dif >= 0 && totRepr > 0
+    ? `<div style="font-size:11.5px; color:var(--muted)">liberado − comprovado = ${brl(dif)}, menos ${brl(totRepr)} de reprovadas (descontadas na próxima OT)</div>` : '';
+  const confValor = conferir ? Number(conferir.conferir_valor || 0) : 0;
+  const conferirHtml = conferir && (confValor > 0 || conferir.conferir_decisao || conferir.estorno_flash !== null) ? `
+    <h4 style="margin:18px 0 6px">Estorno do Flash e diferença a conferir${confValor > 0 && !conferir.conferir_decisao ? ` <span class="badge late">${brl(confValor)}</span>` : ''}</h4>
+    <p class="hint" style="margin:0 0 8px">Estorno recebido no extrato: <strong>${conferir.estorno_flash === null ? 'não importado' : brl(conferir.estorno_flash)}</strong>.
+      ${confValor > 0 && !conferir.conferir_decisao ? `<strong>${brl(confValor)} saíram do saldo e não voltaram como estorno</strong> — confira no Flash (cancelamentos e retenções).` : ''}
+      ${conferir.conferir_decisao ? `<br>Decisão: <strong>${conferir.conferir_decisao === 'cobrado' ? 'cobrado (vira pendência)' : 'justificado'}</strong> — ${esc(conferir.conferir_nota || '')}` : ''}</p>
+    ${confValor > 0 && !conferir.conferir_decisao && finalizada && USER.role === 'admin' && !somenteLeitura ? `
+      <button class="btn" type="button" data-conf="justificar">Conferido no Flash — justificar</button>
+      <button class="btn" type="button" data-conf="cobrar">Cobrar do colaborador</button>` : ''}` : '';
   const reprovadasHtml = reprovadasFlash.length ? `
     <h4 style="margin:18px 0 6px">Despesas reprovadas no Flash <span class="badge late">${brl(totRepr)}</span></h4>
-    <p class="hint" style="margin:0 0 8px">Não entram no comprovado: o colaborador usou o valor, que conta como devolvido ao Flash e é descontado na próxima OT dele.
+    <p class="hint" style="margin:0 0 8px">Não entram no comprovado: o colaborador usou o valor: ele saiu da conta do Flash, não volta ao saldo e é descontado na próxima OT dele.
       ${finalizada && !s.pendencia_resolvida && Number(s.valor_pendencia) > 0 ? `<strong>Pendência a descontar na próxima OT: ${brl(s.valor_pendencia)}.</strong>` : ''}</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Data</th><th>Descrição</th><th class="num">Valor</th><th class="actions"></th></tr></thead>
@@ -6375,7 +6388,7 @@ async function viewSolicitacao(id) {
         ${!s.valor_liberado && solicitado > 0 ? '<div style="font-size:11.5px; color:var(--muted)">aguardando transferência no Flash</div>' : ''}</div>
       <div class="card kpi blue"><div class="label">Comprovado</div><div class="value">${brl(comprovado)}</div></div>
       <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
-        <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(dif))}</div>${detalheDevolvido}</div>
+        <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(saldoCard))}</div>${detalheDevolvido}</div>
     </div>
     ${memoriaHtml}
     ${viaKmSecao(s, km)}
@@ -6410,7 +6423,7 @@ async function viewSolicitacao(id) {
           <button class="btn sm att-btn" data-att="${d.id}">📎</button>
           ${!finalizada && !somenteLeitura ? `<button class="btn sm" data-editdesp="${d.id}">Editar</button><button class="btn sm danger-ghost" data-deldesp="${d.id}">Excluir</button>` : ''}
         </td></tr>`).join('') || '<tr><td colspan="5"><div class="empty">Nenhuma despesa lançada ainda.</div></td></tr>'}</tbody>
-    </table></div>${reprovadasHtml}`;
+    </table></div>${reprovadasHtml}${conferirHtml}`;
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
@@ -6421,7 +6434,7 @@ async function viewSolicitacao(id) {
     botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
       const r = await api(`/api/viaticos/solicitacoes/${id}/fechar`, { method: 'POST' });
       closeModal();
-      toast(r.status === 'divergente' ? `Encerrado com divergência: ${brl(r.valor_pendencia)} em pendência.` : r.status === 'devolvido' ? `Encerrado — ${brl(r.valor_devolvido)} devolvido à carteira.` : 'Encerrado — valores batem exatamente.');
+      toast(r.status === 'divergente' ? `Encerrado com divergência: ${brl(r.valor_pendencia)} em pendência.` : (r.status === 'devolvido' ? `Encerrado — ${brl(r.valor_devolvido)} a devolver à carteira.` : 'Encerrado — valores batem exatamente.') + (r.conferir_valor > 0 ? ` Atenção: ${brl(r.conferir_valor)} a conferir no Flash.` : ''));
       renderViaticos();
     }});
   } else if (s.status !== 'arquivado') {
@@ -6437,6 +6450,16 @@ async function viewSolicitacao(id) {
   openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(s.data_inicio)}–${brDate(s.data_fim)})`,
     body, botoes, { wide: true });
 
+  document.querySelectorAll('[data-conf]').forEach(b => b.onclick = async () => {
+    const cobrar = b.dataset.conf === 'cobrar';
+    const nota = prompt(cobrar ? 'Por que cobrar esta diferença do colaborador? (fica registrado)' : 'Explique o que foi conferido no Flash (fica registrado):');
+    if (nota === null) return;
+    try {
+      await api(`/api/viaticos/solicitacoes/${id}/conferir-decisao`, { method: 'POST', body: { decisao: b.dataset.conf, nota } });
+      toast(cobrar ? 'Diferença cobrada: virou pendência a descontar na próxima OT.' : 'Diferença justificada e registrada.');
+      viewSolicitacao(id);
+    } catch (e) { toast(e.message); }
+  });
   document.querySelectorAll('[data-delrepr]').forEach(b => b.onclick = async () => {
     if (!confirm('Excluir este registro de despesa reprovada? A pendência da viagem é recalculada.')) return;
     try { await api('/api/viaticos/reprovadas/' + b.dataset.delrepr, { method: 'DELETE' }); toast('Registro excluído.'); viewSolicitacao(id); }
@@ -6649,7 +6672,8 @@ async function viewSolicitacao(id) {
 const FLASH_CONCEITO_MAP = {
   'combustivel': 'combustivel', 'pedagio': 'pedagio', 'hospedagem': 'hospedagem',
   'alimentacao': 'alimentacao', 'refeicao': 'alimentacao',
-  'estacionamento': 'estacionamento', 'taxi': 'taxi_uber', 'uber': 'taxi_uber'
+  'estacionamento': 'estacionamento', 'taxi': 'taxi_uber', 'uber': 'taxi_uber',
+  'apps': 'taxi_uber', 'aereas': 'passagem_aviao', 'veiculo': 'aluguel_carro'
 };
 const normalizeTxt = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 
@@ -6793,12 +6817,18 @@ async function parseFlashXLSX(file) {
 
   const out = [];
   const reprovadas = [];
+  let estorno = null; // soma das linhas "Estorno de saldo": o que voltou de fato à carteira
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i] || [];
     diag.lidas++;
     if (col.status > -1) {
       const st = normalizeTxt(row[col.status]);
       if (st && !FLASH_STATUS_OK.some(k => st.includes(k))) {
+        if (/^estorno/.test(normalizeTxt(row[col.mov]))) {
+          const vE = flashParseValor(row[col.valor]);
+          if (vE !== null && vE > 0) estorno = Math.round(((estorno || 0) + vE) * 100) / 100;
+          continue;
+        }
         if (FLASH_STATUS_REPROVADA.some(k => st.includes(k))) {
           const dR = flashParseData(row[col.data]), vR = flashParseValor(row[col.valor]), mR = String(row[col.mov] ?? '').trim();
           if (dR && vR !== null && vR > 0 && mR) {
@@ -6833,7 +6863,7 @@ async function parseFlashXLSX(file) {
     const pessoa = col.pessoa > -1 ? String(row[col.pessoa] ?? '').trim() : '';
     out.push({ data, valor, descricao: movRaw, pessoa, conceitoOriginal, categoria });
   }
-  return { linhas: out, reprovadas, diag };
+  return { linhas: out, reprovadas, estorno, diag };
 }
 
 async function importarFlashModal(s) {
@@ -6845,6 +6875,7 @@ async function importarFlashModal(s) {
   let rows = [];
   let avisos = [];
   let reprovadas = []; // linhas "Reprovado" do Flash: registradas à parte, não entram no comprovado
+  let estornoArquivo = null; // estorno do Flash lido do arquivo (null = arquivo sem estorno)
   let loteReprovadas = null; // hash do arquivo: reimportar o mesmo arquivo não duplica as reprovadas
   let diag = null; // preenchido pelo parse; explica na tela quando nada entra
 
@@ -6934,6 +6965,11 @@ async function importarFlashModal(s) {
           if (resp && resp.duplicada) reprJaExistiam++; else reprRegistradas++;
         } catch (e) { reprErros.push(`${brDate(r.data)} ${brl(r.valor)}: ${e.message}`); }
       }
+      // Estorno do Flash: substitui o valor guardado (reimportar não soma de novo).
+      if (estornoArquivo !== null) {
+        try { await api(`/api/viaticos/solicitacoes/${s.id}/estorno`, { method: 'POST', body: { valor: estornoArquivo } }); }
+        catch (e) { reprErros.push(`estorno ${brl(estornoArquivo)}: ${e.message}`); }
+      }
       const partes = selecionados.length ? [`${ok} de ${selecionados.length} lançamento(s) importado(s)`] : [];
       if (reprRegistradas) partes.push(`${reprRegistradas} reprovada(s) registrada(s) para desconto`);
       if (reprJaExistiam) partes.push(`${reprJaExistiam} reprovada(s) já registrada(s) antes`);
@@ -6958,7 +6994,7 @@ async function importarFlashModal(s) {
         if (!bate) avisos.push(`O nome no arquivo ("${esc(nome)}") não parece bater com o colaborador desta solicitação ("${esc(s.colaborador_name)}").`);
       }
       const parsed = await parseFlashXLSX(file);
-      rows = parsed.linhas; reprovadas = parsed.reprovadas || []; diag = parsed.diag;
+      rows = parsed.linhas; reprovadas = parsed.reprovadas || []; estornoArquivo = parsed.estorno; diag = parsed.diag;
       loteReprovadas = await flashHashArquivo(file);
       // Reimportar o mesmo arquivo duplicava as despesas: o que já está lançado (mesma data e valor) é reconhecido e fica de fora.
       try {
