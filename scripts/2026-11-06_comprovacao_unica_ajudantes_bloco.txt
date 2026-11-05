@@ -1,0 +1,43 @@
+// ---- Comprovação ÚNICA da família de OTs ----
+//
+// FAMÍLIA = a OT de origem (raiz) + todas as complementares ligadas a ela por solicitacao_pai_id, em qualquer profundidade. Cada OT da família segue com
+// aprovação, transferência e cancelamento PRÓPRIOS, mas a comprovação é uma só: despesas, notas, reprovadas do Flash, estorno e excessos ficam
+// gravados na OT RAIZ; liberado = soma das OTs da família (sem as canceladas); o fechamento é um só e as complementares acompanham o status final.
+// A raiz é calculada na hora (CTE recursiva), sem coluna extra: se a OT de origem for apagada, a complementar vira raiz sozinha (ON DELETE SET NULL).
+const FAMILIA_CTE = `WITH RECURSIVE fam AS (
+    SELECT id, id AS raiz_id FROM erp_viaticos_solicitacoes WHERE solicitacao_pai_id IS NULL
+    UNION ALL
+    SELECT s.id, f.raiz_id FROM erp_viaticos_solicitacoes s JOIN fam f ON s.solicitacao_pai_id = f.id)`;
+async function raizFamilia(id) {
+  const i = Number(id);
+  if (!Number.isInteger(i)) return id;
+  const r = await query(`${FAMILIA_CTE} SELECT raiz_id FROM fam WHERE id=$1`, [i]);
+  return r.length ? r[0].raiz_id : i;
+}
+async function idsFamilia(id) {
+  const raiz = Number(await raizFamilia(id));
+  if (!Number.isInteger(raiz)) return [];
+  const r = await query(`${FAMILIA_CTE} SELECT id FROM fam WHERE raiz_id=$1 ORDER BY id`, [raiz]);
+  return r.length ? r.map(x => x.id) : [raiz];
+}
+// Quem enxerga as despesas e as reprovadas: a raiz enxerga as da família toda; uma complementar, só as próprias (que, com a comprovação única,
+// já não existem). Assim os relatórios que somam OT por OT não contam a mesma despesa duas vezes.
+async function idsComprovacao(id) {
+  const raiz = Number(await raizFamilia(id));
+  return raiz === Number(id) ? idsFamilia(raiz) : [Number(id)];
+}
+// Liberado da família: soma das OTs, sem as canceladas (o valor transferido de uma cancelada já virou pendência de devolução à parte).
+async function liberadoFamilia(ids) {
+  const r = await query(`SELECT COALESCE(SUM(valor_liberado),0) AS v FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[]) AND status <> 'cancelada'`, [ids]);
+  return Math.round(n(r[0].v) * 100) / 100;
+}
+async function comprovadoFamilia(ids) {
+  return n((await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[])', [ids]))[0].v);
+}
+// As complementares acompanham o status final da comprovação (fechar, reabrir, arquivar). Só a raiz carrega devolução e pendência.
+async function propagarStatusFamilia(ids, raizId, status, deStatus) {
+  if (ids.length < 2) return;
+  await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=0, valor_pendencia=0, pendencia_resolvida=true
+      WHERE id = ANY($2::int[]) AND id <> $3 AND status = ANY($4::text[])`, [status, ids, raizId, deStatus]);
+}
+

@@ -5831,40 +5831,100 @@ async function renderViaticos() {
       return true;
     });
     lastFiltered = filtered;
+    // COMPROVAÇÃO ÚNICA: uma linha por OT de origem, com as complementares dentro. Os valores da linha são a soma da família (sem as canceladas); a
+    // etiqueta "↪ N complementares" abre o histórico logo abaixo, e cada complementar mantém status, valores e ações próprios (aprovação, transferência,
+    // cancelamento). A complementar que passa no filtro sem a OT de origem aparece sozinha, com a marca de qual OT ela complementa. Os relatórios
+    // (exportar) continuam com uma linha por OT: usam `filtered`, não o agrupamento.
+    const idsFiltrados = new Set(filtered.map(x => x.id));
+    const aninhada = x => viaRaizDe(x) !== x.id && idsFiltrados.has(viaRaizDe(x));
+    const topo = filtered.filter(x => !aninhada(x));
+    const acoesHtml = (s, fechada) => `<td class="actions via-acoes">${READONLY
+        ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
+        : `<button class="btn-ic ok" data-view="${s.id}" title="${fechada ? 'Ver' : 'Comprovar'}" aria-label="${fechada ? 'Ver' : 'Comprovar'}">${fechada ? '👁' : '✓'}</button>
+        <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
+        <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
+        ${meuColaborador && s.colaborador_id === meuColaborador.id && s.complementar_tipo !== 'custo_extra' && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local, ir a um novo destino ou pedir só um custo extra (ex.: remarcação de passagem)" aria-label="Complementar">↪</button>` : ''}
+        ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn-ic perigo" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)" aria-label="Cancelar">⊘</button>` : ''}
+        ${READONLY ? '' : `<button class="btn-ic exc" data-del="${s.id}" title="Excluir" aria-label="Excluir">🗑</button>`}
+      </td>`;
+    const rotuloCompl = s => {
+      if (s.complementar_tipo === 'custo_extra') {
+        const t = VIA_CUSTO_EXTRA_TIPOS.find(x => x.v === s.custo_extra_tipo);
+        return 'Custo extra' + (t ? ' — ' + t.t : '');
+      }
+      return VIA_COMPL_ROTULO[s.complementar_tipo] || 'Complementar';
+    };
+    // o: { fam } raiz com complementares (totais da família + etiqueta) · { filho, raiz } sub-linha · { soltaDe } complementar sem a raiz no filtro
+    const linhaHtml = (s, o = {}) => {
+      const vencida = ['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) && s.data_expiracao_flash && s.data_expiracao_flash < todayISO();
+      const filhos = o.fam ? o.fam.filter(x => x.id !== s.id) : [];
+      const tot = o.fam ? viaFamiliaTotais(o.fam) : null;
+      const aberta = VIA_FAM_ABERTAS.has(s.id);
+      const solic = tot ? tot.solicitado : viaTotalSolicitado(s);
+      const lib = tot ? tot.liberado : s.valor_liberado;
+      const comp = tot ? tot.comprovado : s.valor_comprovado;
+      const pendAprov = filhos.filter(x => x.status === 'em_approvals').length;
+      const raizObj = o.raiz || (o.soltaDe ? sols.find(x => x.id === viaRaizDe(s)) : null);
+      const destinosTxt = Array.isArray(s.destinos) && s.destinos.length ? s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ') : '';
+      const cor = 'style="color:var(--muted)"';
+      if (o.filho) {
+        const fechadaRaiz = raizObj ? viaSolFechada(raizObj) : viaSolFechada(s);
+        return `<tr class="via-fam-filho">
+          <td><span class="via-fam-seta-filho" aria-hidden="true">↪</span> <strong>OT ${esc(s.ordem_trabalho || s.id)}</strong><br><small ${cor}>${esc(rotuloCompl(s))}</small></td>
+          <td></td>
+          <td><small ${cor}>${destinosTxt}</small></td>
+          <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}</td>
+          <td class="num">${brl(viaTotalSolicitado(s))}</td>
+          <td class="num">${brl(s.valor_liberado)}${!s.valor_liberado && viaTotalSolicitado(s) > 0 && s.status !== 'cancelada' ? '<br><small ' + cor + '>a transferir</small>' : ''}</td>
+          <td class="num"><small ${cor}>na comprovação da OT ${esc((raizObj && (raizObj.ordem_trabalho || raizObj.id)) || '')}</small></td>
+          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
+          ${acoesHtml(s, fechadaRaiz)}
+        </tr>`;
+      }
+      const chip = filhos.length
+        ? `<br><button type="button" class="via-fam-chip" data-fam="${s.id}" aria-expanded="${aberta}" title="${aberta ? 'Recolher' : 'Ver'} as complementares desta OT">↪ ${filhos.length} complementar${filhos.length > 1 ? 'es' : ''} <span aria-hidden="true">${aberta ? '▴' : '▾'}</span></button>` : '';
+      return `<tr${filhos.length ? ' class="via-fam-raiz"' : ''}>
+          <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small ${cor}>${esc(s.colaborador_cargo)}</small>` : ''}</td>
+          <td>${s.tier}</td>
+          <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small ${cor}>OT ${esc(s.ordem_trabalho)}</small>` : ''}
+            ${destinosTxt ? `<br><small ${cor}>${destinosTxt}</small>` : ''}
+            ${o.soltaDe ? `<br><small ${cor}>↪ complementar da OT ${esc((raizObj && (raizObj.ordem_trabalho || raizObj.id)) || '')}</small>` : ''}${chip}</td>
+          <td>${brDate((tot && tot.inicio) || s.data_inicio)} – ${brDate((tot && tot.fim) || s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
+          <td class="num">${brl(solic)}${filhos.length ? `<br><small ${cor}>OT + ${filhos.length} compl.</small>` : ''}</td>
+          <td class="num">${brl(lib)}${!lib && solic > 0 ? `<br><small ${cor}>a transferir</small>` : ''}</td>
+          <td class="num">${brl(comp)}${s.anexos_count ? ` <small ${cor}>(📎${s.anexos_count})</small>` : ''}</td>
+          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span>${pendAprov ? `<br><small class="via-fam-aviso">${pendAprov} compl. em Approvals</small>` : ''}</td>
+          ${acoesHtml(s, viaSolFechada(s))}
+        </tr>`;
+    };
+    const linhasDoTopo = s => {
+      const ehRaiz = viaRaizDe(s) === s.id;
+      const fam = ehRaiz ? viaFamiliaDe(sols, s.id) : null;
+      if (!ehRaiz) return linhaHtml(s, { soltaDe: true });
+      if (fam.length < 2) return linhaHtml(s);
+      let h = linhaHtml(s, { fam });
+      if (VIA_FAM_ABERTAS.has(s.id)) {
+        h += fam.filter(x => x.id !== s.id).sort((a, b) => viaDia(a.data_inicio).localeCompare(viaDia(b.data_inicio)) || a.id - b.id)
+          .map(f => linhaHtml(f, { filho: true, raiz: s })).join('');
+      }
+      return h;
+    };
     $('#tbl').innerHTML = `
       <thead><tr><th>Colaborador</th><th>Tier</th><th>Local</th><th>Período</th><th class="num">Solicitado</th><th class="num">Liberado</th>
         <th class="num">Comprovado</th><th>Status</th><th class="actions">Ações</th></tr></thead>
-      <tbody>${filtered.map(s => {
-        const dif = s.valor_liberado - s.valor_comprovado;
-        const vencida = ['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) && s.data_expiracao_flash && s.data_expiracao_flash < todayISO();
-        return `<tr>
-          <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small style="color:var(--muted)">${esc(s.colaborador_cargo)}</small>` : ''}</td>
-          <td>${s.tier}</td>
-          <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small style="color:var(--muted)">OT ${esc(s.ordem_trabalho)}</small>` : ''}
-            ${Array.isArray(s.destinos) && s.destinos.length ? `<br><small style="color:var(--muted)">${s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ')}</small>` : ''}</td>
-          <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
-          <td class="num">${brl(viaTotalSolicitado(s))}</td>
-          <td class="num">${brl(s.valor_liberado)}${!s.valor_liberado && viaTotalSolicitado(s) > 0 ? '<br><small style="color:var(--muted)">a transferir</small>' : ''}</td>
-          <td class="num">${brl(s.valor_comprovado)}${s.anexos_count ? ` <small style="color:var(--muted)">(📎${s.anexos_count})</small>` : ''}</td>
-          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
-          <td class="actions via-acoes">${READONLY
-            ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
-            : `<button class="btn-ic ok" data-view="${s.id}" title="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}" aria-label="${viaSolFechada(s) ? 'Ver' : 'Comprovar'}">${viaSolFechada(s) ? '👁' : '✓'}</button>
-            <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
-            <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
-            ${meuColaborador && s.colaborador_id === meuColaborador.id && s.complementar_tipo !== 'custo_extra' && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local, ir a um novo destino ou pedir só um custo extra (ex.: remarcação de passagem)" aria-label="Complementar">↪</button>` : ''}
-            ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn-ic perigo" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)" aria-label="Cancelar">⊘</button>` : ''}
-            ${READONLY ? '' : `<button class="btn-ic exc" data-del="${s.id}" title="Excluir" aria-label="Excluir">🗑</button>`}
-          </td>
-        </tr>`;
-      }).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
+      <tbody>${topo.map(linhasDoTopo).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
+    $('#tbl').querySelectorAll('[data-fam]').forEach(b => b.onclick = () => {
+      const id = Number(b.dataset.fam);
+      if (VIA_FAM_ABERTAS.has(id)) VIA_FAM_ABERTAS.delete(id); else VIA_FAM_ABERTAS.add(id);
+      draw();
+    });
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
     $('#tbl').querySelectorAll('[data-transf]').forEach(b => b.onclick = () => viaTransferenciaModal(sols.find(s => s.id == b.dataset.transf)));
     $('#tbl').querySelectorAll('[data-cancelar]').forEach(b => b.onclick = () => viaCancelarModal(sols.find(s => s.id == b.dataset.cancelar)));
     $('#tbl').querySelectorAll('[data-compl]').forEach(b => b.onclick = () => renderSolicitacaoAutosservico(sols.find(s => s.id == b.dataset.compl)));
     $('#tbl').querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-      const s = filtered.find(x => x.id == b.dataset.del);
+      const s = sols.find(x => x.id == b.dataset.del);
       if (s && s.status === 'divergente' && !s.pendencia_resolvida) {
         return openModal('⚠️ Atenção — pendência em aberto', `
           <p style="font-size:13.5px; color:var(--ink-2)">Esta solicitação (<strong>${esc(s.colaborador_name)}</strong>) ainda tem uma
@@ -5874,7 +5934,7 @@ async function renderViaticos() {
           [{ label: 'Cancelar', onClick: closeModal },
            { label: 'Excluir mesmo assim', cls: 'danger-ghost', onClick: () => { closeModal(); viaConfirmarExclusao(s); } }]);
       }
-      viaConfirmarExclusao(s || filtered.find(x => x.id == b.dataset.del) || { id: b.dataset.del });
+      viaConfirmarExclusao(s || { id: b.dataset.del });
     });
   };
 
@@ -6257,9 +6317,30 @@ function viaCancelarModal(s) {
      } }]);
 }
 
+// ---- Família de OTs (origem + complementares): comprovação única ----
+// Cada OT tem aprovação, transferência e cancelamento próprios, mas a comprovação é UMA: as despesas ficam na OT de origem (raiz) e o fechamento vale
+// para todas. O servidor devolve `familia_raiz_id` em cada OT da lista.
+const VIA_FAM_ABERTAS = new Set();   // raízes com as complementares abertas na lista (lembra entre redesenhos)
+const VIA_COMPL_ROTULO = { extensao: 'Estender no local', novo_destino: 'Novo destino', custo_extra: 'Custo extra' };
+const viaRaizDe = s => s.familia_raiz_id || s.id;
+const viaDia = v => String(v || '').slice(0, 10);
+function viaFamiliaDe(todas, raizId) { return todas.filter(x => viaRaizDe(x) === raizId); }
+// Totais da família: as OTs canceladas não entram em solicitado, liberado nem no período (o valor transferido de uma cancelada já virou pendência à parte).
+function viaFamiliaTotais(membros) {
+  const ativos = membros.filter(m => m.status !== 'cancelada');
+  const soma = (arr, f) => Math.round(arr.reduce((t, m) => t + (Number(f(m)) || 0), 0) * 100) / 100;
+  const ini = ativos.map(m => viaDia(m.data_inicio)).sort(), fim = ativos.map(m => viaDia(m.data_fim)).sort();
+  return { solicitado: soma(ativos, viaTotalSolicitado), liberado: soma(ativos, m => m.valor_liberado), comprovado: soma(membros, m => m.valor_comprovado),
+    inicio: ini[0] || null, fim: fim[fim.length - 1] || null };
+}
+
 async function viewSolicitacao(id) {
-  const [s, despesas, tud, km, reprovadasFlash, conferir] = await Promise.all([
-    api('/api/viaticos/solicitacoes').then(all => all.find(x => x.id === id)),
+  const todas = await api('/api/viaticos/solicitacoes');
+  const alvo = todas.find(x => x.id === id);
+  // Comprovação única: abrir uma complementar leva à comprovação da OT de origem, onde ficam as despesas da família inteira.
+  if (alvo && viaRaizDe(alvo) !== id) return viewSolicitacao(viaRaizDe(alvo));
+  const familia = viaFamiliaDe(todas, id).sort((a, b) => (a.id === id ? -1 : b.id === id ? 1 : viaDia(a.data_inicio).localeCompare(viaDia(b.data_inicio)) || a.id - b.id));
+  const [despesas, tud, km, reprovadasFlash, conferir] = await Promise.all([
     api(`/api/viaticos/solicitacoes/${id}/despesas`), api('/api/viaticos/tud'),
     // A quilometragem não pode derrubar o modal inteiro se falhar: ela é uma
     // seção a mais numa tela que já funcionava sem ela.
@@ -6269,12 +6350,16 @@ async function viewSolicitacao(id) {
     // Estorno do Flash / diferença a conferir: também é seção a mais, não pode derrubar a tela.
     api(`/api/viaticos/solicitacoes/${id}/conferir`).catch(() => null)
   ]);
+  const s = alvo;
+  const totaisFam = viaFamiliaTotais(familia);
   const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
   // Usuário só-leitura abre o mesmo modal em modo consulta: vê os dados
   // completos da OT e a comprovação, sem nenhum controle de edição.
   const somenteLeitura = READONLY;
   const comprovado = despesas.reduce((sum, d) => sum + d.valor, 0);
-  const dif = s.valor_liberado - comprovado;
+  const liberadoTot = totaisFam.liberado;      // liberado da família (sem as canceladas)
+  const solicitadoTot = totaisFam.solicitado;
+  const dif = liberadoTot - comprovado;
   // Reprovadas no Flash: ficam FORA do comprovado, então já estão dentro do "a devolver ao Flash" (liberado − comprovado); aqui
   // a tela só mostra a composição e lista as linhas.
   const totRepr = reprovadasFlash.reduce((t, r) => t + Number(r.valor || 0), 0);
@@ -6306,8 +6391,11 @@ async function viewSolicitacao(id) {
   // sua própria cota). Hospedagem continua acumulativa (soma das diárias
   // contra o teto do período todo), já que uma diária de hotel normalmente
   // cobre mais de uma noite numa linha só.
-  const limite = s.data_expiracao_flash || s.data_fim;
-  const foraDoPeriodo = despesas.filter(d => d.data < s.data_inicio || d.data > limite);
+  // COMPROVAÇÃO ÚNICA: o período aceito vai do início da primeira OT ao prazo mais tardio da família (Flash ou fim da OT).
+  const ativos = familia.filter(m => m.status !== 'cancelada');
+  const iniFam = totaisFam.inicio || viaDia(s.data_inicio);
+  const limite = ativos.map(m => viaDia(m.data_expiracao_flash || m.data_fim)).sort().pop() || (s.data_expiracao_flash || s.data_fim);
+  const foraDoPeriodo = despesas.filter(d => viaDia(d.data) < iniFam || viaDia(d.data) > viaDia(limite));
   const { dias, noites: noitesPeriodo } = s.complementar_tipo === 'custo_extra' ? { dias: 0, noites: 0 } : viaDiasNoites(s.data_inicio, s.data_fim, !!s.solicitacao_pai_id);
   // Mesma regra da previsão: viagem toda na cidade-sede não tem hospedagem.
   const hospDevida = viaHospedagemDevida(s.destinos, s.colaborador_cidade_base_uf, s.colaborador_cidade_base_municipio);
@@ -6315,15 +6403,30 @@ async function viewSolicitacao(id) {
   const tudHosp = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'hospedagem');
   const tudAlim = tud.find(x => x.tier === s.tier && x.categoria_local === s.categoria_local && x.tipo_despesa === 'alimentacao');
 
+  // Hospedagem: o teto é a soma, por OT da família, de noites × diária da TUD da OT (categoria de local e tier de cada uma; custo extra não tem noite).
+  const tetoHospFam = ativos.reduce((t, m) => {
+    const nn = m.complementar_tipo === 'custo_extra' ? 0 : viaDiasNoites(m.data_inicio, m.data_fim, !!m.solicitacao_pai_id).noites;
+    const hd = viaHospedagemDevida(m.destinos, s.colaborador_cidade_base_uf, s.colaborador_cidade_base_municipio);
+    const th = tud.find(x => x.tier === m.tier && x.categoria_local === m.categoria_local && x.tipo_despesa === 'hospedagem');
+    return t + (th && hd ? th.valor_diaria * nn : 0);
+  }, 0);
+  // Alimentação: teto do DIA = a maior diária entre as OTs que cobrem aquele dia (na dúvida, a da OT de origem).
+  const capAlim = data => {
+    const c = ativos.filter(m => viaDia(m.data_inicio) <= data && data <= viaDia(m.data_fim))
+      .map(m => tud.find(x => x.tier === m.tier && x.categoria_local === m.categoria_local && x.tipo_despesa === 'alimentacao')).filter(Boolean).map(x => x.valor_diaria);
+    return c.length ? Math.max(...c) : tudAlim.valor_diaria;
+  };
   const excessos = []; // { chave, msg, valor }
   if (tudHosp) {
     const gastoHosp = despesas.filter(d => d.categoria === 'hospedagem').reduce((sum, d) => sum + d.valor, 0);
     // Teto por NOITES, a mesma base da previsão (antes era por dias, o que
     // liberava na conferência quase o dobro do que havia sido previsto).
-    const tetoHosp = tudHosp.valor_diaria * noites;
+    const tetoHosp = familia.length > 1 ? tetoHospFam : tudHosp.valor_diaria * noites;
     if (gastoHosp > tetoHosp) {
       excessos.push({ chave: 'hospedagem', valor: gastoHosp - tetoHosp,
-        msg: !hospDevida
+        msg: familia.length > 1
+          ? `Hospedagem acima do teto da TUD: ${brl(gastoHosp)} gasto contra um limite de ${brl(tetoHosp)} (soma das noites previstas nesta OT e nas complementares).`
+          : !hospDevida
           ? `Hospedagem lançada em viagem na própria cidade-sede do colaborador (${esc(s.colaborador_cidade_base_municipio || '')}/${esc(s.colaborador_cidade_base_uf || '')}): ${brl(gastoHosp)}. A TUD não prevê hospedagem nesse caso.`
           : noites === 0
           ? `Hospedagem lançada em viagem de 1 dia (sem pernoite previsto): ${brl(gastoHosp)}. A TUD não prevê hospedagem quando ida e volta ocorrem no mesmo dia.`
@@ -6335,9 +6438,10 @@ async function viewSolicitacao(id) {
     despesas.filter(d => d.categoria === 'alimentacao').forEach(d => { porDia[d.data] = (porDia[d.data] || 0) + d.valor; });
     Object.keys(porDia).sort().forEach(data => {
       const gasto = porDia[data];
-      if (gasto > tudAlim.valor_diaria) {
-        excessos.push({ chave: `alimentacao_${data}`, valor: gasto - tudAlim.valor_diaria,
-          msg: `Alimentação do dia ${brDate(data)} acima da TUD diária: ${brl(gasto)} gasto contra um limite de ${brl(tudAlim.valor_diaria)}/dia.` });
+      const tetoDia = capAlim(viaDia(data));
+      if (gasto > tetoDia) {
+        excessos.push({ chave: `alimentacao_${data}`, valor: gasto - tetoDia,
+          msg: `Alimentação do dia ${brDate(data)} acima da TUD diária: ${brl(gasto)} gasto contra um limite de ${brl(tetoDia)}/dia.` });
       }
     });
   }
@@ -6364,7 +6468,7 @@ async function viewSolicitacao(id) {
         <div><small style="color:var(--muted)">Ordem de Trabalho</small><br><strong>${s.ordem_trabalho ? 'OT ' + esc(s.ordem_trabalho) : '—'}</strong></div>
         <div><small style="color:var(--muted)">Destinos</small><br><strong>${destinosTxt}</strong></div>
         <div><small style="color:var(--muted)">Local / Tier</small><br><strong>${LOCAL_LABEL[s.categoria_local] || '—'} · Tier ${esc(s.tier || '—')}</strong></div>
-        <div><small style="color:var(--muted)">Período</small><br><strong>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}</strong></div>
+        <div><small style="color:var(--muted)">Período${familia.length > 1 ? ' (todas as OTs)' : ''}</small><br><strong>${brDate(totaisFam.inicio || s.data_inicio)} – ${brDate(totaisFam.fim || s.data_fim)}</strong></div>
         <div><small style="color:var(--muted)">Flash expira em</small><br><strong>${s.data_expiracao_flash ? brDate(s.data_expiracao_flash) : '—'}</strong></div>
         <div><small style="color:var(--muted)">Status</small><br><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></div>
       </div>
@@ -6376,7 +6480,26 @@ async function viewSolicitacao(id) {
   const solicitado = viaTotalSolicitado(s);
   const prev = (s.previsao_por_categoria && typeof s.previsao_por_categoria === 'object') ? s.previsao_por_categoria : {};
   const prevLinhas = Object.entries(prev).filter(([, v]) => Number(v) > 0);
-  const memoriaHtml = prevLinhas.length ? `
+  // COMPROVAÇÃO ÚNICA: com complementares, a memória de cálculo mostra cada OT da família (status, solicitado, liberado e o detalhe por categoria).
+  const rotuloMembro = m => m.id === s.id ? 'OT de origem' : (VIA_COMPL_ROTULO[m.complementar_tipo] || 'Complementar');
+  const memoriaFamiliaHtml = familia.length > 1 ? `
+    <div class="card" style="margin-bottom:14px; padding:12px 16px">
+      <div style="font-size:12.5px; color:var(--muted); margin-bottom:8px">Comprovação <strong>única</strong>: reúne a OT ${esc(s.ordem_trabalho || s.id)} e ${familia.length - 1} complementar${familia.length > 2 ? 'es' : ''}.
+        Cada OT tem a própria aprovação e transferência; as despesas, o saldo e o fechamento valem para todas juntas.</div>
+      <table class="via-resumo-tbl" style="width:100%">
+        <tbody>${familia.map(m => {
+          const pv = (m.previsao_por_categoria && typeof m.previsao_por_categoria === 'object') ? Object.entries(m.previsao_por_categoria).filter(([, v]) => Number(v) > 0) : [];
+          const canc = m.status === 'cancelada';
+          return `<tr class="via-fam-cab"><td><strong>OT ${esc(m.ordem_trabalho || m.id)}</strong> <small style="color:var(--muted)">${esc(rotuloMembro(m))}</small>
+              <span class="badge ${VIA_STATUS_BADGE[m.status]}">${VIA_STATUS_LABEL[m.status]}</span></td>
+            <td class="num">${canc ? '<small style="color:var(--muted)">não entra nos totais</small>' : `<strong>${brl(viaTotalSolicitado(m))}</strong><br><small style="color:var(--muted)">liberado ${brl(m.valor_liberado)}</small>`}</td></tr>`
+            + (canc ? '' : pv.map(([k, v]) => `<tr class="via-fam-linha"><td>${DESP_CAT_LABEL[k] || esc(k)}</td><td class="num">${brl(Number(v))}</td></tr>`).join(''));
+        }).join('')}
+        <tr><td><strong>Total solicitado</strong></td><td class="num"><strong>${brl(totaisFam.solicitado)}</strong></td></tr>
+        <tr><td>Total liberado</td><td class="num">${brl(totaisFam.liberado)}</td></tr></tbody>
+      </table>
+    </div>` : '';
+  const memoriaHtml = familia.length > 1 ? memoriaFamiliaHtml : prevLinhas.length ? `
     <div class="card" style="margin-bottom:14px; padding:12px 16px">
       <div style="font-size:12.5px; color:var(--muted); margin-bottom:8px">Memória de cálculo da solicitação${s.origem === 'colaborador' ? ' (enviada pelo colaborador e recalculada pelo sistema)' : ''}</div>
       <table class="via-resumo-tbl" style="width:100%">
@@ -6388,9 +6511,9 @@ async function viewSolicitacao(id) {
   const body = `
     ${infoOT}
     <div class="grid kpis" style="margin-bottom:14px">
-      <div class="card kpi"><div class="label">Solicitado</div><div class="value">${brl(solicitado)}</div></div>
-      <div class="card kpi"><div class="label">Liberado</div><div class="value">${brl(s.valor_liberado)}</div>
-        ${!s.valor_liberado && solicitado > 0 ? '<div style="font-size:11.5px; color:var(--muted)">aguardando transferência no Flash</div>' : ''}</div>
+      <div class="card kpi"><div class="label">Solicitado${familia.length > 1 ? ' (OTs somadas)' : ''}</div><div class="value">${brl(solicitadoTot)}</div></div>
+      <div class="card kpi"><div class="label">Liberado${familia.length > 1 ? ' (OTs somadas)' : ''}</div><div class="value">${brl(liberadoTot)}</div>
+        ${!liberadoTot && solicitadoTot > 0 ? '<div style="font-size:11.5px; color:var(--muted)">aguardando transferência no Flash</div>' : ''}</div>
       <div class="card kpi blue"><div class="label">Comprovado</div><div class="value">${brl(comprovado)}</div></div>
       <div class="card kpi ${dif < 0 ? 'red' : ''}"><div class="label">${dif >= 0 ? 'A devolver ao Flash' : 'Estouro (pendência)'}</div>
         <div class="value ${dif < 0 ? 'neg' : 'pos'}">${brl(Math.abs(saldoCard))}</div>${detalheDevolvido}</div>
@@ -6437,7 +6560,8 @@ async function viewSolicitacao(id) {
     // consulta pura — nenhuma ação além de fechar
   } else if (!finalizada) {
     botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
-      const r = await api(`/api/viaticos/solicitacoes/${id}/fechar`, { method: 'POST' });
+      let r;
+      try { r = await api(`/api/viaticos/solicitacoes/${id}/fechar`, { method: 'POST' }); } catch (e) { return toast(e.message); }
       closeModal();
       toast(r.status === 'divergente' ? `Encerrado com divergência: ${brl(r.valor_pendencia)} em pendência.` : (r.status === 'devolvido' ? `Encerrado — ${brl(r.valor_devolvido)} a devolver à carteira.` : 'Encerrado — valores batem exatamente.') + (r.conferir_valor > 0 ? ` Atenção: ${brl(r.conferir_valor)} a conferir no Flash.` : ''));
       renderViaticos();
@@ -6452,7 +6576,7 @@ async function viewSolicitacao(id) {
     botoes.push({ label: 'Arquivar', cls: 'primary', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/arquivar`, { method: 'POST' }); closeModal(); toast('Arquivado.'); renderViaticos(); } });
   }
 
-  openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(s.data_inicio)}–${brDate(s.data_fim)})`,
+  openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(totaisFam.inicio || s.data_inicio)}–${brDate(totaisFam.fim || s.data_fim)})${familia.length > 1 ? ` · ${familia.length} OTs` : ''}`,
     body, botoes, { wide: true });
 
   document.querySelectorAll('[data-conf]').forEach(b => b.onclick = async () => {

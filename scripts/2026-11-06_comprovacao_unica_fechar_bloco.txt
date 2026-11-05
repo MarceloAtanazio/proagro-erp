@@ -1,0 +1,38 @@
+app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  // COMPROVAÇÃO ÚNICA: a OT de origem e as complementares fecham juntas, numa conta só. liberado = soma das OTs da família (sem as canceladas);
+  // comprovado = despesas da família; o resultado (comprovado/devolvido/divergente, devolução, pendência) fica na raiz e as complementares acompanham.
+  const rid = await raizFamilia(req.params.id);
+  const s = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
+  if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  const ids = await idsFamilia(rid);
+  // Complementar ainda em aprovação: o valor dela ainda vai ser liberado (ou a OT cancelada). Fechar agora fecharia a conta errada.
+  const emAprovacao = ids.length > 1 ? await query(`SELECT ordem_trabalho FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[]) AND id <> $2 AND status='em_approvals'`, [ids, rid]) : [];
+  if (emAprovacao.length) {
+    return res.status(400).json({ error: 'Há complementar(es) ainda em aprovação (' + emAprovacao.map(x => 'OT ' + x.ordem_trabalho).join(', ') + '). Aprove ou cancele antes de fechar a comprovação: ela é única para a OT e as complementares.' });
+  }
+  const comprovado = await comprovadoFamilia(ids);
+  const liberado = await liberadoFamilia(ids);
+  const dif = liberado - comprovado; // >0 sobrou, <0 estourou
+  const reprFlash = await somaReprovadasFlash(rid);
+  let status, valor_devolvido = 0, valor_pendencia = 0, pendencia_resolvida = true;
+  if (Math.abs(dif) < 0.005) { status = 'comprovado'; }
+  else if (dif > 0) { valor_devolvido = saldoDevolvivel(liberado, comprovado, reprFlash); status = valor_devolvido > 0.005 ? 'devolvido' : 'comprovado'; }
+  else { status = 'divergente'; valor_pendencia = Math.abs(dif); pendencia_resolvida = false; }
+  // Sem estouro, mas com excesso reprovado: o valor reprovado fica como pendência a descontar na próxima OT. No
+  // estouro o valor já está contido em valor_pendencia (comprovado − liberado), então não se soma de novo.
+  if (status !== 'divergente' && !s.pendencia_decisao) {
+    const ex = somaExcessosReprovados(s.excessos_status, s.excessos_valores);
+    if (ex > 0) { valor_pendencia = ex; pendencia_resolvida = false; }
+  }
+  // Despesas reprovadas no Flash: o colaborador usou o valor, então se somam à pendência (com ou sem estouro).
+  if (!s.pendencia_decisao) {
+    const fl = reprFlash;
+    if (fl > 0) { valor_pendencia = Math.round((valor_pendencia + fl) * 100) / 100; pendencia_resolvida = false; }
+  }
+  await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5`,
+    [status, valor_devolvido, valor_pendencia, pendencia_resolvida, rid]);
+  await propagarStatusFamilia(ids, rid, status, ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao']);
+  await recalcularSaldoConferir(Number(rid));
+  const conferir = n((await query('SELECT conferir_valor FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0].conferir_valor);
+  res.json({ ok: true, status, comprovado, liberado, valor_devolvido, valor_pendencia, conferir_valor: conferir, familia: ids.length });
+}));

@@ -1,0 +1,88 @@
+    lastFiltered = filtered;
+    // COMPROVAÇÃO ÚNICA: uma linha por OT de origem, com as complementares dentro. Os valores da linha são a soma da família (sem as canceladas); a
+    // etiqueta "↪ N complementares" abre o histórico logo abaixo, e cada complementar mantém status, valores e ações próprios (aprovação, transferência,
+    // cancelamento). A complementar que passa no filtro sem a OT de origem aparece sozinha, com a marca de qual OT ela complementa. Os relatórios
+    // (exportar) continuam com uma linha por OT: usam `filtered`, não o agrupamento.
+    const idsFiltrados = new Set(filtered.map(x => x.id));
+    const aninhada = x => viaRaizDe(x) !== x.id && idsFiltrados.has(viaRaizDe(x));
+    const topo = filtered.filter(x => !aninhada(x));
+    const acoesHtml = (s, fechada) => `<td class="actions via-acoes">${READONLY
+        ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
+        : `<button class="btn-ic ok" data-view="${s.id}" title="${fechada ? 'Ver' : 'Comprovar'}" aria-label="${fechada ? 'Ver' : 'Comprovar'}">${fechada ? '👁' : '✓'}</button>
+        <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
+        <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
+        ${meuColaborador && s.colaborador_id === meuColaborador.id && s.complementar_tipo !== 'custo_extra' && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local, ir a um novo destino ou pedir só um custo extra (ex.: remarcação de passagem)" aria-label="Complementar">↪</button>` : ''}
+        ${viaPodeCancelar(s) && ((meuColaborador && s.colaborador_id === meuColaborador.id) || !READONLY) ? `<button class="btn-ic perigo" data-cancelar="${s.id}" title="Cancelar esta OT (antes de a viagem começar)" aria-label="Cancelar">⊘</button>` : ''}
+        ${READONLY ? '' : `<button class="btn-ic exc" data-del="${s.id}" title="Excluir" aria-label="Excluir">🗑</button>`}
+      </td>`;
+    const rotuloCompl = s => {
+      if (s.complementar_tipo === 'custo_extra') {
+        const t = VIA_CUSTO_EXTRA_TIPOS.find(x => x.v === s.custo_extra_tipo);
+        return 'Custo extra' + (t ? ' — ' + t.t : '');
+      }
+      return VIA_COMPL_ROTULO[s.complementar_tipo] || 'Complementar';
+    };
+    // o: { fam } raiz com complementares (totais da família + etiqueta) · { filho, raiz } sub-linha · { soltaDe } complementar sem a raiz no filtro
+    const linhaHtml = (s, o = {}) => {
+      const vencida = ['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) && s.data_expiracao_flash && s.data_expiracao_flash < todayISO();
+      const filhos = o.fam ? o.fam.filter(x => x.id !== s.id) : [];
+      const tot = o.fam ? viaFamiliaTotais(o.fam) : null;
+      const aberta = VIA_FAM_ABERTAS.has(s.id);
+      const solic = tot ? tot.solicitado : viaTotalSolicitado(s);
+      const lib = tot ? tot.liberado : s.valor_liberado;
+      const comp = tot ? tot.comprovado : s.valor_comprovado;
+      const pendAprov = filhos.filter(x => x.status === 'em_approvals').length;
+      const raizObj = o.raiz || (o.soltaDe ? sols.find(x => x.id === viaRaizDe(s)) : null);
+      const destinosTxt = Array.isArray(s.destinos) && s.destinos.length ? s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ') : '';
+      const cor = 'style="color:var(--muted)"';
+      if (o.filho) {
+        const fechadaRaiz = raizObj ? viaSolFechada(raizObj) : viaSolFechada(s);
+        return `<tr class="via-fam-filho">
+          <td><span class="via-fam-seta-filho" aria-hidden="true">↪</span> <strong>OT ${esc(s.ordem_trabalho || s.id)}</strong><br><small ${cor}>${esc(rotuloCompl(s))}</small></td>
+          <td></td>
+          <td><small ${cor}>${destinosTxt}</small></td>
+          <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}</td>
+          <td class="num">${brl(viaTotalSolicitado(s))}</td>
+          <td class="num">${brl(s.valor_liberado)}${!s.valor_liberado && viaTotalSolicitado(s) > 0 && s.status !== 'cancelada' ? '<br><small ' + cor + '>a transferir</small>' : ''}</td>
+          <td class="num"><small ${cor}>na comprovação da OT ${esc((raizObj && (raizObj.ordem_trabalho || raizObj.id)) || '')}</small></td>
+          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></td>
+          ${acoesHtml(s, fechadaRaiz)}
+        </tr>`;
+      }
+      const chip = filhos.length
+        ? `<br><button type="button" class="via-fam-chip" data-fam="${s.id}" aria-expanded="${aberta}" title="${aberta ? 'Recolher' : 'Ver'} as complementares desta OT">↪ ${filhos.length} complementar${filhos.length > 1 ? 'es' : ''} <span aria-hidden="true">${aberta ? '▴' : '▾'}</span></button>` : '';
+      return `<tr${filhos.length ? ' class="via-fam-raiz"' : ''}>
+          <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small ${cor}>${esc(s.colaborador_cargo)}</small>` : ''}</td>
+          <td>${s.tier}</td>
+          <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small ${cor}>OT ${esc(s.ordem_trabalho)}</small>` : ''}
+            ${destinosTxt ? `<br><small ${cor}>${destinosTxt}</small>` : ''}
+            ${o.soltaDe ? `<br><small ${cor}>↪ complementar da OT ${esc((raizObj && (raizObj.ordem_trabalho || raizObj.id)) || '')}</small>` : ''}${chip}</td>
+          <td>${brDate((tot && tot.inicio) || s.data_inicio)} – ${brDate((tot && tot.fim) || s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
+          <td class="num">${brl(solic)}${filhos.length ? `<br><small ${cor}>OT + ${filhos.length} compl.</small>` : ''}</td>
+          <td class="num">${brl(lib)}${!lib && solic > 0 ? `<br><small ${cor}>a transferir</small>` : ''}</td>
+          <td class="num">${brl(comp)}${s.anexos_count ? ` <small ${cor}>(📎${s.anexos_count})</small>` : ''}</td>
+          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span>${pendAprov ? `<br><small class="via-fam-aviso">${pendAprov} compl. em Approvals</small>` : ''}</td>
+          ${acoesHtml(s, viaSolFechada(s))}
+        </tr>`;
+    };
+    const linhasDoTopo = s => {
+      const ehRaiz = viaRaizDe(s) === s.id;
+      const fam = ehRaiz ? viaFamiliaDe(sols, s.id) : null;
+      if (!ehRaiz) return linhaHtml(s, { soltaDe: true });
+      if (fam.length < 2) return linhaHtml(s);
+      let h = linhaHtml(s, { fam });
+      if (VIA_FAM_ABERTAS.has(s.id)) {
+        h += fam.filter(x => x.id !== s.id).sort((a, b) => viaDia(a.data_inicio).localeCompare(viaDia(b.data_inicio)) || a.id - b.id)
+          .map(f => linhaHtml(f, { filho: true, raiz: s })).join('');
+      }
+      return h;
+    };
+    $('#tbl').innerHTML = `
+      <thead><tr><th>Colaborador</th><th>Tier</th><th>Local</th><th>Período</th><th class="num">Solicitado</th><th class="num">Liberado</th>
+        <th class="num">Comprovado</th><th>Status</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${topo.map(linhasDoTopo).join('') || '<tr><td colspan="9"><div class="empty">Nenhuma solicitação encontrada.</div></td></tr>'}</tbody>`;
+    $('#tbl').querySelectorAll('[data-fam]').forEach(b => b.onclick = () => {
+      const id = Number(b.dataset.fam);
+      if (VIA_FAM_ABERTAS.has(id)) VIA_FAM_ABERTAS.delete(id); else VIA_FAM_ABERTAS.add(id);
+      draw();
+    });

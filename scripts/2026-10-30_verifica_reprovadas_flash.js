@@ -14,23 +14,32 @@ require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: {
   query: async (sql, p = []) => {
     const s = sql.replace(/\s+/g, ' ').trim();
     const find = id => SOL.find(x => x.id == id);
+    // comprovação única da família: aqui cada OT é uma família de um (a raiz é ela mesma)
+    if (s.startsWith('WITH RECURSIVE fam AS')) return s.includes('SELECT raiz_id FROM fam WHERE id=$1') ? [{ raiz_id: Number(p[0]) }] : [{ id: Number(p[0]) }];
+    if (s.startsWith('SELECT COALESCE(SUM(valor_liberado),0) AS v FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[])')) return [{ v: SOL.filter(x => p[0].includes(x.id)).reduce((t, x) => t + x.valor_liberado, 0) }];
     if (s.includes('FROM erp_users WHERE id')) return [U[p[0]]].filter(Boolean);
     if (s.includes('INSERT INTO erp_audit_log')) return [];
     if (s.startsWith('SELECT id FROM erp_colaboradores WHERE usuario_id = $1')) return [{ id: 7 }];
     if (s.startsWith('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY')) return (p[1] || []).includes(7) ? [{ x: 1 }] : [];
     if (s.startsWith('SELECT id FROM erp_viaticos_solicitacoes WHERE id=$1')) return SOL.filter(x => x.id == p[0]).map(x => ({ id: x.id }));
-    if (s.startsWith('SELECT id, data, descricao, categoria, valor FROM erp_viaticos_reprovadas')) return REPR.filter(r => r.solicitacao_id == p[0]);
+    if (s.startsWith('SELECT id, data, descricao, categoria, valor FROM erp_viaticos_reprovadas')) return REPR.filter(r => p[0].includes(r.solicitacao_id));
     if (s.startsWith('INSERT INTO erp_viaticos_reprovadas')) {
       const [sid, data, desc, cat, valor, lote, linha] = p;
       if (lote !== null && REPR.some(r => r.solicitacao_id == sid && r.import_batch === lote && r.import_linha === linha)) return [];
       REPR.push({ id: ++SEQ, solicitacao_id: Number(sid), data, descricao: desc, categoria: cat, valor, import_batch: lote, import_linha: linha }); return [{ id: SEQ }];
     }
     if (s.startsWith('DELETE FROM erp_viaticos_reprovadas WHERE id=$1 RETURNING solicitacao_id')) { const i = REPR.findIndex(r => r.id == p[0]); if (i < 0) return []; const [r] = REPR.splice(i, 1); return [{ solicitacao_id: r.solicitacao_id }]; }
-    if (s.startsWith('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_reprovadas WHERE solicitacao_id=$1')) return [{ v: REPR.filter(r => r.solicitacao_id == p[0]).reduce((t, r) => t + r.valor, 0) }];
+    if (s.startsWith('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_reprovadas WHERE solicitacao_id = ANY($1::int[])')) return [{ v: REPR.filter(r => p[0].includes(r.solicitacao_id)).reduce((t, r) => t + r.valor, 0) }];
+    // consultas do saldo/estorno (sessões de 05/11): sem estorno importado e sem decisão de conferência
+    if (s.startsWith('SELECT status, pendencia_decisao, excessos_status, excessos_valores, valor_liberado FROM erp_viaticos_solicitacoes WHERE id=$1')) { const x = find(p[0]); return x ? [x] : []; }
+    if (s.startsWith('SELECT status, valor_devolvido, estorno_flash, conferir_decisao FROM erp_viaticos_solicitacoes WHERE id=$1')) { const x = find(p[0]); return x ? [{ ...x, estorno_flash: null, conferir_decisao: null }] : []; }
+    if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET valor_devolvido=$1, status=$2 WHERE id=$3')) { const x = find(p[2]); Object.assign(x, { valor_devolvido: p[0], status: p[1] }); return []; }
+    if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET conferir_valor=$1 WHERE id=$2')) return [];
+    if (s.startsWith('SELECT conferir_valor FROM erp_viaticos_solicitacoes WHERE id=$1')) return [{ conferir_valor: 0 }];
     if (s.startsWith('SELECT status, pendencia_decisao, excessos_status, excessos_valores FROM erp_viaticos_solicitacoes WHERE id=$1')) { const x = find(p[0]); return x ? [x] : []; }
     if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET valor_pendencia=$1, pendencia_resolvida=$2 WHERE id=$3')) { const x = find(p[2]); x.valor_pendencia = p[0]; x.pendencia_resolvida = p[1]; return []; }
     if (s.startsWith('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1')) return SOL.filter(x => x.id == p[0]);
-    if (s.startsWith('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id=$1')) return [{ v: find(p[0]).comprovado }];
+    if (s.startsWith('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[])')) return [{ v: p[0].reduce((t, id) => t + find(id).comprovado, 0) }];
     if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5')) {
       const x = find(p[4]); Object.assign(x, { status: p[0], valor_devolvido: p[1], valor_pendencia: p[2], pendencia_resolvida: p[3] }); return [];
     }
@@ -65,7 +74,8 @@ const LOTE = 'a'.repeat(64);
   ok('a lista traz a reprovada', r.status === 200 && r.body.length === 1 && r.body[0].valor === 7.95, r);
 
   r = await req(1, 'POST', '/api/viaticos/solicitacoes/93/fechar');
-  ok('fechar a viagem: devolvido = liberado − comprovado (já inclui a reprovada)', r.status === 200 && r.body.status === 'devolvido' && Math.abs(r.body.valor_devolvido - 1221.23) < 0.005, r);
+  // regra de 05/11: a reprovada saiu da conta do Flash e NÃO volta ao saldo (1.221,23 − 7,95 = 1.213,28; a reprovada vive só na pendência)
+  ok('fechar a viagem: devolvido = liberado − comprovado − reprovada (a reprovada não volta ao saldo)', r.status === 200 && r.body.status === 'devolvido' && Math.abs(r.body.valor_devolvido - 1213.28) < 0.005, r);
   ok('...e a reprovada vira pendência de R$ 7,95 em aberto', r.body.valor_pendencia === 7.95 && SOL[0].pendencia_resolvida === false, [r.body, SOL[0]]);
   let pe = (await req(1, 'GET', '/api/viaticos/colaboradores/7/pendencia')).body;
   ok('o aviso da próxima OT lista a pendência com origem "flash"', pe.total === 7.95 && pe.solicitacoes[0].origem === 'flash' && pe.solicitacoes[0].ordem_trabalho === '93' && pe.solicitacoes[0].valor_reprovado_flash === 7.95, pe);

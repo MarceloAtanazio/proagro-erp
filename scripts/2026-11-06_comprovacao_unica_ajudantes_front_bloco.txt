@@ -1,0 +1,17 @@
+// ---- Família de OTs (origem + complementares): comprovação única ----
+// Cada OT tem aprovação, transferência e cancelamento próprios, mas a comprovação é UMA: as despesas ficam na OT de origem (raiz) e o fechamento vale
+// para todas. O servidor devolve `familia_raiz_id` em cada OT da lista.
+const VIA_FAM_ABERTAS = new Set();   // raízes com as complementares abertas na lista (lembra entre redesenhos)
+const VIA_COMPL_ROTULO = { extensao: 'Estender no local', novo_destino: 'Novo destino', custo_extra: 'Custo extra' };
+const viaRaizDe = s => s.familia_raiz_id || s.id;
+const viaDia = v => String(v || '').slice(0, 10);
+function viaFamiliaDe(todas, raizId) { return todas.filter(x => viaRaizDe(x) === raizId); }
+// Totais da família: as OTs canceladas não entram em solicitado, liberado nem no período (o valor transferido de uma cancelada já virou pendência à parte).
+function viaFamiliaTotais(membros) {
+  const ativos = membros.filter(m => m.status !== 'cancelada');
+  const soma = (arr, f) => Math.round(arr.reduce((t, m) => t + (Number(f(m)) || 0), 0) * 100) / 100;
+  const ini = ativos.map(m => viaDia(m.data_inicio)).sort(), fim = ativos.map(m => viaDia(m.data_fim)).sort();
+  return { solicitado: soma(ativos, viaTotalSolicitado), liberado: soma(ativos, m => m.valor_liberado), comprovado: soma(membros, m => m.valor_comprovado),
+    inicio: ini[0] || null, fim: fim[fim.length - 1] || null };
+}
+

@@ -1644,7 +1644,7 @@ app.get('/api/reports/actuals/:year', requireAuth, requireViewAny(['orcadoreal',
     `SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables
       WHERE status='pago' AND category=$1 AND EXTRACT(YEAR FROM payment_date)=$2`, [CAT_REPASSE_VIATICOS, y]))[0].v);
   const pend = (await query(
-    `SELECT COUNT(*)::int AS n, COALESCE(SUM(s.valor_liberado),0) AS v
+    `SELECT COUNT(*) FILTER (WHERE s.solicitacao_pai_id IS NULL)::int AS n, COALESCE(SUM(s.valor_liberado),0) AS v
        FROM erp_viaticos_solicitacoes s
       WHERE s.status = 'aguardando_comprovacao'`))[0];
 
@@ -6711,26 +6711,36 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
   // regra assume o registro, para a tela não seguir dizendo "definido
   // manualmente". `em_approvals` continua fora desta faixa: é decisão de
   // aprovação, não de calendário.
+  // COMPROVAÇÃO ÚNICA: a família de OTs (origem + complementares) só entra em "Aguardando comprovação" depois do fim da ÚLTIMA OT dela. Antes, cada
+  // OT mudava de status só pelas próprias datas, e a OT de origem entrava em comprovação com a complementar ainda em viagem. Complementar em
+  // aprovação ou cancelada não estica o prazo da família.
   const today = hojeISO();
-  const STATUS_POR_DATA = `CASE
-      WHEN status = 'transferencia_agendada' AND $1 < data_inicio THEN 'transferencia_agendada'
-      WHEN $1 < data_inicio THEN 'liberado'
-      WHEN $1 > data_fim THEN 'aguardando_comprovacao'
-      ELSE 'em_viagem'
-    END`;
-  await query(`
-    UPDATE erp_viaticos_solicitacoes
-    SET status = ${STATUS_POR_DATA},
-        status_manual = CASE
-          WHEN status = 'transferencia_agendada' AND $1 < data_inicio THEN status_manual
-          ELSE false
-        END
-    WHERE status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada')
-      AND status <> ${STATUS_POR_DATA}`, [today]);
+  await query(`${FAMILIA_CTE},
+    fim AS (SELECT f.raiz_id, MAX(m.data_fim) AS fim_fam FROM fam f JOIN erp_viaticos_solicitacoes m ON m.id = f.id
+             WHERE m.status NOT IN ('cancelada','em_approvals') GROUP BY f.raiz_id),
+    alvo AS (
+      SELECT s.id,
+             CASE
+               WHEN s.status = 'transferencia_agendada' AND $1 < s.data_inicio THEN 'transferencia_agendada'
+               WHEN $1 < s.data_inicio THEN 'liberado'
+               WHEN $1 > GREATEST(s.data_fim, COALESCE(fi.fim_fam, s.data_fim)) THEN 'aguardando_comprovacao'
+               ELSE 'em_viagem'
+             END AS novo,
+             (s.status = 'transferencia_agendada' AND $1 < s.data_inicio) AS manter_manual
+        FROM erp_viaticos_solicitacoes s
+        JOIN fam f ON f.id = s.id
+        LEFT JOIN fim fi ON fi.raiz_id = f.raiz_id
+       WHERE s.status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada'))
+    UPDATE erp_viaticos_solicitacoes s
+       SET status = a.novo,
+           status_manual = CASE WHEN a.manter_manual THEN s.status_manual ELSE false END
+      FROM alvo a
+     WHERE s.id = a.id AND s.status <> a.novo`, [today]);
 
   const escopo = await viaticosEscopo(req.user);
   const rows = await query(`
-    SELECT s.*, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
+    ${FAMILIA_CTE}
+    SELECT s.*, f.raiz_id AS familia_raiz_id, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
       c.cidade_base_uf AS colaborador_cidade_base_uf, c.cidade_base_municipio AS colaborador_cidade_base_municipio,
       c.veiculo_consumo_kml AS colaborador_veiculo_consumo_kml,
       -- Placa e modelo já cadastrados: o formulário de quilometragem chega
@@ -6739,6 +6749,7 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
       COALESCE((SELECT SUM(d.valor) FROM erp_viaticos_despesas d WHERE d.solicitacao_id=s.id), 0) AS valor_comprovado,
       (SELECT COUNT(*)::int FROM erp_attachments a JOIN erp_viaticos_despesas d ON d.id=a.entity_id AND a.entity_type='viatico' WHERE d.solicitacao_id=s.id) AS anexos_count
     FROM erp_viaticos_solicitacoes s JOIN erp_colaboradores c ON c.id=s.colaborador_id
+    LEFT JOIN fam f ON f.id = s.id
     ${escopo ? 'WHERE s.colaborador_id = ANY($1)' : ''}
     ORDER BY s.data_inicio DESC, s.id DESC`, escopo ? [escopo] : []);
   res.json(rows.map(r => ({ ...r, valor_solicitado: n(r.valor_solicitado), valor_liberado: n(r.valor_liberado),
@@ -6923,13 +6934,56 @@ function somaExcessosReprovados(statusPorChave, valoresPorChave) {
   return Math.round(Object.keys(vl).reduce((t, k) => t + (st[k] === 'reprovado' ? Number(vl[k]) || 0 : 0), 0) * 100) / 100;
 }
 
+// ---- Comprovação ÚNICA da família de OTs ----
+//
+// FAMÍLIA = a OT de origem (raiz) + todas as complementares ligadas a ela por solicitacao_pai_id, em qualquer profundidade. Cada OT da família segue com
+// aprovação, transferência e cancelamento PRÓPRIOS, mas a comprovação é uma só: despesas, notas, reprovadas do Flash, estorno e excessos ficam
+// gravados na OT RAIZ; liberado = soma das OTs da família (sem as canceladas); o fechamento é um só e as complementares acompanham o status final.
+// A raiz é calculada na hora (CTE recursiva), sem coluna extra: se a OT de origem for apagada, a complementar vira raiz sozinha (ON DELETE SET NULL).
+const FAMILIA_CTE = `WITH RECURSIVE fam AS (
+    SELECT id, id AS raiz_id FROM erp_viaticos_solicitacoes WHERE solicitacao_pai_id IS NULL
+    UNION ALL
+    SELECT s.id, f.raiz_id FROM erp_viaticos_solicitacoes s JOIN fam f ON s.solicitacao_pai_id = f.id)`;
+async function raizFamilia(id) {
+  const i = Number(id);
+  if (!Number.isInteger(i)) return id;
+  const r = await query(`${FAMILIA_CTE} SELECT raiz_id FROM fam WHERE id=$1`, [i]);
+  return r.length ? r[0].raiz_id : i;
+}
+async function idsFamilia(id) {
+  const raiz = Number(await raizFamilia(id));
+  if (!Number.isInteger(raiz)) return [];
+  const r = await query(`${FAMILIA_CTE} SELECT id FROM fam WHERE raiz_id=$1 ORDER BY id`, [raiz]);
+  return r.length ? r.map(x => x.id) : [raiz];
+}
+// Quem enxerga as despesas e as reprovadas: a raiz enxerga as da família toda; uma complementar, só as próprias (que, com a comprovação única,
+// já não existem). Assim os relatórios que somam OT por OT não contam a mesma despesa duas vezes.
+async function idsComprovacao(id) {
+  const raiz = Number(await raizFamilia(id));
+  return raiz === Number(id) ? idsFamilia(raiz) : [Number(id)];
+}
+// Liberado da família: soma das OTs, sem as canceladas (o valor transferido de uma cancelada já virou pendência de devolução à parte).
+async function liberadoFamilia(ids) {
+  const r = await query(`SELECT COALESCE(SUM(valor_liberado),0) AS v FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[]) AND status <> 'cancelada'`, [ids]);
+  return Math.round(n(r[0].v) * 100) / 100;
+}
+async function comprovadoFamilia(ids) {
+  return n((await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[])', [ids]))[0].v);
+}
+// As complementares acompanham o status final da comprovação (fechar, reabrir, arquivar). Só a raiz carrega devolução e pendência.
+async function propagarStatusFamilia(ids, raizId, status, deStatus) {
+  if (ids.length < 2) return;
+  await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=0, valor_pendencia=0, pendencia_resolvida=true
+      WHERE id = ANY($2::int[]) AND id <> $3 AND status = ANY($4::text[])`, [status, ids, raizId, deStatus]);
+}
+
 // ---- Despesas reprovadas no Flash ----
 //
 // No Excel do Flash a coluna "Prestação de contas" traz "Finalizada" ou "Reprovado". A reprovada NÃO é comprovada: fica
 // fora do comprovado (então já está dentro do "a devolver ao Flash" = liberado − comprovado), mas o colaborador USOU o
 // valor — por isso ela é registrada aqui e vira pendência a descontar na próxima OT dele.
 async function somaReprovadasFlash(solId) {
-  const r = await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_reprovadas WHERE solicitacao_id=$1', [solId]);
+  const r = await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_reprovadas WHERE solicitacao_id = ANY($1::int[])', [await idsFamilia(solId)]);
   return Math.round(n(r[0].v) * 100) / 100;
 }
 
@@ -6945,9 +6999,12 @@ async function recalcularPendenciaReprovadas(solId) {
     await query('UPDATE erp_viaticos_solicitacoes SET valor_pendencia=$1, pendencia_resolvida=$2 WHERE id=$3', [total, total === 0, solId]);
   }
   // A reprovada não volta ao saldo: o devolvido acompanha o que ela consome.
-  const comp = n((await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id=$1', [solId]))[0].v);
-  const dv = saldoDevolvivel(n(s.valor_liberado), comp, repr);
-  await query('UPDATE erp_viaticos_solicitacoes SET valor_devolvido=$1, status=$2 WHERE id=$3', [dv, dv > 0.005 ? 'devolvido' : 'comprovado', solId]);
+  const idsFam = await idsFamilia(solId);
+  const comp = await comprovadoFamilia(idsFam);
+  const dv = saldoDevolvivel(await liberadoFamilia(idsFam), comp, repr);
+  const novoStatus = dv > 0.005 ? 'devolvido' : 'comprovado';
+  await query('UPDATE erp_viaticos_solicitacoes SET valor_devolvido=$1, status=$2 WHERE id=$3', [dv, novoStatus, solId]);
+  await propagarStatusFamilia(idsFam, solId, novoStatus, ['comprovado', 'devolvido']);
   await recalcularSaldoConferir(solId);
 }
 
@@ -6972,7 +7029,7 @@ app.get('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireViewAny
     const dona = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)', [req.params.id, escopo]);
     if (!dona.length) return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
   }
-  const rows = await query('SELECT id, data, descricao, categoria, valor FROM erp_viaticos_reprovadas WHERE solicitacao_id=$1 ORDER BY data, id', [req.params.id]);
+  const rows = await query('SELECT id, data, descricao, categoria, valor FROM erp_viaticos_reprovadas WHERE solicitacao_id = ANY($1::int[]) ORDER BY data, id', [await idsComprovacao(req.params.id)]);
   res.json(rows.map(r => ({ ...r, valor: n(r.valor) })));
 }));
 
@@ -6983,6 +7040,7 @@ app.post('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireEdit('
   if (!isFinite(valor) || valor <= 0 || valor >= 1000000) return res.status(400).json({ error: 'Valor inválido.' });
   const sol = await query('SELECT id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]);
   if (!sol.length) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  const rid = await raizFamilia(req.params.id); // comprovação única: a reprovada fica na OT raiz da família
   // Mesma idempotência da importação das despesas: o par (arquivo, linha) identifica a ORIGEM, então reimportar o mesmo
   // arquivo não duplica, e o índice parcial é a garantia real (não uma consulta prévia).
   const lote = typeof b.import_batch === 'string' && /^[a-f0-9]{16,64}$/.test(b.import_batch) ? b.import_batch : null;
@@ -6993,9 +7051,9 @@ app.post('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireEdit('
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      ON CONFLICT (solicitacao_id, import_batch, import_linha) WHERE import_batch IS NOT NULL DO NOTHING
      RETURNING id`,
-    [req.params.id, b.data, sanitize(b.descricao) || null, sanitize(b.categoria) || null, valor, lote, linha, req.user.id]);
+    [rid, b.data, sanitize(b.descricao) || null, sanitize(b.categoria) || null, valor, lote, linha, req.user.id]);
   if (!ins.length) return res.json({ ok: true, duplicada: true });
-  await recalcularPendenciaReprovadas(Number(req.params.id));
+  await recalcularPendenciaReprovadas(Number(rid));
   res.json({ ok: true, id: ins[0].id, duplicada: false });
 }));
 
@@ -7010,43 +7068,46 @@ app.delete('/api/viaticos/reprovadas/:id', requireAuth, requireEdit('viaticos'),
 // O extrato traz "Estorno de saldo de pessoa": o que voltou de fato à carteira. SUBSTITUI (não soma) o valor guardado, então
 // reimportar o mesmo arquivo dá o mesmo resultado.
 app.get('/api/viaticos/solicitacoes/:id/conferir', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
+  const rid = await raizFamilia(req.params.id);
   const escopo = await viaticosEscopo(req.user);
   if (escopo) {
-    const dona = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)', [req.params.id, escopo]);
+    const dona = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)', [rid, escopo]);
     if (!dona.length) return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
   }
-  const r = (await query('SELECT estorno_flash, conferir_valor, conferir_decisao, conferir_nota, conferir_decidida_em FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  const r = (await query('SELECT estorno_flash, conferir_valor, conferir_decisao, conferir_nota, conferir_decidida_em FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
   if (!r) return res.status(404).json({ error: 'Solicitação não encontrada.' });
   res.json({ estorno_flash: r.estorno_flash === null ? null : n(r.estorno_flash), conferir_valor: n(r.conferir_valor),
     conferir_decisao: r.conferir_decisao, conferir_nota: r.conferir_nota, conferir_decidida_em: r.conferir_decidida_em });
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/estorno', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const rid = await raizFamilia(req.params.id);
   const valor = Math.round(Number(req.body && req.body.valor) * 100) / 100;
   if (!isFinite(valor) || valor < 0 || valor >= 1000000) return res.status(400).json({ error: 'Valor de estorno inválido.' });
-  const up = await query('UPDATE erp_viaticos_solicitacoes SET estorno_flash=$1 WHERE id=$2 RETURNING id', [valor, req.params.id]);
+  const up = await query('UPDATE erp_viaticos_solicitacoes SET estorno_flash=$1 WHERE id=$2 RETURNING id', [valor, rid]);
   if (!up.length) return res.status(404).json({ error: 'Solicitação não encontrada.' });
-  await recalcularSaldoConferir(Number(req.params.id));
+  await recalcularSaldoConferir(Number(rid));
   res.json({ ok: true });
 }));
 
 // Decisão sobre a diferença: "justificar" (conferido no Flash; a nota é obrigatória e fica registrada) ou "cobrar" (o valor vira
 // pendência a descontar na próxima OT). Só administrador: justificar é abrir mão de um valor.
 app.post('/api/viaticos/solicitacoes/:id/conferir-decisao', requireAuth, requireAdmin, h(async (req, res) => {
+  const rid = await raizFamilia(req.params.id);
   const b = req.body || {};
   const decisao = b.decisao === 'cobrar' ? 'cobrado' : (b.decisao === 'justificar' ? 'justificado' : null);
   const nota = sanitize(b.nota);
   if (!decisao) return res.status(400).json({ error: 'Decisão inválida.' });
   if (!nota || String(nota).trim().length < 5) return res.status(400).json({ error: 'Informe a justificativa (mínimo de 5 caracteres).' });
-  const s = (await query('SELECT status, conferir_valor, conferir_decisao FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  const s = (await query('SELECT status, conferir_valor, conferir_decisao FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
   if (s.conferir_decisao) return res.status(400).json({ error: 'Esta diferença já foi decidida.' });
   if (n(s.conferir_valor) <= 0) return res.status(400).json({ error: 'Não há diferença a conferir nesta OT.' });
   if (decisao === 'cobrado') {
     await query(`UPDATE erp_viaticos_solicitacoes SET conferir_decisao=$1, conferir_nota=$2, conferir_decidida_em=now(),
-      valor_pendencia = valor_pendencia + conferir_valor, pendencia_resolvida=false WHERE id=$3`, [decisao, nota, req.params.id]);
+      valor_pendencia = valor_pendencia + conferir_valor, pendencia_resolvida=false WHERE id=$3`, [decisao, nota, rid]);
   } else {
-    await query('UPDATE erp_viaticos_solicitacoes SET conferir_decisao=$1, conferir_nota=$2, conferir_decidida_em=now() WHERE id=$3', [decisao, nota, req.params.id]);
+    await query('UPDATE erp_viaticos_solicitacoes SET conferir_decisao=$1, conferir_nota=$2, conferir_decidida_em=now() WHERE id=$3', [decisao, nota, rid]);
   }
   res.json({ ok: true });
 }));
@@ -7089,12 +7150,21 @@ app.get('/api/viaticos/solicitacoes/:id/transferencia', requireAuth, requireEdit
 // Fecha a solicitação: compara valor liberado x comprovado e resolve automaticamente
 // (devolvido / comprovado exato / divergente com pendência registrada).
 app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  const s = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  // COMPROVAÇÃO ÚNICA: a OT de origem e as complementares fecham juntas, numa conta só. liberado = soma das OTs da família (sem as canceladas);
+  // comprovado = despesas da família; o resultado (comprovado/devolvido/divergente, devolução, pendência) fica na raiz e as complementares acompanham.
+  const rid = await raizFamilia(req.params.id);
+  const s = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
-  const comprovado = n((await query('SELECT COALESCE(SUM(valor),0) AS v FROM erp_viaticos_despesas WHERE solicitacao_id=$1', [req.params.id]))[0].v);
-  const liberado = n(s.valor_liberado);
+  const ids = await idsFamilia(rid);
+  // Complementar ainda em aprovação: o valor dela ainda vai ser liberado (ou a OT cancelada). Fechar agora fecharia a conta errada.
+  const emAprovacao = ids.length > 1 ? await query(`SELECT ordem_trabalho FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[]) AND id <> $2 AND status='em_approvals'`, [ids, rid]) : [];
+  if (emAprovacao.length) {
+    return res.status(400).json({ error: 'Há complementar(es) ainda em aprovação (' + emAprovacao.map(x => 'OT ' + x.ordem_trabalho).join(', ') + '). Aprove ou cancele antes de fechar a comprovação: ela é única para a OT e as complementares.' });
+  }
+  const comprovado = await comprovadoFamilia(ids);
+  const liberado = await liberadoFamilia(ids);
   const dif = liberado - comprovado; // >0 sobrou, <0 estourou
-  const reprFlash = await somaReprovadasFlash(s.id);
+  const reprFlash = await somaReprovadasFlash(rid);
   let status, valor_devolvido = 0, valor_pendencia = 0, pendencia_resolvida = true;
   if (Math.abs(dif) < 0.005) { status = 'comprovado'; }
   else if (dif > 0) { valor_devolvido = saldoDevolvivel(liberado, comprovado, reprFlash); status = valor_devolvido > 0.005 ? 'devolvido' : 'comprovado'; }
@@ -7111,23 +7181,28 @@ app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viat
     if (fl > 0) { valor_pendencia = Math.round((valor_pendencia + fl) * 100) / 100; pendencia_resolvida = false; }
   }
   await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5`,
-    [status, valor_devolvido, valor_pendencia, pendencia_resolvida, req.params.id]);
-  await recalcularSaldoConferir(Number(req.params.id));
-  const conferir = n((await query('SELECT conferir_valor FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0].conferir_valor);
-  res.json({ ok: true, status, comprovado, valor_devolvido, valor_pendencia, conferir_valor: conferir });
+    [status, valor_devolvido, valor_pendencia, pendencia_resolvida, rid]);
+  await propagarStatusFamilia(ids, rid, status, ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao']);
+  await recalcularSaldoConferir(Number(rid));
+  const conferir = n((await query('SELECT conferir_valor FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0].conferir_valor);
+  res.json({ ok: true, status, comprovado, liberado, valor_devolvido, valor_pendencia, conferir_valor: conferir, familia: ids.length });
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/arquivar', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  await query(`UPDATE erp_viaticos_solicitacoes SET status='arquivado' WHERE id=$1 AND status IN ('comprovado','devolvido','divergente')`, [req.params.id]);
+  const rid = await raizFamilia(req.params.id);
+  const up = await query(`UPDATE erp_viaticos_solicitacoes SET status='arquivado' WHERE id=$1 AND status IN ('comprovado','devolvido','divergente') RETURNING id`, [rid]);
+  if (up.length) await propagarStatusFamilia(await idsFamilia(rid), rid, 'arquivado', ['comprovado', 'devolvido', 'divergente']);
   res.json({ ok: true });
 }));
 
 // Reabre uma comprovação já finalizada, para corrigir/editar despesas.
 // Restrito a administradores (não basta ter permissão de edição em Viáticos).
 app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(async (req, res) => {
-  await query(`UPDATE erp_viaticos_solicitacoes SET status='aguardando_comprovacao', valor_devolvido=0, valor_pendencia=0, pendencia_resolvida=true,
+  const rid = await raizFamilia(req.params.id);
+  const up = await query(`UPDATE erp_viaticos_solicitacoes SET status='aguardando_comprovacao', valor_devolvido=0, valor_pendencia=0, pendencia_resolvida=true,
       conferir_valor=0, conferir_decisao=NULL, conferir_nota=NULL, conferir_decidida_em=NULL
-    WHERE id=$1 AND status IN ('comprovado','devolvido','divergente')`, [req.params.id]);
+    WHERE id=$1 AND status IN ('comprovado','devolvido','divergente') RETURNING id`, [rid]);
+  if (up.length) await propagarStatusFamilia(await idsFamilia(rid), rid, 'aguardando_comprovacao', ['comprovado', 'devolvido', 'divergente']);
   res.json({ ok: true });
 }));
 
@@ -7141,10 +7216,11 @@ app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(
 // estouro — não havia segundo par de olhos em nenhum ponto do fluxo
 // (auditoria 2026-09-01, P0-3(c)). Mesma trava que `reabrir` já usava.
 app.post('/api/viaticos/solicitacoes/:id/excesso-status', requireAuth, requireAdmin, h(async (req, res) => {
+  const rid = await raizFamilia(req.params.id);
   const chave = String(req.body.chave || '').trim();
   const status = req.body.status;
   if (!chave || !['aprovado', 'reprovado'].includes(status)) return res.status(400).json({ error: 'Dados inválidos.' });
-  const s = (await query('SELECT excessos_status, excessos_valores, status AS sol_status, pendencia_decisao FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+  const s = (await query('SELECT excessos_status, excessos_valores, status AS sol_status, pendencia_decisao FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
   const atual = (s.excessos_status && typeof s.excessos_status === 'object') ? s.excessos_status : {};
   const valores = (s.excessos_valores && typeof s.excessos_valores === 'object') ? { ...s.excessos_valores } : {};
@@ -7157,20 +7233,23 @@ app.post('/api/viaticos/solicitacoes/:id/excesso-status', requireAuth, requireAd
   } else {
     delete valores[chave];
   }
-  await query('UPDATE erp_viaticos_solicitacoes SET excessos_status=$1, excessos_valores=$2 WHERE id=$3', [JSON.stringify(atual), JSON.stringify(valores), req.params.id]);
+  await query('UPDATE erp_viaticos_solicitacoes SET excessos_status=$1, excessos_valores=$2 WHERE id=$3', [JSON.stringify(atual), JSON.stringify(valores), rid]);
   if (status === 'aprovado' && s.sol_status === 'divergente') {
-    await query(`UPDATE erp_viaticos_solicitacoes SET pendencia_resolvida=true WHERE id=$1`, [req.params.id]);
+    await query(`UPDATE erp_viaticos_solicitacoes SET pendencia_resolvida=true WHERE id=$1`, [rid]);
   }
   // Viagem já fechada SEM estouro: o excesso reprovado vira (ou deixa de ser) pendência na hora. Se ela ainda está
   // em andamento, quem aplica é o fechamento. Pendência já decidida (descontada/dispensada) não é reaberta.
   if (['comprovado', 'devolvido'].includes(s.sol_status) && !s.pendencia_decisao) {
     const total = somaExcessosReprovados(atual, valores);
-    await query('UPDATE erp_viaticos_solicitacoes SET valor_pendencia=$1, pendencia_resolvida=$2 WHERE id=$3', [total, total === 0, req.params.id]);
+    await query('UPDATE erp_viaticos_solicitacoes SET valor_pendencia=$1, pendencia_resolvida=$2 WHERE id=$3', [total, total === 0, rid]);
   }
   res.json({ ok: true });
 }));
 
 app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  // A comprovação da família (despesas, reprovadas, estorno) mora na OT raiz: apagá-la com complementares penduradas levaria tudo junto.
+  const filhas = await query('SELECT COUNT(*)::int AS n FROM erp_viaticos_solicitacoes WHERE solicitacao_pai_id=$1', [req.params.id]);
+  if (filhas[0] && filhas[0].n > 0) return res.status(400).json({ error: 'Esta OT tem complementar(es) ligada(s) a ela e a comprovação é única: exclua primeiro as complementares.' });
   await query('DELETE FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 }));
@@ -7182,7 +7261,7 @@ app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny([
     const dona = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id=$1 AND colaborador_id = ANY($2)', [req.params.id, escopo]);
     if (!dona.length) return res.status(403).json({ error: 'Acesso restrito às suas próprias solicitações.' });
   }
-  const rows = await query('SELECT * FROM erp_viaticos_despesas WHERE solicitacao_id=$1 ORDER BY data', [req.params.id]);
+  const rows = await query('SELECT * FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[]) ORDER BY data', [await idsComprovacao(req.params.id)]);
   res.json(rows.map(r => ({ ...r, valor: n(r.valor) })));
 }));
 
@@ -7193,7 +7272,7 @@ app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('vi
   const valor = Number(b.valor);
   if (!isFinite(valor) || valor <= 0) return res.status(400).json({ error: 'Valor deve ser maior que zero.' });
   const ins = await query(`INSERT INTO erp_viaticos_despesas (solicitacao_id, categoria, data, valor, descricao)
-    VALUES ($1,$2,$3,$4,$5) RETURNING id`, [req.params.id, b.categoria, b.data, valor, sanitize(b.descricao)]);
+    VALUES ($1,$2,$3,$4,$5) RETURNING id`, [await raizFamilia(req.params.id), b.categoria, b.data, valor, sanitize(b.descricao)]);
   res.json({ ok: true, id: ins[0].id });
 }));
 
@@ -7225,7 +7304,7 @@ app.delete('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('
   // justamente nesses dois casos. Um if (escopo) neste ponto seria codigo morto
   // se passando por guarda de seguranca. E o mesmo motivo pelo qual o POST e o
   // DELETE de despesa individual tambem nao checam.
-  const apagadas = await query('DELETE FROM erp_viaticos_despesas WHERE solicitacao_id=$1 RETURNING valor', [req.params.id]);
+  const apagadas = await query('DELETE FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[]) RETURNING valor', [await idsFamilia(req.params.id)]);
   const total = apagadas.reduce((acc, r) => acc + n(r.valor), 0);
   res.json({ ok: true, removidas: apagadas.length, total });
 }));
@@ -7692,10 +7771,10 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
     saldoCarteira = transferido - alocado;
   }
 
-  const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado FROM erp_viaticos_solicitacoes
+  const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado, solicitacao_pai_id FROM erp_viaticos_solicitacoes
     WHERE status IN ('liberado','em_viagem','aguardando_comprovacao')${filtroColab}`, paramsColab);
   const vencidas = aguardando.filter(r => r.data_expiracao_flash && r.data_expiracao_flash < today);
-  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia - COALESCE((SELECT SUM(a.valor) FROM erp_viaticos_pendencia_abatimentos a WHERE a.solicitacao_origem_id = erp_viaticos_solicitacoes.id AND a.decisao='descontada'),0)),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND pendencia_resolvida=false${filtroColab}`, paramsColab);
+  const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia - COALESCE((SELECT SUM(a.valor) FROM erp_viaticos_pendencia_abatimentos a WHERE a.solicitacao_origem_id = erp_viaticos_solicitacoes.id AND a.decisao='descontada'),0)),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND solicitacao_pai_id IS NULL AND pendencia_resolvida=false${filtroColab}`, paramsColab);
 
   // Fila de aprovação de quilometragem. Só para quem aprova (mesma regra do
   // saldo da carteira): para o colaborador, "3 a aprovar" seria ruído sobre uma
@@ -7722,7 +7801,7 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
 
   res.json({
     saldoCarteira, transferido, transferidoMes, kmPendentes,
-    aguardandoComprovacao: { n: aguardando.length, v: aguardando.reduce((s, r) => s + n(r.valor_liberado), 0) },
+    aguardandoComprovacao: { n: aguardando.filter(r => !r.solicitacao_pai_id).length, v: aguardando.reduce((s, r) => s + n(r.valor_liberado), 0) },
     vencidas: { n: vencidas.length, v: vencidas.reduce((s, r) => s + n(r.valor_liberado), 0) },
     divergentes: { n: divergentes[0].n, v: n(divergentes[0].v) }
   });

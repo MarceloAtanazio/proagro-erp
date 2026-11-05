@@ -1920,3 +1920,14 @@ td.via-acoes .btn-ic.exc:hover { background: var(--danger-050); }
 .btn.via-compl-card:hover { border-color: var(--verde-700); background: var(--verde-050, #EAF5EC); }
 .via-compl-tit { font-size: 14.5px; font-weight: 700; color: var(--ink, #1E2620); }
 .via-compl-desc { font-size: 12.5px; font-weight: 400; color: var(--muted); line-height: 1.45; }
+
+/* Viáticos: OT de origem com as complementares dentro (comprovação única). A etiqueta abre o histórico; as sub-linhas são mais leves e recuadas. */
+.via-fam-chip { margin-top: 4px; padding: 2px 9px; font-size: 11.5px; font-weight: 600; color: var(--verde-700); background: var(--verde-050, #EAF5EC); border: 1px solid #CDE5D6; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.via-fam-chip:hover { background: #DDEFE2; }
+tr.via-fam-filho td { background: #F7FAF8; font-size: 12.5px; border-top: 1px dashed var(--line); }
+tr.via-fam-filho td:first-child { padding-left: 26px; }
+.via-fam-seta-filho { color: var(--muted); }
+.via-fam-aviso { color: #8A6100; font-weight: 600; }
+tr.via-fam-cab td { padding-top: 8px; }
+tr.via-fam-linha td { font-size: 12.5px; color: var(--ink-2); padding-left: 18px; }
+tr.via-fam-linha td.num { padding-left: 0; }

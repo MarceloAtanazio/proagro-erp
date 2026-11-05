@@ -1,0 +1,25 @@
+  // COMPROVAÇÃO ÚNICA: a família de OTs (origem + complementares) só entra em "Aguardando comprovação" depois do fim da ÚLTIMA OT dela. Antes, cada
+  // OT mudava de status só pelas próprias datas, e a OT de origem entrava em comprovação com a complementar ainda em viagem. Complementar em
+  // aprovação ou cancelada não estica o prazo da família.
+  const today = hojeISO();
+  await query(`${FAMILIA_CTE},
+    fim AS (SELECT f.raiz_id, MAX(m.data_fim) AS fim_fam FROM fam f JOIN erp_viaticos_solicitacoes m ON m.id = f.id
+             WHERE m.status NOT IN ('cancelada','em_approvals') GROUP BY f.raiz_id),
+    alvo AS (
+      SELECT s.id,
+             CASE
+               WHEN s.status = 'transferencia_agendada' AND $1 < s.data_inicio THEN 'transferencia_agendada'
+               WHEN $1 < s.data_inicio THEN 'liberado'
+               WHEN $1 > GREATEST(s.data_fim, COALESCE(fi.fim_fam, s.data_fim)) THEN 'aguardando_comprovacao'
+               ELSE 'em_viagem'
+             END AS novo,
+             (s.status = 'transferencia_agendada' AND $1 < s.data_inicio) AS manter_manual
+        FROM erp_viaticos_solicitacoes s
+        JOIN fam f ON f.id = s.id
+        LEFT JOIN fim fi ON fi.raiz_id = f.raiz_id
+       WHERE s.status IN ('liberado','em_viagem','aguardando_comprovacao','transferencia_agendada'))
+    UPDATE erp_viaticos_solicitacoes s
+       SET status = a.novo,
+           status_manual = CASE WHEN a.manter_manual THEN s.status_manual ELSE false END
+      FROM alvo a
+     WHERE s.id = a.id AND s.status <> a.novo`, [today]);
