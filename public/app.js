@@ -2559,8 +2559,14 @@ const viaticosDestinoTxt = s => {
 // Busca as despesas de cada solicitação filtrada e devolve uma lista "achatada"
 // (uma linha por despesa), ordenada por colaborador/OT e depois por data —
 // é o detalhamento completo, ordem de trabalho por ordem de trabalho.
+const VIA_DESP_CACHE = new Map();   // despesas por solicitação (zerado a cada renderViaticos); a chave inclui status e valor comprovado
 async function buildViaticosItens(sols) {
-  const comDespesas = await Promise.all(sols.map(async s => ({ s, despesas: await api(`/api/viaticos/solicitacoes/${s.id}/despesas`) })));
+  const despesasDe = s => {
+    const k = `${s.id}|${s.status}|${s.valor_comprovado}`;
+    if (!VIA_DESP_CACHE.has(k)) VIA_DESP_CACHE.set(k, api(`/api/viaticos/solicitacoes/${s.id}/despesas`).catch(e => { VIA_DESP_CACHE.delete(k); throw e; }));
+    return VIA_DESP_CACHE.get(k);
+  };
+  const comDespesas = await Promise.all(sols.map(async s => ({ s, despesas: await despesasDe(s) })));
   const itens = [];
   comDespesas.forEach(({ s, despesas }) => {
     despesas.forEach(d => itens.push({
@@ -5735,6 +5741,7 @@ const VIA_STATUS_BADGE = {
 };
 
 async function renderViaticos() {
+  VIA_DESP_CACHE.clear();
   // meu-colaborador decide se o botão "Solicitar viagem" aparece — é
   // autosserviço, então vale para qualquer usuário vinculado a um
   // colaborador, mesmo os com acesso só de leitura na página (READONLY
@@ -5838,6 +5845,9 @@ async function renderViaticos() {
       return true;
     });
     lastFiltered = filtered;
+    // visual Novo (tema-viaticos.js): painel do período e indicadores leem daqui
+    window.ProagroVia = { sols, filtrados: filtered, dash, escopoProprio, de, ate, rotulo: viaticosPeriodoRotulo(filtered, de, ate), build: buildViaticosFechamento, pdf: exportViaticosFechamentoPDF, excel: exportViaticosFechamentoExcel };
+    setTimeout(() => document.dispatchEvent(new CustomEvent('proagro:via')), 0);
     // COMPROVAÇÃO ÚNICA: uma linha por OT de origem, com as complementares dentro. Os valores da linha são a soma da família (sem as canceladas); a
     // etiqueta "↪ N complementares" abre o histórico logo abaixo, e cada complementar mantém status, valores e ações próprios (aprovação, transferência,
     // cancelamento). A complementar que passa no filtro sem a OT de origem aparece sozinha, com a marca de qual OT ela complementa. Os relatórios

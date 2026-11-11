@@ -8112,3 +8112,19 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro, 13 categorias: nomes completos, valores e % legíveis, barra grande sem esmagar as pequenas. Não testado: tema claro neste gráfico, celular, produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 208: Viáticos — indicadores repaginados e aba "Painel do período" (visual Novo)
+
+**Solicitação:** com um print da tela de Viáticos, o Marcelo pediu uma repaginada nos indicadores do topo e uma aba "Painel" para analisar tudo do período filtrado — um espelho do "Exportar > Fechamento do período".
+
+**O que mudou (só no visual "Novo"; o Clássico não muda):**
+- **Indicadores:** saldo da carteira Flash em destaque (com medidor "restam X% do transferido") e cartões com ícone e cor: transferido no mês, reembolsos de km (leva à fila), aguardando comprovação e divergentes (filtram a lista ao clicar), vencidas e um novo "No filtro atual" (nº de OTs, liberado e comprovado do filtro; abre o Painel). Os indicadores originais continuam no DOM, ocultos.
+- **Abas Lista | Painel do período** acima dos filtros; a escolha fica na sessão. O Painel obedece à busca, ao status e ao período da tela e usa os MESMOS números do Fechamento (`buildViaticosFechamento`): indicadores (solicitado, liberado, comprovado, taxa de comprovação, devolvido, a descontar, ticket médio), prestação de contas por situação (clique filtra a lista), gastos por categoria (rosca + legenda com %), quando se gastou (por dia/semana/mês conforme a amplitude), ranking por colaborador (clique filtra; "ver todos"), quadro colaborador × categoria em mapa de calor e maiores lançamentos. Botões "Fechamento em PDF/Excel" geram os documentos existentes a partir do mesmo cálculo.
+- **app.js (ganchos mínimos, sem mudar o Clássico):** cache das despesas por OT dentro de `buildViaticosItens` (zerado a cada `renderViaticos`), e publicação de `window.ProagroVia` + evento `proagro:via` a cada `draw()`.
+
+**Arquivos:** `public/tema-viaticos.js` e `public/tema-viaticos.css` (novos), `public/index.html`, `public/app.js`, `scripts/2026-11-12_viaticos_painel_ganchos.js`, simulador `scripts/2026-11-11_tema_mock_navegador.js` (22 OTs extras, despesas e indicadores de exemplo). Sem servidor nem banco.
+
+**Verificação:** simulador, escuro e claro: indicadores, abas, todas as seções do Painel, cliques (situação, colaborador, indicadores) levando à lista filtrada, volta ao Clássico sem nenhum elemento novo. Não testado: produção logada (muitas OTs = muitas buscas de despesas no primeiro carregamento do Painel), usuário restrito (escopo próprio), celular, geração dos PDFs/Excel a partir do Painel.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

@@ -18,6 +18,15 @@
       valor_solicitado: 900, valor_liberado: 900, previsao_por_categoria: { hospedagem: 600, alimentacao: 300 }, data_inicio: '2026-11-06', data_fim: '2026-11-09', destinos: [{ uf: 'PR', municipio: 'Maringá' }] }),
     base({ id: 50, familia_raiz_id: 50, ordem_trabalho: '50', status: 'comprovado', data_inicio: '2026-10-01', data_fim: '2026-10-05', valor_comprovado: 1000, destinos: [{ uf: 'MT', municipio: 'Sinop' }] })
   ];
+  // OTs extras (painel de Viáticos): vários colaboradores, situações e datas
+  const NOMES = ['Dijovano Dal Castel', 'Leticia Cristina Deniz Fonseca', 'Rodolpho Teixeira Mensato', 'Arthur Albani Dala Costa', 'Marina Souza Prado', 'Carlos Eduardo Lima'];
+  const STS = ['comprovado', 'em_viagem', 'aguardando_comprovacao', 'devolvido', 'divergente', 'liberado', 'comprovado', 'em_approvals'];
+  for (let k = 0; k < 22; k++) { const di = new Date(2026, 9, 2 + k * 1.4), df = new Date(di.getTime() + (2 + k % 3) * 86400000), lib = 900 + (k * 377) % 3100;
+    SOLS.push(base({ id: 200 + k, familia_raiz_id: 200 + k, ordem_trabalho: String(150 + k), colaborador_name: NOMES[k % NOMES.length], status: STS[k % STS.length], data_inicio: di.toISOString().slice(0, 10), data_fim: df.toISOString().slice(0, 10),
+      valor_solicitado: lib, valor_liberado: lib, valor_comprovado: Math.round(lib * (0.55 + (k % 5) * 0.1)), valor_devolvido: k % 4 === 3 ? 120 : 0, valor_pendencia: k % 7 === 6 ? 210.5 : 0, destinos: [{ uf: 'PR', municipio: ['Maringá', 'Cascavel', 'Londrina'][k % 3] }] })); }
+  const CATS = ['hospedagem', 'alimentacao', 'combustivel', 'pedagio', 'aluguel_carro', 'estacionamento', 'taxi_uber'];
+  const despesasMock = id => { const s = SOLS.find(x => x.id === id); if (!s || id < 200) return null; const out = []; const n = 3 + id % 4; for (let j = 0; j < n; j++) { const d = new Date(new Date(s.data_inicio + 'T12:00:00').getTime() + (j % 3) * 86400000);
+      out.push({ id: id * 10 + j, solicitacao_id: id, categoria: CATS[(id + j) % CATS.length], data: d.toISOString().slice(0, 10), valor: Math.round((s.valor_comprovado / n) * (0.7 + (j % 3) * 0.3) * 100) / 100, descricao: ['Hotel', 'Almoço', 'Abastecimento', 'Pedágio BR-376', 'Locadora', 'Estacionamento', 'Corrida'][(id + j) % 7] }); } return out; };
   const TUD = [];
   for (const [cat, h, a] of [['interior', 200, 100], ['capital', 300, 150], ['sp_df_rj_intl', 400, 200]]) TUD.push({ tier: 'A', categoria_local: cat, tipo_despesa: 'hospedagem', valor_diaria: h }, { tier: 'A', categoria_local: cat, tipo_despesa: 'alimentacao', valor_diaria: a });
   window.__POSTS = []; window.__CHAMADAS = [];
@@ -26,7 +35,7 @@
     if (!u.includes('/api/')) return json({});
     window.__CHAMADAS.push(m + ' ' + u);
     if (u.includes('/api/auth/me')) return json({ user: { id: 1, name: 'Fulano de Tal', email: 'f@x.com', role: 'admin', is_super: true, permissions: { viaticos: (location.search.includes('admin') ? 'edit' : 'view') }, must_change_password: false } });
-    if (u.includes('/api/viaticos/dashboard')) return json({ aguardandoComprovacao: { n: 0, v: 0 }, divergentes: { n: 0, v: 0 }, vencidas: { n: 0, v: 0 }, kmPendentes: { n: 0, valor: 0 }, saldoCarteira: 0, transferido: 0, transferidoMes: 0 });
+    if (u.includes('/api/viaticos/dashboard')) return json({ aguardandoComprovacao: { n: 13, v: 41569.18 }, divergentes: { n: 2, v: 1830.4 }, vencidas: { n: 0, v: 0 }, kmPendentes: { n: 2, valor: 314.5 }, saldoCarteira: 60155.59, transferido: 219793.18, transferidoMes: 18400 });
     if (u.endsWith('/api/viaticos/solicitacoes') && m === 'GET') return json(SOLS);
     if (u.includes('/api/viaticos/autosservico/meu-colaborador')) return json(COLAB);
     if (u.endsWith('/api/colaboradores')) return json([COLAB]);
@@ -87,6 +96,7 @@
         vencendoPagar: cats.slice(0, 6).map((c, k) => ({ due_date: '2026-11-' + String(12 + k * 3).padStart(2, '0'), party: ['Tech Cloud S/A', 'Imobiliária Central', 'Seguradora Alfa', 'Gráfica Rápida', 'Contabilidade Silva', 'Energia Sul'][k], description: 'Pagamento ' + c, category: c, amount: 4200 + k * 3100 })),
         maioresPagarAbertos: cats.slice(0, 5).map((c, k) => ({ fornecedor: ['Tech Cloud S/A', 'Imobiliária Central', 'Seguradora Alfa', 'Folha de Pagamento', 'Energia Sul'][k], description: 'Título ' + (410 + k), category: c, due_date: '2026-11-' + String(15 + k * 2).padStart(2, '0'), amount: 48200 - k * 7300 }))
       }); }
+    if (u.includes('/despesas') && m === 'GET') { const mm = /solicitacoes\/(\d+)\/despesas/.exec(u); const g = mm && despesasMock(Number(mm[1])); if (g) return json(g); }
     if (u.includes('/despesas') && m === 'GET') return json(u.includes('/solicitacoes/109/') ? [
       { id: 1, solicitacao_id: 109, categoria: 'hospedagem', data: '2026-11-03', valor: 700, descricao: 'Hotel' },
       { id: 2, solicitacao_id: 109, categoria: 'alimentacao', data: '2026-11-04', valor: 300, descricao: 'Almoço' },
@@ -100,4 +110,5 @@
     return json([]);
   };
 })();
+
 
