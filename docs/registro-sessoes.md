@@ -8175,3 +8175,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro: cartões, pastilhas, medidores, minigráficos e clique no desvio levando à linha "Folha de Pagamento". Não testado: tema claro neste ajuste, produção logada, celular.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 212: Destaque "Execução do orçamento" maior e melhor distribuído (visual Novo)
+
+**Solicitação:** com um print do cartão "Execução do orçamento", o Marcelo pediu para aumentar e distribuir melhor as informações, que estavam pequenas e encostadas no canto.
+
+**O que mudou (só no visual "Novo"):** o medidor circular cresce (170–220px) e o % dentro dele fica maior; orçado, realizado e "ainda disponível" passam a ter fonte maior (até 30px), mais espaço entre si e barra lateral mais grossa; o corpo do cartão ocupa toda a altura, com o medidor e os valores distribuídos. Novo rodapé: barra de execução com a marca do 100% e três dados — média mensal orçada, média mensal realizada e número de categorias com orçamento.
+
+**Arquivos:** `public/tema-orcado.js`, `public/tema-orcado.css`. Sem servidor nem banco; Clássico intacto.
+
+**Verificação:** simulador, escuro, viewport 1250: medidor e valores grandes, cartão preenchido, rodapé com as médias (R$ 282.000,00 orçado e R$ 174.278,36 realizado por mês). Não testado: tema claro neste ajuste, produção logada, celular.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

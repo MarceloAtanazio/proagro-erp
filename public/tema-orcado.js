@@ -77,6 +77,10 @@
               <div><dt>Realizado</dt><dd data-conta="${tReal}">R$ 0,00</dd></div>
               <div class="${dif <= 0 ? 'ok' : 'late'}"><dt>${dif <= 0 ? 'Ainda disponível' : 'Acima do orçado'}</dt><dd data-conta="${Math.abs(dif)}">R$ 0,00</dd></div>
             </dl></div>
+          <div class="nd-ovr-hero-pe">
+            <div class="nd-ovr-hero-barra" title="Realizado em relação ao orçado (a marca é o 100%)">${medidor(pct == null ? 0 : Math.min(150, pct) / 150 * 100, 100 / 150 * 100)}</div>
+            <div class="nd-ovr-hero-med"><div><small>Média mensal orçada</small><b>${brl(tOrc / (O.maxM || 1))}</b></div><div><small>Média mensal realizada</small><b>${brl(tReal / (O.maxM || 1))}</b></div><div><small>Categorias</small><b>${comOrc.length}</b></div></div>
+          </div>
         </article>
         <div class="nd-ovr-grade">
           ${kpi(dif > 0 ? 'red' : 'ok', 'Variação total', sinal(dif) + brl(Math.abs(dif)), pct == null ? 'sem orçamento' : (dif <= 0 ? 'abaixo do orçado · ' : 'acima do orçado · ') + p1(pct) + ' do orçado',

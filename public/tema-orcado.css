@@ -14,19 +14,19 @@ html[data-ui="novo"] .nd-ovr-orig { display: none; }
 
 /* destaque + cartões */
 .nd-ovr-bento { display: grid; grid-template-columns: minmax(340px, 4.4fr) 8fr; gap: 18px; }
-.nd-ovr-hero { position: relative; overflow: hidden; background: linear-gradient(150deg, color-mix(in srgb, var(--verde-500) 13%, var(--card)), var(--card) 58%); }
+.nd-ovr-hero { position: relative; overflow: hidden; display: flex; flex-direction: column; padding: 24px 28px; background: linear-gradient(150deg, color-mix(in srgb, var(--verde-500) 13%, var(--card)), var(--card) 58%); }
 .nd-ovr-hero::after { content: ''; position: absolute; right: -70px; top: -70px; width: 220px; height: 220px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--verde-500) 24%, transparent), transparent 70%); pointer-events: none; }
-.nd-ovr-hero-corpo { display: flex; align-items: center; gap: 24px; margin-top: 16px; flex-wrap: wrap; position: relative; z-index: 1; }
-.nd-ovr-anel { position: relative; width: 150px; height: 150px; flex-shrink: 0; }
+.nd-ovr-hero-corpo { display: flex; align-items: center; justify-content: space-around; gap: 32px; margin: 12px 0; flex: 1; flex-wrap: wrap; position: relative; z-index: 1; }
+.nd-ovr-anel { position: relative; width: clamp(170px, 14vw, 220px); aspect-ratio: 1; flex-shrink: 0; }
 .nd-ovr-anel .nd-gauge circle { stroke-width: 13; }
 .nd-ovr-anel-tx { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
-.nd-ovr-anel-tx b { font-size: 27px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.nd-ovr-anel-tx small { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; margin-top: 3px; }
-.nd-ovr-valores { margin: 0; display: flex; flex-direction: column; gap: 12px; flex: 1; min-width: 150px; }
-.nd-ovr-valores div { border-left: 3px solid color-mix(in srgb, var(--muted) 35%, transparent); padding-left: 12px; }
+.nd-ovr-anel-tx b { font-size: clamp(32px, 2.6vw, 42px); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.nd-ovr-anel-tx small { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; margin-top: 3px; }
+.nd-ovr-valores { margin: 0; display: flex; flex-direction: column; gap: 22px; flex: 1; min-width: 200px; }
+.nd-ovr-valores div { border-left: 4px solid color-mix(in srgb, var(--muted) 35%, transparent); padding-left: 16px; }
 .nd-ovr-valores div.ok { border-color: var(--verde-500); } .nd-ovr-valores div.late { border-color: var(--danger); }
-.nd-ovr-valores dt { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.nd-ovr-valores dd { margin: 2px 0 0; font-size: 19px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.nd-ovr-valores dt { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.nd-ovr-valores dd { margin: 4px 0 0; font-size: clamp(22px, 1.9vw, 30px); font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .nd-ovr-grade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .nd-ovr-k { grid-column: auto; min-width: 0; --acento: var(--verde-500); }
 .nd-ovr-k.red { --acento: var(--danger); } .nd-ovr-k.warn { --acento: var(--warn); } .nd-ovr-k.blue { --acento: var(--azul-700); } .nd-ovr-k.ok { --acento: var(--verde-500); }
@@ -80,3 +80,11 @@ html[data-ui="novo"] .nd-ovr-h { font-size: 17px !important; letter-spacing: -.0
 .nd-ovr-k[data-cat] { cursor: pointer; } .nd-ovr-k[data-cat]:hover { transform: translateY(-3px); box-shadow: var(--shadow-alto); border-color: color-mix(in srgb, var(--acento) 40%, var(--line)); }
 @keyframes nd-ovr-pisca { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--verde-500) 55%, transparent); } }
 html[data-ui="novo"] tr.nd-ovr-pisca { animation: nd-ovr-pisca 1.1s ease-in-out 2; }
+
+/* rodapé do destaque: barra de execução + médias mensais */
+.nd-ovr-hero-pe { position: relative; z-index: 1; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 4px; }
+.nd-ovr-hero-barra .nd-ovr-m { margin: 4px 0 16px; height: 12px; }
+.nd-ovr-hero-barra .nd-ovr-m i { background: linear-gradient(90deg, var(--verde-700), var(--verde-500)); }
+.nd-ovr-hero-med { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.nd-ovr-hero-med small { display: block; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.nd-ovr-hero-med b { display: block; margin-top: 3px; font-size: 15px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
