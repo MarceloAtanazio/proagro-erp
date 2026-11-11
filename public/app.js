@@ -459,6 +459,8 @@ function injectReadonlyBanner() {
 async function renderDashboard() {
   const anoAtual = new Date().getFullYear();
   const [d, cf] = await Promise.all([api('/api/reports/dashboard'), api('/api/reports/cashflow/' + anoAtual)]);
+  // Visual novo (experimento): o Dashboard redesenhado vive em tema-dashboard.js e recebe os mesmos dados; no clássico, segue o de sempre.
+  if (window.ProagroNovo && window.ProagroTema && ProagroTema.ui === 'novo') return ProagroNovo.dashboard(d, cf);
   const c = $('#content');
   const fmtPct = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
   const cur = d.last12[11], prev = d.last12[10];
