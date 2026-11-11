@@ -8070,3 +8070,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador com o estado salvo (side-collapsed): símbolo de 46px visível no novo; ida ao clássico repõe o menu recolhido e o logo original; volta ao novo mostra o símbolo de novo. Cache do servidor conferido (revalida sempre), então não era arquivo antigo.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 205: Ícone selecionado deslocado no menu em trilho recolhido
+
+**Solicitação:** com um print, o Marcelo avisou que o ícone do item selecionado aparecia meio deslocado no menu recolhido.
+
+**Medição (antes):** centro do menu = 48; ícone do item ativo em 50; pílula do item ativo centrada em 43 com 34px de largura (o ícone ficava ~7px fora do centro da própria pílula); botão de busca com o ícone 2px fora. Causas: (1) a barra de rolagem do menu tomava ~10px de largura (a pílula encolhia de 44 para 34px e o ícone, com padding de 14px, transbordava); (2) o texto escondido do item (opacity 0) continuava ocupando espaço no fluxo (rolagem interna de 188px).
+
+**O que mudou (só no visual "Novo"):** recolhido, sem barra de rolagem visível no trilho (a rolagem com o mouse continua funcionando), texto do item fora do fluxo e padding simétrico de 12px (ícone de 20px no meio dos 44px); aberto, volta o padding de 14px, o espaço entre ícone e texto e a barra de rolagem fina. O mesmo no botão de busca do menu. Sem servidor nem banco.
+
+**Verificação (depois):** recolhido, os seis primeiros ícones, o item ativo e a busca com centro em 48 = centro do menu, pílulas de 44px; aberto (fixado), pílula de 214px com o texto dentro, ícone à esquerda, logo completo e busca no lugar. Não testado: produção logada; o abrir por passar o mouse (testei pelo botão de fixar).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
