@@ -142,6 +142,6 @@
     melhorar();
   }
 
-  const pagina = hash => { if (!novo()) return; if (hash === 'pagar' || hash === 'receber') financeiro(hash); };
-  window.ProagroNovo = Object.assign(window.ProagroNovo || {}, { pagina });
+  // quem decide quando enfeitar (troca de página e redesenho da tela) é o tema-paginas.js, que chama isto
+  window.ProagroNovo = Object.assign(window.ProagroNovo || {}, { financeiro: hash => { if (novo() && (hash === 'pagar' || hash === 'receber')) financeiro(hash); } });
 })();

@@ -25,7 +25,7 @@
     const u = String(url), m = (opts.method || 'GET').toUpperCase();
     if (!u.includes('/api/')) return json({});
     window.__CHAMADAS.push(m + ' ' + u);
-    if (u.includes('/api/auth/me')) return json({ user: { id: 1, name: 'Fulano de Tal', email: 'f@x.com', role: 'admin', permissions: { viaticos: (location.search.includes('admin') ? 'edit' : 'view') }, must_change_password: false } });
+    if (u.includes('/api/auth/me')) return json({ user: { id: 1, name: 'Fulano de Tal', email: 'f@x.com', role: 'admin', is_super: true, permissions: { viaticos: (location.search.includes('admin') ? 'edit' : 'view') }, must_change_password: false } });
     if (u.includes('/api/viaticos/dashboard')) return json({ aguardandoComprovacao: { n: 0, v: 0 }, divergentes: { n: 0, v: 0 }, vencidas: { n: 0, v: 0 }, kmPendentes: { n: 0, valor: 0 }, saldoCarteira: 0, transferido: 0, transferidoMes: 0 });
     if (u.endsWith('/api/viaticos/solicitacoes') && m === 'GET') return json(SOLS);
     if (u.includes('/api/viaticos/autosservico/meu-colaborador')) return json(COLAB);
@@ -34,7 +34,16 @@
     if (u.endsWith('/api/viaticos/config')) return json({ preco_combustivel_litro: 6 });
     if (u.endsWith('/api/viaticos/solicitacoes/autosservico') && m === 'POST') { window.__POSTS.push(JSON.parse(opts.body)); return json({ ok: true, id: 900 }); }
     if (m === 'DELETE') { window.__POSTS.push({ del: u }); return json({ ok: true }); }
-    if (u.endsWith('/api/suppliers')) return json([{ id: 1, name: 'Tech Cloud S/A' }, { id: 2, name: 'Imobiliária Central' }]);
+    if (u.endsWith('/api/suppliers')) return json([
+      { id: 1, name: 'Tech Cloud S/A', cnpj: '12345678000190', category: 'Tecnologia', email: 'contato@techcloud.com', contact_name: 'Marina Souza', phone: '4430543219', payment_terms: '30 dias', status: 'ativo' },
+      { id: 2, name: 'Imobiliária Central', cnpj: '98765432000110', category: 'Aluguel', email: 'fin@imobcentral.com', contact_name: '', phone: '', payment_terms: '15 dias', status: 'ativo' },
+      { id: 3, name: 'Gráfica Rápida LTDA', cnpj: '11222333000144', category: 'Marketing', email: '', contact_name: 'Paulo', phone: '4430548800', payment_terms: '', status: 'inativo' },
+      { id: 4, name: 'Seguradora Alfa', cnpj: '55666777000188', category: 'Seguros', email: 'cobranca@alfa.com.br', contact_name: 'Julia Reis', phone: '1130001000', payment_terms: '30 dias', status: 'ativo' }]);
+    if (u.includes('/api/settings/manage')) return json({
+      categories: ['Administrativo', 'Água', 'Aluguel', 'Energia', 'Tecnologia'].map((n, k) => ({ id: 10 + k, type: 'despesa', name: n, active: k !== 3 }))
+        .concat(['Prêmios', 'Serviços'].map((n, k) => ({ id: 30 + k, type: 'receita', name: n, active: true })))
+        .concat([{ id: 40, type: 'fornecedor', name: 'Tecnologia', active: true }]),
+      costCenters: [{ id: 50, name: 'Operações', active: true }, { id: 51, name: 'Comercial', active: false }] });
     if (u.endsWith('/api/payables') && m === 'GET') {
       const off = d => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
       const forn = ['Tech Cloud S/A', 'Imobiliária Central', 'Seguradora Alfa', 'Gráfica Rápida', 'Contabilidade Silva', 'Energia Sul', 'Papelaria Norte', 'Consultoria Beta'];

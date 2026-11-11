@@ -1,0 +1,106 @@
+/* ============================================================
+   KIT DE PÁGINAS — visual novo em TODAS as telas.
+   Reveste os componentes comuns (abas, cartões, listas, formulários,
+   avisos, vazios) e dá o cabeçalho de página. Só vale com
+   <html data-ui="novo">, exceto a correção de tinta do modo escuro
+   (que vale para os dois visuais). Carregado depois de tema-listas.css.
+   ============================================================ */
+
+/* ---------- escuro: textos que usavam o verde-escuro como "tinta" ficavam invisíveis ---------- */
+html[data-tema="escuro"] .rh-card b, html[data-tema="escuro"] .rh-painel-sec > h3, html[data-tema="escuro"] .kpi-v,
+html[data-tema="escuro"] .rh-sec h4, html[data-tema="escuro"] .rh-painel-sec h5 { color: var(--ink); }
+html[data-tema="escuro"] .rh-card.alerta b { color: var(--danger); }
+html[data-tema="escuro"] .rh-card.ok b { color: var(--verde-500); }
+
+/* ---------- cabeçalho de página ---------- */
+.nd-pagina-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin: 0 0 22px; }
+.nd-pagina-hero .nd-hero-titulo { margin: 4px 0 6px; }
+.nd-hero-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.nd-hero-chips .nd-chip { font-size: 12px; padding: 5px 13px; }
+@media (min-width: 981px) {
+  html[data-ui="novo"] .app.nd-tem-hero .topbar > div:first-child { display: none; }
+  html[data-ui="novo"] .app.nd-tem-hero .nd-cmdk-btn { margin-left: 0; margin-right: auto; }
+}
+
+/* ---------- abas (RH e outras) viram cápsula ---------- */
+html[data-ui="novo"] .rh-abas { display: flex; width: max-content; max-width: 100%; gap: 2px; padding: 4px; background: color-mix(in srgb, var(--muted) 10%, transparent); border: 0; border-radius: 999px; margin-bottom: 22px; }
+html[data-ui="novo"] .rh-aba { border: 0; margin: 0; padding: 9px 18px; border-radius: 999px; color: var(--muted); transition: background .18s, color .18s, box-shadow .18s; }
+html[data-ui="novo"] .rh-aba:hover { color: var(--ink); }
+html[data-ui="novo"] .rh-aba.ativa { background: var(--card); color: var(--ink); box-shadow: 0 1px 4px rgba(15,40,28,.16); }
+
+/* ---------- cartões e seções ---------- */
+html[data-ui="novo"] .rh-sec, html[data-ui="novo"] .rh-painel-sec, html[data-ui="novo"] .cfg-card, html[data-ui="novo"] .via-subcard {
+  border-radius: 20px; box-shadow: var(--shadow); padding: 22px 24px; transition: border-color .25s, box-shadow .25s var(--curva);
+}
+html[data-ui="novo"] .rh-sec:hover, html[data-ui="novo"] .rh-painel-sec:hover, html[data-ui="novo"] .cfg-card:hover { border-color: color-mix(in srgb, var(--verde-500) 26%, var(--line)); }
+html[data-ui="novo"] .card > h3, html[data-ui="novo"] .rh-painel-sec > h3, html[data-ui="novo"] .cfg-card > h3 { position: relative; padding-left: 14px; border-bottom: 0; padding-bottom: 0; letter-spacing: -.01em; }
+html[data-ui="novo"] .card > h3::before, html[data-ui="novo"] .rh-painel-sec > h3::before, html[data-ui="novo"] .cfg-card > h3::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 4px; height: 17px; border-radius: 4px; background: linear-gradient(180deg, var(--verde-500), var(--verde-700));
+}
+html[data-ui="novo"] .rh-sec h4 { display: flex; align-items: center; gap: 8px; letter-spacing: .09em; color: var(--muted); }
+html[data-ui="novo"] .rh-sec h4::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--verde-500); flex-shrink: 0; }
+html[data-ui="novo"] .rh-sec-desl h4::before { background: var(--danger); }
+html[data-ui="novo"] .rh-painel-sec h5 { letter-spacing: .09em; }
+
+/* ---------- indicadores do RH (rh-card) como os do Dashboard ---------- */
+html[data-ui="novo"] .rh-cards { gap: 16px; }
+html[data-ui="novo"] .rh-card {
+  position: relative; overflow: hidden; --acento: var(--verde-500); border-radius: 18px; padding: 18px 20px; box-shadow: var(--shadow);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--acento) 9%, var(--card)), var(--card) 62%);
+  transition: transform .25s var(--curva), box-shadow .25s var(--curva), border-color .25s;
+}
+html[data-ui="novo"] .rh-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-alto); }
+html[data-ui="novo"] .rh-card::before { content: ''; position: absolute; left: 20px; top: 0; width: 42px; height: 3px; border-radius: 0 0 4px 4px; background: var(--acento); }
+html[data-ui="novo"] .rh-card.alerta { --acento: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); background: linear-gradient(160deg, color-mix(in srgb, var(--danger) 10%, var(--card)), var(--card) 62%); }
+html[data-ui="novo"] .rh-card.aviso { --acento: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); background: linear-gradient(160deg, color-mix(in srgb, var(--warn) 10%, var(--card)), var(--card) 62%); }
+html[data-ui="novo"] .rh-card b { font-size: 29px; letter-spacing: -.03em; color: var(--ink); }
+html[data-ui="novo"] .rh-card.alerta b { color: var(--danger); }
+html[data-ui="novo"] .rh-card.ok b { color: var(--verde-700); }
+html[data-ui="novo"] .rh-card span { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+/* ---------- listas de configuração (Categorias, Centros de custo…) ---------- */
+html[data-ui="novo"] .cfg-add-row { gap: 10px; margin: 14px 0 18px; }
+html[data-ui="novo"] .cfg-list { gap: 8px; }
+html[data-ui="novo"] .cfg-item { border-radius: 16px; padding: 12px 16px; background: var(--card); border: 1px solid var(--line); transition: background .18s, border-color .18s; }
+html[data-ui="novo"] .cfg-item:hover { background: color-mix(in srgb, var(--verde-500) 5%, var(--card)); border-color: color-mix(in srgb, var(--verde-500) 24%, var(--line)); }
+html[data-ui="novo"] .cfg-item.inactive { opacity: .62; }
+html[data-ui="novo"] .cfg-actions .btn.sm { border-radius: 999px; padding: 5px 12px; }
+@media (hover: hover) { html[data-ui="novo"] .cfg-actions { opacity: .45; transition: opacity .18s; } html[data-ui="novo"] .cfg-item:hover .cfg-actions, html[data-ui="novo"] .cfg-actions:focus-within { opacity: 1; } }
+
+/* ---------- formulários: todos os campos da tela (sem pesar sobre componentes específicos: :where zera a especificidade) ---------- */
+html[data-ui="novo"] :where(.content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="hidden"]), .content select, .content textarea) {
+  background-color: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font: inherit; font-size: 14px;
+  transition: border-color .18s, box-shadow .18s, background-color .18s;
+}
+html[data-ui="novo"] :where(.content input, .content select, .content textarea):focus { border-color: var(--verde-500); box-shadow: var(--anel); outline: none; }
+html[data-ui="novo"] :where(.content input::placeholder, .content textarea::placeholder) { color: var(--muted); opacity: .8; }
+html[data-ui="novo"] .cfg-add-row input[type="text"] { border-radius: 999px; padding: 11px 20px; }
+html[data-ui="novo"] .check-chip { border-radius: 999px; }
+
+/* ---------- tabelas dentro de cartões ---------- */
+html[data-ui="novo"] .card .table-wrap, html[data-ui="novo"] .rh-sec .table-wrap, html[data-ui="novo"] .rh-painel-sec .table-wrap { background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+html[data-ui="novo"] .card table thead th, html[data-ui="novo"] .rh-sec table thead th, html[data-ui="novo"] .rh-painel-sec table thead th {
+  background: transparent; font-size: 10.5px; letter-spacing: .1em; padding: 10px 14px; border-bottom: 1px solid var(--line);
+}
+html[data-ui="novo"] .card table tbody td, html[data-ui="novo"] .rh-sec table tbody td, html[data-ui="novo"] .rh-painel-sec table tbody td { padding: 12px 14px; border-bottom-color: color-mix(in srgb, var(--line) 70%, transparent); }
+html[data-ui="novo"] .card table tbody tr:hover td, html[data-ui="novo"] .rh-sec table tbody tr:hover td, html[data-ui="novo"] .rh-painel-sec table tbody tr:hover td { background: color-mix(in srgb, var(--verde-500) 6%, transparent); }
+
+/* ---------- barra de filtros simples (Fornecedores, Contratos…) ---------- */
+html[data-ui="novo"] .content > .toolbar:not(.toolbar-spaced) {
+  padding: 12px 14px; gap: 10px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--card) 82%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+html[data-ui="novo"] .toolbar input[type="search"], html[data-ui="novo"] .toolbar select { border-radius: 999px; }
+
+/* ---------- avisos, notas e alertas ---------- */
+html[data-ui="novo"] .rh-nota, html[data-ui="novo"] .alert-item, html[data-ui="novo"] .rh-alerta, html[data-ui="novo"] .rh-tira { border-radius: 14px; }
+html[data-ui="novo"] .rh-nota { border-left: 4px solid var(--verde-500); padding: 12px 16px; }
+html[data-ui="novo"] .rh-nota.aviso, html[data-ui="novo"] .rh-alerta { border-left-color: var(--warn); }
+html[data-ui="novo"] .rh-nota.alerta { border-left-color: var(--danger); }
+html[data-ui="novo"] .alert-item { border-left-width: 4px; padding: 12px 16px; }
+
+/* ---------- estados vazios ---------- */
+html[data-ui="novo"] .empty, html[data-ui="novo"] .rh-vazio { border-radius: 18px; padding: 38px 20px; }
+html[data-ui="novo"] .content .card > .empty, html[data-ui="novo"] .cfg-list > .empty { border: 1px dashed var(--line); background: color-mix(in srgb, var(--muted) 5%, transparent); }
+html[data-ui="novo"] .empty::before { content: '✦'; display: block; font-size: 20px; margin-bottom: 8px; opacity: .45; }
+html[data-ui="novo"] td .empty::before { display: none; }
