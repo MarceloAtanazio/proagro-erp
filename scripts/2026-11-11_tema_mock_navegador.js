@@ -108,6 +108,19 @@
       { id: 1, solicitacao_id: 109, categoria: 'hospedagem', data: '2026-11-03', valor: 700, descricao: 'Hotel' },
       { id: 2, solicitacao_id: 109, categoria: 'alimentacao', data: '2026-11-04', valor: 300, descricao: 'Almoço' },
       { id: 3, solicitacao_id: 109, categoria: 'passagem_aviao', data: '2026-11-05', valor: 200, descricao: 'Remarcação' }] : []);
+    if (u.includes('/api/rh/painel')) { const meses = ['2025-12','2026-01','2026-02','2026-03','2026-04','2026-05','2026-06','2026-07','2026-08','2026-09','2026-10','2026-11'];
+      return json({ cobertura: { ativos: 26, com_vinculo: 26, sem_vinculo: 0, sem_vinculo_nomes: [], sem_fornecedor: 0, sem_fornecedor_nomes: [], com_nascimento: 24, com_sexo: 25, com_salario: 23 },
+        headcount: { ativos: 26, candidatos: 2, tempo_casa_dias: 520, idade_media: 34, arquivados: 9, por_departamento: [{ chave: 'Campo', n: 13 }, { chave: 'Subscrição', n: 4 }, { chave: 'Comercial', n: 2 }, { chave: 'Administrativo', n: 2 }], por_modelo: [{ chave: 'externo', n: 14 }, { chave: 'hibrido', n: 8 }], por_sexo: [{ chave: 'M', n: 15 }, { chave: 'F', n: 10 }],
+          movimentacao: meses.map((m, i) => ({ mes: m, admissoes: i % 3 === 0 ? 2 : 1, desligamentos: i % 4 === 0 ? 1 : 0 })) },
+        recrutamento: { vagas: { abertas: 3, pausadas: 1, posicoes_abertas: 4, tempo_medio_preenchimento_dias: 32, paradas: 1, paradas_nomes: ['Analista de Sinistros'] }, em_andamento: 5, previstas_30d: 2, tempo_medio_dias: 21, taxa_conclusao: 57, concluidas_12m: 4, canceladas: 8,
+          por_etapa: [{ chave: 'triagem', n: 2 }, { chave: 'entrevista', n: 2 }, { chave: 'documentacao', n: 1 }], encerradas_por_parte: { candidato: 2, empresa: 6 },
+          encerradas_por_motivo: [{ chave: 'Escolhemos outro candidato', n: 5 }, { chave: 'Recusou a proposta', n: 1 }, { chave: 'Outro motivo', n: 1 }, { chave: 'Desistiu do processo', n: 1 }, { chave: 'Reprovado na seleção', n: 1 }] },
+        turnover: { taxa_12m: 23.1, desligamentos_12m: 6, headcount_medio: 26, voluntario: 2, involuntario: 4, permanencia_media_dias: 60, por_departamento: [{ chave: 'Campo', n: 3 }, { chave: 'Comercial', n: 2 }, { chave: 'Sinistros', n: 1 }] },
+        custo: { folha_mensal: 268843.27, periculosidade_mensal: 24140.08, beneficios_mensais: 19526, base_dias_uteis: 22, custo_medio: 12537.79,
+          por_departamento: [{ chave: 'Campo', n: 13, salario: 131187.08 }, { chave: 'Diretoria', n: 1, salario: 45543.39 }, { chave: 'Subscrição', n: 4, salario: 43180.1 }, { chave: 'Administrativo', n: 2, salario: 22327.5 }, { chave: 'Comercial', n: 2, salario: 20035.65 }, { chave: 'Sinistros', n: 1, salario: 6569.55 }] },
+        desenvolvimento: { horas_12m: 0, horas_per_capita: 0, cobertura_pct: 0, pessoas_treinadas_12m: 0, certificacoes_vencidas: 0, certificacoes_a_vencer: 0, investimento_12m: 0, registros: 0 },
+        clima: location.search.includes('clima') ? { enps: 32, ciclo_atual: '2026-S2', satisfacao: 4.1, participacao_pct: 62, respostas: 16, ciclos: [{ ciclo: '2026-S2', respostas: 16, promotores: 9, neutros: 4, detratores: 3, satisfacao: 4.1 }] } : { enps: null, ciclo_atual: null, satisfacao: null, participacao_pct: null, respostas: 0, ciclos: [] },
+        compliance: { dossie_incompleto: 3, sem_aso: 2, sem_contrato_assinado: 1, experiencia_vencida: [], sem_vinculo: 0, experiencia_vencendo_30d: [{ nome: 'Fulano de Tal', ate: '2026-12-02' }] } }); }
     if (u.includes('/reprovadas')) return json([]);
     if (u.includes('/conferir')) return json({ estorno_flash: null, conferir_valor: 0, conferir_decisao: null, conferir_nota: null });
     if (u.includes('/api/viaticos/km')) return json({ registros: [], taxa_vigente: 0.7 });

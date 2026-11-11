@@ -1,0 +1,47 @@
+/* ============================================================
+   RH · QUADRO — visual novo. Só vale com <html data-ui="novo">.
+   ============================================================ */
+html[data-ui="novo"] .rh-painel-sec .kpis { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+
+/* cartões de indicador */
+html[data-ui="novo"] .rh-painel-sec .kpi.nd-rh-k {
+  --acento: var(--verde-500); position: relative; overflow: hidden; padding: 16px 18px 15px; border-radius: 18px; border: 1px solid var(--line); border-left: 1px solid var(--line);
+  background: var(--card); box-shadow: var(--shadow); transition: transform .22s var(--curva), box-shadow .22s var(--curva), border-color .22s;
+}
+html[data-ui="novo"] .rh-painel-sec .kpi.nd-rh-k::before { content: ''; position: absolute; left: 0; top: 0; right: 0; height: 3px; background: var(--acento); opacity: .8; }
+html[data-ui="novo"] .rh-painel-sec .kpi.nd-rh-k.aviso { --acento: var(--warn); }
+html[data-ui="novo"] .rh-painel-sec .kpi.nd-rh-k.alerta { --acento: var(--danger); background: linear-gradient(160deg, color-mix(in srgb, var(--danger) 9%, var(--card)), var(--card) 62%); border-color: color-mix(in srgb, var(--danger) 32%, var(--line)); }
+html[data-ui="novo"] .rh-painel-sec .kpi.nd-rh-k.ok { background: var(--card); border-color: var(--line); }
+html[data-ui="novo"] .rh-painel-sec .kpi.nd-rh-k:hover { transform: translateY(-3px); box-shadow: var(--shadow-alto); border-color: color-mix(in srgb, var(--acento) 40%, var(--line)); }
+.nd-rh-top { display: flex; align-items: center; gap: 11px; }
+.nd-rh-ic { width: 32px; height: 32px; flex-shrink: 0; border-radius: 11px; display: grid; place-items: center; color: var(--acento); background: color-mix(in srgb, var(--acento) 15%, transparent); }
+html[data-ui="novo"] .rh-painel-sec .nd-rh-k .kpi-r { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); line-height: 1.3; }
+html[data-ui="novo"] .rh-painel-sec .nd-rh-k .kpi-v { font-size: clamp(24px, 2vw, 32px); letter-spacing: -.035em; margin-top: 12px; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+html[data-ui="novo"] .rh-painel-sec .nd-rh-k.ok .kpi-v { color: var(--verde-700); }
+html[data-tema="escuro"][data-ui="novo"] .rh-painel-sec .nd-rh-k.ok .kpi-v { color: var(--verde-500); }
+html[data-ui="novo"] .rh-painel-sec .nd-rh-k.aviso .kpi-v { color: var(--warn); }
+html[data-ui="novo"] .rh-painel-sec .nd-rh-k.alerta .kpi-v { color: var(--danger); }
+html[data-ui="novo"] .rh-painel-sec .nd-rh-k .kpi-n { font-size: 12px; margin-top: 6px; color: var(--muted); line-height: 1.4; }
+
+/* medidores dentro do cartão */
+.nd-rh-m { position: relative; height: 8px; border-radius: 999px; margin-top: 14px; background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.nd-rh-m i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--acento); transition: width .9s var(--curva); }
+.nd-rh-m u { position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 60%, transparent); text-decoration: none; }
+.nd-rh-div { background: color-mix(in srgb, var(--azul-700) 30%, transparent); }
+
+/* barras de distribuição (Por departamento, Saídas, Folha, Etapas…) */
+html[data-ui="novo"] .rh-painel-sec .rh-barras { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+html[data-ui="novo"] .rh-barra-linha { grid-template-columns: minmax(140px, 230px) 1fr auto; gap: 16px; align-items: center; padding: 7px 12px; border-radius: 12px; font-size: 13.5px; transition: background .18s; }
+html[data-ui="novo"] .rh-barra-linha:hover { background: color-mix(in srgb, var(--verde-500) 8%, transparent); }
+html[data-ui="novo"] .rh-barra-linha .rot { color: var(--ink); font-weight: 500; }
+html[data-ui="novo"] .rh-barra-linha .trilho { height: 12px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 14%, transparent); }
+html[data-ui="novo"] .rh-barra-linha .trilho i { border-radius: 999px; background-image: linear-gradient(90deg, rgba(255,255,255,0) 0, rgba(255,255,255,.28) 100%); background-blend-mode: soft-light; box-shadow: inset 0 0 0 1px rgba(0,0,0,.04); }
+html[data-ui="novo"] .rh-barra-linha .val { min-width: 48px; text-align: right; font-weight: 700; font-size: 14px; letter-spacing: -.01em; }
+
+/* notas */
+html[data-ui="novo"] .rh-painel-sec .rh-nota { position: relative; padding-left: 48px; font-size: 13px; line-height: 1.5; }
+html[data-ui="novo"] .rh-painel-sec .rh-nota::before { content: 'i'; position: absolute; left: 16px; top: 13px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 12px var(--font); font-style: italic; color: #fff; background: var(--verde-500); }
+html[data-ui="novo"] .rh-painel-sec .rh-nota.aviso::before { content: '!'; font-style: normal; background: var(--warn); }
+html[data-ui="novo"] .rh-painel-sec .rh-nota.alerta::before { content: '!'; font-style: normal; background: var(--danger); }
+
+@media (max-width: 700px) { html[data-ui="novo"] .rh-barra-linha { grid-template-columns: minmax(90px, 1fr) 1.4fr auto; gap: 10px; } }

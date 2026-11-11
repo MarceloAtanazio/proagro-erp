@@ -12558,6 +12558,7 @@ async function rhPainel(c) {
     olho.textContent = RH_CUSTO_OCULTO ? '🙈' : '👁';
     olho.title = olho.ariaLabel = RH_CUSTO_OCULTO ? 'Mostrar valores' : 'Ocultar valores';
   };
+  setTimeout(() => document.dispatchEvent(new CustomEvent('proagro:rh')), 0);   // visual Novo (tema-rh.js)
 }
 
 function rhFormClima() {

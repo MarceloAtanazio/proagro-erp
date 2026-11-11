@@ -8231,3 +8231,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador em 1500px: duas grades de 661px (Tier A à esquerda, Tier B à direita), campos alinhados, sem rolagem horizontal. Não testado: dados reais e telas estreitas.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 216: Indicadores do Quadro de Recursos Humanos repaginados (visual Novo)
+
+**Solicitação:** com dois prints do Quadro de RH (recrutamento/turnover, custo de pessoal e desenvolvimento), o Marcelo pediu para melhorar mais os indicadores, no padrão que vem sendo estabelecido.
+
+**O que mudou (só no visual "Novo"; mesmos números e textos):** em todas as seções do quadro (Headcount, Recrutamento, Turnover, Custo de pessoal, Desenvolvimento, Clima e Compliance) os cartões ganham ícone, faixa de cor pela situação (normal, aviso, alerta), número maior e medidores onde faz sentido: Turnover 12 meses (com marca do limite de 20%), Cobertura, Taxa de conclusão, Participação, Satisfação (de 5) e eNPS (com marca no zero), mais uma divisão proporcional para Voluntário × Involuntário e Recusa do candidato × Decisão da empresa. As barras de distribuição (departamentos, saídas, folha, etapas, motivos) ficaram mais altas, arredondadas e com o valor em destaque; as notas ganharam ícone de informação/aviso. O botão de ocultar valores do custo continua funcionando (o efeito de desfoque vale nos novos cartões).
+
+**Arquivos:** `public/tema-rh.js` e `public/tema-rh.css` (novos), `public/app.js` (um evento `proagro:rh` ao fim de `rhPainel`), `public/index.html`, `scripts/2026-11-12_rh_painel_ganchos.js`; simulador `scripts/2026-11-11_tema_mock_navegador.js` com `/api/rh/painel` de exemplo (`?clima` liga a pesquisa de clima). Sem servidor nem banco; Clássico intacto.
+
+**Verificação:** simulador, escuro: 36 cartões transformados, medidores nos cartões certos, barras e notas novas, clima com eNPS/satisfação/participação, volta ao Clássico sem nenhum elemento novo e sem erros no console. Não testado: tema claro neste ajuste, produção logada, celular e o botão de ocultar valores com os novos cartões.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
