@@ -53,11 +53,16 @@
     const raio = 62, circ = 2 * Math.PI * raio, ocup = pct == null ? 0 : Math.min(1.5, pct / 100) / 1.5;   // o anel vai a 150%; a marca de 100% fica em 2/3
     const corAnel = pct == null ? 'var(--muted)' : pct <= 100 ? 'var(--verde-500)' : pct <= 110 ? 'var(--warn)' : 'var(--danger)';
     const estado = pct == null ? ['pend', 'sem orçamento'] : pct <= 100 ? ['ok', 'dentro do orçado'] : pct <= 110 ? ['warn', 'até 10% acima'] : ['late', 'acima do orçado'];
-    const kpi = (cls, rotulo, valor, det, atr, fmt) => `
+    // medidor: preenchimento em % de uma escala, com marca opcional (ex.: o 100% do orçado) e parte "projetada" tracejada
+    const medidor = (fill, marca, extra) => `<div class="nd-ovr-m"><i style="width:${Math.max(0, Math.min(100, fill)).toFixed(1)}%"></i>${extra != null ? `<em style="left:${Math.max(0, Math.min(100, fill)).toFixed(1)}%;width:${Math.max(0, Math.min(100 - fill, extra)).toFixed(1)}%"></em>` : ''}${marca != null ? `<u style="left:${marca.toFixed(1)}%" title="Orçado"></u>` : ''}</div>`;
+    const kpi = (cls, rotulo, valor, det, atr, fmt, extra, icone, chip) => `
       <article class="nd-kpi nd-ovr-k ${cls}" ${atr || ''}>
-        <div class="nd-kpi-top"><span class="nd-kpi-label">${rotulo}</span></div>
+        <div class="nd-kpi-top"><span class="nd-via-ic">${icone || '•'}</span><span class="nd-kpi-label">${rotulo}</span>${chip ? `<span class="nd-chip ${chip[0]}">${chip[1]}</span>` : ''}</div>
         <div class="nd-kpi-valor" ${typeof valor === 'number' ? `data-conta="${valor}" data-fmt="${fmt || 'brl'}"` : ''}>${typeof valor === 'number' ? '0' : valor}</div>
-        <div class="nd-via-det">${det}</div></article>`;
+        <div class="nd-via-det">${det}</div>${extra || ''}</article>`;
+    const pontos = [...comOrc].sort((x, y) => y.pct - x.pct).map(r => `<i class="${r.pct > 110 ? 'late' : r.pct > 100 ? 'warn' : 'ok'}" title="${E(r.cat)}: ${p1(r.pct)} do orçado"></i>`).join('');
+    const escalaP = maiorP ? Math.max(150, Math.ceil(maiorP.pct / 50) * 50) : 150;
+    const escalaProj = Math.max(proj || 0, orcAno) * 1.08 || 1;
     const sec = document.createElement('section'); sec.className = 'nd-ovr';
     sec.innerHTML = `
       <p class="nd-ovr-rotulo">Despesas — ${periodo} de ${O.year}</p>
@@ -74,12 +79,18 @@
             </dl></div>
         </article>
         <div class="nd-ovr-grade">
-          ${kpi(dif > 0 ? 'red' : 'ok', 'Variação total', sinal(dif) + brl(Math.abs(dif)), pct == null ? 'sem orçamento' : (dif <= 0 ? 'abaixo do orçado · ' : 'acima do orçado · ') + p1(pct) + ' do orçado')}
-          ${kpi(acima.length ? 'warn' : 'ok', 'Categorias acima do orçado', `${acima.length} / ${comOrc.length}`, acima.length ? 'clique para ver as categorias acima' : 'todas dentro do orçado', acima.length ? 'role="button" tabindex="0" data-ovr="acima"' : '')}
-          ${kpi(maiorR ? (maiorR.dif > 0 ? 'red' : 'ok') : '', 'Maior desvio (R$)', maiorR ? sinal(maiorR.dif) + brl(Math.abs(maiorR.dif)) : '—', maiorR ? E(maiorR.cat) + (maiorR.dif > 0 ? ' · acima' : ' · abaixo') : 'sem dados')}
-          ${kpi(maiorP && maiorP.pct > 100 ? 'red' : 'ok', 'Maior desvio (%)', maiorP ? p1(maiorP.pct) : '—', maiorP ? E(maiorP.cat) + ' do orçado' : 'sem dados')}
-          ${kpi(pctR == null ? '' : pctR >= 100 ? 'ok' : 'warn', 'Receitas', pctR == null ? '—' : p1(pctR), tOrcR ? `${brl(tRealR)} de ${brl(tOrcR)}` : 'sem orçamento de receitas')}
-          ${proj != null ? kpi(projPct > 100 ? 'red' : 'blue', 'Projeção do ano', brl(proj), `no ritmo atual · ${p1(projPct)} do orçado anual`) : kpi('blue', 'Orçado do ano', brl(orcAno), 'despesas, ano completo')}
+          ${kpi(dif > 0 ? 'red' : 'ok', 'Variação total', sinal(dif) + brl(Math.abs(dif)), pct == null ? 'sem orçamento' : (dif <= 0 ? 'abaixo do orçado · ' : 'acima do orçado · ') + p1(pct) + ' do orçado',
+            '', null, '<div class="nd-spark"><canvas id="nd-ovr-sp-var"></canvas></div>', dif > 0 ? '▲' : '▼', [dif > 0 ? 'late' : 'ok', dif > 0 ? 'acima' : 'economia'])}
+          ${kpi(acima.length ? 'warn' : 'ok', 'Categorias acima do orçado', `${acima.length} / ${comOrc.length}`, acima.length ? 'clique para ver as categorias acima' : 'todas dentro do orçado', acima.length ? 'role="button" tabindex="0" data-ovr="acima"' : '', null,
+            `<div class="nd-ovr-pontos" aria-label="Categorias: verde dentro, âmbar até 10% acima, vermelho mais de 10% acima">${pontos}</div>`, '≠')}
+          ${kpi(maiorR ? (maiorR.dif > 0 ? 'red' : 'ok') : '', 'Maior desvio (R$)', maiorR ? sinal(maiorR.dif) + brl(Math.abs(maiorR.dif)) : '—', maiorR ? E(maiorR.cat) + (maiorR.dif > 0 ? ' · acima' : ' · abaixo') + (maiorR.orc ? ` · ${p1(Math.abs(maiorR.dif) / maiorR.orc * 100)} do orçado dela` : '') : 'sem dados',
+            maiorR ? 'role="button" tabindex="0" data-cat="' + E(maiorR.cat) + '"' : '', null, maiorR && maiorR.orc ? medidor(Math.abs(maiorR.dif) / maiorR.orc * 100, null) : '', '$')}
+          ${kpi(maiorP && maiorP.pct > 100 ? 'red' : 'ok', 'Maior desvio (%)', maiorP ? p1(maiorP.pct) : '—', maiorP ? E(maiorP.cat) + ' do orçado' : 'sem dados',
+            maiorP ? 'role="button" tabindex="0" data-cat="' + E(maiorP.cat) + '"' : '', null, maiorP ? medidor(maiorP.pct / escalaP * 100, 100 / escalaP * 100) : '', '%')}
+          ${kpi(pctR == null ? '' : pctR >= 100 ? 'ok' : 'warn', 'Receitas', pctR == null ? '—' : p1(pctR), tOrcR ? `${brl(tRealR)} de ${brl(tOrcR)}` : 'sem orçamento de receitas',
+            '', null, '<div class="nd-spark"><canvas id="nd-ovr-sp-rec"></canvas></div>', '↑', pctR == null ? null : [pctR >= 100 ? 'ok' : 'warn', pctR >= 100 ? 'meta batida' : 'abaixo do orçado'])}
+          ${proj != null ? kpi(projPct > 100 ? 'red' : 'blue', 'Projeção do ano', brl(proj), `no ritmo atual · ${p1(projPct)} do orçado anual`, '', null, medidor(tReal / escalaProj * 100, orcAno / escalaProj * 100, Math.max(0, proj - tReal) / escalaProj * 100), '◔', [projPct > 100 ? 'late' : 'ok', projPct > 100 ? 'vai estourar' : 'dentro do ano'])
+            : kpi('blue', 'Orçado do ano', brl(orcAno), 'despesas, ano completo', '', null, '', '◔')}
         </div></div>
       ${a.alertas && a.alertas.length ? `<article class="nd-card nd-ovr-alertas"><div class="nd-card-cab"><h3>Pontos de atenção</h3><span class="nd-chip warn">${a.alertas.length}</span></div><ul>${a.alertas.map(t => `<li><span aria-hidden="true">⚠</span>${E(t)}</li>`).join('')}</ul></article>` : ''}
       <article class="nd-card nd-ovr-mes"><div class="nd-card-cab"><h3>Mês a mês <small>orçado × realizado</small></h3>
@@ -89,6 +100,16 @@
     if (window.ProagroNovo && ProagroNovo.contar) ProagroNovo.contar(sec);
     $$('[data-mes]', sec).forEach(b => { b.onclick = () => { modoMes = b.dataset.mes; mensal(O, a, sec); }; });
     $$('[data-ovr="acima"]', sec).forEach(el => clique(el, () => { const alvo = $$('#content h3').find(h => /^Despesas$/.test(h.textContent.trim())); if (alvo) alvo.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+    // minigráficos mensais e atalhos para a linha da categoria
+    if (window.ProagroNovo && ProagroNovo.sparkline && a.porMes.length > 1) {
+      const rot = a.porMes.map(x => x.mes);
+      ProagroNovo.sparkline($('#nd-ovr-sp-var', sec), a.porMes.map(x => x.difDespesa), dif > 0 ? '#B23A2F' : '#3DAE43', rot);
+      ProagroNovo.sparkline($('#nd-ovr-sp-rec', sec), a.porMes.map(x => x.receitaReal), '#3DAE43', rot);
+    }
+    $$('[data-cat]', sec).forEach(el => clique(el, () => {
+      const tr = $$('#content tbody tr').find(t => t.firstElementChild && t.firstElementChild.textContent.trim() === el.dataset.cat); if (!tr) return;
+      tr.scrollIntoView({ behavior: 'smooth', block: 'center' }); tr.classList.add('nd-ovr-pisca'); setTimeout(() => tr.classList.remove('nd-ovr-pisca'), 2200);
+    }));
     mensal(O, a, sec);
   }
 

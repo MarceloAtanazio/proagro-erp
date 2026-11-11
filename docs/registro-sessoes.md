@@ -8162,3 +8162,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro e claro: destaque, cartões, pontos de atenção, três modos do mês a mês, os dois gráficos com e sem corte, tabelas, escopo/ano em abas, volta ao Clássico sem nenhum elemento novo e sem erros no console. Não testado: produção logada, celular, ano sem orçamento, nota de Viáticos.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 211: Indicadores de Orçado x Realizado mais visuais (visual Novo)
+
+**Solicitação:** o Marcelo perguntou se os indicadores da tela de Orçado x Realizado não podiam melhorar mais.
+
+**O que mudou (só no visual "Novo"):** cada cartão ganhou ícone, selo de situação e um elemento visual próprio, sem mudar os números: Variação total (selo "economia"/"acima" e minigráfico da variação mês a mês), Categorias acima do orçado (uma pastilha por categoria — verde, âmbar ou vermelha — com o nome e o % na dica), Maior desvio em R$ e em % (medidor com a marca do 100%; clicar leva à linha da categoria na tabela e a destaca), Receitas (selo "meta batida"/"abaixo do orçado" e minigráfico das receitas mensais) e Projeção do ano (barra do realizado + restante projetado tracejado, com a marca do orçado anual e selo "vai estourar"/"dentro do ano").
+
+**Arquivos:** `public/tema-orcado.js`, `public/tema-orcado.css`. Sem servidor nem banco; Clássico intacto.
+
+**Verificação:** simulador, escuro: cartões, pastilhas, medidores, minigráficos e clique no desvio levando à linha "Folha de Pagamento". Não testado: tema claro neste ajuste, produção logada, celular.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
