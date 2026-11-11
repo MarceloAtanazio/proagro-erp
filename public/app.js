@@ -414,7 +414,7 @@ function route() {
   };
   $('#content').innerHTML = '<div class="empty">Carregando…</div>';
   renderers[page.hash]()
-    .then(() => { if (READONLY) { injectReadonlyBanner(); bloquearEscritaSomenteLeitura(page.hash); } })
+    .then(() => { if (READONLY) { injectReadonlyBanner(); bloquearEscritaSomenteLeitura(page.hash); } if (window.ProagroNovo && ProagroNovo.pagina) ProagroNovo.pagina(page.hash); })
     .catch(err => { $('#content').innerHTML = `<div class="empty">${esc(err.message)}</div>`; });
 }
 
@@ -735,6 +735,7 @@ function chartOpts(extra) {
 // ============================================================
 async function renderPagar() {
   const [rows, sups] = await Promise.all([api('/api/payables'), api('/api/suppliers')]);
+  window.ProagroFin = { tipo: 'pagar', rows };   // visual novo (tema-listas.js) lê as linhas daqui
   const c = $('#content');
   const FKEY = 'filters-pagar';
   const saved = loadFilters(FKEY);
@@ -1222,6 +1223,7 @@ function formPagar(r, sups) {
 // ============================================================
 async function renderReceber() {
   const rows = await api('/api/receivables');
+  window.ProagroFin = { tipo: 'receber', rows };   // visual novo (tema-listas.js) lê as linhas daqui
   const c = $('#content');
   const FKEY = 'filters-receber';
   const saved = loadFilters(FKEY);

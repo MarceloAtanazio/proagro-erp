@@ -34,6 +34,19 @@
     if (u.endsWith('/api/viaticos/config')) return json({ preco_combustivel_litro: 6 });
     if (u.endsWith('/api/viaticos/solicitacoes/autosservico') && m === 'POST') { window.__POSTS.push(JSON.parse(opts.body)); return json({ ok: true, id: 900 }); }
     if (m === 'DELETE') { window.__POSTS.push({ del: u }); return json({ ok: true }); }
+    if (u.endsWith('/api/suppliers')) return json([{ id: 1, name: 'Tech Cloud S/A' }, { id: 2, name: 'Imobiliária Central' }]);
+    if (u.endsWith('/api/payables') && m === 'GET') {
+      const off = d => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+      const forn = ['Tech Cloud S/A', 'Imobiliária Central', 'Seguradora Alfa', 'Gráfica Rápida', 'Contabilidade Silva', 'Energia Sul', 'Papelaria Norte', 'Consultoria Beta'];
+      const cats = ['Tecnologia', 'Aluguel e Condomínio', 'Seguros', 'Marketing', 'Consultoria', 'Energia', 'Material de Escritório', 'Impostos'];
+      const dias = [-12, -9, -5, -2, 0, 1, 2, 4, 6, 9, 12, 15, 19, 25, -30, -22, -18, -14];
+      return json(dias.map((dd, k) => { const pago = k >= 14; return { id: 410 + k, due_date: off(dd), description: ['Mensalidade da plataforma', 'Aluguel do escritório', 'Apólice coletiva', 'Campanha de divulgação', 'Honorários contábeis', 'Conta de energia'][k % 6] + ' ' + (k + 1), supplier_name: forn[k % 8],
+        payment_method: ['boleto', 'pix', 'transferencia'][k % 3], amount: 1800 + k * 2350.4, status: pago ? 'pago' : 'pendente', payment_date: pago ? off(dd + 2) : null, aprovacao_count: k % 3 === 0 ? 1 : 0, attachment_count: k % 4, reconciled: pago && k % 2 === 0, category: cats[k % 8], cost_center: 'Operações', document: 'NF ' + (1000 + k) }; })); }
+    if (u.endsWith('/api/receivables') && m === 'GET') {
+      const off = d => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+      const cli = ['Agro Vale Ltda', 'Cooperativa Sul', 'Fazenda Boa Safra', 'Grupo Semear', 'Agropecuária Norte'];
+      const dias = [-20, -8, -3, 0, 2, 5, 8, 14, 21, -40, -35, -28, -15];
+      return json(dias.map((dd, k) => { const rec = k >= 9; return { id: 90 + k, due_date: off(dd), description: 'Prêmio de seguro — apólice ' + (7000 + k), client_name: cli[k % 5], document: 'AP ' + (7000 + k), amount: 6400 + k * 3120.7, status: rec ? 'recebido' : 'pendente', receipt_date: rec ? off(dd + 1) : null, reconciled: rec && k % 2 === 1, attachment_count: k % 3, category: 'Prêmios' }; })); }
     if (u.includes('/api/reports/cashflow/')) { const mes = n => ({ month: n, total: 0 }); const ent = [], sai = []; for (let k = 1; k <= 12; k++) { ent.push({ month: k, total: 300000 + k * 9000 + (k % 3) * 18000 }); sai.push({ month: k, total: 240000 + k * 7000 + (k % 4) * 15000 }); }
       return json({ entradas: { realizado: ent.slice(0, 10), projetado: ent.slice(10) }, saidas: { realizado: sai.slice(0, 10), projetado: sai.slice(10) } }); }
     if (u.includes('/api/reports/dashboard')) {

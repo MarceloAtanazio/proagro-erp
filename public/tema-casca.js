@@ -84,7 +84,27 @@
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { if (!novo()) return; e.preventDefault(); if (aberta) fechar(); else abrir(); }
     else if (e.key === 'Escape' && aberta) fechar();
   });
-  const iniciar = () => { if (document.querySelector('.topbar')) montar(); };
+  // ---------- menu lateral em trilho: marca, fixador e busca ----------
+  const K_PIN = 'proagro_rail_pin';
+  const SVG_PIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3z"/></svg>';
+  function montarRail() {
+    const app = document.getElementById('view-app'), side = document.querySelector('.sidebar'); if (!app || !side) return;
+    const brand = side.querySelector('.brand');
+    if (brand && !brand.querySelector('.nd-mark')) {
+      const m = document.createElement('span'); m.className = 'nd-mark'; m.textContent = 'P'; m.setAttribute('aria-hidden', 'true'); brand.insertBefore(m, brand.firstChild);
+      const p = document.createElement('button'); p.type = 'button'; p.className = 'nd-pin-btn'; p.title = 'Fixar o menu aberto'; p.setAttribute('aria-label', 'Fixar o menu aberto'); p.innerHTML = SVG_PIN;
+      p.onclick = () => { const on = app.classList.toggle('nd-pin'); try { localStorage.setItem(K_PIN, on ? '1' : '0'); } catch (e) { /* sem armazenamento */ } p.title = on ? 'Soltar o menu' : 'Fixar o menu aberto'; };
+      brand.appendChild(p);
+    }
+    if (!side.querySelector('.nd-rail-busca')) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'nd-rail-busca'; b.title = 'Buscar ou ir para… (Ctrl+K)';
+      b.innerHTML = SVG_BUSCA + '<span>Buscar…</span><kbd>Ctrl K</kbd>'; b.onclick = abrir;
+      const nav = side.querySelector('.nav'); side.insertBefore(b, nav);
+    }
+    let pin = false; try { pin = localStorage.getItem(K_PIN) === '1'; } catch (e) { /* ok */ }
+    app.classList.toggle('nd-pin', pin);
+  }
+  const iniciar = () => { montarRail(); if (document.querySelector('.topbar')) montar(); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
   window.addEventListener('load', iniciar);
   window.ProagroCmdk = { abrir, fechar };

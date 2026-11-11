@@ -240,5 +240,5 @@
     return Promise.resolve();
   }
 
-  window.ProagroNovo = Object.assign(window.ProagroNovo || {}, { dashboard });
+  window.ProagroNovo = Object.assign(window.ProagroNovo || {}, { dashboard, contar });
 })();
