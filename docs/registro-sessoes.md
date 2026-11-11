@@ -8218,3 +8218,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador em 1500px: janela com 1396px, tabela sem rolagem horizontal, todas as colunas dentro da janela (Ações termina a ~40px da borda). Não testado: lista real com muitos colaboradores e cargos longos, telas menores que 1100px (a janela ocupa 96% e a tabela rola dentro dela).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 215: TUD dos Tiers A e B lado a lado nas Configurações de Viáticos
+
+**Solicitação:** com um print, o Marcelo pediu para a tabela de TUD preencher a largura, sem deixar o vão vazio à direita.
+
+**O que mudou:** as grades do Tier A e do Tier B ficam lado a lado, cada uma com metade da largura da janela (em telas abaixo de 900px voltam a empilhar); o limite de 860px posto na sessão anterior foi retirado. Vale para o Clássico e o Novo. Sem servidor nem banco.
+
+**Arquivos:** `public/app.js`, `public/styles.css`, `scripts/2026-11-12_viaticos_config_tud_lado_a_lado.js`.
+
+**Verificação:** simulador em 1500px: duas grades de 661px (Tier A à esquerda, Tier B à direita), campos alinhados, sem rolagem horizontal. Não testado: dados reais e telas estreitas.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

@@ -9471,7 +9471,7 @@ async function renderViaticosConfig() {
       </div>
     </div>
     <p class="hint">Estacionamento é sempre lançado "por recibo" (sem teto) e Veículo próprio fica fora da TUD — não precisam de configuração aqui.</p>
-    ${tudGrid('A')}${tudGrid('B')}
+    <div class="cfg-tud-par"><div>${tudGrid('A')}</div><div>${tudGrid('B')}</div></div>
     <h3 style="margin:20px 0 10px; font-size:15px">Colaboradores</h3>
     <div class="field-row" style="align-items:flex-end">
       ${fld('cb-nome', 'Nome', 'text', '')}

@@ -1940,4 +1940,7 @@ tr.via-fam-linha td.num { padding-left: 0; }
 .modal.modal-cfg .tbl-colaboradores th, .modal.modal-cfg .tbl-colaboradores td { white-space: nowrap; }
 .modal.modal-cfg .tbl-colaboradores .btn-group { flex-wrap: nowrap; }
 .modal.modal-cfg .body { overflow-x: auto; }
-.modal.modal-cfg .table-wrap:not(:has(.tbl-colaboradores)) { max-width: 860px; }
+/* TUD dos Tiers A e B lado a lado, cada um com metade da largura */
+.cfg-tud-par { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+.cfg-tud-par .table-wrap { margin: 0; }
+@media (max-width: 900px) { .cfg-tud-par { grid-template-columns: 1fr; gap: 0; } }
