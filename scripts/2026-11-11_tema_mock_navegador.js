@@ -1,4 +1,4 @@
-// Propósito: simulador de servidor para avaliar o TEMA (claro/escuro e visual novo) no app real, no navegador, sem banco. Usuário administrador; Dashboard com todos os
+﻿// Propósito: simulador de servidor para avaliar o TEMA (claro/escuro e visual novo) no app real, no navegador, sem banco. Usuário administrador; Dashboard com todos os
 //   indicadores e gráficos (dados de exemplo) e Viáticos (OT 42 com complementares). Roteiro: abrir /#dashboard e /#viaticos, alternar Clássico/Novo e claro/escuro.
 // Como executar: copiar public/ para uma pasta, salvar este arquivo como mock.js ao lado do index.html (com <script src="/mock.js"> antes do app.js), servir e abrir /#dashboard.
 (() => {
@@ -65,7 +65,7 @@
       const te = bk.reduce((t, x) => t + x.entradas, 0), ts = bk.reduce((t, x) => t + x.saidas, 0), ok = location.search.includes('ok');
       return json({ de, ate, resumo: { saldoInicial: 444350.4, totalEntradas: te, totalSaidas: ts, saldoAtual: 482350.4, saldoPrevisto: ok ? 512000 : 301200.6 },
         alerta: ok ? { diaCritico: null, horizonte: '2027-02-09' } : { diaCritico: '2026-12-18', diaPior: '2027-01-14', necessidade: 86400.5, horizonte: '2027-02-09' }, buckets: bk,
-        categorias: { despesas: [{ category: 'Folha de Pagamento', total: 188000 }, { category: 'Tecnologia', total: 96400 }, { category: 'Aluguel', total: 61000 }], receitas: [{ category: 'Prêmios', total: 402000 }, { category: 'Serviços', total: 83000 }] },
+        categorias: { despesas: [{ category: 'Folha de Pagamento', total: 470000 }, { category: 'Repasse de Viáticos', total: 288000 }, { category: 'Compras / Fornecedores', total: 52000 }, { category: 'Frota', total: 29800 }, { category: 'RH / Benefícios', total: 22400 }, { category: 'Jurídico', total: 8900 }, { category: 'Aluguel', total: 7600 }, { category: 'Serviços de Terceiros', total: 6900 }, { category: 'Contabilidade', total: 5600 }, { category: 'Condomínio', total: 3100 }, { category: 'Viáticos', total: 1200 }, { category: 'Telefone', total: 540 }, { category: 'Internet', total: 90 }], receitas: [{ category: 'Prêmios', total: 402000 }, { category: 'Serviços', total: 83000 }] },
         futuras: { receber: [{ due_date: '2026-11-20', client_name: 'Agro Vale Ltda', description: 'Prêmio 7001', amount: 9520.7 }], pagar: [{ due_date: '2026-11-18', party: 'Tech Cloud S/A', description: 'Mensalidade', amount: 4200 }] } }); }
     if (u.includes('/api/reports/cashflow/')) { const mes = n => ({ month: n, total: 0 }); const ent = [], sai = []; for (let k = 1; k <= 12; k++) { ent.push({ month: k, total: 300000 + k * 9000 + (k % 3) * 18000 }); sai.push({ month: k, total: 240000 + k * 7000 + (k % 4) * 15000 }); }
       return json({ entradas: { realizado: ent.slice(0, 10), projetado: ent.slice(10) }, saidas: { realizado: sai.slice(0, 10), projetado: sai.slice(10) } }); }
@@ -100,3 +100,4 @@
     return json([]);
   };
 })();
+

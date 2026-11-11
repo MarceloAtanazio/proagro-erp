@@ -8099,3 +8099,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** no simulador, escuro e claro, com o caso do print: eixo cortado e etiqueta no estouro, dica legível com Entradas/Saídas/Resultado, modo líquido com legenda própria, Clássico com 2 séries, pontos originais e sem seletor. Não testado: produção logada, celular, períodos por dia com muitos pontos.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 207: Gráficos de categorias do Fluxo de Caixa (visual Novo)
+
+**Solicitação:** com um print do gráfico "Despesas por categoria" (tema escuro), o Marcelo pediu para melhorá-lo: tudo muito junto, distribuir mais e aumentar se preciso.
+
+**O que mudou (só no visual "Novo"):** em `public/tema-graficos.js`, "Despesas por categoria" e "Receitas por categoria" ganharam altura proporcional ao número de categorias (~46px por linha), barras de 20px arredondadas com espaço entre elas, todos os nomes visíveis (antes o gráfico pulava nomes), valor compacto e % do total ao fim de cada barra, grade suave, eixo compacto e dica com "% do total". Em `public/tema-fluxo.css`, os dois cartões passam a ocupar uma linha cada, dando largura para os nomes e as barras. Clássico intacto; sem servidor nem banco.
+
+**Arquivos:** `public/tema-graficos.js`, `public/tema-fluxo.css`, `scripts/2026-11-12_tema_integra7.js`; simulador `scripts/2026-11-11_tema_mock_navegador.js` com 13 categorias de despesa como no print.
+
+**Verificação:** simulador, escuro, 13 categorias: nomes completos, valores e % legíveis, barra grande sem esmagar as pequenas. Não testado: tema claro neste gráfico, celular, produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

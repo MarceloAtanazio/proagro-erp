@@ -65,6 +65,21 @@
     tooltip(o, {});
   }
 
+  // Despesas / Receitas por categoria (barras horizontais): mais altura por categoria, barras arredondadas com respiro,
+  // valor e % do total ao fim de cada barra e eixo compacto.
+  function prepararCategorias(chart) {
+    const o = chart.config.options, ds = chart.config.data.datasets[0], n = chart.config.data.labels.length; if (!ds || !n) return;
+    const box = chart.canvas.parentElement; if (box) box.style.height = Math.max(300, n * 46 + 84) + 'px';
+    Object.assign(ds, { borderRadius: 10, borderSkipped: false, barThickness: 20, categoryPercentage: 1, barPercentage: 1 });
+    o.layout = { padding: { right: 118, top: 6 } };
+    eixos(o); o.scales.y.ticks = Object.assign({}, o.scales.y.ticks, { autoSkip: false, maxTicksLimit: 99, padding: 12, font: { family: 'DM Sans', size: 13 }, callback: function (v) { return this.getLabelForValue(v); } });
+    o.scales.x.grid = { display: true, color: escuro() ? 'rgba(255,255,255,.06)' : 'rgba(16,40,28,.07)', drawTicks: false }; o.scales.x.ticks = Object.assign({}, o.scales.x.ticks, { padding: 10, maxTicksLimit: 6, callback: v => moeda(v) });
+    o.scales.y.grid = { display: false };
+    const total = ds.data.reduce((t, v) => t + v, 0) || 1;
+    tooltip(o, { afterLabel: c => ' ' + (c.parsed.x / total * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% do total' });
+    chart.$ndTotal = total;
+  }
+
   function pilula(ctx, texto, x, y, area, claro) {
     ctx.save(); ctx.font = '600 11px "DM Sans", sans-serif'; const w = ctx.measureText(texto).width + 18, h = 22;
     const px = Math.min(Math.max(x - w / 2, area.left + 2), area.right - w - 2), py = y - h / 2;
@@ -76,7 +91,7 @@
     id: 'proagroFluxoGraficos',
     beforeInit(chart) {
       if (!novo()) return; const id = chart.canvas && chart.canvas.id;
-      if (id === 'ch-saldo') prepararSaldo(chart); else if (id === 'ch-entsai') prepararEntSai(chart);
+      if (id === 'ch-saldo') prepararSaldo(chart); else if (id === 'ch-entsai') prepararEntSai(chart); else if (id === 'ch-desp' || id === 'ch-rec') prepararCategorias(chart);
     },
     afterInit(chart) { if (novo() && chart.canvas && chart.canvas.id === 'ch-entsai') seletorModo(chart); },
     beforeDatasetsDraw(chart) {
@@ -86,6 +101,15 @@
       ctx.save(); ctx.fillStyle = escuro() ? 'rgba(255,255,255,.06)' : 'rgba(0,120,63,.07)'; ctx.beginPath(); ctx.roundRect(x - w / 2, ar.top, w, ar.height, 10); ctx.fill(); ctx.restore();
     },
     afterDatasetsDraw(chart) {
+      if (novo() && chart.$ndTotal) {   // valor e % ao fim de cada barra
+        const { ctx } = chart, ds = chart.data.datasets[0], meta = chart.getDatasetMeta(0);
+        ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+        ds.data.forEach((v, i) => { const el = meta.data[i]; if (!el) return; const pct = v / chart.$ndTotal * 100;
+          ctx.font = '700 12px "DM Sans", sans-serif'; ctx.fillStyle = escuro() ? '#e8f0ea' : '#10281c'; const t1 = 'R$ ' + compacto(v); ctx.fillText(t1, el.x + 10, el.y);
+          ctx.font = '500 11px "DM Sans", sans-serif'; ctx.fillStyle = escuro() ? 'rgba(232,240,234,.6)' : 'rgba(16,40,28,.55)';
+          ctx.fillText((pct < 0.1 ? '<0,1' : pct.toLocaleString('pt-BR', { maximumFractionDigits: 1 })) + '%', el.x + 14 + (ctx.measureText(t1).width * 1.0) + 8, el.y); });
+        ctx.restore();
+      }
       if (novo() && chart.$ndTeto && chart.canvas && chart.canvas.id === 'ch-entsai') {   // etiqueta "▲ valor" nas barras cortadas
         const { ctx, chartArea: ar } = chart, teto = chart.$ndTeto, claro = !escuro();
         chart.data.datasets.forEach((d, di) => {
