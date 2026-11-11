@@ -12368,7 +12368,7 @@ async function rhPainel(c) {
 
   // Quantas pendências de compliance existem, para o bloco saber a própria cor.
   const nCompliance = cp.dossie_incompleto + cp.sem_aso + cp.sem_contrato_assinado
-    + cp.experiencia_vencida.length + cp.sem_vinculo;
+    + cp.sem_vinculo;
 
   const traduzir = (itens, mapa) => itens.map(i => ({ ...i, chave: mapa[i.chave] || i.chave }));
   const maxMov = Math.max(1, ...hc.movimentacao.map(m => Math.max(m.admissoes, m.desligamentos)));
@@ -12538,10 +12538,6 @@ async function rhPainel(c) {
         ${rhKpi('Experiência vencendo', cp.experiencia_vencendo_30d.length, 'nos próximos 30 dias',
           cp.experiencia_vencendo_30d.length ? 'aviso' : '')}
       </div>
-      ${cp.experiencia_vencida.length ? `<div class="rh-nota aviso">
-        <strong>Contrato de experiência já vencido:</strong>
-        ${cp.experiencia_vencida.map(x => `${esc(x.nome)} (${rhData(x.ate)})`).join(' · ')}.
-        Passada a data sem rescisão, o contrato vira por prazo indeterminado.</div>` : ''}
       ${cp.experiencia_vencendo_30d.length ? `<div class="rh-nota aviso">
         <strong>Experiência terminando:</strong>
         ${cp.experiencia_vencendo_30d.map(x => `${esc(x.nome)} até ${rhData(x.ate)}`).join(' · ')}.</div>` : ''}

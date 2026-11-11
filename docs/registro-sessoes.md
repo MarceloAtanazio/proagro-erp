@@ -8244,3 +8244,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro: 36 cartões transformados, medidores nos cartões certos, barras e notas novas, clima com eNPS/satisfação/participação, volta ao Clássico sem nenhum elemento novo e sem erros no console. Não testado: tema claro neste ajuste, produção logada, celular e o botão de ocultar valores com os novos cartões.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 217: Quadro de RH — fim do aviso "Contrato de experiência já vencido"
+
+**Solicitação:** com um print, o Marcelo disse que o aviso "Contrato de experiência já vencido: …" é irrelevante: se a experiência terminou sem nenhuma ação, a pessoa passou a ser efetiva, não está "vencida". Pediu para tirar.
+
+**O que mudou (Clássico e Novo):** o aviso saiu do bloco "Compliance trabalhista" do Quadro de RH; essas pessoas também deixaram de contar como "pendência de compliance" (era o que pintava o bloco como pendente). Continuam o indicador "Experiência vencendo" e o aviso "Experiência terminando", ambos para os próximos 30 dias. A API segue devolvendo o campo, sem uso na tela. Sem servidor nem banco.
+
+**Arquivos:** `public/app.js`, `scripts/2026-11-12_rh_remove_experiencia_vencida.js`; simulador com `?venc` para reproduzir o caso.
+
+**Verificação:** simulador com duas pessoas "vencidas": o aviso não aparece; indicadores e aviso "terminando" intactos; sem erros no console.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

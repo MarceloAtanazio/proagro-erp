@@ -120,7 +120,7 @@
           por_departamento: [{ chave: 'Campo', n: 13, salario: 131187.08 }, { chave: 'Diretoria', n: 1, salario: 45543.39 }, { chave: 'Subscrição', n: 4, salario: 43180.1 }, { chave: 'Administrativo', n: 2, salario: 22327.5 }, { chave: 'Comercial', n: 2, salario: 20035.65 }, { chave: 'Sinistros', n: 1, salario: 6569.55 }] },
         desenvolvimento: { horas_12m: 0, horas_per_capita: 0, cobertura_pct: 0, pessoas_treinadas_12m: 0, certificacoes_vencidas: 0, certificacoes_a_vencer: 0, investimento_12m: 0, registros: 0 },
         clima: location.search.includes('clima') ? { enps: 32, ciclo_atual: '2026-S2', satisfacao: 4.1, participacao_pct: 62, respostas: 16, ciclos: [{ ciclo: '2026-S2', respostas: 16, promotores: 9, neutros: 4, detratores: 3, satisfacao: 4.1 }] } : { enps: null, ciclo_atual: null, satisfacao: null, participacao_pct: null, respostas: 0, ciclos: [] },
-        compliance: { dossie_incompleto: 3, sem_aso: 2, sem_contrato_assinado: 1, experiencia_vencida: [], sem_vinculo: 0, experiencia_vencendo_30d: [{ nome: 'Fulano de Tal', ate: '2026-12-02' }] } }); }
+        compliance: { dossie_incompleto: 3, sem_aso: 2, sem_contrato_assinado: 1, experiencia_vencida: location.search.includes('venc') ? [{ nome: 'Brenda Porcinelli Baptistone', ate: '2026-06-30' }, { nome: 'Luiz Henrique Santos Suzuki', ate: '2026-10-30' }] : [], sem_vinculo: 0, experiencia_vencendo_30d: [{ nome: 'Fulano de Tal', ate: '2026-12-02' }] } }); }
     if (u.includes('/reprovadas')) return json([]);
     if (u.includes('/conferir')) return json({ estorno_flash: null, conferir_valor: 0, conferir_decisao: null, conferir_nota: null });
     if (u.includes('/api/viaticos/km')) return json({ registros: [], taxa_vigente: 0.7 });
