@@ -1931,3 +1931,6 @@ tr.via-fam-filho td:first-child { padding-left: 26px; }
 tr.via-fam-cab td { padding-top: 8px; }
 tr.via-fam-linha td { font-size: 12.5px; color: var(--ink-2); padding-left: 18px; }
 tr.via-fam-linha td.num { padding-left: 0; }
+
+/* Viáticos: destinos numa linha só, com reticências (texto completo no title) */
+.via-destinos { display: block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

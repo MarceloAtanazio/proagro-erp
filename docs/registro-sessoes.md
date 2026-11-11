@@ -8128,3 +8128,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro e claro: indicadores, abas, todas as seções do Painel, cliques (situação, colaborador, indicadores) levando à lista filtrada, volta ao Clássico sem nenhum elemento novo. Não testado: produção logada (muitas OTs = muitas buscas de despesas no primeiro carregamento do Painel), usuário restrito (escopo próprio), celular, geração dos PDFs/Excel a partir do Painel.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 209: Viáticos — coluna "Local" não estica mais a lista
+
+**Solicitação:** com um print, o Marcelo pediu que a coluna "Local" da lista de solicitações não cresça a ponto de quebrar as outras colunas (OT com muitos destinos): cortar com "…" e mostrar o resto ao passar o mouse.
+
+**O que mudou:** os destinos de cada OT ficam em uma linha só, com no máximo 340px, reticências no fim e o texto completo na dica do mouse (`title`). Vale para a OT de origem e para as complementares, no Clássico e no Novo (classe `.via-destinos` em `public/styles.css`; marcação em `public/app.js`). Sem servidor nem banco.
+
+**Arquivos:** `public/app.js`, `public/styles.css`, `scripts/2026-11-12_viaticos_local_reticencias.js`; simulador com OTs de 8 destinos.
+
+**Verificação:** simulador: OT de 8 destinos truncada com "…" (texto completo no title), OTs de 1 destino inalteradas, altura da linha normal. Não testado: produção logada, celular.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

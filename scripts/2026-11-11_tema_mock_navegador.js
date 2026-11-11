@@ -23,7 +23,7 @@
   const STS = ['comprovado', 'em_viagem', 'aguardando_comprovacao', 'devolvido', 'divergente', 'liberado', 'comprovado', 'em_approvals'];
   for (let k = 0; k < 22; k++) { const di = new Date(2026, 9, 2 + k * 1.4), df = new Date(di.getTime() + (2 + k % 3) * 86400000), lib = 900 + (k * 377) % 3100;
     SOLS.push(base({ id: 200 + k, familia_raiz_id: 200 + k, ordem_trabalho: String(150 + k), colaborador_name: NOMES[k % NOMES.length], status: STS[k % STS.length], data_inicio: di.toISOString().slice(0, 10), data_fim: df.toISOString().slice(0, 10),
-      valor_solicitado: lib, valor_liberado: lib, valor_comprovado: Math.round(lib * (0.55 + (k % 5) * 0.1)), valor_devolvido: k % 4 === 3 ? 120 : 0, valor_pendencia: k % 7 === 6 ? 210.5 : 0, destinos: [{ uf: 'PR', municipio: ['Maringá', 'Cascavel', 'Londrina'][k % 3] }] })); }
+      valor_solicitado: lib, valor_liberado: lib, valor_comprovado: Math.round(lib * (0.55 + (k % 5) * 0.1)), valor_devolvido: k % 4 === 3 ? 120 : 0, valor_pendencia: k % 7 === 6 ? 210.5 : 0, destinos: k % 5 === 0 ? ['Jaguapitã', 'Iguaraçu', 'Ângulo', 'Astorga', 'Munhoz de Melo', 'Godoy Moreira', 'Fênix', 'São João do Ivaí'].map(m => ({ uf: 'PR', municipio: m })) : [{ uf: 'PR', municipio: ['Maringá', 'Cascavel', 'Londrina'][k % 3] }] })); }
   const CATS = ['hospedagem', 'alimentacao', 'combustivel', 'pedagio', 'aluguel_carro', 'estacionamento', 'taxi_uber'];
   const despesasMock = id => { const s = SOLS.find(x => x.id === id); if (!s || id < 200) return null; const out = []; const n = 3 + id % 4; for (let j = 0; j < n; j++) { const d = new Date(new Date(s.data_inicio + 'T12:00:00').getTime() + (j % 3) * 86400000);
       out.push({ id: id * 10 + j, solicitacao_id: id, categoria: CATS[(id + j) % CATS.length], data: d.toISOString().slice(0, 10), valor: Math.round((s.valor_comprovado / n) * (0.7 + (j % 3) * 0.3) * 100) / 100, descricao: ['Hotel', 'Almoço', 'Abastecimento', 'Pedágio BR-376', 'Locadora', 'Estacionamento', 'Corrida'][(id + j) % 7] }); } return out; };
@@ -110,5 +110,6 @@
     return json([]);
   };
 })();
+
 
 

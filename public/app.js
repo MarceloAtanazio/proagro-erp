@@ -5883,13 +5883,14 @@ async function renderViaticos() {
       const pendAprov = filhos.filter(x => x.status === 'em_approvals').length;
       const raizObj = o.raiz || (o.soltaDe ? sols.find(x => x.id === viaRaizDe(s)) : null);
       const destinosTxt = Array.isArray(s.destinos) && s.destinos.length ? s.destinos.map(d => `${esc(d.municipio)}/${esc(d.uf)}`).join(', ') : '';
+      const destinosAttr = destinosTxt ? `class="via-destinos" title="${destinosTxt.replace(/"/g, '&quot;')}"` : '';   // uma linha com "…"; o texto inteiro no mouse
       const cor = 'style="color:var(--muted)"';
       if (o.filho) {
         const fechadaRaiz = raizObj ? viaSolFechada(raizObj) : viaSolFechada(s);
         return `<tr class="via-fam-filho">
           <td><span class="via-fam-seta-filho" aria-hidden="true">↪</span> <strong>OT ${esc(s.ordem_trabalho || s.id)}</strong><br><small ${cor}>${esc(rotuloCompl(s))}</small></td>
           <td></td>
-          <td><small ${cor}>${destinosTxt}</small></td>
+          <td><small ${cor} ${destinosAttr}>${destinosTxt}</small></td>
           <td>${brDate(s.data_inicio)} – ${brDate(s.data_fim)}</td>
           <td class="num">${brl(viaTotalSolicitado(s))}</td>
           <td class="num">${brl(s.valor_liberado)}${!s.valor_liberado && viaTotalSolicitado(s) > 0 && s.status !== 'cancelada' ? '<br><small ' + cor + '>a transferir</small>' : ''}</td>
@@ -5904,7 +5905,7 @@ async function renderViaticos() {
           <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small ${cor}>${esc(s.colaborador_cargo)}</small>` : ''}</td>
           <td>${s.tier}</td>
           <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small ${cor}>OT ${esc(s.ordem_trabalho)}</small>` : ''}
-            ${destinosTxt ? `<br><small ${cor}>${destinosTxt}</small>` : ''}
+            ${destinosTxt ? `<br><small ${cor} ${destinosAttr}>${destinosTxt}</small>` : ''}
             ${o.soltaDe ? `<br><small ${cor}>↪ complementar da OT ${esc((raizObj && (raizObj.ordem_trabalho || raizObj.id)) || '')}</small>` : ''}${chip}</td>
           <td>${brDate((tot && tot.inicio) || s.data_inicio)} – ${brDate((tot && tot.fim) || s.data_fim)}${vencida ? '<br><small style="color:#B23A2F">Flash expirado</small>' : ''}</td>
           <td class="num">${brl(solic)}${filhos.length ? `<br><small ${cor}>OT + ${filhos.length} compl.</small>` : ''}</td>
