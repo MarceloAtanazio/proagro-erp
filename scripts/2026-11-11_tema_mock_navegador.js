@@ -56,6 +56,16 @@
       const cli = ['Agro Vale Ltda', 'Cooperativa Sul', 'Fazenda Boa Safra', 'Grupo Semear', 'Agropecuária Norte'];
       const dias = [-20, -8, -3, 0, 2, 5, 8, 14, 21, -40, -35, -28, -15];
       return json(dias.map((dd, k) => { const rec = k >= 9; return { id: 90 + k, due_date: off(dd), description: 'Prêmio de seguro — apólice ' + (7000 + k), client_name: cli[k % 5], document: 'AP ' + (7000 + k), amount: 6400 + k * 3120.7, status: rec ? 'recebido' : 'pendente', receipt_date: rec ? off(dd + 1) : null, reconciled: rec && k % 2 === 1, attachment_count: k % 3, category: 'Prêmios' }; })); }
+    if (u.includes('/api/reports/fluxo-caixa')) {
+      const q = new URL(u, location.origin).searchParams, de = q.get('de'), ate = q.get('ate'), gran = q.get('granularidade') || 'dia';
+      const n = { dia: 30, semana: 9, mes: 12, ano: 3 }[gran] || 30; let saldo = 482350.4 - 38000; const bk = [];
+      for (let k = 0; k < n; k++) { const ent = Math.round(24000 + Math.sin(k / 2.2) * 9000 + (k % 4) * 3100), sai = Math.round(21000 + Math.cos(k / 1.7) * 8000 + (k % 3) * 4200); saldo += ent - sai;
+        bk.push({ label: gran === 'ano' ? String(2024 + k) : gran === 'mes' ? ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][k] + '/26' : gran === 'semana' ? 'Sem ' + (k + 1) : String(1 + k).padStart(2, '0') + '/11', entradas: ent, saidas: sai, saldo: Math.round(saldo) }); }
+      const te = bk.reduce((t, x) => t + x.entradas, 0), ts = bk.reduce((t, x) => t + x.saidas, 0), ok = location.search.includes('ok');
+      return json({ de, ate, resumo: { saldoInicial: 444350.4, totalEntradas: te, totalSaidas: ts, saldoAtual: 482350.4, saldoPrevisto: ok ? 512000 : 301200.6 },
+        alerta: ok ? { diaCritico: null, horizonte: '2027-02-09' } : { diaCritico: '2026-12-18', diaPior: '2027-01-14', necessidade: 86400.5, horizonte: '2027-02-09' }, buckets: bk,
+        categorias: { despesas: [{ category: 'Folha de Pagamento', total: 188000 }, { category: 'Tecnologia', total: 96400 }, { category: 'Aluguel', total: 61000 }], receitas: [{ category: 'Prêmios', total: 402000 }, { category: 'Serviços', total: 83000 }] },
+        futuras: { receber: [{ due_date: '2026-11-20', client_name: 'Agro Vale Ltda', description: 'Prêmio 7001', amount: 9520.7 }], pagar: [{ due_date: '2026-11-18', party: 'Tech Cloud S/A', description: 'Mensalidade', amount: 4200 }] } }); }
     if (u.includes('/api/reports/cashflow/')) { const mes = n => ({ month: n, total: 0 }); const ent = [], sai = []; for (let k = 1; k <= 12; k++) { ent.push({ month: k, total: 300000 + k * 9000 + (k % 3) * 18000 }); sai.push({ month: k, total: 240000 + k * 7000 + (k % 4) * 15000 }); }
       return json({ entradas: { realizado: ent.slice(0, 10), projetado: ent.slice(10) }, saidas: { realizado: sai.slice(0, 10), projetado: sai.slice(10) } }); }
     if (u.includes('/api/reports/dashboard')) {

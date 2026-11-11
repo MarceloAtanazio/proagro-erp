@@ -1382,6 +1382,7 @@ async function renderFluxo() {
   if (centroCusto) params.set('centro_custo', centroCusto);
   if (situacao) params.set('situacao', situacao);
   const d = await api('/api/reports/fluxo-caixa?' + params.toString());
+  window.ProagroFluxo = { d };   // visual novo (tema-fluxo.js) lê os dados daqui
   const c = $('#content');
 
   c.innerHTML = `

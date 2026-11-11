@@ -26,7 +26,7 @@
     const reduz = matchMedia('(prefers-reduced-motion: reduce)').matches;
     root.querySelectorAll('[data-conta]').forEach(el => {
       const alvo = Number(el.dataset.conta), fmt = el.dataset.fmt || 'brl';
-      const mostra = v => { el.textContent = fmt === 'int' ? Math.round(v).toLocaleString('pt-BR') : brl(v); };
+      const mostra = v => { el.textContent = fmt === 'int' ? Math.round(v).toLocaleString('pt-BR') : fmt === 'pct' ? Math.round(v).toLocaleString('pt-BR') + '%' : brl(v); };
       if (reduz || !isFinite(alvo)) return mostra(alvo);
       const t0 = performance.now(), dur = 900;
       const passo = t => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); mostra(alvo * e); if (k < 1) requestAnimationFrame(passo); };
@@ -240,5 +240,5 @@
     return Promise.resolve();
   }
 
-  window.ProagroNovo = Object.assign(window.ProagroNovo || {}, { dashboard, contar });
+  window.ProagroNovo = Object.assign(window.ProagroNovo || {}, { dashboard, contar, sparkline });
 })();

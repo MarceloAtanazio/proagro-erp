@@ -38,6 +38,7 @@
   };
   // etiquetas extras por página, lidas da própria tela (ex.: ativos e inativos de Fornecedores)
   const EXTRA = {
+    fluxo: () => { const f = window.ProagroFluxo && ProagroFluxo.d; return f ? [{ t: brDate(f.de) + ' – ' + brDate(f.ate), cls: '' }] : []; },
     fornecedores: c => { const ok = c.querySelectorAll('#tbl tbody .badge.ok').length, off = c.querySelectorAll('#tbl tbody .badge.off').length;
       return (ok ? [{ t: ok + (ok === 1 ? ' ativo' : ' ativos'), cls: 'ok' }] : []).concat(off ? [{ t: off + (off === 1 ? ' inativo' : ' inativos'), cls: '' }] : []); }
   };
@@ -80,12 +81,14 @@
   function aplicar(hash) {
     const a = app(), c = conteudo(); if (!a || !c) return;
     if (!novo()) { a.classList.remove('nd-tem-hero'); return; }
+    if (hash !== 'fluxo') c.classList.remove('nd-fx-page');   // marca do Fluxo não vaza para outras telas
     if (CARREGANDO(c)) return;
     // já enfeitada (o Dashboard tem o cabeçalho próprio, de tema-dashboard.js)
     if (c.querySelector('.nd-hero, .nd-pagina-hero')) { a.classList.add('nd-tem-hero'); return; }
     const page = (typeof PAGES !== 'undefined') ? PAGES.find(p => p.hash === hash) : null;
     if (!page || hash === 'dashboard') return;
     if ((hash === 'pagar' || hash === 'receber') && window.ProagroNovo && ProagroNovo.financeiro) ProagroNovo.financeiro(hash);
+    if (hash === 'fluxo' && window.ProagroNovo && ProagroNovo.fluxo) ProagroNovo.fluxo();
     inserirHero(c, page);
     a.classList.add('nd-tem-hero');
   }
