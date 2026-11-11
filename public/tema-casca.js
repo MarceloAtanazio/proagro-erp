@@ -91,7 +91,7 @@
     const app = document.getElementById('view-app'), side = document.querySelector('.sidebar'); if (!app || !side) return;
     const brand = side.querySelector('.brand');
     if (brand && !brand.querySelector('.nd-mark')) {
-      const m = document.createElement('span'); m.className = 'nd-mark'; m.textContent = 'P'; m.setAttribute('aria-hidden', 'true'); brand.insertBefore(m, brand.firstChild);
+      const m = document.createElement('span'); m.className = 'nd-mark'; m.setAttribute('aria-hidden', 'true'); m.innerHTML = '<img src="/logo-simbolo-branco.png" alt="">'; brand.insertBefore(m, brand.firstChild);
       const p = document.createElement('button'); p.type = 'button'; p.className = 'nd-pin-btn'; p.title = 'Fixar o menu aberto'; p.setAttribute('aria-label', 'Fixar o menu aberto'); p.innerHTML = SVG_PIN;
       p.onclick = () => { const on = app.classList.toggle('nd-pin'); try { localStorage.setItem(K_PIN, on ? '1' : '0'); } catch (e) { /* sem armazenamento */ } p.title = on ? 'Soltar o menu' : 'Fixar o menu aberto'; };
       brand.appendChild(p);
@@ -103,7 +103,15 @@
     }
     let pin = false; try { pin = localStorage.getItem(K_PIN) === '1'; } catch (e) { /* ok */ }
     app.classList.toggle('nd-pin', pin);
+    aplicarLogoMenu();
   }
+  // Menu aberto: logo completo em branco (no clássico segue o logo original, que fica em data-orig)
+  function aplicarLogoMenu() {
+    const img = document.querySelector('.sidebar .brand > img'); if (!img) return;
+    if (!img.dataset.orig) img.dataset.orig = img.getAttribute('src');
+    img.setAttribute('src', novo() ? '/logo-completo-branco.png' : img.dataset.orig);
+  }
+  window.addEventListener('proagro:tema', aplicarLogoMenu);
   const iniciar = () => { montarRail(); if (document.querySelector('.topbar')) montar(); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar); else iniciar();
   window.addEventListener('load', iniciar);

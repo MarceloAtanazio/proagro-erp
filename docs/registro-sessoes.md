@@ -8046,3 +8046,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador com dados de exemplo, em 1440px, claro e escuro: estrutura, contagem, minigráficos e medidor; entradas ligando/desligando no gráfico; atalho de 90 dias trocando as datas e recarregando; agrupamento por mês (12 linhas); botão do banner abrindo a solicitação de aporte original; estado "sem risco"; clássico com os originais de volta e sem nada do novo; sem erro de console. Defeito achado e corrigido: a marca da página do Fluxo ficava no conteúdo ao navegar para outra tela. Não testado: dados reais da produção, celular, e como o medidor se comporta com saídas muito grandes ou zeradas fora dos casos simulados.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 203: Logo no menu lateral em trilho (recolhido e expandido)
+
+**Solicitação:** o Marcelo achou o menu lateral em trilho "meio estranho" e enviou o símbolo da ProAgro: recolhido, quer esse símbolo em branco; expandido, quer o logo mais ajustado.
+
+**O que mudou (só no visual "Novo"; o clássico mantém o logo original):** (1) Recolhido: o "P" verde foi substituído pelo símbolo do logo em branco, sem o quadrado, com um brilho suave e um leve aumento ao passar o mouse. (2) Expandido: o logo completo ("PROAGRO SEGUROS" com o símbolo) em branco, 34px de altura, alinhado à esquerda e ao lado do botão de fixar; no lugar do logo verde pequeno, de pouco contraste sobre o menu escuro. (3) A área da marca tem altura fixa (78px), então o menu não "pula" ao abrir e fechar. Os logos brancos foram gerados por script a partir do JPG enviado e do logo atual (o contorno vira branco, o fundo transparente, recortado rente ao desenho): public/logo-simbolo-branco.png (320px) e public/logo-completo-branco.png (560px). O JPG original ficou guardado em scripts para refazer o logo se mudar. Sem servidor nem banco.
+
+**Verificação:** simulador, em 1120px: menu recolhido mostrando o símbolo branco; menu fixado aberto com o logo completo; clássico com o logo original (logo-white.png) e menu de 236px; claro e escuro. Defeito achado e corrigido: a regra que escondia o logo antigo no menu recolhido pegava também a imagem do símbolo novo (passou a valer só para o logo original). Não testado: produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
