@@ -8057,3 +8057,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, em 1120px: menu recolhido mostrando o símbolo branco; menu fixado aberto com o logo completo; clássico com o logo original (logo-white.png) e menu de 236px; claro e escuro. Defeito achado e corrigido: a regra que escondia o logo antigo no menu recolhido pegava também a imagem do símbolo novo (passou a valer só para o logo original). Não testado: produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 204: Símbolo do logo sumia no menu recolhido de quem já usava o clássico
+
+**Solicitação:** com um print da produção, o Marcelo avisou que o logo pequeno não aparecia no menu minimizado (Sessão 203).
+
+**Causa:** quem tinha o "menu recolhido" do visual clássico salvo no navegador (proagro_sidebar_collapsed) abria o sistema com a classe side-collapsed no #view-app, e a regra antiga ".app.side-collapsed .brand img { display:none }" do styles.css escondia também a imagem do símbolo novo. No teste do dia anterior o estado salvo não existia, por isso apareceu. Reproduzido no simulador com o estado salvo antes de corrigir.
+
+**O que mudou:** (1) no visual novo a classe side-collapsed é retirada (o trilho tem o próprio modo recolhido/aberto) e, ao voltar ao clássico, o menu recolhido salvo é reposto; (2) a regra do símbolo ganhou especificidade maior que a da regra antiga, como segunda camada. Sem servidor nem banco.
+
+**Verificação:** simulador com o estado salvo (side-collapsed): símbolo de 46px visível no novo; ida ao clássico repõe o menu recolhido e o logo original; volta ao novo mostra o símbolo de novo. Cache do servidor conferido (revalida sempre), então não era arquivo antigo.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

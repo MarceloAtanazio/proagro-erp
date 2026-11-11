@@ -20,7 +20,7 @@
   html[data-ui="novo"] .app.visible .sidebar:hover .brand > img, html[data-ui="novo"] .app.visible .sidebar:focus-within .brand > img, html[data-ui="novo"] .app.visible.nd-pin .sidebar .brand > img { display: block; height: 34px; width: auto; max-width: 168px; margin-left: 4px; animation: nd-fade .35s both; }
   html[data-ui="novo"] .app.visible .sidebar .brand .side-toggle { display: none; }
   html[data-ui="novo"] .nd-mark { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; }
-  html[data-ui="novo"] .nd-mark img { width: 46px; height: auto; display: block; filter: drop-shadow(0 4px 12px rgba(61,220,132,.45)); transition: transform .3s var(--curva); }
+  html[data-ui="novo"] .app.visible .sidebar .brand .nd-mark img { width: 46px; height: auto; display: block; filter: drop-shadow(0 4px 12px rgba(61,220,132,.45)); transition: transform .3s var(--curva); }
   html[data-ui="novo"] .nd-mark:hover img { transform: scale(1.08); }
   html[data-ui="novo"] .app.visible .sidebar:hover .nd-mark, html[data-ui="novo"] .app.visible .sidebar:focus-within .nd-mark, html[data-ui="novo"] .app.visible.nd-pin .sidebar .nd-mark { display: none; }
   html[data-ui="novo"] .nd-pin-btn { display: none; position: absolute; right: 14px; top: 24px; width: 30px; height: 30px; border-radius: 10px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: rgba(255,255,255,.8); cursor: pointer; place-items: center; transition: background .2s, transform .3s var(--curva); }

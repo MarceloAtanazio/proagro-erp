@@ -110,6 +110,10 @@
     const img = document.querySelector('.sidebar .brand > img'); if (!img) return;
     if (!img.dataset.orig) img.dataset.orig = img.getAttribute('src');
     img.setAttribute('src', novo() ? '/logo-completo-branco.png' : img.dataset.orig);
+    // o "menu recolhido" do clássico (salvo no navegador) não vale para o trilho: a classe side-collapsed escondia o símbolo; volta ao trocar para o clássico
+    const app = document.getElementById('view-app'); if (!app) return;
+    if (novo()) app.classList.remove('side-collapsed');
+    else { let c = false; try { c = localStorage.getItem('proagro_sidebar_collapsed') === '1'; } catch (e) { /* ok */ } app.classList.toggle('side-collapsed', c); }
   }
   window.addEventListener('proagro:tema', aplicarLogoMenu);
   const iniciar = () => { montarRail(); if (document.querySelector('.topbar')) montar(); };
