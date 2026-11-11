@@ -184,6 +184,12 @@ function modalError(msg) {
 
 const fld = (id, label, type = 'text', value = '', attrs = '') =>
   `<div class="field"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(value)}" ${attrs}></div>`;
+// Campo de nº da OT de Viáticos: só dígitos (digitando ou colando). Marque o input com data-ot-num.
+const OT_ATTRS = 'data-ot-num inputmode="numeric" maxlength="15" autocomplete="off" placeholder="Somente números"';
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el && el.matches && el.matches('[data-ot-num]')) { const limpo = el.value.replace(/\D/g, ''); if (limpo !== el.value) el.value = limpo; }
+});
 const fldSel = (id, label, options, selected) =>
   `<div class="field"><label for="${id}">${label}</label><select id="${id}">${options.map(o =>
     `<option value="${esc(o.v)}" ${String(o.v) === String(selected) ? 'selected' : ''}>${esc(o.t)}</option>`).join('')}</select></div>`;
@@ -6111,7 +6117,7 @@ async function formSolicitacao(existing) {
     <div id="vs-pendencia-alerta"></div>
     ${fldSel('vs-tier', 'Tier (TUD)', [{ v: 'A', t: TIER_LABEL.A }, { v: 'B', t: TIER_LABEL.B }], existing ? existing.tier : colabAtual.tier)}
     ${fldSel('vs-local', 'Categoria de local (a mais alta tocada na viagem)', Object.entries(LOCAL_LABEL).map(([v, t]) => ({ v, t })), existing ? existing.categoria_local : 'interior')}
-    ${fld('vs-ordem', 'Nº da Ordem de Trabalho', 'text', existing ? existing.ordem_trabalho || '' : '')}
+    ${fld('vs-ordem', 'Nº da Ordem de Trabalho', 'text', existing ? existing.ordem_trabalho || '' : '', existing && existing.complementar_tipo ? 'disabled title="OT complementar: o nome é gerado automaticamente"' : OT_ATTRS)}
     <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
       <div class="field-row" style="align-items:flex-end; margin-bottom:8px">
         ${fldSel('vs-uf', 'Estado', BR_LOCALIDADES.estados.map(e => ({ v: e.uf, t: e.nome })), BR_LOCALIDADES.estados[0].uf)}
@@ -6145,6 +6151,9 @@ async function formSolicitacao(existing) {
           valor_liberado: Number($('#vs-liberado').value) || 0,
           notes: $('#vs-notes').value
         };
+        // O nº da OT é só número. OT antiga com letras só passa se o valor não foi mexido.
+        const otNovo = String(b.ordem_trabalho || '').trim();
+        if (otNovo && !/^\d+$/.test(otNovo) && !(isEdit && otNovo === String(existing.ordem_trabalho || '').trim())) return modalError('O nº da Ordem de Trabalho deve conter somente números.');
         // Pendência de viagem(ns) anterior(es): a decisão (descontar ou dispensar) é aplicada de verdade
         // — e não só na tela — e registrada no log de auditoria.
         if (pend && pend.ativo) {
@@ -7787,6 +7796,8 @@ const viaNumOk = v => { const n = viaNum(v); return isFinite(n) && n > 0; };
 
 function viaWizValidarEtapa2(v) {
   if (!String(v.ordem_trabalho || '').trim()) return { msg: 'Informe o nº da Ordem de Trabalho.', foco: 'w2-ot' };
+  // complementar: o nome é gerado automaticamente (campo travado), não se valida; OT nova: só números
+  if (!v.complementar && !/^\d+$/.test(String(v.ordem_trabalho).trim())) return { msg: 'O nº da Ordem de Trabalho deve conter somente números.', foco: 'w2-ot' };
   if (!v.destinos || !v.destinos.length) return { msg: 'Adicione ao menos um destino (cidade da Ordem de Trabalho).', foco: 'w2-mun' };
   if (!v.data_inicio || !v.data_fim) return { msg: 'Preencha as datas de saída e de retorno.', foco: !v.data_inicio ? 'w2-inicio' : 'w2-fim' };
   if (v.data_fim < v.data_inicio) return { msg: 'Data de retorno não pode ser antes da saída.', foco: 'w2-fim' };
@@ -7890,7 +7901,7 @@ function viaWizStep2() {
       ${viaWizProgress(2)}
       <div class="card">
         <h3 style="margin-bottom:14px">Dados da viagem</h3>
-        ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho, w.complementar ? 'disabled' : '')}
+        ${fld('w2-ot', 'Nº da Ordem de Trabalho', 'text', w.ordem_trabalho, w.complementar ? 'disabled' : OT_ATTRS)}
         ${w.complementar ? '<p class="hint" style="margin:-6px 0 10px">Complementar de uma OT em curso: o número é gerado automaticamente (se houver outra complementar da mesma OT, entra 2, 3…).</p>' : ''}
         <div class="field"><label>Destinos (cidades da Ordem de Trabalho)</label>
           <div class="field-row" style="align-items:flex-end; margin-bottom:8px">

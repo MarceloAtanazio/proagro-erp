@@ -8188,3 +8188,20 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro, viewport 1250: medidor e valores grandes, cartão preenchido, rodapé com as médias (R$ 282.000,00 orçado e R$ 174.278,36 realizado por mês). Não testado: tema claro neste ajuste, produção logada, celular.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 213: Nº da Ordem de Trabalho só aceita números (Viáticos)
+
+**Solicitação:** em "Solicitar viagem", o campo "Nº da Ordem de Trabalho" deve aceitar somente números; letras devem ser proibidas. E, ao gerar uma complementar, o " - Complementar" deve continuar vindo automático.
+
+**O que mudou:**
+- **Tela:** o campo (no assistente "Solicitar viagem" e no formulário do administrador) só aceita dígitos — letras e símbolos são removidos ao digitar ou colar; teclado numérico no celular; máximo 15 dígitos; aviso "Somente números". O assistente e o formulário também recusam o envio com mensagem clara.
+- **Servidor (a regra não depende só da tela):** o autosserviço recusa OT com letras; o administrador não cria nem troca por OT com letras.
+- **Complementar / custo extra: nada muda** — o nome ("42 - Complementar", "42 - Custo extra 2") continua sendo montado automaticamente pelo sistema e o campo continua travado; essas OTs não passam pela regra numérica. No formulário do administrador, a OT complementar agora aparece com o campo travado.
+- **OTs antigas com letras** (ex.: "OT - 181"): continuam funcionando — editar outros campos delas não é barrado; só não se pode trocar o número por outro com letras (corrigir para "181" é permitido). A complementar de uma OT antiga também continua sendo gerada.
+
+**Arquivos:** `public/app.js`, `api/index.js`, `scripts/2026-11-12_viaticos_ot_somente_numeros.js` (aplicação) e `scripts/2026-11-12_verifica_ot_somente_numeros.js` (14 verificações do backend, todas PASS). Sem migração e sem mexer em dados existentes.
+
+**Verificação:** simulador: letras filtradas ao digitar (administrador e assistente), mensagem de validação, complementar e OT antiga sem bloqueio, campo da complementar travado. Backend com banco simulado: 14/14.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

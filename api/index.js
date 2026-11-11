@@ -6621,6 +6621,7 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   // para aprovação e uma sem OT, motivo ou objetivo chega sem contexto nenhum.
   // A tela já barra, mas a regra não pode depender só dela.
   if (!sanitize(b.ordem_trabalho)) return res.status(400).json({ error: 'Informe o nº da Ordem de Trabalho.' });
+  if (!pai && !OT_SO_NUMEROS.test(String(b.ordem_trabalho).trim())) return res.status(400).json({ error: OT_MSG });
   if (!b.motivo) return res.status(400).json({ error: 'Selecione o motivo da viagem.' });
   if (!MOTIVO_OPTIONS.includes(b.motivo)) return res.status(400).json({ error: 'Motivo inválido.' });
   if (!sanitize(b.objetivo)) return res.status(400).json({ error: 'Descreva o objetivo da viagem.' });
@@ -6758,6 +6759,11 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
 
 const MOTIVO_OPTIONS = ['Comercial', 'Monitoramento', 'Prévia', 'Reinspeção', 'Sinistro'];
 
+// Nº da OT de Viáticos: só dígitos; complementar / custo extra levam o sufixo gerado pelo sistema (ex.: "42 - Complementar 2").
+const OT_SO_NUMEROS = /^\d+$/;
+const OT_COM_SUFIXO = /^\d+ - (Complementar|Custo extra)( \d+)?$/i;
+const OT_MSG = 'O nº da Ordem de Trabalho deve conter somente números.';
+
 function validateSolicitacao(b) {
   if (!b.colaborador_id) return 'Selecione o colaborador.';
   if (!['A', 'B'].includes(b.tier)) return 'Tier inválido.';
@@ -6844,6 +6850,7 @@ async function encerrarPendencias(b, colaboradorId, naSolicitacaoId) {
 app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
+  { const ot = String(sanitize(b.ordem_trabalho) || '').trim(); if (ot && !OT_SO_NUMEROS.test(ot) && !OT_COM_SUFIXO.test(ot)) return res.status(400).json({ error: OT_MSG }); }
   const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
     (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, data_inicio, data_fim, data_expiracao_flash, valor_solicitado, valor_liberado, notes, created_by)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
@@ -6856,6 +6863,13 @@ app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(a
 app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
+  {
+    const ot = String(sanitize(b.ordem_trabalho) || '').trim();
+    if (ot && !OT_SO_NUMEROS.test(ot) && !OT_COM_SUFIXO.test(ot)) {
+      const atualOt = (await query('SELECT ordem_trabalho FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+      if (!atualOt || String(atualOt.ordem_trabalho || '').trim() !== ot) return res.status(400).json({ error: OT_MSG });
+    }
+  }
   // Decidir sobre a pendência é liberar (ou abrir mão de) valor: só administrador, e só antes da transferência.
   const querDecidir = Array.isArray(b.pendencia_ids) && b.pendencia_ids.length;
   let donoPend = null;
