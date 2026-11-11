@@ -9498,6 +9498,7 @@ async function renderViaticosConfig() {
     </table></div>`;
 
   openModal('Configurações de Viáticos (TUD e Colaboradores)', body, [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { xwide: true });
+  document.querySelector('.modal').classList.add('modal-cfg');   // bem mais larga: a tabela de colaboradores cabe inteira
 
   // Lista de colaboradores com filtro de situação. Inativar em vez de excluir é
   // o caminho recomendado (o histórico de viagens aponta para o cadastro), então

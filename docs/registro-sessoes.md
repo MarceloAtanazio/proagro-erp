@@ -8205,3 +8205,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador: letras filtradas ao digitar (administrador e assistente), mensagem de validação, complementar e OT antiga sem bloqueio, campo da complementar travado. Backend com banco simulado: 14/14.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 214: Configurações de Viáticos em janela mais larga
+
+**Solicitação:** com um print, o Marcelo pediu para expandir a tela de Configurações de Viáticos para os dois lados, de modo que todas as informações apareçam claras e sem quebrar (a tabela de colaboradores cortava os botões de Ações).
+
+**O que mudou:** a janela passa de 1100px para até 1560px (96% da tela); a tabela de colaboradores não quebra mais linha (nome, cargo, documentação, "Dispensar CNH, CRLV e seguro" e os botões Editar / Inativar / Excluir cabem inteiros) e as grades de TUD ficam limitadas a 860px para não esticar sem necessidade. Vale para o Clássico e o Novo. Sem servidor nem banco.
+
+**Arquivos:** `public/app.js` (classe `modal-cfg`), `public/styles.css`, `scripts/2026-11-12_viaticos_config_modal_largo.js`.
+
+**Verificação:** simulador em 1500px: janela com 1396px, tabela sem rolagem horizontal, todas as colunas dentro da janela (Ações termina a ~40px da borda). Não testado: lista real com muitos colaboradores e cargos longos, telas menores que 1100px (a janela ocupa 96% e a tabela rola dentro dela).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
