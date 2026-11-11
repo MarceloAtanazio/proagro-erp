@@ -59,7 +59,8 @@
     if (u.includes('/api/reports/fluxo-caixa')) {
       const q = new URL(u, location.origin).searchParams, de = q.get('de'), ate = q.get('ate'), gran = q.get('granularidade') || 'dia';
       const n = { dia: 30, semana: 9, mes: 12, ano: 3 }[gran] || 30; let saldo = 482350.4 - 38000; const bk = [];
-      for (let k = 0; k < n; k++) { const ent = Math.round(24000 + Math.sin(k / 2.2) * 9000 + (k % 4) * 3100), sai = Math.round(21000 + Math.cos(k / 1.7) * 8000 + (k % 3) * 4200); saldo += ent - sai;
+      for (let k = 0; k < n; k++) { let ent =Math.round(24000 + Math.sin(k / 2.2) * 9000 + (k % 4) * 3100), sai = Math.round(21000 + Math.cos(k / 1.7) * 8000 + (k % 3) * 4200); saldo += ent - sai;
+        if (location.search.includes('out') && k === n - 1) { sai = 1250000; saldo = 482350 - 600000; }   // ?out: último período com saída enorme (caso do print do Marcelo)
         bk.push({ label: gran === 'ano' ? String(2024 + k) : gran === 'mes' ? ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][k] + '/26' : gran === 'semana' ? 'Sem ' + (k + 1) : String(1 + k).padStart(2, '0') + '/11', entradas: ent, saidas: sai, saldo: Math.round(saldo) }); }
       const te = bk.reduce((t, x) => t + x.entradas, 0), ts = bk.reduce((t, x) => t + x.saidas, 0), ok = location.search.includes('ok');
       return json({ de, ate, resumo: { saldoInicial: 444350.4, totalEntradas: te, totalSaidas: ts, saldoAtual: 482350.4, saldoPrevisto: ok ? 512000 : 301200.6 },

@@ -114,6 +114,7 @@
     clicar(sec.querySelector('[data-fx="saldo"]'), () => { const cv = $('#ch-saldo'); const card = cv && cv.closest('.card'); if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); card.classList.remove('nd-pisca'); void card.offsetWidth; card.classList.add('nd-pisca'); } });
     sec.querySelectorAll('[data-serie]').forEach(el => clicar(el, () => {
       const ch = window.Chart && Chart.getChart('ch-entsai'); if (!ch) return;
+      if (ch.$ndModo === 'liq' && ProagroNovo.modoEntSai) ProagroNovo.modoEntSai(ch, 'ent');   // estava no resultado líquido: volta às barras de entradas e saídas
       const i = Number(el.dataset.serie), vis = ch.isDatasetVisible(i);
       ch.setDatasetVisibility(i, !vis); ch.update(); el.classList.toggle('nd-off', vis);
       const card = $('#ch-entsai').closest('.card'); if (card && vis === true) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }

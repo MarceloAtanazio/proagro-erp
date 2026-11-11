@@ -8083,3 +8083,19 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação (depois):** recolhido, os seis primeiros ícones, o item ativo e a busca com centro em 48 = centro do menu, pílulas de 44px; aberto (fixado), pílula de 214px com o texto dentro, ícone à esquerda, logo completo e busca no lugar. Não testado: produção logada; o abrir por passar o mouse (testei pelo botão de fixar).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 206: Gráficos do Fluxo de Caixa refeitos (visual Novo)
+
+**Solicitação:** com um print dos dois gráficos no tema escuro, o Marcelo pediu para melhorá-los: pontos em todo dado, eixos com números enormes e datas completas, barras finas achatadas por um valor gigante no último período e dica de passagem apagada.
+
+**O que mudou (só no visual "Novo"; o Clássico não muda):** novo `public/tema-graficos.js`, plugin do Chart.js que refina os dois gráficos sem mexer na criação deles em `app.js`.
+- **Evolução do saldo:** linha suave sem pontos (só o último e o que estiver sob o mouse), trechos negativos em vermelho, linha tracejada "Saldo zero" quando cruza o zero, marcadores de Máx. e Mín. do período, linha vertical que acompanha o mouse, dica com a variação contra o ponto anterior; eixos compactos (R$ 400 mil, R$ 1,8 mi) e datas curtas (dd/mm).
+- **Entradas × Saídas:** barras mais cheias e arredondadas, faixa que realça o período sob o mouse, linha tracejada de Resultado (entradas − saídas) e seletor "Entradas e saídas | Resultado líquido" (líquido: verde acima de zero, vermelho abaixo). Quando um período é mais de 3× maior que os demais, o eixo é cortado no valor normal e a barra estourada recebe a etiqueta "▲ R$ 1,3 mi" (a dica mostra o valor real).
+- Clicar em Entradas/Saídas nos KPIs volta o gráfico ao modo de barras antes de ligar/desligar a série. Grade de dois cartões travada em colunas iguais (o seletor no título alargava a página).
+
+**Arquivos:** `public/tema-graficos.js` (novo), `public/index.html`, `public/tema-fluxo.js`, `public/tema-fluxo.css`, `scripts/2026-11-12_tema_integra6.js`, simulador `scripts/2026-11-11_tema_mock_navegador.js` (`?out` simula saída enorme no último período).
+
+**Verificação:** no simulador, escuro e claro, com o caso do print: eixo cortado e etiqueta no estouro, dica legível com Entradas/Saídas/Resultado, modo líquido com legenda própria, Clássico com 2 séries, pontos originais e sem seletor. Não testado: produção logada, celular, períodos por dia com muitos pontos.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
