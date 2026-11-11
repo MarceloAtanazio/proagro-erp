@@ -151,7 +151,7 @@ function toast(msg) {
 }
 
 function destroyCharts() { charts.forEach(c => c.destroy()); charts = []; }
-function makeChart(canvas, cfg) { const c = new Chart(canvas, cfg); charts.push(c); return c; }
+function makeChart(canvas, cfg) { if (window.ProagroTema) ProagroTema.aplicarChart(); const c = new Chart(canvas, cfg); charts.push(c); return c; }
 
 // ------------------ Modal ------------------
 function openModal(title, bodyHTML, buttons, opts) {
@@ -364,6 +364,8 @@ function firstAllowedHash() {
 }
 
 window.addEventListener('hashchange', () => { if (USER) route(); });
+// Tema claro/escuro ou visual novo trocado: redesenha a tela para os gráficos pegarem as cores novas
+window.addEventListener('proagro:tema', () => { if (USER) route(); });
 
 function route() {
   destroyCharts();

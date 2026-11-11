@@ -7987,3 +7987,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** 29 verificações novas no backend (despesa e reprovada gravadas na raiz, leitura, fechar com liberado somado, recusa com complementar em aprovação, status propagado, reabrir/arquivar, excluir, cartões do painel) e todos os testes antigos passando (atualizei o teste das reprovadas do Flash, que já estava defasado). O SQL novo foi conferido no Postgres real, só leitura: a família da OT 42 sai como 109 e 120, o status automático não muda nada hoje e, em cenários sintéticos, a OT de origem fica em viagem enquanto a complementar aprovada não termina. Na tela simulada: lista agrupada, sub-linhas, comprovação com totais somados e recusa de fechar.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-11 — Sessão 198: Tema escuro e visual novo (experimento reversível)
+
+**Solicitação:** o Marcelo quis experimentar uma aparência mais moderna (páginas e gráficos mais interativos, menos engessado), com botões para alternar entre claro e escuro, e poder voltar à versão atual se não gostasse.
+
+**O que mudou:** nada muda por padrão — o sistema abre claro e clássico, exatamente como era. No topo (e na tela de entrada) há dois controles, salvos no navegador de cada pessoa: um seletor Clássico | Novo ✦ e um botão sol/lua. (1) Tema escuro, valendo para os dois visuais: variáveis novas e um CSS gerado por script (scripts/2026-11-11_gera_tema_escuro.js) que converte as ~280 cores fixas do styles.css para equivalentes escuras, conforme o papel de cada uma. (2) Visual novo: menu com destaque em degradê, barra superior de vidro, cartões e indicadores com acento e brilho, botões e campos arredondados com anel de foco, tabelas mais arejadas com realce da linha, selos com ponto, janelas com desfoque e animação de entrada, páginas que entram suavemente, avisos em pílula. (3) Gráficos: cores de texto e grade conforme o tema; no visual novo, animação, dica ao passar o mouse com estilo, barras arredondadas, linhas suaves com degradê de preenchimento, legenda com pontos e rosca mais fina; cores de série muito escuras são clareadas no escuro. Arquivos novos: public/tema.js, public/tema.css, public/tema-escuro.css (gerado); mudanças pequenas no index.html (3 linhas) e no app.js (makeChart e um ouvinte do evento proagro:tema). Sem mudança no servidor nem no banco.
+
+**Como voltar:** botão Clássico no topo (imediato, por pessoa) ou reverter o commit. Para refazer o escuro depois de mudar o styles.css: node scripts/2026-11-11_gera_tema_escuro.js.
+
+**Verificação:** no navegador, com simulador (Dashboard com 7 gráficos, Viáticos com a OT 42 e suas complementares, janela de comprovação e tela de entrada), nas quatro combinações (clássico/novo × claro/escuro): sem erro de console novo, o claro clássico mantém as mesmas cores e raios de antes, e os gráficos desenham em todas. Defeitos achados e corrigidos no caminho: valores dos indicadores estourando o cartão; animação do Chart.js quebrada por eu trocar o objeto padrão; barras escuras sumindo no fundo escuro; vermelho e borda fixos no estilo das telas. Não testado: telas de Contas a Pagar/Receber, RH, Suprimentos e demais, que só herdam o tema (podem ter detalhes a ajustar).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
