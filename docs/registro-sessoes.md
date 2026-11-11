@@ -8257,3 +8257,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador com duas pessoas "vencidas": o aviso não aparece; indicadores e aviso "terminando" intactos; sem erros no console.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 218: Dashboard — saldo de caixa sem dupla contagem do extrato
+
+**Solicitação:** o Marcelo desconfiou do "Saldo de caixa" do Dashboard (R$ 3.477.025,02) e pediu para conferir.
+
+**Diagnóstico (somente leitura no banco):** o saldo era recebido (histórico, R$ 4.585.381,05) − pago (histórico, R$ 2.844.480,10) + soma de TODAS as linhas de extrato com `auto_generated=false` (R$ 1.736.124,07). Essas 451 linhas são o extrato bancário importado (18/03 a 03/11/2026); 442 estão conciliadas com os mesmos títulos pagos/recebidos, então o dinheiro entrava duas vezes (≈ R$ 1,74 mi a mais). A tela de Fluxo de Caixa, que usa outro cálculo, já mostrava a faixa de R$ 1,74 mi.
+
+**O que mudou:** os "ajustes bancários" passam a ser só as linhas do extrato que NÃO estão ligadas a um título a pagar/receber (`matched_type` diferente de payable/receivable). Saldo novo: R$ 1.733.401,54 (recebido − pago = R$ 1.740.900,95; extrato total = R$ 1.736.124,07; 9 linhas não conciliadas = − R$ 7.499,41). "Mínimo projetado" passa de R$ 2.572.055,18 para R$ 828.431,70. No visual Novo, "Acumulado do ano" virou "Resultado do ano (com previsto)", com dica explicando que inclui o previsto do mês atual. Sem migração e sem alterar dados.
+
+**Arquivos:** `api/index.js`, `public/tema-dashboard.js`, `scripts/2026-11-12_dashboard_saldo_sem_dupla_contagem.js`, `scripts/2026-11-12_verifica_saldo_dashboard.sql` (conferência em leitura).
+
+**Verificação:** a consulta nova, rodada na base real, devolve exatamente os valores esperados acima. Não testado: a tela depois do deploy (esperado: Saldo R$ 1.733.401,54; selo "30 d → 828 mil"). Observação: não há nenhum título a receber pendente no sistema (por isso "Entradas 30 d" é R$ 0,00 e a projeção é pessimista).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

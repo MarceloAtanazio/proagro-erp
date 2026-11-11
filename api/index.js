@@ -1949,10 +1949,13 @@ app.get('/api/reports/dashboard', requireAuth, requireViewAny(['dashboard']), h(
   // ---- Caixa / bancos ----
   const naoConciliados = await one(`SELECT COUNT(*)::int AS c, COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE reconciled=false`);
   // Saldo real = todo o histórico de recebimentos/pagamentos já realizados +
-  // ajustes bancários independentes (não gerados automaticamente por uma baixa).
+  // ajustes bancários INDEPENDENTES: só as linhas do extrato que não estão ligadas a um título
+  // a pagar/receber. As conciliadas já entram pelo próprio título; somá-las de novo duplicava o
+  // dinheiro (o extrato importado tem auto_generated=false e quase tudo está conciliado).
   const totalRecebidoHistD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='recebido'`);
   const totalPagoHistD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago'`);
-  const ajustesBancoManuaisD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions WHERE auto_generated=false`);
+  const ajustesBancoManuaisD = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions
+    WHERE auto_generated=false AND COALESCE(matched_type,'') NOT IN ('payable','receivable')`);
   const saldoBanco = { v: n(totalRecebidoHistD.v) - n(totalPagoHistD.v) + n(ajustesBancoManuaisD.v) };
 
   // ---- Despesas do mês (indicador principal) ----

@@ -105,7 +105,7 @@
         <div class="nd-kpi-top"><span class="nd-kpi-label">Saldo de caixa</span><span class="nd-chip ${projFim >= d.saldoAtual ? 'ok' : 'warn'}">30 d → ${compacto(projFim)}</span></div>
         <div class="nd-saldo-valor" data-conta="${d.saldoAtual}">R$ 0,00</div>
         <div class="nd-saldo-meta">
-          <span>Acumulado do ano <strong class="${acumMes >= 0 ? 'pos' : 'neg'}">${brl(acumMes)}</strong></span>
+          <span title="Resultado realizado do ano somado ao previsto (a pagar e a receber) do mês atual">Resultado do ano (com previsto) <strong class="${acumMes >= 0 ? 'pos' : 'neg'}">${brl(acumMes)}</strong></span>
           <span>Mínimo projetado <strong class="${projMin >= 0 ? '' : 'neg'}">${brl(projMin)}</strong></span>
         </div>
         <div class="nd-saldo-spark"><canvas id="nd-sp-saldo"></canvas></div>
