@@ -5422,6 +5422,8 @@ async function renderOrcadoReal() {
   };
   const rec = build('receita', actuals.receitas);
   const desp = build('despesa', actuals.despesas);
+  // visual Novo (tema-orcado.js / tema-graficos.js): os gráficos e o painel leem daqui
+  window.ProagroOvr = { year, scope, maxM, rec, desp, budgets, actuals, analise: () => orcadoRealAnalise(year, scope, maxM, budgets, actuals) };
 
   // ---- KPIs corporativos (Despesas) ----
   const despComOrc = desp.filter(r => r.orc > 0);
@@ -5590,6 +5592,7 @@ async function renderOrcadoReal() {
         y: { ticks: { font: { family: 'DM Sans' } }, grid: { display: false } } }
     }
   });
+  setTimeout(() => document.dispatchEvent(new CustomEvent('proagro:ovr')), 0);
 }
 
 // ============================================================

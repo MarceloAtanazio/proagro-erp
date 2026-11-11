@@ -8141,3 +8141,24 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador: OT de 8 destinos truncada com "…" (texto completo no title), OTs de 1 destino inalteradas, altura da linha normal. Não testado: produção logada, celular.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 210: Orçado x Realizado repaginado (visual Novo)
+
+**Solicitação:** com um print da tela de Orçado x Realizado, o Marcelo pediu uma repaginada boa.
+
+**O que mudou (só no visual "Novo"; o Clássico não muda):**
+- **Barra do topo:** escopo em abas (Acumulado YTD | Ano completo) e ano com setas ‹ ›; o seletor e o campo originais continuam no DOM comandando a tela.
+- **Execução do orçamento em destaque:** medidor circular com o % do orçado (marca de 100% em 2/3 do anel), orçado, realizado e quanto ainda está disponível (ou acima do orçado), mais cartões: variação total, categorias acima do orçado (clique leva à tabela), maior desvio em R$ e em %, receitas e projeção do ano pelo ritmo atual (em ano completo mostra o orçado do ano). Os cartões antigos ficam ocultos. A cor segue o sentido certo para despesa: abaixo do orçado é verde, acima é vermelho.
+- **Pontos de atenção:** os mesmos textos do relatório "Análise completa" (`orcadoRealAnalise`).
+- **Mês a mês:** novo gráfico de barras orçado × realizado (despesas | receitas) e linha do resultado acumulado.
+- **Gráfico "% do orçamento utilizado":** altura proporcional ao número de categorias, todos os nomes, barras arredondadas, valor % e "R$ realizado de orçado" no fim, linha tracejada "Orçado 100%"; quando uma categoria estoura muito (ex.: 437%), o eixo corta em 150% e a barra recebe etiqueta "▲ 437%" para as demais não ficarem achatadas.
+- **Gráfico "Maiores variações em R$":** barras divergentes com linha de zero, rótulos "+/−R$ x" e a mesma regra de corte para um desvio gigante (etiqueta "◀ −R$ 1,3 mi").
+- **Tabelas:** coluna "% realizado" com barra de execução e marca de 100%, colorida pela situação; títulos de seção maiores.
+- **app.js (ganchos mínimos):** `window.ProagroOvr` (linhas, orçamentos e `analise()`) e evento `proagro:ovr`.
+
+**Arquivos:** `public/tema-orcado.js`, `public/tema-orcado.css` (novos), `public/tema-graficos.js`, `public/index.html`, `public/app.js`, `scripts/2026-11-12_orcado_real_ganchos.js`; simulador `scripts/2026-11-11_tema_mock_navegador.js` (orçamentos e realizado de exemplo). Sem servidor nem banco.
+
+**Verificação:** simulador, escuro e claro: destaque, cartões, pontos de atenção, três modos do mês a mês, os dois gráficos com e sem corte, tabelas, escopo/ano em abas, volta ao Clássico sem nenhum elemento novo e sem erros no console. Não testado: produção logada, celular, ano sem orçamento, nota de Viáticos.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

@@ -80,6 +80,40 @@
     chart.$ndTotal = total;
   }
 
+  // Orçado x Realizado — "% do orçamento utilizado" (ch-pct) e "Maiores variações em R$" (ch-var).
+  const linhaOvr = cat => { const O = window.ProagroOvr; return O && O.desp.find(r => r.cat === cat); };
+  function prepararPct(chart) {
+    const o = chart.config.options, ds = chart.config.data.datasets[0], labels = chart.config.data.labels, n = labels.length; if (!ds || !n) return;
+    const box = chart.canvas.parentElement; if (box) box.style.height = Math.max(320, n * 46 + 90) + 'px';
+    Object.assign(ds, { borderRadius: 10, borderSkipped: false, barThickness: 20, categoryPercentage: 1, barPercentage: 1 });
+    o.layout = { padding: { right: 150, top: 8 } };
+    eixos(o); const x = o.scales.x, y = o.scales.y;
+    y.ticks = Object.assign({}, y.ticks, { autoSkip: false, maxTicksLimit: 99, padding: 12, font: { family: 'DM Sans', size: 13 }, callback: function (v) { return this.getLabelForValue(v); } }); y.grid = { display: false };
+    x.grid = { display: true, color: escuro() ? 'rgba(255,255,255,.06)' : 'rgba(16,40,28,.07)', drawTicks: false };
+    x.ticks = Object.assign({}, x.ticks, { padding: 10, maxTicksLimit: 8, callback: v => v + '%' }); x.min = 0;
+    const v = ds.data.filter(a => a != null).sort((a, b) => b - a), maior = v[0] || 0, segundo = v.find(a => a < maior * 0.6) || 0;
+    if (maior > 0 && segundo > 0 && maior > segundo * 2.2) { x.max = Math.max(150, Math.ceil(segundo * 1.25 / 50) * 50); chart.$ndTetoPct = x.max; }
+    else x.suggestedMax = Math.max(120, Math.ceil(maior * 1.05 / 10) * 10);
+    tooltip(o, { label: c => ' ' + c.parsed.x.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% do orçado', afterLabel: c => { const r = linhaOvr(c.label); return r ? ' Orçado ' + brl(r.orc) + ' · Realizado ' + brl(r.real) : ''; } });
+    chart.$ndOvr = 'pct';
+  }
+  function prepararVar(chart) {
+    const o = chart.config.options, ds = chart.config.data.datasets[0], labels = chart.config.data.labels, n = labels.length; if (!ds || !n) return;
+    const box = chart.canvas.parentElement; if (box) box.style.height = Math.max(320, n * 46 + 90) + 'px';
+    Object.assign(ds, { borderRadius: 10, borderSkipped: false, barThickness: 20, categoryPercentage: 1, barPercentage: 1 });
+    o.layout = { padding: { right: 20, top: 8 } };
+    eixos(o); const x = o.scales.x, y = o.scales.y;
+    y.ticks = Object.assign({}, y.ticks, { autoSkip: false, maxTicksLimit: 99, padding: 12, font: { family: 'DM Sans', size: 13 }, callback: function (v) { return this.getLabelForValue(v); } });
+    y.grid = { display: true, color: escuro() ? 'rgba(255,255,255,.05)' : 'rgba(16,40,28,.06)', drawTicks: false };
+    x.grid = { display: true, drawTicks: false, color: c => (c.tick && c.tick.value === 0 ? (escuro() ? 'rgba(255,255,255,.5)' : 'rgba(16,40,28,.5)') : (escuro() ? 'rgba(255,255,255,.06)' : 'rgba(16,40,28,.07)')), lineWidth: c => (c.tick && c.tick.value === 0 ? 2 : 1) };
+    x.ticks = Object.assign({}, x.ticks, { padding: 10, maxTicksLimit: 7, callback: v => moeda(v) }); x.grace = '28%';
+    // um desvio gigante achata os demais: corta o eixo no "normal" e marca o estouro com uma etiqueta
+    const dv = ds.data.map(Number), ab = dv.map(Math.abs).sort((a, b) => b - a), seg = ab.find(a => a < ab[0] * 0.6) || 0;
+    if (ab[0] > 0 && seg > 0 && ab[0] > seg * 2.5) { const teto = Math.ceil(seg * 1.7 / 1000) * 1000; x.min = Math.min(0, Math.max(Math.min(...dv) - teto * 0.22, -teto)); x.max = Math.max(0, Math.min(Math.max(...dv) + teto * 0.22, teto)); if (Math.min(...dv) >= 0) x.min = 0; if (Math.max(...dv) <= 0) x.max = 0; chart.$ndTetoVar = teto; }
+    tooltip(o, { label: c => ' ' + (c.parsed.x > 0 ? 'Acima do orçado: ' : 'Abaixo do orçado: ') + brl(Math.abs(c.parsed.x)), afterLabel: c => { const r = linhaOvr(c.label); return r ? ' Orçado ' + brl(r.orc) + ' · Realizado ' + brl(r.real) : ''; } });
+    chart.$ndOvr = 'var';
+  }
+
   function pilula(ctx, texto, x, y, area, claro) {
     ctx.save(); ctx.font = '600 11px "DM Sans", sans-serif'; const w = ctx.measureText(texto).width + 18, h = 22;
     const px = Math.min(Math.max(x - w / 2, area.left + 2), area.right - w - 2), py = y - h / 2;
@@ -91,7 +125,7 @@
     id: 'proagroFluxoGraficos',
     beforeInit(chart) {
       if (!novo()) return; const id = chart.canvas && chart.canvas.id;
-      if (id === 'ch-saldo') prepararSaldo(chart); else if (id === 'ch-entsai') prepararEntSai(chart); else if (id === 'ch-desp' || id === 'ch-rec') prepararCategorias(chart);
+      if (id === 'ch-saldo') prepararSaldo(chart); else if (id === 'ch-entsai') prepararEntSai(chart); else if (id === 'ch-desp' || id === 'ch-rec') prepararCategorias(chart); else if (id === 'ch-pct') prepararPct(chart); else if (id === 'ch-var') prepararVar(chart);
     },
     afterInit(chart) { if (novo() && chart.canvas && chart.canvas.id === 'ch-entsai') seletorModo(chart); },
     beforeDatasetsDraw(chart) {
@@ -101,6 +135,26 @@
       ctx.save(); ctx.fillStyle = escuro() ? 'rgba(255,255,255,.06)' : 'rgba(0,120,63,.07)'; ctx.beginPath(); ctx.roundRect(x - w / 2, ar.top, w, ar.height, 10); ctx.fill(); ctx.restore();
     },
     afterDatasetsDraw(chart) {
+      if (novo() && chart.$ndOvr) {   // Orçado x Realizado: rótulos nas barras (+ linha do 100% no gráfico de %)
+        const { ctx, chartArea: ar, scales } = chart, ds = chart.data.datasets[0], meta = chart.getDatasetMeta(0), claro = !escuro(), tinta = claro ? '#10281c' : '#e8f0ea', suave = claro ? 'rgba(16,40,28,.55)' : 'rgba(232,240,234,.6)';
+        if (chart.$ndOvr === 'pct') {
+          const x100 = scales.x.getPixelForValue(100);
+          if (x100 > ar.left && x100 < ar.right) { ctx.save(); ctx.setLineDash([6, 5]); ctx.strokeStyle = claro ? 'rgba(16,40,28,.55)' : 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x100, ar.top - 2); ctx.lineTo(x100, ar.bottom); ctx.stroke(); ctx.restore(); pilula(ctx, 'Orçado 100%', x100, ar.top - 8, ar, claro); }
+        }
+        ctx.save(); ctx.textBaseline = 'middle';
+        ds.data.forEach((v, i) => { const el = meta.data[i]; if (!el || v == null) return;
+          if (chart.$ndOvr === 'pct') {
+            const corte = chart.$ndTetoPct && v > chart.$ndTetoPct, xx = Math.min(el.x, ar.right);
+            if (corte) { pilula(ctx, '▲ ' + v.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '%', ar.right - 30, el.y, ar, claro); return; }
+            ctx.textAlign = 'left'; ctx.font = '700 12px "DM Sans", sans-serif'; ctx.fillStyle = tinta; const t = v.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '%'; ctx.fillText(t, xx + 10, el.y);
+            const r = linhaOvr(chart.data.labels[i]); if (r) { ctx.font = '500 11px "DM Sans", sans-serif'; ctx.fillStyle = suave; ctx.fillText('R$ ' + compacto(r.real) + ' de ' + compacto(r.orc), xx + 16 + ctx.measureText(t).width + 4, el.y); }
+          } else {
+            const pos = v > 0;
+            if (chart.$ndTetoVar && Math.abs(v) > chart.$ndTetoVar) { pilula(ctx, (pos ? '▶ +' : '◀ −') + 'R$ ' + compacto(v), pos ? ar.right - 52 : ar.left + 56, el.y, ar, claro); return; }
+            ctx.textAlign = pos ? 'left' : 'right'; ctx.font = '700 12px "DM Sans", sans-serif'; ctx.fillStyle = tinta; ctx.fillText((pos ? '+' : '−') + 'R$ ' + compacto(v), pos ? el.x + 10 : el.x - 10, el.y);
+          } });
+        ctx.restore();
+      }
       if (novo() && chart.$ndTotal) {   // valor e % ao fim de cada barra
         const { ctx } = chart, ds = chart.data.datasets[0], meta = chart.getDatasetMeta(0);
         ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';

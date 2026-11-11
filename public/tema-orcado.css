@@ -1,0 +1,65 @@
+/* ============================================================
+   ORÇADO × REALIZADO — visual novo. Só vale com <html data-ui="novo">.
+   ============================================================ */
+html[data-ui="novo"] .nd-ovr-orig { display: none; }
+.nd-ovr-rotulo { margin: 2px 0 12px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--verde-700); }
+.nd-ovr { margin-bottom: 18px; display: flex; flex-direction: column; gap: 18px; }
+.nd-ovr-rotulo { margin-bottom: -6px; }
+
+/* barra superior */
+.nd-ovr-seg button[aria-pressed="true"] { background: var(--verde-700); color: #fff; }
+.nd-ovr-seg button { padding: 7px 14px; }
+.nd-ovr-ano { border: 1px solid var(--line); background: var(--card); color: var(--ink); width: 34px; height: 34px; border-radius: 50%; font-size: 18px; line-height: 1; cursor: pointer; transition: transform .15s var(--curva), border-color .2s; }
+.nd-ovr-ano:hover { transform: translateY(-1px); border-color: var(--verde-500); }
+
+/* destaque + cartões */
+.nd-ovr-bento { display: grid; grid-template-columns: minmax(340px, 4.4fr) 8fr; gap: 18px; }
+.nd-ovr-hero { position: relative; overflow: hidden; background: linear-gradient(150deg, color-mix(in srgb, var(--verde-500) 13%, var(--card)), var(--card) 58%); }
+.nd-ovr-hero::after { content: ''; position: absolute; right: -70px; top: -70px; width: 220px; height: 220px; border-radius: 50%; background: radial-gradient(circle, color-mix(in srgb, var(--verde-500) 24%, transparent), transparent 70%); pointer-events: none; }
+.nd-ovr-hero-corpo { display: flex; align-items: center; gap: 24px; margin-top: 16px; flex-wrap: wrap; position: relative; z-index: 1; }
+.nd-ovr-anel { position: relative; width: 150px; height: 150px; flex-shrink: 0; }
+.nd-ovr-anel .nd-gauge circle { stroke-width: 13; }
+.nd-ovr-anel-tx { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+.nd-ovr-anel-tx b { font-size: 27px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.nd-ovr-anel-tx small { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; margin-top: 3px; }
+.nd-ovr-valores { margin: 0; display: flex; flex-direction: column; gap: 12px; flex: 1; min-width: 150px; }
+.nd-ovr-valores div { border-left: 3px solid color-mix(in srgb, var(--muted) 35%, transparent); padding-left: 12px; }
+.nd-ovr-valores div.ok { border-color: var(--verde-500); } .nd-ovr-valores div.late { border-color: var(--danger); }
+.nd-ovr-valores dt { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.nd-ovr-valores dd { margin: 2px 0 0; font-size: 19px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.nd-ovr-grade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.nd-ovr-k { grid-column: auto; min-width: 0; --acento: var(--verde-500); }
+.nd-ovr-k.red { --acento: var(--danger); } .nd-ovr-k.warn { --acento: var(--warn); } .nd-ovr-k.blue { --acento: var(--azul-700); } .nd-ovr-k.ok { --acento: var(--verde-500); }
+.nd-ovr-k::before { content: ''; position: absolute; left: 0; top: 0; right: 0; height: 3px; background: var(--acento); opacity: .75; }
+.nd-ovr-k .nd-kpi-valor { font-size: clamp(19px, 1.7vw, 27px); }
+.nd-ovr-k.red .nd-kpi-valor { color: var(--danger); } .nd-ovr-k.ok .nd-kpi-valor { color: var(--verde-700); } .nd-ovr-k.warn .nd-kpi-valor { color: var(--warn); }
+html[data-tema="escuro"] .nd-ovr-k.ok .nd-kpi-valor { color: var(--verde-500); }
+.nd-ovr-k[role="button"] { cursor: pointer; } .nd-ovr-k[role="button"]:hover { transform: translateY(-3px); box-shadow: var(--shadow-alto); border-color: color-mix(in srgb, var(--acento) 40%, var(--line)); }
+
+/* pontos de atenção */
+.nd-ovr-alertas ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.nd-ovr-alertas li { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; border-radius: 14px; font-size: 13.5px; line-height: 1.45; background: color-mix(in srgb, var(--warn) 9%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 24%, var(--line)); }
+.nd-ovr-alertas li span { color: var(--warn); flex-shrink: 0; }
+
+/* mês a mês */
+.nd-ovr-mes-cv { position: relative; height: 300px; }
+.nd-ovr-mes .nd-seg button[aria-pressed="true"] { background: var(--verde-700); color: #fff; }
+.nd-ovr-mes .nd-card-cab { flex-wrap: wrap; }
+
+/* gráficos originais: colunas iguais sem esticar */
+@media (min-width: 981px) { html[data-ui="novo"] .nd-ovr-page .two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+html[data-ui="novo"] .nd-ovr-page .two-col > .card { min-width: 0; }
+
+/* títulos e tabelas */
+html[data-ui="novo"] .nd-ovr-h { font-size: 17px !important; letter-spacing: -.02em; margin: 22px 0 10px !important; }
+.nd-ovr-pct { display: flex; align-items: center; gap: 10px; justify-content: flex-end; white-space: nowrap; }
+.nd-ovr-pct span { position: relative; width: 110px; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 18%, transparent); overflow: visible; }
+.nd-ovr-pct span::after { content: ''; position: absolute; left: 66.67%; top: -3px; bottom: -3px; width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 55%, transparent); }
+.nd-ovr-pct i { display: block; height: 100%; border-radius: 999px; background: var(--verde-500); transition: width .8s var(--curva); }
+.nd-ovr-pct.warn i { background: var(--warn); } .nd-ovr-pct.late i { background: var(--danger); }
+.nd-ovr-pct b { min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.nd-ovr-sem { color: var(--muted); }
+
+@media (max-width: 1100px) { .nd-ovr-bento { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .nd-ovr-grade { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .nd-ovr-grade { grid-template-columns: 1fr; } }

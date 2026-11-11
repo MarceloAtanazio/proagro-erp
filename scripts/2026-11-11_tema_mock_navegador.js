@@ -1,4 +1,4 @@
-﻿// Propósito: simulador de servidor para avaliar o TEMA (claro/escuro e visual novo) no app real, no navegador, sem banco. Usuário administrador; Dashboard com todos os
+// Propósito: simulador de servidor para avaliar o TEMA (claro/escuro e visual novo) no app real, no navegador, sem banco. Usuário administrador; Dashboard com todos os
 //   indicadores e gráficos (dados de exemplo) e Viáticos (OT 42 com complementares). Roteiro: abrir /#dashboard e /#viaticos, alternar Clássico/Novo e claro/escuro.
 // Como executar: copiar public/ para uma pasta, salvar este arquivo como mock.js ao lado do index.html (com <script src="/mock.js"> antes do app.js), servir e abrir /#dashboard.
 (() => {
@@ -76,6 +76,13 @@
         alerta: ok ? { diaCritico: null, horizonte: '2027-02-09' } : { diaCritico: '2026-12-18', diaPior: '2027-01-14', necessidade: 86400.5, horizonte: '2027-02-09' }, buckets: bk,
         categorias: { despesas: [{ category: 'Folha de Pagamento', total: 470000 }, { category: 'Repasse de Viáticos', total: 288000 }, { category: 'Compras / Fornecedores', total: 52000 }, { category: 'Frota', total: 29800 }, { category: 'RH / Benefícios', total: 22400 }, { category: 'Jurídico', total: 8900 }, { category: 'Aluguel', total: 7600 }, { category: 'Serviços de Terceiros', total: 6900 }, { category: 'Contabilidade', total: 5600 }, { category: 'Condomínio', total: 3100 }, { category: 'Viáticos', total: 1200 }, { category: 'Telefone', total: 540 }, { category: 'Internet', total: 90 }], receitas: [{ category: 'Prêmios', total: 402000 }, { category: 'Serviços', total: 83000 }] },
         futuras: { receber: [{ due_date: '2026-11-20', client_name: 'Agro Vale Ltda', description: 'Prêmio 7001', amount: 9520.7 }], pagar: [{ due_date: '2026-11-18', party: 'Tech Cloud S/A', description: 'Mensalidade', amount: 4200 }] } }); }
+    if (/\/api\/budgets\/\d+/.test(u)) { const orc = { 'Folha de Pagamento': 215000, 'Compras / Fornecedores': 9000, 'Serviços de Terceiros': 6500, 'Tarifas Bancárias': 1500, 'Contabilidade': 2600, 'RH / Benefícios': 8200, 'Energia': 1900, 'Viáticos': 14000, 'Frota': 7000, 'Aluguel': 4200, 'Jurídico': 3000, 'Investimentos': 6000, 'Administrativo': 2500, 'Telefone': 600 }; const out = [];
+      Object.entries(orc).forEach(([c, v]) => { for (let mth = 1; mth <= 12; mth++) out.push({ type: 'despesa', category: c, month: mth, amount: v }); });
+      for (let mth = 1; mth <= 12; mth++) { out.push({ type: 'receita', category: 'Prêmios', month: mth, amount: 410000 }, { type: 'receita', category: 'Serviços', month: mth, amount: 60000 }); } return json(out); }
+    if (/\/api\/reports\/actuals\/\d+/.test(u)) { const real = { 'Folha de Pagamento': 96000, 'Compras / Fornecedores': 41000, 'Serviços de Terceiros': 7400, 'Tarifas Bancárias': 1400, 'Contabilidade': 2550, 'RH / Benefícios': 8100, 'Energia': 1500, 'Viáticos': 4700, 'Frota': 6900, 'Aluguel': 3900, 'Jurídico': 3300, 'Telefone': 690 }; const ds = [], rs = [];
+      Object.entries(real).forEach(([c, v]) => { for (let mth = 1; mth <= 11; mth++) ds.push({ category: c, month: mth, total: Math.round(v * (0.82 + ((mth * 7 + c.length) % 9) / 25)) }); });
+      for (let mth = 1; mth <= 11; mth++) { rs.push({ category: 'Prêmios', month: mth, total: 330000 + mth * 9000 }, { category: 'Serviços', month: mth, total: 52000 }); }
+      return json({ despesas: ds, receitas: rs, viaticos: null }); }
     if (u.includes('/api/reports/cashflow/')) { const mes = n => ({ month: n, total: 0 }); const ent = [], sai = []; for (let k = 1; k <= 12; k++) { ent.push({ month: k, total: 300000 + k * 9000 + (k % 3) * 18000 }); sai.push({ month: k, total: 240000 + k * 7000 + (k % 4) * 15000 }); }
       return json({ entradas: { realizado: ent.slice(0, 10), projetado: ent.slice(10) }, saidas: { realizado: sai.slice(0, 10), projetado: sai.slice(10) } }); }
     if (u.includes('/api/reports/dashboard')) {
