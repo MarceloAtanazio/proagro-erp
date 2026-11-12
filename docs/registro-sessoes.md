@@ -8330,3 +8330,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (comprovação vencida não trava; nova solicitação e repasse dão 423; liberar só administrador com justificativa; depois de liberar passam). Simulador: lista, banner, botões Importar/Fechar/Liberar bloqueio. Não testado: produção logada e o formulário de autosserviço de ponta a ponta.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 223: Relatórios Gerenciais executivos (DRE completo + KPIs) no visual Novo
+
+**Solicitação:** o Marcelo pediu para reformular toda a página de Relatórios Gerenciais, bem executiva e corporativa, com um DRE completíssimo e KPIs essenciais para a operação. (No visual Novo o gráfico "Despesas por categoria" da página antiga estava quebrado: rosca com eixo 0–1.)
+
+**O que mudou (só visual Novo; o Clássico continua idêntico):** a página passa a ter (1) barra de controle: ano com setas, regime **Caixa** (pago/recebido) ou **Competência** (vencimento, com previsto), visão Mensal/Trimestral/Anual e Exportar Excel; (2) 8 KPIs: receita bruta, custos e despesas, resultado líquido (margem), EBITDA (margem), peso do pessoal, execução do orçamento, receita × orçado e saldo de caixa com fôlego (meses) e queima média, com comparação com o ano anterior e minigráficos; (3) posição financeira (a receber/pagar em aberto e vencido, próximos 30 dias, concentração de receita) e pontos de atenção automáticos; (4) **DRE**: receita bruta → tributos → receita líquida → pessoal, campo e viagens, serviços e suprimentos → margem de contribuição → ocupação, serviços profissionais, tecnologia, seguros, comercial, outras → EBITDA → resultado financeiro e investimentos → resultado líquido, mais resultado acumulado e margens; colunas: meses/trimestres, total/acumulado, AV % (sobre a receita líquida), orçado, variação, ano anterior e variação; grupos expansíveis por categoria; (5) gráficos de receitas × custos × resultado acumulado e ponte do resultado; custos por grupo × orçado, maiores categorias, principais fornecedores e origem da receita (clientes). Categorias novas ou desconhecidas caem em "Outras despesas administrativas".
+
+**Servidor:** `GET /api/reports/dre/:ano?regime=caixa|competencia` (somente leitura; permissão de Relatórios). Viáticos entra como em Orçado × Realizado (comprovado + reembolsos), repasse à carteira Flash fora; saldo de caixa com a mesma conta do Dashboard.
+
+**Arquivos:** `public/tema-relatorios.js`, `public/tema-relatorios.css`, `public/index.html`, `public/app.js` (gancho), `api/index.js`, `scripts/2026-11-12_relatorios_executivo.js` (+ `_dre_api_bloco.txt`), `scripts/2026-11-12_verifica_relatorios_dre.js`, `scripts/2026-11-12_mock_relatorios.js`.
+
+**Verificação:** teste de backend com banco simulado (11 verificações), SQL conferida no banco real só em leitura, simulador no navegador (escuro): KPIs, DRE (expandir, trimestral, anual, competência), gráficos, Clássico intacto. Não testado: tema claro, tela larga real e produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

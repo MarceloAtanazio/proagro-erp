@@ -50,6 +50,21 @@
     if (u.includes('/api/auth/me')) return json({ user: { id: 1, name: 'Fulano de Tal', email: 'f@x.com', role: 'admin', is_super: true, permissions: { viaticos: (location.search.includes('admin') ? 'edit' : 'view') }, must_change_password: false } });
     if (u.includes('/api/viaticos/dashboard')) return json({ aguardandoComprovacao: { n: 13, v: 41569.18 }, divergentes: { n: 2, v: 1830.4 }, vencidas: { n: 0, v: 0 }, kmPendentes: { n: 2, valor: 314.5 }, saldoCarteira: 60155.59, transferido: 219793.18, transferidoMes: 18400 });
     if (u.includes('/liberar-comprovacao') && m === 'POST') { LIB.add(Number(u.split('/solicitacoes/')[1].split('/')[0])); return json({ ok: true }); }
+    if (u.includes('/api/reports/dre/')) {
+      const y = Number(u.split('/dre/')[1].split('?')[0]), comp = u.includes('regime=competencia'), mesAtual = y === 2026 ? 11 : 0, ate = mesAtual && !comp ? mesAtual : 12;
+      const ruido = (i, k) => 1 + (((i * 37 + k * 11) % 17) - 8) / 60;
+      const DESP = { 'Folha de Pagamento': 215000, 'RH / Benefícios': 12500, 'Compras / Fornecedores': 12000, 'Serviços de Terceiros': 11800, 'Contabilidade': 6800, 'Aluguel': 6000, 'Jurídico': 4000, 'Cursos / Capacitações': 3800,
+        'Condomínio': 3300, 'Seguros': 2700, 'Uniformes / EPIs': 2600, 'Viáticos': 18000, 'Tarifas Bancárias': 2000, 'Comodato': 1900, 'Marketing e Vendas': 1750, 'Reembolso de Despesas': 1500, 'Telefone': 320, 'Tecnologia': 280, 'Internet': 100, 'Energia': 95, 'Impostos e Taxas': 700 };
+      const gera = (esc, ano) => { const rec = [], desp = []; for (let mes = 1; mes <= 12; mes++) { if (mes > ate && ano === y) { if (!comp) continue; }
+          if (mes >= 3 && !(ano === y && !comp && mes > ate)) { rec.push({ month: mes, category: 'Serviços Intercompany', total: Math.round(560000 * esc * ruido(mes, 1)) }); rec.push({ month: mes, category: 'Outros', total: Math.round(520 * ruido(mes, 2)) }); if (mes % 3 === 0) rec.push({ month: mes, category: 'Receitas Financeiras', total: 1400 }); }
+          Object.keys(DESP).forEach((c, k) => { if (mes >= 3 || ano === y) desp.push({ month: mes, category: c, total: Math.round(DESP[c] * esc * ruido(mes, k) * (c === 'Folha de Pagamento' && mes === 11 ? 1.9 : 1)) }); }); }
+        return { rec, desp }; };
+      const orc = { rec: [], desp: [] }; for (let mes = 1; mes <= 12; mes++) { orc.rec.push({ month: mes, category: 'Serviços Intercompany', total: 210000 }); Object.keys(DESP).forEach(c => { if (c !== 'Impostos e Taxas') orc.desp.push({ month: mes, category: c, total: Math.round(DESP[c] * 1.05) }); }); }
+      return json({ ano: y, regime: comp ? 'competencia' : 'caixa', hoje: '2026-11-12', mesAtual, atual: gera(1, y), anterior: gera(0.78, y - 1), orcado: orc,
+        posicao: { saldoCaixa: 1733401.54, receberAberto: 84000, receberVencido: 12000, receber30: 40000, pagarAberto: 1633936, pagarVencido: 18400, pagar30: 402000 },
+        clientes: [{ nome: 'Proteccion Agropecuaria, Servicios Tecnicos de Seguros S.A de C.V', total: 4580823 }, { nome: 'SALDO INICIAL', total: 4318 }, { nome: 'Rendimento', total: 285 }],
+        fornecedores: [{ nome: 'Receita Federal do Brasil', total: 689937 }, { nome: 'Fabricio Camargo de Lima', total: 257291 }, { nome: 'Alcenir de Amorim Fernandes Júnior', total: 108831 }, { nome: 'Ministerio do Trabalho e Emprego (FGTS)', total: 103821 }, { nome: 'Flash Tecnologia e Intituição de Pagamento LTDA', total: 88179 }] });
+    }
     if (u.endsWith('/api/viaticos/solicitacoes') && m === 'GET') return json(withPrazo(SOLS));
     if (u.includes('/api/viaticos/autosservico/meu-colaborador')) return json(COLAB);
     if (u.endsWith('/api/colaboradores')) return json([COLAB]);

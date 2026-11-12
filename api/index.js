@@ -1664,6 +1664,67 @@ app.get('/api/reports/actuals/:year', requireAuth, requireViewAny(['orcadoreal',
   });
 }));
 
+// ---- DRE gerencial (Relatórios Gerenciais, visual Novo) ----
+// regime 'caixa': pago/recebido, na data do pagamento/recebimento. 'competencia': pelo vencimento, incluindo o que ainda está pendente (previsto).
+// O repasse à carteira Flash fica de fora (não é despesa) e Viáticos entra pelo comprovado, como em /api/reports/actuals.
+async function dreBase(y, regime) {
+  const caixa = regime !== 'competencia';
+  const despesas = await query(caixa
+    ? `SELECT EXTRACT(MONTH FROM payment_date)::int AS month, COALESCE(category,'Sem categoria') AS category, SUM(amount) AS total
+         FROM erp_payables WHERE status='pago' AND EXTRACT(YEAR FROM payment_date) = $1 AND category IS DISTINCT FROM $2 GROUP BY 1, 2`
+    : `SELECT EXTRACT(MONTH FROM due_date)::int AS month, COALESCE(category,'Sem categoria') AS category, SUM(amount) AS total
+         FROM erp_payables WHERE status IN ('pago','pendente') AND EXTRACT(YEAR FROM due_date) = $1 AND category IS DISTINCT FROM $2 GROUP BY 1, 2`, [y, CAT_REPASSE_VIATICOS]);
+  const viaticos = await query(SQL_VIATICOS_POR_MES, [y]);
+  const receitas = await query(caixa
+    ? `SELECT EXTRACT(MONTH FROM receipt_date)::int AS month, COALESCE(category,'Sem categoria') AS category, SUM(amount) AS total
+         FROM erp_receivables WHERE status='recebido' AND EXTRACT(YEAR FROM receipt_date) = $1 GROUP BY 1, 2`
+    : `SELECT EXTRACT(MONTH FROM due_date)::int AS month, COALESCE(category,'Sem categoria') AS category, SUM(amount) AS total
+         FROM erp_receivables WHERE status IN ('recebido','pendente') AND EXTRACT(YEAR FROM due_date) = $1 GROUP BY 1, 2`, [y]);
+  return {
+    rec: somarPorMesCategoria(receitas),
+    desp: somarPorMesCategoria(despesas.concat(viaticos.map(r => ({ month: r.month, category: CAT_VIATICOS, total: r.total }))))
+  };
+}
+app.get('/api/reports/dre/:year', requireAuth, requireViewAny(['relatorios']), h(async (req, res) => {
+  const y = Number(req.params.year);
+  if (!Number.isInteger(y) || y < 2000 || y > 2100) return res.status(400).json({ error: 'Ano inválido.' });
+  const regime = req.query.regime === 'competencia' ? 'competencia' : 'caixa', caixa = regime === 'caixa';
+  const hoje = hojeISO(), in30 = isoMaisDias(30), one = async (sql, p) => n((await query(sql, p))[0].v);
+  const [atual, anterior] = [await dreBase(y, regime), await dreBase(y - 1, regime)];
+  const orc = await query(`SELECT month, type, COALESCE(category,'Sem categoria') AS category, SUM(amount) AS total FROM erp_budgets
+      WHERE year=$1 AND COALESCE(category,'') <> $2 GROUP BY 1, 2, 3`, [y, CAT_REPASSE_VIATICOS]);
+  const orcado = { rec: somarPorMesCategoria(orc.filter(r => r.type === 'receita')), desp: somarPorMesCategoria(orc.filter(r => r.type === 'despesa')) };
+  const recebidoHist = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='recebido'`);
+  const pagoHist = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pago'`);
+  const ajustes = await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_bank_transactions
+    WHERE auto_generated=false AND COALESCE(matched_type,'') NOT IN ('payable','receivable')`);
+  const posicao = {
+    saldoCaixa: recebidoHist - pagoHist + ajustes,
+    receberAberto: await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='pendente'`),
+    receberVencido: await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='pendente' AND due_date < $1`, [hoje]),
+    receber30: await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_receivables WHERE status='pendente' AND due_date BETWEEN $1 AND $2`, [hoje, in30]),
+    pagarAberto: await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pendente' AND category IS DISTINCT FROM $1`, [CAT_REPASSE_VIATICOS]),
+    pagarVencido: await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pendente' AND due_date < $1 AND category IS DISTINCT FROM $2`, [hoje, CAT_REPASSE_VIATICOS]),
+    pagar30: await one(`SELECT COALESCE(SUM(amount),0) AS v FROM erp_payables WHERE status='pendente' AND due_date BETWEEN $1 AND $2 AND category IS DISTINCT FROM $3`, [hoje, in30, CAT_REPASSE_VIATICOS])
+  };
+  const clientes = await query(caixa
+    ? `SELECT COALESCE(NULLIF(TRIM(client_name),''),'Sem cliente') AS nome, SUM(amount) AS total FROM erp_receivables
+        WHERE status='recebido' AND EXTRACT(YEAR FROM receipt_date) = $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 6`
+    : `SELECT COALESCE(NULLIF(TRIM(client_name),''),'Sem cliente') AS nome, SUM(amount) AS total FROM erp_receivables
+        WHERE status IN ('recebido','pendente') AND EXTRACT(YEAR FROM due_date) = $1 GROUP BY 1 ORDER BY 2 DESC LIMIT 6`, [y]);
+  const fornecedores = await query(caixa
+    ? `SELECT COALESCE(s.name,'Sem fornecedor') AS nome, SUM(p.amount) AS total FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
+        WHERE p.status='pago' AND EXTRACT(YEAR FROM p.payment_date) = $1 AND p.category IS DISTINCT FROM $2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`
+    : `SELECT COALESCE(s.name,'Sem fornecedor') AS nome, SUM(p.amount) AS total FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id
+        WHERE p.status IN ('pago','pendente') AND EXTRACT(YEAR FROM p.due_date) = $1 AND p.category IS DISTINCT FROM $2 GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, [y, CAT_REPASSE_VIATICOS]);
+  res.json({
+    ano: y, regime, hoje, mesAtual: y === Number(hoje.slice(0, 4)) ? Number(hoje.slice(5, 7)) : 0,
+    atual, anterior, orcado, posicao,
+    clientes: clientes.map(r => ({ nome: r.nome, total: n(r.total) })),
+    fornecedores: fornecedores.map(r => ({ nome: r.nome, total: n(r.total) }))
+  });
+}));
+
 // Fluxo de caixa: realizado (pagos/recebidos) + projetado (pendentes por vencimento)
 app.get('/api/reports/cashflow/:year', requireAuth, requireViewAny(['dashboard','fluxo']), h(async (req, res) => {
   const y = Number(req.params.year);

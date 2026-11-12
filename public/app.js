@@ -5677,6 +5677,9 @@ async function renderRelatorios() {
       backgroundColor: resM.map(v => v >= 0 ? CORES.verdeMed : CORES.vermelho), borderRadius: 4 }] },
     options: chartOpts()
   });
+  // visual Novo (tema-relatorios.js): monta a página executiva por cima, com dados do endpoint /api/reports/dre
+  window.ProagroRel = { year };
+  setTimeout(() => document.dispatchEvent(new CustomEvent('proagro:rel')), 0);
 }
 
 // ============================================================
