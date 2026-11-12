@@ -8358,3 +8358,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro: rótulos nas barras e na linha, ponte, minigráficos com o último valor, gráficos sem esticar. Não testado: tema claro, tela larga real e produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 225: Relatórios Gerenciais — valor minúsculo nos quadros da Posição financeira
+
+**Solicitação:** com um print do quadro "Próximos 30 dias", o Marcelo avisou que o rótulo/valor estava muito pequeno.
+
+**Causa e correção (só visual Novo):** a regra do rótulo cinza em maiúsculas (`.nd-rel-mini span`) também valia para o `<span>` de cor que fica dentro do valor e do detalhe, deixando "−R$ 615.174,58" com 11px. Agora vale só para o rótulo (filho direto); o valor ficou com 22px e o detalhe com 13px, e o rótulo foi para 12px. Sem servidor nem banco.
+
+**Arquivos:** `public/tema-relatorios.css`, `scripts/2026-11-12_relatorios_mini_rotulo.js`.
+
+**Verificação:** simulador: os quatro quadros com valor de 22px, detalhe de 13px e trecho colorido herdando o tamanho. Não testado: produção logada neste ajuste.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

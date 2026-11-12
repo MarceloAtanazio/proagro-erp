@@ -41,7 +41,7 @@ html[data-ui="novo"] .nd-rel-orig { display: none; }
 .nd-rel-duo-gr { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
 .nd-rel-minis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .nd-rel-mini { padding: 14px 16px; border-radius: 16px; background: color-mix(in srgb, var(--muted) 7%, transparent); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.nd-rel-mini span { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.nd-rel-mini > span { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .nd-rel-mini b { font-size: 19px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .nd-rel-mini small { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nd-rel-mini.warn { background: var(--warn-050); } .nd-rel-mini.late { background: var(--danger-050); }
@@ -114,7 +114,8 @@ html[data-ui="novo"] .nd-rel-orig { display: none; }
 .nd-dre { font-size: 13px; }
 .nd-dre td small { font-size: 11px; }
 .nd-dre th { font-size: 11px; }
-.nd-rel-mini span { font-size: 11.5px; } .nd-rel-mini small { font-size: 12.5px; }
+.nd-rel-mini > span { font-size: 12px; } .nd-rel-mini small { font-size: 13px; }
+.nd-rel-mini b { font-size: 22px; } .nd-rel-mini b span, .nd-rel-mini small span { font-size: inherit; font-weight: inherit; letter-spacing: inherit; text-transform: none; }
 .nd-rel-gr-t small, .nd-rel-rk-t small { font-size: 12.5px; }
 .nd-rel-ins span { font-size: 13px; }
 @media (max-width: 640px) { .nd-rel-graf-alto { height: 320px; } }
