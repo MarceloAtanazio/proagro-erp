@@ -9489,11 +9489,11 @@ async function renderViaticosConfig() {
       </select>
       <span class="hint" style="margin:0">Inativar preserva o histórico e os dados do colaborador — só o esconde das novas solicitações. Excluir apaga o cadastro.</span>
     </div>
-    <p class="hint" style="margin:10px 0 0"><strong>Dispensar CNH, CRLV e seguro:</strong> para quem não usa carro a serviço. A pessoa deixa de constar como pendente e continua podendo
+    <p class="hint" style="margin:10px 0 0"><strong>Dispensado (CNH, CRLV e seguro):</strong> marque para quem não usa carro a serviço. A pessoa deixa de constar como pendente e continua podendo
       viajar de avião, ônibus ou táxi/Uber; só o carro (próprio e alugado) fica indisponível até o cadastro ser ativado. Os dados já informados ficam guardados.</p>
     <div class="table-wrap" style="margin-top:10px"><table class="tbl-colaboradores">
       <thead><tr><th>Nome</th><th>Cargo</th><th>Tier</th><th>Ativo</th><th>Documentação</th>
-        <th class="c-inc" title="Para quem não usa carro a serviço: não cobra CNH, CRLV nem seguro">Dispensar CNH, CRLV e seguro</th><th class="actions">Ações</th></tr></thead>
+        <th class="c-inc" title="Dispensar CNH, CRLV e seguro: para quem não usa carro a serviço, não cobra esses documentos">Dispensado</th><th class="actions">Ações</th></tr></thead>
       <tbody id="cb-tbody"></tbody>
     </table></div>`;
 

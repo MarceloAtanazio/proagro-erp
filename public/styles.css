@@ -1944,3 +1944,6 @@ tr.via-fam-linha td.num { padding-left: 0; }
 .cfg-tud-par { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
 .cfg-tud-par .table-wrap { margin: 0; }
 @media (max-width: 900px) { .cfg-tud-par { grid-template-columns: 1fr; gap: 0; } }
+
+/* Configurações de Viáticos: coluna "Dispensado" estreita e centralizada */
+.tbl-colaboradores th.c-inc, .tbl-colaboradores td.c-inc { text-align: center; width: 1%; white-space: nowrap; }

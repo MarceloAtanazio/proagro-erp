@@ -8285,3 +8285,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador, escuro: em tela estreita a rosca de 245px centralizada com legenda e barras; lado a lado o cartão preenche a altura da coluna. Não testado: tema claro neste ajuste, tela larga real (≥1500px) e produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 220: Configurações de Viáticos — coluna "Dispensado"
+
+**Solicitação:** com um print, o Marcelo pediu para encurtar o cabeçalho "Dispensar CNH, CRLV e seguro" da tabela de colaboradores, deixando só "Dispensado", para a coluna não ficar tão larga.
+
+**O que mudou (Clássico e Novo):** o cabeçalho virou "Dispensado" (a explicação completa continua na dica do cabeçalho, ao passar o mouse); a coluna ficou estreita e centralizada (de cerca de 320px para ~105px); o texto explicativo acima da tabela passou a começar por "Dispensado (CNH, CRLV e seguro): marque para quem não usa carro a serviço". A caixa de marcar e a regra de negócio não mudaram. Sem servidor nem banco.
+
+**Arquivos:** `public/app.js`, `public/styles.css`, `scripts/2026-11-12_viaticos_config_coluna_dispensado.js`.
+
+**Verificação:** simulador em 1500px: cabeçalho "Dispensado", coluna de 105px centralizada, dica completa no cabeçalho, nota atualizada. Não testado: produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
