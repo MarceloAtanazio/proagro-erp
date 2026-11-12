@@ -1,5 +1,5 @@
 // Propósito: verifica no backend (banco simulado) o prazo de comprovação de Viáticos: cálculo de 3 dias úteis (com fim de semana e família de OTs), campos comprov_* da lista,
-//   bloqueio (423) de lançar/editar/apagar despesa e fechar quando vencido, liberação só por administrador com justificativa, e desbloqueio depois de liberar.
+//   a comprovação nunca trava; o colaborador com comprovação vencida fica sem nova solicitação e sem novo repasse (423); liberação só por administrador com justificativa.
 // Entrada: raiz do projeto (argv[2]). Saída: PASS/FALHA por verificação; código de saída 1 se algo falhar.
 // Uso: node scripts/2026-11-12_verifica_prazo_comprovacao.js <raiz>
 const path = require('path');
@@ -46,6 +46,9 @@ require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: {
   if (s.startsWith('DELETE FROM erp_viaticos_despesas WHERE solicitacao_id')) return [];
   if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET comprovacao_liberada_em=NOW()')) { ESTADO.liberada = true; ESTADO.motivo = p[2]; ESTADO.por = p[1]; return [{ id: p[0] }]; }
   if (s.includes('FROM erp_viaticos_solicitacoes WHERE id=$1') && s.startsWith('SELECT *')) return [ROWS.find(x => x.id === Number(p[0]))].filter(Boolean);
+  if (s.includes('r.comprovacao_liberada_em IS NULL')) return ROWS.filter(x => x.familia_raiz_id === x.id && x.status === 'aguardando_comprovacao' && !x.comprovacao_liberada_em && !(x.id === 1 && ESTADO.liberada)).map(x => ({ id: x.id, ordem_trabalho: String(x.id), fim: ROWS.filter(m => m.familia_raiz_id === x.id).map(m => m.data_fim).sort().pop() }));
+  if (s.startsWith('SELECT colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1')) return [{ colaborador_id: 7 }];
+  if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true')) { if (p.length === 3) ESTADO.repasse = p[1]; return []; }
   throw new Error('SQL não previsto no stub: ' + s.slice(0, 160));
 } } };
 const jwt = require(path.join(ROOT, 'node_modules/jsonwebtoken')); const app = require(path.join(ROOT, 'api/index.js')); const server = app.listen(0);
@@ -68,17 +71,25 @@ const chama = async (quem, metodo, rota, corpo) => { const r = await fetch(`http
   ok('OT 8 antiga sem data de fechamento: sem entrega/atraso (fica fora das médias)', L(8).comprov_entrega === undefined && L(8).comprov_atraso === undefined, L(8));
   ok('OT 9 em viagem: sem prazo', L(9).comprov_prazo === null && L(9).comprov_bloqueada === false, L(9));
   const desp = { categoria: 'alimentacao', data: soma(hoje, -21), valor: 50, descricao: 'x' };
+  const MSG = /comprovação em atraso/i;
   r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/despesas', desp);
-  ok('bloqueada: lançar despesa dá 423 com a mensagem (até para administrador)', r.status === 423 && /bloqueada por atraso/.test(r.body.error) && INSD.length === 0, r);
-  r = await chama(9, 'PUT', '/api/viaticos/despesas/55', desp); ok('bloqueada: editar despesa dá 423', r.status === 423, r);
-  r = await chama(9, 'DELETE', '/api/viaticos/despesas/55'); ok('bloqueada: apagar despesa dá 423', r.status === 423, r);
-  r = await chama(9, 'DELETE', '/api/viaticos/solicitacoes/1/despesas'); ok('bloqueada: limpar lançamentos dá 423', r.status === 423, r);
-  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/fechar'); ok('bloqueada: fechar/conferir dá 423', r.status === 423, r);
-  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/reprovadas', { data: hoje, valor: 10, descricao: 'x', categoria: 'outro' }); ok('bloqueada: lançar reprovada do Flash dá 423', r.status === 423, r);
+  ok('comprovação vencida NÃO trava: lançar despesa passa', r.status === 200 && INSD.length === 1, r);
+  r = await chama(9, 'PUT', '/api/viaticos/despesas/55', desp); ok('comprovação vencida: editar despesa passa', r.status === 200, r);
+  r = await chama(9, 'DELETE', '/api/viaticos/despesas/55'); ok('comprovação vencida: apagar despesa passa', r.status === 200, r);
+  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/reprovadas', { data: hoje, valor: 10, descricao: 'x', categoria: 'outro' }); ok('comprovação vencida: lançar reprovada não é barrado por atraso', r.status !== 423, r);
+  const auto = { motivo: 'Comercial', objetivo: 'x', data_inicio: soma(hoje, 10), data_fim: soma(hoje, 12), destinos: [{ uf: 'SP', municipio: 'São Paulo' }], transporte_detalhes: { aviao: true }, previsao_por_categoria: { hospedagem: 100 } };
+  r = await chama(1, 'POST', '/api/viaticos/solicitacoes/autosservico', { ...auto, ordem_trabalho: '321' });
+  ok('colaborador com comprovação vencida NÃO consegue fazer nova solicitação (423 + mensagem)', r.status === 423 && MSG.test(r.body.error), r);
+  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/2/status', { status: 'transferencia_agendada', valor_liberado: 500 });
+  ok('repasse (valor liberado) bloqueado para colaborador com comprovação vencida (423)', r.status === 423 && /repasse/.test(r.body.error) && !ESTADO.repasse, r);
+  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/2/status', { status: 'em_viagem' });
+  ok('mudar status sem repasse não é barrado', r.status === 200, r);
   r = await chama(1, 'POST', '/api/viaticos/solicitacoes/1/liberar-comprovacao', { motivo: 'Atestado médico' }); ok('usuário comum NÃO consegue liberar (403)', r.status === 403 && !ESTADO.liberada, r);
   r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/liberar-comprovacao', { motivo: '  ' }); ok('liberar exige justificativa (400)', r.status === 400 && !ESTADO.liberada, r);
-  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/2/despesas', desp); ok('dentro do prazo (OT 2): lançar despesa passa', r.status === 200 && INSD.length === 1, r);
   r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/liberar-comprovacao', { motivo: 'Atestado médico do colaborador' }); ok('administrador libera com justificativa (200) e o nome fica gravado', r.status === 200 && ESTADO.liberada && ESTADO.por === 'Admin' && /Atestado/.test(ESTADO.motivo), [r, ESTADO]);
-  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/1/despesas', desp); ok('depois de liberada: lançar despesa passa', r.status === 200 && INSD.length === 2, r);
+  r = await chama(9, 'POST', '/api/viaticos/solicitacoes/2/status', { status: 'transferencia_agendada', valor_liberado: 500 });
+  ok('depois de liberado: o repasse passa', r.status === 200 && ESTADO.repasse === 500, [r, ESTADO]);
+  r = await chama(1, 'POST', '/api/viaticos/solicitacoes/autosservico', { ...auto, ordem_trabalho: '321' });
+  ok('depois de liberado: nova solicitação não é mais barrada por atraso', r.status !== 423, r);
   server.close(); console.log(f.length ? `\n${f.length} FALHA(S)` : '\nTudo certo.'); process.exit(f.length ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

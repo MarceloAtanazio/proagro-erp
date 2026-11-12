@@ -6572,6 +6572,8 @@ app.post('/api/viaticos/solicitacoes/autosservico', requireAuth, requireAutosser
   if (!colabRows.length) return res.status(403).json({ error: 'Seu usuário não está vinculado a um colaborador de viáticos.' });
   const colab = colabRows[0];
   const b = req.body;
+  { const paiRaiz = b.solicitacao_pai_id != null && b.solicitacao_pai_id !== '' ? await raizFamilia(b.solicitacao_pai_id) : null;
+    if (await respondeSeColaboradorBloqueado(colab.id, res, 'fazer uma nova solicitação', paiRaiz)) return; }
   // OT complementar: parte de uma OT do próprio colaborador que ainda está de pé. O servidor impõe o número, a data de saída e (na extensão) os
   // destinos — o que vem do navegador não decide isso.
   let pai = null, complTipo = null, partida = null, custoExtra = null;
@@ -6855,6 +6857,7 @@ app.post('/api/viaticos/solicitacoes', requireAuth, requireEdit('viaticos'), h(a
   const b = req.body, err = validateSolicitacao(b);
   if (err) return res.status(400).json({ error: err });
   { const ot = String(sanitize(b.ordem_trabalho) || '').trim(); if (ot && !OT_SO_NUMEROS.test(ot) && !OT_COM_SUFIXO.test(ot)) return res.status(400).json({ error: OT_MSG }); }
+  if (Number(b.valor_liberado) > 0 && await respondeSeColaboradorBloqueado(b.colaborador_id, res, 'registrar o repasse', null)) return;
   const ins = await query(`INSERT INTO erp_viaticos_solicitacoes
     (colaborador_id, tier, categoria_local, ordem_trabalho, destinos, motivo, data_inicio, data_fim, data_expiracao_flash, valor_solicitado, valor_liberado, notes, created_by)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
@@ -6874,6 +6877,8 @@ app.put('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'), 
       if (!atualOt || String(atualOt.ordem_trabalho || '').trim() !== ot) return res.status(400).json({ error: OT_MSG });
     }
   }
+  { const at = (await query('SELECT colaborador_id, valor_liberado FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+    if (at && Number(b.valor_liberado) > n(at.valor_liberado) + 0.005 && await respondeSeColaboradorBloqueado(at.colaborador_id, res, 'registrar o repasse', await raizFamilia(req.params.id))) return; }
   // Decidir sobre a pendência é liberar (ou abrir mão de) valor: só administrador, e só antes da transferência.
   const querDecidir = Array.isArray(b.pendencia_ids) && b.pendencia_ids.length;
   let donoPend = null;
@@ -6908,6 +6913,8 @@ app.post('/api/viaticos/solicitacoes/:id/status', requireAuth, requireEdit('viat
     if (Array.isArray(req.body.pendencia_ids) && req.body.pendencia_ids.length && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Somente um administrador pode decidir sobre a pendência de viagem anterior.' });
     }
+    { const dono0 = (await query('SELECT colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
+      if (dono0 && lib > 0 && await respondeSeColaboradorBloqueado(dono0.colaborador_id, res, 'registrar o repasse (transferência)', await raizFamilia(req.params.id))) return; }
     await query('UPDATE erp_viaticos_solicitacoes SET status=$1, status_manual=true, valor_liberado=$2 WHERE id=$3', [status, lib, req.params.id]);
     if (Array.isArray(req.body.pendencia_ids) && req.body.pendencia_ids.length) {
       const dono = (await query('SELECT colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1', [req.params.id]))[0];
@@ -7012,6 +7019,11 @@ function diasEntre(deISO, ateISO) {   // ate − de, em dias corridos
 }
 // Acrescenta a cada linha da lista os campos comprov_* (prazo, dias, atraso, bloqueio, liberação, entrega). A família inteira usa a mesma conta.
 function anexarPrazoComprovacao(rows, hoje) {
+  const res = anexarPrazoBase(rows, hoje), bloq = {};
+  res.forEach(r => { if (r.comprov_bloqueada && (r.familia_raiz_id || r.id) === r.id) (bloq[r.colaborador_id] = bloq[r.colaborador_id] || []).push(r.ordem_trabalho || r.id); });
+  return res.map(r => ({ ...r, colab_bloqueios: bloq[r.colaborador_id] || [] }));
+}
+function anexarPrazoBase(rows, hoje) {
   const fimFam = {}, porId = new Map(rows.map(r => [r.id, r]));
   rows.forEach(r => {
     if (['cancelada', 'em_approvals'].includes(r.status)) return;
@@ -7034,27 +7046,24 @@ function anexarPrazoComprovacao(rows, hoje) {
     return { ...r, ...extra, comprov_prazo: fechados.includes(r.status) ? prazo : null, comprov_bloqueada: false };
   });
 }
-// Bloqueio no servidor: com a comprovação vencida e sem liberação, ninguém lança, edita, apaga nem fecha despesas (nem o administrador: ele libera antes).
-async function comprovacaoBloqueada(id) {
-  const rid = await raizFamilia(id);
-  const r = (await query(`${FAMILIA_CTE}
-    SELECT s.status, s.comprovacao_liberada_em AS lib,
-           (SELECT MAX(m.data_fim) FROM fam f JOIN erp_viaticos_solicitacoes m ON m.id = f.id WHERE f.raiz_id = $1 AND m.status NOT IN ('cancelada','em_approvals')) AS fim
-      FROM erp_viaticos_solicitacoes s WHERE s.id = $1`, [rid]))[0];
-  if (!r || r.status !== 'aguardando_comprovacao' || r.lib || !r.fim) return null;
-  const prazo = somaDiasUteis(r.fim, PRAZO_COMPROVACAO_DIAS_UTEIS), atraso = -diasEntre(hojeISO(), prazo);
-  return atraso > 0 ? { prazo, atraso } : null;
+// Bloqueio do COLABORADOR (não da comprovação): com comprovação sua vencida (3 dias úteis) e sem liberação do administrador, ele não pode fazer nova solicitação
+// e não se registra novo repasse para ele, até regularizar. A comprovação em si NUNCA trava: é feita pela equipe a partir do Flash. `ignorarRaiz` = a própria
+// família (complementar / custo extra da OT atrasada não deve ser barrado por ela mesma).
+async function bloqueioDoColaborador(colabId, ignorarRaiz) {
+  const rows = await query(`${FAMILIA_CTE},
+    fim AS (SELECT f.raiz_id, MAX(m.data_fim) AS fim FROM fam f JOIN erp_viaticos_solicitacoes m ON m.id = f.id WHERE m.status NOT IN ('cancelada','em_approvals') GROUP BY f.raiz_id)
+    SELECT r.id, r.ordem_trabalho, fi.fim FROM erp_viaticos_solicitacoes r JOIN fim fi ON fi.raiz_id = r.id
+     WHERE r.colaborador_id = $1 AND r.status = 'aguardando_comprovacao' AND r.comprovacao_liberada_em IS NULL`, [colabId]);
+  const hoje = hojeISO();
+  const venc = rows.filter(r => r.id !== Number(ignorarRaiz)).map(r => ({ ot: r.ordem_trabalho || r.id, prazo: somaDiasUteis(r.fim, PRAZO_COMPROVACAO_DIAS_UTEIS) })).filter(r => r.prazo < hoje).sort((a, b) => a.prazo.localeCompare(b.prazo));
+  return venc.length ? venc[0] : null;
 }
-async function respondeSeBloqueada(id, res) {
-  const b = await comprovacaoBloqueada(id);
+async function respondeSeColaboradorBloqueado(colabId, res, acao, ignorarRaiz) {
+  const b = await bloqueioDoColaborador(colabId, ignorarRaiz);
   if (!b) return false;
   const [y, m, d] = b.prazo.split('-');
-  res.status(423).json({ error: `Comprovação bloqueada por atraso: o prazo venceu em ${d}/${m}/${y} (${b.atraso} dia${b.atraso > 1 ? 's' : ''} de atraso). Peça a um administrador para liberar.` });
+  res.status(423).json({ error: `Há comprovação em atraso (OT ${b.ot}, o prazo venceu em ${d}/${m}/${y}). Enquanto ela não for regularizada, não é possível ${acao}. Um administrador pode liberar com justificativa.` });
   return true;
-}
-async function respondeSeBloqueadaDespesa(despesaId, res) {
-  const r = await query('SELECT solicitacao_id FROM erp_viaticos_despesas WHERE id=$1', [despesaId]);
-  return r.length ? respondeSeBloqueada(r[0].solicitacao_id, res) : false;
 }
 
 // ---- Despesas reprovadas no Flash ----
@@ -7114,7 +7123,6 @@ app.get('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireViewAny
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  if (await respondeSeBloqueada(req.params.id, res)) return;
   const b = req.body || {};
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
   const valor = Math.round(Number(b.valor) * 100) / 100;
@@ -7236,7 +7244,6 @@ app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viat
   const rid = await raizFamilia(req.params.id);
   const s = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
-  if (await respondeSeBloqueada(rid, res)) return;
   const ids = await idsFamilia(rid);
   // Complementar ainda em aprovação: o valor dela ainda vai ser liberado (ou a OT cancelada). Fechar agora fecharia a conta errada.
   const emAprovacao = ids.length > 1 ? await query(`SELECT ordem_trabalho FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[]) AND id <> $2 AND status='em_approvals'`, [ids, rid]) : [];
@@ -7361,7 +7368,6 @@ app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny([
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  if (await respondeSeBloqueada(req.params.id, res)) return;
   const b = req.body;
   if (!['alimentacao', 'aluguel_carro', 'combustivel', 'estacionamento', 'hospedagem', 'outro', 'passagem_aviao', 'passagem_onibus', 'pedagio', 'taxi_uber', 'veiculo'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
@@ -7373,7 +7379,6 @@ app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('vi
 }));
 
 app.put('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  if (await respondeSeBloqueadaDespesa(req.params.id, res)) return;
   const b = req.body;
   if (!['alimentacao', 'aluguel_carro', 'combustivel', 'estacionamento', 'hospedagem', 'outro', 'passagem_aviao', 'passagem_onibus', 'pedagio', 'taxi_uber', 'veiculo'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
@@ -7385,7 +7390,6 @@ app.put('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(as
 }));
 
 app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
-  if (await respondeSeBloqueadaDespesa(req.params.id, res)) return;
   await query('DELETE FROM erp_viaticos_despesas WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 }));
@@ -7402,7 +7406,6 @@ app.delete('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('
   // justamente nesses dois casos. Um if (escopo) neste ponto seria codigo morto
   // se passando por guarda de seguranca. E o mesmo motivo pelo qual o POST e o
   // DELETE de despesa individual tambem nao checam.
-  if (await respondeSeBloqueada(req.params.id, res)) return;
   const apagadas = await query('DELETE FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[]) RETURNING valor', [await idsFamilia(req.params.id)]);
   const total = apagadas.reduce((acc, r) => acc + n(r.valor), 0);
   res.json({ ok: true, removidas: apagadas.length, total });

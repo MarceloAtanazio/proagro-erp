@@ -8317,3 +8317,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Atenção ao publicar:** as 4 OTs hoje em "Aguardando comprovação" (Fabricio OT 42, Mayara OT 170, Mayara OT 170 e Idalino OT 173; fins em 06 e 07/11) já nascem vencidas e bloqueadas; o administrador precisa liberar cada uma.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 222: Viáticos — o bloqueio por atraso passa a valer para o colaborador, não para a comprovação
+
+**Solicitação:** o Marcelo corrigiu a regra da Sessão 221: a comprovação é feita pelo Flash e repassada ao ERP pela equipe, então ela precisa estar sempre liberada (principalmente para quem opera a página). Quem fica impedido é o colaborador, que não pode solicitar, e o repasse de uma futura solicitação fica bloqueado até regularizar a comprovação anterior.
+
+**O que mudou:** (a) Comprovação nunca trava: lançar/editar/apagar despesas, limpar lançamentos, reprovadas do Flash e Fechar/conferir voltam a funcionar sempre; a tela abre normal, com faixa de aviso do atraso. (b) Colaborador com comprovação vencida (3 dias úteis) e sem liberação: o servidor recusa (HTTP 423, com mensagem) a nova solicitação por autosserviço e o registro de novo repasse (agendar transferência com valor, criar ou aumentar valor liberado). A complementar/custo extra da própria OT atrasada não é barrada por ela mesma. (c) Botão "Solicitar viagem" avisa antes de abrir; o modal de Transferência mostra a faixa "Repasse bloqueado". (d) O ✓ volta a ser ✓; o 🔓 (agora "Liberar bloqueio", só administrador, com justificativa e auditoria) segue na linha. Sem mudança de banco (usa as colunas da Sessão 221).
+
+**Arquivos:** `api/index.js`, `public/app.js`, `scripts/2026-11-12_viaticos_bloqueio_no_colaborador.js`, `scripts/2026-11-12_verifica_prazo_comprovacao.js` (atualizado).
+
+**Verificação:** teste de backend com banco simulado (comprovação vencida não trava; nova solicitação e repasse dão 423; liberar só administrador com justificativa; depois de liberar passam). Simulador: lista, banner, botões Importar/Fechar/Liberar bloqueio. Não testado: produção logada e o formulário de autosserviço de ponta a ponta.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

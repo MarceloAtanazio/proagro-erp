@@ -5818,7 +5818,11 @@ async function renderViaticos() {
     </div>
     <div class="table-wrap"><table id="tbl"></table></div>`;
 
-  if ($('#btn-solicitar-viagem')) $('#btn-solicitar-viagem').onclick = () => renderSolicitacaoAutosservico();
+  if ($('#btn-solicitar-viagem')) $('#btn-solicitar-viagem').onclick = () => {
+    const atras = meuColaborador ? sols.filter(x => x.colaborador_id === meuColaborador.id && viaRaizDe(x) === x.id && x.comprov_bloqueada) : [];
+    if (atras.length) return toast(`Você tem comprovação em atraso (OT ${atras[0].ordem_trabalho || atras[0].id}). Enquanto não for regularizada, não é possível fazer nova solicitação. Fale com o administrador.`);
+    renderSolicitacaoAutosservico();
+  };
 
   // A barra e o cartao levam ao mesmo lugar: a fila de aprovacao.
   ['via-km-fila', 'via-km-fila-card'].forEach(id => { const el = $('#' + id); if (el) el.onclick = viaFilaKm; });
@@ -5866,8 +5870,8 @@ async function renderViaticos() {
     const topo = filtered.filter(x => !aninhada(x));
     const acoesHtml = (s, fechada) => `<td class="actions via-acoes">${READONLY
         ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
-        : `<button class="btn-ic ok" data-view="${s.id}" title="${fechada ? 'Ver' : s.comprov_bloqueada ? 'Comprovação bloqueada por atraso: abrir' : 'Comprovar'}" aria-label="${fechada ? 'Ver' : 'Comprovar'}">${fechada ? '👁' : s.comprov_bloqueada ? '🔒' : '✓'}</button>
-        ${s.comprov_bloqueada && !fechada ? `<button class="btn-ic" data-liberar="${s.id}" ${USER.role === 'admin' ? '' : 'disabled'} title="${USER.role === 'admin' ? 'Liberar a comprovação em atraso (pede a justificativa)' : 'Só o administrador pode liberar uma comprovação em atraso'}" aria-label="Liberar comprovação">🔓</button>` : ''}
+        : `<button class="btn-ic ok" data-view="${s.id}" title="${fechada ? 'Ver' : 'Comprovar'}" aria-label="${fechada ? 'Ver' : 'Comprovar'}">${fechada ? '👁' : '✓'}</button>
+        ${s.comprov_bloqueada && !fechada ? `<button class="btn-ic" data-liberar="${s.id}" ${USER.role === 'admin' ? '' : 'disabled'} title="${USER.role === 'admin' ? 'Liberar o colaborador apesar do atraso (pede a justificativa): ele volta a poder solicitar e receber repasse' : 'Só o administrador pode liberar o bloqueio por comprovação em atraso'}" aria-label="Liberar bloqueio">🔓</button>` : ''}
         <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
         <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
         ${meuColaborador && s.colaborador_id === meuColaborador.id && s.complementar_tipo !== 'custo_extra' && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local, ir a um novo destino ou pedir só um custo extra (ex.: remarcação de passagem)" aria-label="Complementar">↪</button>` : ''}
@@ -6236,7 +6240,8 @@ async function viaTransferenciaModal(s) {
   let ctx;
   try { ctx = await api(`/api/viaticos/solicitacoes/${s.id}/transferencia`); } catch (e) { return toast(e.message); }
   const titulo = `Transferência — ${s.colaborador_name} · OT ${s.ordem_trabalho || s.id}`;
-  const kpis = `<div class="grid kpis" style="margin-bottom:12px">
+  const avisoBloq = (s.colab_bloqueios || []).length ? `<div class="alert-item late" style="margin-bottom:12px">🔒 <strong>Repasse bloqueado:</strong> ${esc(s.colaborador_name)} tem comprovação em atraso (OT ${esc(s.colab_bloqueios.join(', '))}). Regularize a comprovação, ou um administrador pode liberar o bloqueio com justificativa (🔓 na lista).</div>` : '';
+  const kpis = avisoBloq + `<div class="grid kpis" style="margin-bottom:12px">
       <div class="card kpi"><div class="label">Solicitado</div><div class="value">${brl(solicitado)}</div></div>
       <div class="card kpi ${registrada ? 'blue' : ''}"><div class="label">Valor liberado no Flash</div><div class="value">${registrada ? brl(s.valor_liberado) : '—'}</div>
         ${registrada ? '' : '<div style="font-size:11.5px; color:var(--muted)">ainda não registrado</div>'}</div>
@@ -6329,7 +6334,7 @@ function viaConfirmarExclusao(s) {
 function viaPrazoInfo(s) {
   if (s.status !== 'aguardando_comprovacao' || !s.comprov_prazo) return null;
   const d = s.comprov_dias, pl = n => `${n} dia${n > 1 ? 's' : ''}`;
-  if (d < 0) return { cls: 'atraso', txt: `Em atraso há ${pl(-d)}`, sub: s.comprov_bloqueada ? '🔒 bloqueada até a liberação' : `liberada${s.comprov_liberada_por ? ' por ' + s.comprov_liberada_por : ''}` };
+  if (d < 0) return { cls: 'atraso', txt: `Em atraso há ${pl(-d)}`, sub: s.comprov_bloqueada ? '🔒 sem nova solicitação nem repasse' : `liberada${s.comprov_liberada_por ? ' por ' + s.comprov_liberada_por : ''}` };
   if (d === 0) return { cls: 'aviso', txt: 'Último dia para comprovar (hoje)' };
   return { cls: d <= 1 ? 'aviso' : 'ok', txt: d === 1 ? 'Falta 1 dia para comprovar' : `Faltam ${d} dias para comprovar` };
 }
@@ -6343,20 +6348,20 @@ function viaAtrasoQtd(sols) {   // OTs de origem aguardando comprovação já ve
 }
 function viaLiberarComprovacaoModal(s, depois) {
   if (USER.role !== 'admin') return toast('Só o administrador pode liberar uma comprovação em atraso.');
-  openModal(`Liberar comprovação — ${esc(s.colaborador_name)}`, `
+  openModal(`Liberar bloqueio — ${esc(s.colaborador_name)}`, `
     <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">A comprovação da OT <strong>${esc(s.ordem_trabalho || s.id)}</strong> venceu em <strong>${brDate(s.comprov_prazo)}</strong>
-      (${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso) e está bloqueada. Ao liberar, o lançamento das despesas e o fechamento voltam a funcionar.
-      O atraso continua aparecendo nos indicadores, e a justificativa fica registrada.</p>
+      (${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso). Enquanto não for regularizada, <strong>${esc(s.colaborador_name)}</strong> não pode fazer nova solicitação e novos repasses ficam bloqueados.
+      Ao liberar, ele volta a poder solicitar e receber repasse. O lançamento da comprovação nunca é bloqueado; o atraso continua nos indicadores e a justificativa fica registrada.</p>
     <div class="field"><label for="lb-motivo">Justificativa do atraso</label><textarea id="lb-motivo" rows="3" placeholder="Ex.: viagem estendida, atestado médico, problema no Flash…"></textarea></div>`,
     [{ label: 'Voltar', onClick: closeModal },
-     { label: 'Liberar comprovação', cls: 'primary', onClick: async (ev) => {
+     { label: 'Liberar bloqueio', cls: 'primary', onClick: async (ev) => {
         const motivo = $('#lb-motivo').value.trim();
         if (motivo.length < 5) return modalError('Informe a justificativa do atraso.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Liberando…'; }
         try {
           await api(`/api/viaticos/solicitacoes/${s.id}/liberar-comprovacao`, { method: 'POST', body: { motivo } });
-          closeModal(); toast('Comprovação liberada.'); if (depois) depois(); else renderViaticos();
-        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Liberar comprovação'; } }
+          closeModal(); toast('Bloqueio liberado.'); if (depois) depois(); else renderViaticos();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Liberar bloqueio'; } }
      } }]);
 }
 function viaPodeCancelar(s) {
@@ -6422,7 +6427,7 @@ async function viewSolicitacao(id) {
   // Usuário só-leitura abre o mesmo modal em modo consulta: vê os dados
   // completos da OT e a comprovação, sem nenhum controle de edição.
   const bloqueada = !!s.comprov_bloqueada && !finalizada;   // prazo vencido e sem liberação do administrador
-  const somenteLeitura = READONLY || bloqueada;
+  const somenteLeitura = READONLY;
   const comprovado = despesas.reduce((sum, d) => sum + d.valor, 0);
   const liberadoTot = totaisFam.liberado;      // liberado da família (sem as canceladas)
   const solicitadoTot = totaisFam.solicitado;
@@ -6577,7 +6582,7 @@ async function viewSolicitacao(id) {
 
   const prazoInfo = viaPrazoInfo(s);
   const prazoBanner = bloqueada
-    ? `<div class="alert-item late" style="margin-bottom:14px">🔒 <strong>Comprovação bloqueada por atraso.</strong> O prazo (3 dias úteis após o fim da viagem) venceu em <strong>${brDate(s.comprov_prazo)}</strong> — ${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso. ${USER.role === 'admin' ? 'Use <strong>Liberar comprovação</strong> (abaixo) depois de ouvir a justificativa do colaborador.' : 'Para lançar despesas ou fechar, um administrador precisa liberar.'}</div>`
+    ? `<div class="alert-item late" style="margin-bottom:14px">⚠️ <strong>Comprovação em atraso.</strong> O prazo (3 dias úteis após o fim da viagem) venceu em <strong>${brDate(s.comprov_prazo)}</strong> — ${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso. Você pode lançar e fechar a comprovação normalmente; enquanto ela não for regularizada, o colaborador não pode fazer nova solicitação e novos repasses ficam bloqueados.${USER.role === 'admin' ? ' Se houver justificativa, use <strong>Liberar bloqueio</strong> (abaixo).' : ''}</div>`
     : prazoInfo ? `<div class="alert-item ${prazoInfo.cls === 'atraso' ? 'late' : prazoInfo.cls === 'aviso' ? 'warn' : 'ok'}" style="margin-bottom:14px">⏱ <strong>${esc(prazoInfo.txt)}</strong> (prazo: ${brDate(s.comprov_prazo)}, 3 dias úteis após o fim da viagem)${prazoInfo.sub ? ` — ${esc(prazoInfo.sub)}${s.comprov_liberada_motivo ? ': ' + esc(s.comprov_liberada_motivo) : ''}` : ''}</div>` : '';
   const body = `
     ${prazoBanner}
@@ -6628,9 +6633,8 @@ async function viewSolicitacao(id) {
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
   botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
-  if (bloqueada) {
-    if (USER.role === 'admin' && !READONLY) botoes.push({ label: 'Liberar comprovação', cls: 'primary', onClick: () => { closeModal(); viaLiberarComprovacaoModal(s, () => viewSolicitacao(id)); } });
-  } else if (somenteLeitura) {
+  if (bloqueada && USER.role === 'admin' && !READONLY) botoes.push({ label: 'Liberar bloqueio', onClick: () => { closeModal(); viaLiberarComprovacaoModal(s, () => viewSolicitacao(id)); } });
+  if (somenteLeitura) {
     // consulta pura — nenhuma ação além de fechar
   } else if (!finalizada) {
     botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
@@ -6650,7 +6654,7 @@ async function viewSolicitacao(id) {
     botoes.push({ label: 'Arquivar', cls: 'primary', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/arquivar`, { method: 'POST' }); closeModal(); toast('Arquivado.'); renderViaticos(); } });
   }
 
-  openModal(`${bloqueada ? 'Comprovação bloqueada' : somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(totaisFam.inicio || s.data_inicio)}–${brDate(totaisFam.fim || s.data_fim)})${familia.length > 1 ? ` · ${familia.length} OTs` : ''}`,
+  openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(totaisFam.inicio || s.data_inicio)}–${brDate(totaisFam.fim || s.data_fim)})${familia.length > 1 ? ` · ${familia.length} OTs` : ''}`,
     body, botoes, { wide: true });
 
   document.querySelectorAll('[data-conf]').forEach(b => b.onclick = async () => {
