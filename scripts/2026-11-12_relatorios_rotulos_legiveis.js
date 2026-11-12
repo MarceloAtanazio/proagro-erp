@@ -23,7 +23,8 @@ const GRAFICOS = `  // ---------- gráficos ----------
         const v = ds.data[i]; if (v == null || (cfg.so && !cfg.so(i))) return;
         const topo = Math.min(el.y, el.base == null ? el.y : el.base), val = cfg.valor ? cfg.valor(i) : v;
         if (Math.abs(val) < 0.5) return;
-        ctx.fillText(cfg.fmt(val, i), el.x, Math.max(topo - 8, chart.chartArea.top - 6));
+        const txt = cfg.fmt(val, i), meia = ctx.measureText(txt).width / 2;
+        ctx.fillText(txt, Math.max(meia + 2, Math.min(el.x, chart.width - meia - 2)), Math.max(topo - 8, chart.chartArea.top - 6));
       });
     });
     ctx.restore();
