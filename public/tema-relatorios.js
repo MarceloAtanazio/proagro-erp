@@ -184,9 +184,9 @@
     const cor = v => (v >= 0 ? '' : 'red');
     const runwayTxt = K.runway == null ? '—' : K.runway >= 60 ? '60+ meses' : K.runway.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' meses';
     return `<div class="nd-rel-kpis">
-      ${k('', 'Receita bruta', brlFull(K.rec), chipDelta(varPct(K.rec, K.recP)) || `${K.meses} mês(es)`, '<canvas class="nd-rel-sp" id="nd-rel-sp-rec" height="38"></canvas>')}
-      ${k('', 'Custos e despesas', brlFull(K.despesa), chipDelta(varPct(K.despesa, K.despesaP), true) || `${K.meses} mês(es)`, '<canvas class="nd-rel-sp" id="nd-rel-sp-desp" height="38"></canvas>')}
-      ${k(cor(K.liq), 'Resultado líquido', `<span class="${K.liq >= 0 ? 'pos' : 'neg'}">${brlFull(K.liq)}</span>`, `<span class="nd-chip ${K.liq >= 0 ? 'ok' : 'late'}">margem ${pct(K.margLiq)}</span>${K.liqP ? ' ' + chipDelta(varPct(K.liq, K.liqP)) : ''}`, '<canvas class="nd-rel-sp" id="nd-rel-sp-liq" height="38"></canvas>')}
+      ${k('', 'Receita bruta', brlFull(K.rec), chipDelta(varPct(K.rec, K.recP)) || `${K.meses} mês(es)`, '<div class="nd-rel-spbox"><canvas id="nd-rel-sp-rec"></canvas></div>')}
+      ${k('', 'Custos e despesas', brlFull(K.despesa), chipDelta(varPct(K.despesa, K.despesaP), true) || `${K.meses} mês(es)`, '<div class="nd-rel-spbox"><canvas id="nd-rel-sp-desp"></canvas></div>')}
+      ${k(cor(K.liq), 'Resultado líquido', `<span class="${K.liq >= 0 ? 'pos' : 'neg'}">${brlFull(K.liq)}</span>`, `<span class="nd-chip ${K.liq >= 0 ? 'ok' : 'late'}">margem ${pct(K.margLiq)}</span>${K.liqP ? ' ' + chipDelta(varPct(K.liq, K.liqP)) : ''}`, '<div class="nd-rel-spbox"><canvas id="nd-rel-sp-liq"></canvas></div>')}
       ${k(cor(K.eb), 'EBITDA', `<span class="${K.eb >= 0 ? 'pos' : 'neg'}">${brlFull(K.eb)}</span>`, `<span class="nd-chip ${K.eb >= 0 ? 'ok' : 'late'}">margem ${pct(K.margEb)}</span> resultado operacional`)}
       ${k('', 'Peso do pessoal', pct(K.pesoPessoal), `${brlFull(K.pessoal)} sobre a receita líquida`, medidor(K.pesoPessoal))}
       ${k(K.exec != null && K.exec > 100 ? 'red' : '', 'Execução do orçamento', K.exec == null ? '—' : pct(K.exec, 0), K.exec == null ? 'sem orçamento de despesas' : `${brlFull(K.despesa)} de ${brlFull(K.despesaO)} orçados`, K.exec == null ? '' : medidor(K.exec, true))}
@@ -251,39 +251,60 @@
   }
 
   // ---------- gráficos ----------
+  const FONTE = { family: 'DM Sans', size: 13 };
+  const tinta = () => { try { return getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || '#10281c'; } catch (e) { return '#10281c'; } };
+  const curto = v => { const a = Math.abs(v), sg = v < 0 ? '−' : ''; if (a >= 1e6) return sg + (a / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'M'; if (a >= 1e3) return sg + Math.round(a / 1e3).toLocaleString('pt-BR') + 'k'; return sg + Math.round(a).toLocaleString('pt-BR'); };
+  // escreve o valor em cima de cada barra/ponto dos conjuntos que pedirem (dataset.rotulo = { fmt, valor?, so?, cor? })
+  const ROTULOS = { id: 'ndRelRotulos', afterDatasetsDraw(chart) {
+    const ctx = chart.ctx; ctx.save(); ctx.font = '700 12.5px "DM Sans", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    chart.data.datasets.forEach((ds, di) => {
+      const cfg = ds.rotulo; if (!cfg || !chart.isDatasetVisible(di)) return;
+      ctx.fillStyle = cfg.cor || tinta();
+      chart.getDatasetMeta(di).data.forEach((el, i) => {
+        const v = ds.data[i]; if (v == null || (cfg.so && !cfg.so(i))) return;
+        const topo = Math.min(el.y, el.base == null ? el.y : el.base), val = cfg.valor ? cfg.valor(i) : v;
+        if (Math.abs(val) < 0.5) return;
+        ctx.fillText(cfg.fmt(val, i), el.x, Math.max(topo - 8, chart.chartArea.top - 6));
+      });
+    });
+    ctx.restore();
+  } };
   const limpaGraficos = () => { S.graficos.forEach(g => { try { g.destroy(); } catch (e) { /* já destruído */ } }); S.graficos = []; };
-  const novoGrafico = (el, cfg) => { if (!el || !window.Chart) return null; const g = typeof makeChart === 'function' ? makeChart(el, cfg) : new Chart(el, cfg); S.graficos.push(g); return g; };
+  const novoGrafico = (el, cfg) => { if (!el || !window.Chart) return null; cfg.plugins = (cfg.plugins || []).concat([ROTULOS]); const g = typeof makeChart === 'function' ? makeChart(el, cfg) : new Chart(el, cfg); S.graficos.push(g); return g; };
+  const DICA = { padding: 12, boxPadding: 6, titleFont: { family: 'DM Sans', size: 14, weight: '700' }, bodyFont: { family: 'DM Sans', size: 14 } };
+  const eixoY = extra => Object.assign({ border: { display: false }, ticks: { maxTicksLimit: 5, font: FONTE, padding: 8, callback: v => (v < 0 ? '−' : '') + compacto(v) } }, extra || {});
 
   function graficos(m, K, d, ate) {
-    const rotMes = MES.slice(0, 12), rec = m.receita.v.cur, orcDesp = null;
+    const rotMes = MES.slice(0, 12), rec = m.receita.v.cur;
     const desp = rec.map((_, i) => -(m.tributos.v.cur[i] + m.gCustos.concat(m.gAdmin).reduce((t, g) => t + g.v.cur[i], 0) + Math.min(0, m.financ.v.cur[i]) + m.invest.v.cur[i]));
     const recBruta = rec.map((v, i) => v + Math.max(0, m.financ.v.cur[i]));
     const acum = m.acumulado.v.cur;
     novoGrafico($('#nd-rel-ch-mes'), { data: { labels: rotMes, datasets: [
-      { type: 'line', label: 'Resultado acumulado', data: acum.map((v, i) => (i < ate ? v : null)), borderColor: CORES.dourado, backgroundColor: CORES.dourado, borderWidth: 2.5, pointRadius: 3, tension: .3, yAxisID: 'y2', order: 0 },
-      { type: 'bar', label: 'Receitas', data: recBruta.map((v, i) => (i < ate ? v : null)), backgroundColor: CORES.verde2, borderRadius: 6, borderSkipped: false, maxBarThickness: 22, order: 2 },
-      { type: 'bar', label: 'Custos e despesas', data: desp.map((v, i) => (i < ate ? v : null)), backgroundColor: CORES.azul, borderRadius: 6, borderSkipped: false, maxBarThickness: 22, order: 1 }] },
-      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } }, tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + brlFull(c.parsed.y) } } },
-        scales: { x: { grid: { display: false }, border: { display: false } }, y: { border: { display: false }, ticks: { maxTicksLimit: 5, callback: v => (v < 0 ? '−' : '') + compacto(v) } },
-          y2: { position: 'right', grid: { display: false }, border: { display: false }, ticks: { maxTicksLimit: 5, color: CORES.dourado, callback: v => (v < 0 ? '−' : '') + compacto(v) } } } } });
+      { type: 'line', label: 'Resultado acumulado', data: acum.map((v, i) => (i < ate ? v : null)), borderColor: CORES.dourado, backgroundColor: CORES.dourado, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6, tension: .3, yAxisID: 'y2', order: 0, rotulo: { fmt: curto, so: i => i === ate - 1, cor: CORES.dourado } },
+      { type: 'bar', label: 'Receitas', data: recBruta.map((v, i) => (i < ate ? v : null)), backgroundColor: CORES.verde2, borderRadius: 6, borderSkipped: false, maxBarThickness: 30, order: 2, rotulo: { fmt: curto } },
+      { type: 'bar', label: 'Custos e despesas', data: desp.map((v, i) => (i < ate ? v : null)), backgroundColor: CORES.azul, borderRadius: 6, borderSkipped: false, maxBarThickness: 30, order: 1, rotulo: { fmt: curto } }] },
+      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 26 } }, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 9, padding: 18, font: FONTE } }, tooltip: Object.assign({}, DICA, { callbacks: { label: c => ' ' + c.dataset.label + ': ' + brlFull(c.parsed.y) } }) },
+        scales: { x: { grid: { display: false }, border: { display: false }, ticks: { font: FONTE } }, y: eixoY(), y2: eixoY({ position: 'right', grid: { display: false }, ticks: { maxTicksLimit: 5, font: FONTE, padding: 8, color: CORES.dourado, callback: v => (v < 0 ? '−' : '') + compacto(v) } }) } } });
     // ponte do resultado
     const T = x => tot(x, 'cur', ate);
-    const passos = [[['Receita', 'líquida'], T(m.rLiq), 'total'], ['Pessoal', T(m.pessoal), 'step'], [['Campo e', 'viagens'], T(m.campo), 'step'], [['Serviços e', 'suprimentos'], T(m.gCustos[2]), 'step'],
-      [['Despesas', 'administrativas'], m.gAdmin.reduce((t, g) => t + T(g), 0), 'step'], [['Financeiro e', 'invest.'], T(m.financ) + T(m.invest), 'step'], [['Resultado', 'líquido'], T(m.liquido), 'total']];
+    const passos = [[['Receita', 'líquida'], T(m.rLiq), 'total'], ['Pessoal', T(m.pessoal), 'step'], ['Campo', T(m.campo), 'step'], ['Serviços', T(m.gCustos[2]), 'step'],
+      ['Admin.', m.gAdmin.reduce((t, g) => t + T(g), 0), 'step'], ['Financ.', T(m.financ) + T(m.invest), 'step'], [['Resultado', 'líquido'], T(m.liquido), 'total']];
     let corre = 0; const faixas = [], cores = [];
     passos.forEach(([, v, tipo]) => {
       if (tipo === 'total') { faixas.push(v >= 0 ? [0, v] : [v, 0]); cores.push(v >= 0 ? CORES.verde : CORES.vermelho); corre = v; }
       else { const ini = corre, fim = corre + v; faixas.push([Math.min(ini, fim), Math.max(ini, fim)]); cores.push(v >= 0 ? CORES.verde2 : CORES.azul); corre = fim; }
     });
-    novoGrafico($('#nd-rel-ch-ponte'), { type: 'bar', data: { labels: passos.map(p => p[0]), datasets: [{ data: faixas, backgroundColor: cores, borderRadius: 6, borderSkipped: false, maxBarThickness: 46 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + brlFull(passos[c.dataIndex][1]) } } },
-        scales: { x: { grid: { display: false }, border: { display: false }, ticks: { maxRotation: 0, autoSkip: false, font: { size: 10.5 } } }, y: { border: { display: false }, ticks: { maxTicksLimit: 5, callback: v => (v < 0 ? '−' : '') + compacto(v) } } } } });
-    // sparklines
-    if (window.ProagroNovo && ProagroNovo.sparkline) {
-      ProagroNovo.sparkline($('#nd-rel-sp-rec'), K.mensal.rec, CORES.verde2, MES);
-      ProagroNovo.sparkline($('#nd-rel-sp-desp'), K.mensal.desp, CORES.azul, MES);
-      ProagroNovo.sparkline($('#nd-rel-sp-liq'), K.mensal.liq, K.liq >= 0 ? CORES.verde : CORES.vermelho, MES);
-    }
+    novoGrafico($('#nd-rel-ch-ponte'), { type: 'bar', data: { labels: passos.map(p => p[0]), datasets: [{ data: faixas, backgroundColor: cores, borderRadius: 6, borderSkipped: false, maxBarThickness: 52, rotulo: { fmt: curto, valor: i => passos[i][1] } }] },
+      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 26 } }, plugins: { legend: { display: false }, tooltip: Object.assign({}, DICA, { callbacks: { title: c => ['Receita líquida', 'Pessoal e benefícios', 'Operação de campo e viagens', 'Serviços e suprimentos', 'Despesas administrativas', 'Resultado financeiro e investimentos', 'Resultado líquido'][c[0].dataIndex], label: c => ' ' + brlFull(passos[c.dataIndex][1]) } }) },
+        scales: { x: { grid: { display: false }, border: { display: false }, ticks: { maxRotation: 0, autoSkip: false, font: { family: 'DM Sans', size: 12 } } }, y: eixoY() } } });
+    // minigráficos dos KPIs: último mês escrito e dica grande ao passar o mouse
+    const spark = (id, vals, cor) => novoGrafico($('#' + id), { type: 'line', data: { labels: MES.slice(0, vals.length), datasets: [{ data: vals, borderColor: cor, backgroundColor: cor + '24', fill: true, borderWidth: 2.5, tension: .35, pointRadius: 0, pointHoverRadius: 5, rotulo: { fmt: curto, so: i => i === vals.length - 1, cor } }] },
+      options: { responsive: true, maintainAspectRatio: false, layout: { padding: { top: 20, right: 14, bottom: 2 } }, interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false }, tooltip: Object.assign({}, DICA, { displayColors: false, callbacks: { label: c => ' ' + brlFull(c.parsed.y) } }) }, scales: { x: { display: false }, y: { display: false } } } });
+    spark('nd-rel-sp-rec', K.mensal.rec, CORES.verde2);
+    spark('nd-rel-sp-desp', K.mensal.desp, CORES.azul);
+    spark('nd-rel-sp-liq', K.mensal.liq, K.liq >= 0 ? CORES.verde : CORES.vermelho);
   }
 
   // ---------- Excel ----------
@@ -338,12 +359,13 @@
       <article class="nd-card nd-rel-dre"><div class="nd-card-cab"><div><h3>DRE — Demonstração do Resultado do Exercício</h3><p class="nd-rel-nota">${d.regime === 'caixa' ? 'Regime de caixa: o que foi efetivamente pago e recebido.' : 'Competência: pelo vencimento, incluindo o que ainda está previsto.'} Valores em R$; custos e despesas entre parênteses.</p></div>
         <button type="button" class="nd-rel-bt" id="nd-rel-tudo">${todosAbertos ? 'Recolher grupos' : 'Expandir grupos'}</button></div>
         ${tabelaDRE(m, d, ate)}</article>
-      <div class="nd-rel-duo nd-rel-duo-graf">
-        <article class="nd-card"><div class="nd-card-cab"><h3>Receitas, custos e resultado acumulado</h3><span class="nd-chip">${S.ano}</span></div><div class="nd-rel-graf"><canvas id="nd-rel-ch-mes"></canvas></div></article>
-        <article class="nd-card"><div class="nd-card-cab"><h3>Ponte do resultado</h3><span class="nd-chip">da receita líquida ao resultado</span></div><div class="nd-rel-graf"><canvas id="nd-rel-ch-ponte"></canvas></div></article>
+      <article class="nd-card"><div class="nd-card-cab"><h3>Receitas, custos e resultado acumulado</h3><span class="nd-chip">${S.ano}</span></div><div class="nd-rel-graf nd-rel-graf-alto"><canvas id="nd-rel-ch-mes"></canvas></div></article>
+      <div class="nd-rel-duo">
+        <article class="nd-card"><div class="nd-card-cab"><h3>Ponte do resultado</h3><span class="nd-chip">da receita líquida ao resultado</span></div><div class="nd-rel-graf nd-rel-graf-alto"><canvas id="nd-rel-ch-ponte"></canvas></div></article>
+        ${gruposCard(m, d, ate)}
       </div>
-      <div class="nd-rel-duo nd-rel-duo-gr">${gruposCard(m, d, ate)}${rankingCard('Maiores categorias de despesa', topDesp, totDesp, 'Sem despesas no período.')}</div>
-      <div class="nd-rel-duo">${rankingCard('Principais fornecedores', d.fornecedores, totForn, 'Sem pagamentos no período.')}${rankingCard('Origem da receita (clientes)', d.clientes, totCli, 'Sem receitas no período.')}</div>`;
+      <div class="nd-rel-duo">${rankingCard('Maiores categorias de despesa', topDesp, totDesp, 'Sem despesas no período.')}${rankingCard('Principais fornecedores', d.fornecedores, totForn, 'Sem pagamentos no período.')}</div>
+      <div class="nd-rel-duo nd-rel-um">${rankingCard('Origem da receita (clientes)', d.clientes, totCli, 'Sem receitas no período.')}</div>`;
     ligaControles(root, m, d, ate);
     graficos(m, K, d, ate);
     if (window.ProagroNovo && ProagroNovo.contar) ProagroNovo.contar(root);

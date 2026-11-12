@@ -104,3 +104,18 @@ html[data-ui="novo"] .nd-rel-orig { display: none; }
 @media (max-width: 1280px) { .nd-rel-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1000px) { .nd-rel-duo, .nd-rel-duo-graf, .nd-rel-duo-gr { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .nd-rel-kpis, .nd-rel-minis { grid-template-columns: 1fr; } .nd-dre .nd-dre-nome { min-width: 190px; } .nd-rel-graf { height: 280px; } }
+
+/* rótulos mais legíveis */
+.nd-rel-sp { height: 64px !important; }
+.nd-rel-graf-alto { height: 380px; }
+.nd-rel-um { grid-template-columns: 1fr; }
+.nd-rel-det { font-size: 13px; }
+.nd-rel-nota { font-size: 12.5px; }
+.nd-dre { font-size: 13px; }
+.nd-dre td small { font-size: 11px; }
+.nd-dre th { font-size: 11px; }
+.nd-rel-mini span { font-size: 11.5px; } .nd-rel-mini small { font-size: 12.5px; }
+.nd-rel-gr-t small, .nd-rel-rk-t small { font-size: 12.5px; }
+.nd-rel-ins span { font-size: 13px; }
+@media (max-width: 640px) { .nd-rel-graf-alto { height: 320px; } }
+.nd-rel-spbox { position: relative; height: 64px; margin-top: 10px; }

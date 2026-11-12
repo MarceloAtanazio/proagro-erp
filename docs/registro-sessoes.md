@@ -8345,3 +8345,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (11 verificações), SQL conferida no banco real só em leitura, simulador no navegador (escuro): KPIs, DRE (expandir, trimestral, anual, competência), gráficos, Clássico intacto. Não testado: tema claro, tela larga real e produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 224: Relatórios Gerenciais — rótulos legíveis nos gráficos
+
+**Solicitação:** com um print, o Marcelo avisou que os rótulos de dados das visualizações da página de Relatórios Gerenciais estavam muito pequenos, quase ilegíveis (dica do minigráfico e textos).
+
+**O que mudou (só visual Novo):** valores escritos em cima de cada barra do gráfico mensal e da ponte do resultado e no ponto final da linha (formato 560k / 1,2M, zeros omitidos); eixos, legendas e dicas dos gráficos com fonte de 13–14px; minigráficos dos KPIs em caixa própria de 64px (antes ficavam esticados) com o valor do último mês escrito; gráfico mensal em largura total, ponte ao lado dos custos por grupo, rankings em pares; rótulos da ponte encurtados (nome completo na dica) e textos pequenos da página um pouco maiores. Sem servidor nem banco; Clássico intacto.
+
+**Arquivos:** `public/tema-relatorios.js`, `public/tema-relatorios.css`, `scripts/2026-11-12_relatorios_rotulos_legiveis.js`, `scripts/2026-11-12_relatorios_sparkline_caixa.js`.
+
+**Verificação:** simulador, escuro: rótulos nas barras e na linha, ponte, minigráficos com o último valor, gráficos sem esticar. Não testado: tema claro, tela larga real e produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
