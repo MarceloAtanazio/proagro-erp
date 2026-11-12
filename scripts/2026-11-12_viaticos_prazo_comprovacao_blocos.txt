@@ -1,0 +1,187 @@
+@@API_HELPERS
+// ---- Prazo de comprovação (3 dias úteis após o fim da ÚLTIMA OT da família) ----
+// Dias úteis = segunda a sexta (feriados não são descontados). Prazo = fim da família + 3 dias úteis; "dias" = prazo − hoje em dias corridos
+// (positivo: faltam; 0: último dia; negativo: em atraso). Comprovação em atraso fica BLOQUEADA até um administrador liberar (com justificativa).
+const PRAZO_COMPROVACAO_DIAS_UTEIS = 3;
+const diaISO = v => String(v || '').slice(0, 10);
+function somaDiasUteis(iso, qtd) {
+  const [y, m, d] = diaISO(iso).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  for (let c = 0; c < qtd;) { dt.setUTCDate(dt.getUTCDate() + 1); const w = dt.getUTCDay(); if (w !== 0 && w !== 6) c++; }
+  return dt.toISOString().slice(0, 10);
+}
+function diasEntre(deISO, ateISO) {   // ate − de, em dias corridos
+  const a = diaISO(deISO).split('-').map(Number), b = diaISO(ateISO).split('-').map(Number);
+  return Math.round((Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) / 86400000);
+}
+// Acrescenta a cada linha da lista os campos comprov_* (prazo, dias, atraso, bloqueio, liberação, entrega). A família inteira usa a mesma conta.
+function anexarPrazoComprovacao(rows, hoje) {
+  const fimFam = {}, porId = new Map(rows.map(r => [r.id, r]));
+  rows.forEach(r => {
+    if (['cancelada', 'em_approvals'].includes(r.status)) return;
+    const raiz = r.familia_raiz_id || r.id, f = diaISO(r.data_fim);
+    if (!fimFam[raiz] || f > fimFam[raiz]) fimFam[raiz] = f;
+  });
+  const fechados = ['comprovado', 'devolvido', 'divergente', 'arquivado'];
+  return rows.map(r => {
+    const raizId = r.familia_raiz_id || r.id, raiz = porId.get(raizId) || r;
+    const fim = fimFam[raizId] || diaISO(r.data_fim), prazo = somaDiasUteis(fim, PRAZO_COMPROVACAO_DIAS_UTEIS);
+    const lib = !!raiz.comprovacao_liberada_em, extra = { comprov_liberada: lib, comprov_liberada_por: lib ? raiz.comprovacao_liberada_por : null, comprov_liberada_motivo: lib ? raiz.comprovacao_liberada_motivo : null };
+    if (r.status === 'aguardando_comprovacao') {
+      const dias = diasEntre(hoje, prazo);
+      return { ...r, ...extra, comprov_prazo: prazo, comprov_dias: dias, comprov_atraso: dias < 0 ? -dias : 0, comprov_bloqueada: dias < 0 && !lib };
+    }
+    if (fechados.includes(r.status) && raiz.comprov_fechada_dia) {
+      const entrega = raiz.comprov_fechada_dia;
+      return { ...r, ...extra, comprov_prazo: prazo, comprov_entrega: entrega, comprov_tempo: Math.max(0, diasEntre(fim, entrega)), comprov_atraso: Math.max(0, diasEntre(prazo, entrega)), comprov_bloqueada: false };
+    }
+    return { ...r, ...extra, comprov_prazo: fechados.includes(r.status) ? prazo : null, comprov_bloqueada: false };
+  });
+}
+// Bloqueio no servidor: com a comprovação vencida e sem liberação, ninguém lança, edita, apaga nem fecha despesas (nem o administrador: ele libera antes).
+async function comprovacaoBloqueada(id) {
+  const rid = await raizFamilia(id);
+  const r = (await query(`${FAMILIA_CTE}
+    SELECT s.status, s.comprovacao_liberada_em AS lib,
+           (SELECT MAX(m.data_fim) FROM fam f JOIN erp_viaticos_solicitacoes m ON m.id = f.id WHERE f.raiz_id = $1 AND m.status NOT IN ('cancelada','em_approvals')) AS fim
+      FROM erp_viaticos_solicitacoes s WHERE s.id = $1`, [rid]))[0];
+  if (!r || r.status !== 'aguardando_comprovacao' || r.lib || !r.fim) return null;
+  const prazo = somaDiasUteis(r.fim, PRAZO_COMPROVACAO_DIAS_UTEIS), atraso = -diasEntre(hojeISO(), prazo);
+  return atraso > 0 ? { prazo, atraso } : null;
+}
+async function respondeSeBloqueada(id, res) {
+  const b = await comprovacaoBloqueada(id);
+  if (!b) return false;
+  const [y, m, d] = b.prazo.split('-');
+  res.status(423).json({ error: `Comprovação bloqueada por atraso: o prazo venceu em ${d}/${m}/${y} (${b.atraso} dia${b.atraso > 1 ? 's' : ''} de atraso). Peça a um administrador para liberar.` });
+  return true;
+}
+async function respondeSeBloqueadaDespesa(despesaId, res) {
+  const r = await query('SELECT solicitacao_id FROM erp_viaticos_despesas WHERE id=$1', [despesaId]);
+  return r.length ? respondeSeBloqueada(r[0].solicitacao_id, res) : false;
+}
+
+@@API_LIBERAR
+// Libera uma comprovação em atraso (só administrador, com justificativa). O atraso continua contando nos indicadores.
+app.post('/api/viaticos/solicitacoes/:id/liberar-comprovacao', requireAuth, requireAdmin, h(async (req, res) => {
+  const motivo = String(sanitize(req.body && req.body.motivo) || '');
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa do atraso.' });
+  const rid = await raizFamilia(req.params.id);
+  const up = await query(`UPDATE erp_viaticos_solicitacoes SET comprovacao_liberada_em=NOW(), comprovacao_liberada_por=$2, comprovacao_liberada_motivo=$3
+    WHERE id=$1 AND status='aguardando_comprovacao' RETURNING id`, [rid, req.user.name, motivo.slice(0, 500)]);
+  if (!up.length) return res.status(400).json({ error: 'Esta solicitação não está aguardando comprovação.' });
+  res.json({ ok: true });
+}));
+
+@@APP_FUNCS
+// ---- Prazo de comprovação (3 dias úteis após o fim da viagem; o servidor calcula os campos comprov_*) ----
+function viaPrazoInfo(s) {
+  if (s.status !== 'aguardando_comprovacao' || !s.comprov_prazo) return null;
+  const d = s.comprov_dias, pl = n => `${n} dia${n > 1 ? 's' : ''}`;
+  if (d < 0) return { cls: 'atraso', txt: `Em atraso há ${pl(-d)}`, sub: s.comprov_bloqueada ? '🔒 bloqueada até a liberação' : `liberada${s.comprov_liberada_por ? ' por ' + s.comprov_liberada_por : ''}` };
+  if (d === 0) return { cls: 'aviso', txt: 'Último dia para comprovar (hoje)' };
+  return { cls: d <= 1 ? 'aviso' : 'ok', txt: d === 1 ? 'Falta 1 dia para comprovar' : `Faltam ${d} dias para comprovar` };
+}
+function viaPrazoHtml(s) {
+  const p = viaPrazoInfo(s);
+  return p ? `<small class="via-prazo ${p.cls}" title="Prazo: 3 dias úteis após o fim da viagem (até ${brDate(s.comprov_prazo)})${s.comprov_liberada_motivo ? ' · Justificativa: ' + esc(s.comprov_liberada_motivo) : ''}">${esc(p.txt)}${p.sub ? `<br>${esc(p.sub)}` : ''}</small>` : '';
+}
+function viaAtrasoQtd(sols) {   // OTs de origem aguardando comprovação já vencidas (bloqueadas = ainda sem liberação)
+  const r = (sols || []).filter(x => viaRaizDe(x) === x.id && x.status === 'aguardando_comprovacao' && x.comprov_atraso > 0);
+  return { n: r.length, bloq: r.filter(x => x.comprov_bloqueada).length };
+}
+function viaLiberarComprovacaoModal(s, depois) {
+  if (USER.role !== 'admin') return toast('Só o administrador pode liberar uma comprovação em atraso.');
+  openModal(`Liberar comprovação — ${esc(s.colaborador_name)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">A comprovação da OT <strong>${esc(s.ordem_trabalho || s.id)}</strong> venceu em <strong>${brDate(s.comprov_prazo)}</strong>
+      (${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso) e está bloqueada. Ao liberar, o lançamento das despesas e o fechamento voltam a funcionar.
+      O atraso continua aparecendo nos indicadores, e a justificativa fica registrada.</p>
+    <div class="field"><label for="lb-motivo">Justificativa do atraso</label><textarea id="lb-motivo" rows="3" placeholder="Ex.: viagem estendida, atestado médico, problema no Flash…"></textarea></div>`,
+    [{ label: 'Voltar', onClick: closeModal },
+     { label: 'Liberar comprovação', cls: 'primary', onClick: async (ev) => {
+        const motivo = $('#lb-motivo').value.trim();
+        if (motivo.length < 5) return modalError('Informe a justificativa do atraso.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Liberando…'; }
+        try {
+          await api(`/api/viaticos/solicitacoes/${s.id}/liberar-comprovacao`, { method: 'POST', body: { motivo } });
+          closeModal(); toast('Comprovação liberada.'); if (depois) depois(); else renderViaticos();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Liberar comprovação'; } }
+     } }]);
+}
+@@APP_BANNER
+  const prazoInfo = viaPrazoInfo(s);
+  const prazoBanner = bloqueada
+    ? `<div class="alert-item late" style="margin-bottom:14px">🔒 <strong>Comprovação bloqueada por atraso.</strong> O prazo (3 dias úteis após o fim da viagem) venceu em <strong>${brDate(s.comprov_prazo)}</strong> — ${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso. ${USER.role === 'admin' ? 'Use <strong>Liberar comprovação</strong> (abaixo) depois de ouvir a justificativa do colaborador.' : 'Para lançar despesas ou fechar, um administrador precisa liberar.'}</div>`
+    : prazoInfo ? `<div class="alert-item ${prazoInfo.cls === 'atraso' ? 'late' : prazoInfo.cls === 'aviso' ? 'warn' : 'ok'}" style="margin-bottom:14px">⏱ <strong>${esc(prazoInfo.txt)}</strong> (prazo: ${brDate(s.comprov_prazo)}, 3 dias úteis após o fim da viagem)${prazoInfo.sub ? ` — ${esc(prazoInfo.sub)}${s.comprov_liberada_motivo ? ': ' + esc(s.comprov_liberada_motivo) : ''}` : ''}</div>` : '';
+@@CSS_CLASSIC
+
+/* Viáticos: prazo de comprovação (3 dias úteis) — mensagem sob o status e botão de liberar */
+.via-prazo { display: block; margin-top: 5px; font-size: 11.5px; line-height: 1.35; font-weight: 500; }
+.via-prazo.ok { color: var(--muted); }
+.via-prazo.aviso { color: var(--warn); font-weight: 600; }
+.via-prazo.atraso { color: var(--danger); font-weight: 600; }
+.btn-ic[disabled] { opacity: .45; cursor: not-allowed; }
+@@TEMA_FUNC
+  // ---------- prazo de comprovação (3 dias úteis após o fim da viagem) ----------
+  const FECHADOS = ['comprovado', 'devolvido', 'divergente', 'arquivado'];
+  const media = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  const dias1 = v => (Math.round(v * 10) / 10).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + (Math.round(v * 10) / 10 === 1 ? ' dia' : ' dias');
+  function prazoSecao(sols) {
+    const raizes = sols.filter(s => (s.familia_raiz_id || s.id) === s.id && s.comprov_prazo);
+    const itens = [];
+    raizes.forEach(s => {
+      if (s.status === 'aguardando_comprovacao') itens.push({ s, pend: true, atraso: num(s.comprov_atraso), tempo: null });
+      else if (FECHADOS.includes(s.status) && s.comprov_entrega) itens.push({ s, pend: false, atraso: num(s.comprov_atraso), tempo: num(s.comprov_tempo) });
+    });
+    const semData = raizes.filter(s => FECHADOS.includes(s.status) && !s.comprov_entrega).length;
+    const noPrazoAberto = itens.filter(i => i.pend && !i.atraso).length;
+    const aval = itens.filter(i => !i.pend || i.atraso > 0), atr = aval.filter(i => i.atraso > 0);
+    if (!aval.length && !noPrazoAberto) return '';
+    const pctNo = aval.length ? (aval.length - atr.length) / aval.length : 1;
+    const abertasAtraso = itens.filter(i => i.pend && i.atraso > 0), bloq = abertasAtraso.filter(i => i.s.comprov_bloqueada).length;
+    const mAtraso = media(atr.map(i => i.atraso)), maior = atr.reduce((m, i) => Math.max(m, i.atraso), 0);
+    const tempos = itens.filter(i => !i.pend && i.tempo != null).map(i => i.tempo), mTempo = media(tempos);
+    const faixas = [['No prazo', i => i.atraso === 0, 'ok'], ['1 a 3 dias', i => i.atraso >= 1 && i.atraso <= 3, 'aviso'], ['4 a 7 dias', i => i.atraso >= 4 && i.atraso <= 7, 'alerta'], ['Mais de 7 dias', i => i.atraso > 7, 'grave']]
+      .map(([rot, fn, cls]) => ({ rot, cls, n: aval.filter(fn).length }));
+    const por = new Map();
+    aval.forEach(i => {
+      const k = i.s.colaborador_name || '—', o = por.get(k) || { nome: k, aval: 0, atr: 0, soma: 0, maior: 0, abertas: 0, tempos: [] };
+      o.aval++; if (i.atraso > 0) { o.atr++; o.soma += i.atraso; o.maior = Math.max(o.maior, i.atraso); } if (i.pend && i.atraso > 0) o.abertas++; if (!i.pend && i.tempo != null) o.tempos.push(i.tempo);
+      por.set(k, o);
+    });
+    const rank = [...por.values()].sort((a, b) => b.atr - a.atr || (b.atr ? b.soma / b.atr : 0) - (a.atr ? a.soma / a.atr : 0) || b.aval - a.aval).slice(0, 10);
+    const corPct = pctNo >= 0.9 ? 'ok' : pctNo >= 0.7 ? 'warn' : 'red';
+    return `
+      <article class="nd-card nd-pn-largo nd-pn-prazo">
+        <div class="nd-card-cab"><h3>Prazo de comprovação <small>(3 dias úteis após o fim da viagem)</small></h3>
+          <span class="nd-chip ${abertasAtraso.length ? 'late' : 'ok'}">${abertasAtraso.length ? abertasAtraso.length + ' em atraso agora' : 'nenhuma em atraso agora'}</span></div>
+        <div class="nd-pn-pz-kpis">
+          ${tile(corPct === 'red' ? 'warn' : '', 'Comprovadas no prazo', pct(pctNo), `${aval.length - atr.length} de ${aval.length} avaliada(s)`)}
+          ${tile(abertasAtraso.length ? 'warn' : '', 'Em atraso agora', String(abertasAtraso.length), bloq ? `${bloq} bloqueada(s) · ${abertasAtraso.length - bloq} liberada(s)` : (abertasAtraso.length ? 'todas já liberadas' : 'tudo em dia') + (noPrazoAberto ? ` · ${noPrazoAberto} ainda no prazo` : ''))}
+          ${tile(atr.length ? 'warn' : '', 'Atraso médio', atr.length ? dias1(mAtraso) : '—', atr.length ? `maior atraso: ${maior} dia${maior > 1 ? 's' : ''}` : 'sem atrasos')}
+          ${tile('blue', 'Tempo médio para comprovar', tempos.length ? dias1(mTempo) : '—', tempos.length ? `após o fim da viagem · ${tempos.length} fechada(s)` : 'sem fechamentos com data')}
+        </div>
+        <div class="nd-pn-faixas" title="Distribuição das comprovações avaliadas por dias de atraso">
+          <div class="nd-pn-faixas-barra">${faixas.filter(f => f.n).map(f => `<i class="${f.cls}" style="flex:${f.n}" title="${f.rot}: ${f.n}"></i>`).join('')}</div>
+          <div class="nd-pn-faixas-leg">${faixas.map(f => `<span><i class="${f.cls}"></i>${f.rot} <b>${f.n}</b></span>`).join('')}</div>
+        </div>
+        ${rank.length ? `<div class="nd-pn-rolagem"><table class="nd-pn-tb"><thead><tr><th>Colaborador</th><th class="num">Avaliadas</th><th class="num">Em atraso</th><th class="num">Atraso médio</th><th class="num">Maior atraso</th><th class="num">Atrasadas agora</th><th class="num">Tempo médio</th></tr></thead><tbody>
+          ${rank.map(r => `<tr data-nome="${E(r.nome)}" title="Filtrar a lista por ${E(r.nome)}"><td><b>${E(r.nome)}</b></td><td class="num">${r.aval}</td><td class="num ${r.atr ? 'neg' : ''}">${r.atr ? r.atr + ' (' + pct(r.atr / r.aval) + ')' : '—'}</td>
+            <td class="num">${r.atr ? dias1(r.soma / r.atr) : '—'}</td><td class="num">${r.atr ? r.maior + ' d' : '—'}</td><td class="num ${r.abertas ? 'neg' : ''}">${r.abertas || '—'}</td><td class="num">${r.tempos.length ? dias1(media(r.tempos)) : '—'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <p class="nd-pn-nota">Prazo: 3 dias úteis (segunda a sexta, sem descontar feriados) depois do fim da última OT da viagem. "Avaliadas" = comprovações já fechadas + as abertas já vencidas.${semData ? ` ${semData} comprovação(ões) fechada(s) antes do controle de datas não entram nas médias.` : ''}</p>
+      </article>`;
+  }
+
+@@CSS_TEMA
+
+/* Painel — prazo de comprovação */
+.nd-pn-pz-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.nd-pn-faixas { margin: 0 0 18px; }
+.nd-pn-faixas-barra { display: flex; gap: 3px; height: 14px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--muted) 12%, transparent); }
+.nd-pn-faixas-barra i { display: block; min-width: 6px; }
+.nd-pn-faixas i.ok { background: var(--verde-500); } .nd-pn-faixas i.aviso { background: #C9922A; } .nd-pn-faixas i.alerta { background: #D9692A; } .nd-pn-faixas i.grave { background: var(--danger); }
+.nd-pn-faixas-leg { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.nd-pn-faixas-leg span { display: inline-flex; align-items: center; gap: 7px; } .nd-pn-faixas-leg i { width: 10px; height: 10px; border-radius: 4px; display: inline-block; }
+.nd-pn-faixas-leg b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.nd-pn-prazo .nd-pn-tb tr[data-nome] { cursor: pointer; }
+.nd-via-atraso { color: var(--danger); }

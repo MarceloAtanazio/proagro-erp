@@ -347,6 +347,7 @@ const AUDIT_MAP = {
   'POST /api/viaticos/km/:id/decidir': (req, body) => `${req.body.aprovar ? 'APROVOU' : 'Rejeitou'} a comprovação de quilometragem ID ${req.params.id}${body && body.payable_id ? ` — gerou a conta a pagar ${body.payable_id} (R$ ${body.valor})` : ''}${req.body.motivo ? ` — ${req.body.motivo}` : ''}`,
   'DELETE /api/viaticos/km/:id': req => `Excluiu a comprovação de quilometragem ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/arquivar': req => `Arquivou a solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/liberar-comprovacao': req => `Liberou (admin) a comprovação em atraso da solicitação de viático ID ${req.params.id}: ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
   'POST /api/viaticos/solicitacoes/:id/reabrir': req => `Reabriu (admin) a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/excesso-status': req => `${req.body.status === 'aprovado' ? 'Aprovou' : 'Reprovou'} o excesso da TUD ("${req.body.chave}") na solicitação de viático ID ${req.params.id}` +
     (req.body.status === 'reprovado' && Number(req.body.valor) > 0 ? ` — ${fmtBRL(req.body.valor)} viram pendência a descontar na próxima OT do colaborador` : ''),
@@ -6744,7 +6745,7 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
   const escopo = await viaticosEscopo(req.user);
   const rows = await query(`
     ${FAMILIA_CTE}
-    SELECT s.*, f.raiz_id AS familia_raiz_id, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
+    SELECT s.*, (s.comprovacao_fechada_em AT TIME ZONE 'America/Sao_Paulo')::date::text AS comprov_fechada_dia, f.raiz_id AS familia_raiz_id, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
       c.cidade_base_uf AS colaborador_cidade_base_uf, c.cidade_base_municipio AS colaborador_cidade_base_municipio,
       c.veiculo_consumo_kml AS colaborador_veiculo_consumo_kml,
       -- Placa e modelo já cadastrados: o formulário de quilometragem chega
@@ -6756,7 +6757,7 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
     LEFT JOIN fam f ON f.id = s.id
     ${escopo ? 'WHERE s.colaborador_id = ANY($1)' : ''}
     ORDER BY s.data_inicio DESC, s.id DESC`, escopo ? [escopo] : []);
-  res.json(rows.map(r => ({ ...r, valor_solicitado: n(r.valor_solicitado), valor_liberado: n(r.valor_liberado),
+  res.json(anexarPrazoComprovacao(rows, hojeISO()).map(r => ({ ...r, valor_solicitado: n(r.valor_solicitado), valor_liberado: n(r.valor_liberado),
     valor_devolvido: n(r.valor_devolvido), valor_pendencia: n(r.valor_pendencia), valor_comprovado: n(r.valor_comprovado) })));
 }));
 
@@ -6994,6 +6995,68 @@ async function propagarStatusFamilia(ids, raizId, status, deStatus) {
       WHERE id = ANY($2::int[]) AND id <> $3 AND status = ANY($4::text[])`, [status, ids, raizId, deStatus]);
 }
 
+// ---- Prazo de comprovação (3 dias úteis após o fim da ÚLTIMA OT da família) ----
+// Dias úteis = segunda a sexta (feriados não são descontados). Prazo = fim da família + 3 dias úteis; "dias" = prazo − hoje em dias corridos
+// (positivo: faltam; 0: último dia; negativo: em atraso). Comprovação em atraso fica BLOQUEADA até um administrador liberar (com justificativa).
+const PRAZO_COMPROVACAO_DIAS_UTEIS = 3;
+const diaISO = v => String(v || '').slice(0, 10);
+function somaDiasUteis(iso, qtd) {
+  const [y, m, d] = diaISO(iso).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  for (let c = 0; c < qtd;) { dt.setUTCDate(dt.getUTCDate() + 1); const w = dt.getUTCDay(); if (w !== 0 && w !== 6) c++; }
+  return dt.toISOString().slice(0, 10);
+}
+function diasEntre(deISO, ateISO) {   // ate − de, em dias corridos
+  const a = diaISO(deISO).split('-').map(Number), b = diaISO(ateISO).split('-').map(Number);
+  return Math.round((Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) / 86400000);
+}
+// Acrescenta a cada linha da lista os campos comprov_* (prazo, dias, atraso, bloqueio, liberação, entrega). A família inteira usa a mesma conta.
+function anexarPrazoComprovacao(rows, hoje) {
+  const fimFam = {}, porId = new Map(rows.map(r => [r.id, r]));
+  rows.forEach(r => {
+    if (['cancelada', 'em_approvals'].includes(r.status)) return;
+    const raiz = r.familia_raiz_id || r.id, f = diaISO(r.data_fim);
+    if (!fimFam[raiz] || f > fimFam[raiz]) fimFam[raiz] = f;
+  });
+  const fechados = ['comprovado', 'devolvido', 'divergente', 'arquivado'];
+  return rows.map(r => {
+    const raizId = r.familia_raiz_id || r.id, raiz = porId.get(raizId) || r;
+    const fim = fimFam[raizId] || diaISO(r.data_fim), prazo = somaDiasUteis(fim, PRAZO_COMPROVACAO_DIAS_UTEIS);
+    const lib = !!raiz.comprovacao_liberada_em, extra = { comprov_liberada: lib, comprov_liberada_por: lib ? raiz.comprovacao_liberada_por : null, comprov_liberada_motivo: lib ? raiz.comprovacao_liberada_motivo : null };
+    if (r.status === 'aguardando_comprovacao') {
+      const dias = diasEntre(hoje, prazo);
+      return { ...r, ...extra, comprov_prazo: prazo, comprov_dias: dias, comprov_atraso: dias < 0 ? -dias : 0, comprov_bloqueada: dias < 0 && !lib };
+    }
+    if (fechados.includes(r.status) && raiz.comprov_fechada_dia) {
+      const entrega = raiz.comprov_fechada_dia;
+      return { ...r, ...extra, comprov_prazo: prazo, comprov_entrega: entrega, comprov_tempo: Math.max(0, diasEntre(fim, entrega)), comprov_atraso: Math.max(0, diasEntre(prazo, entrega)), comprov_bloqueada: false };
+    }
+    return { ...r, ...extra, comprov_prazo: fechados.includes(r.status) ? prazo : null, comprov_bloqueada: false };
+  });
+}
+// Bloqueio no servidor: com a comprovação vencida e sem liberação, ninguém lança, edita, apaga nem fecha despesas (nem o administrador: ele libera antes).
+async function comprovacaoBloqueada(id) {
+  const rid = await raizFamilia(id);
+  const r = (await query(`${FAMILIA_CTE}
+    SELECT s.status, s.comprovacao_liberada_em AS lib,
+           (SELECT MAX(m.data_fim) FROM fam f JOIN erp_viaticos_solicitacoes m ON m.id = f.id WHERE f.raiz_id = $1 AND m.status NOT IN ('cancelada','em_approvals')) AS fim
+      FROM erp_viaticos_solicitacoes s WHERE s.id = $1`, [rid]))[0];
+  if (!r || r.status !== 'aguardando_comprovacao' || r.lib || !r.fim) return null;
+  const prazo = somaDiasUteis(r.fim, PRAZO_COMPROVACAO_DIAS_UTEIS), atraso = -diasEntre(hojeISO(), prazo);
+  return atraso > 0 ? { prazo, atraso } : null;
+}
+async function respondeSeBloqueada(id, res) {
+  const b = await comprovacaoBloqueada(id);
+  if (!b) return false;
+  const [y, m, d] = b.prazo.split('-');
+  res.status(423).json({ error: `Comprovação bloqueada por atraso: o prazo venceu em ${d}/${m}/${y} (${b.atraso} dia${b.atraso > 1 ? 's' : ''} de atraso). Peça a um administrador para liberar.` });
+  return true;
+}
+async function respondeSeBloqueadaDespesa(despesaId, res) {
+  const r = await query('SELECT solicitacao_id FROM erp_viaticos_despesas WHERE id=$1', [despesaId]);
+  return r.length ? respondeSeBloqueada(r[0].solicitacao_id, res) : false;
+}
+
 // ---- Despesas reprovadas no Flash ----
 //
 // No Excel do Flash a coluna "Prestação de contas" traz "Finalizada" ou "Reprovado". A reprovada NÃO é comprovada: fica
@@ -7051,6 +7114,7 @@ app.get('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireViewAny
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/reprovadas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  if (await respondeSeBloqueada(req.params.id, res)) return;
   const b = req.body || {};
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
   const valor = Math.round(Number(b.valor) * 100) / 100;
@@ -7172,6 +7236,7 @@ app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viat
   const rid = await raizFamilia(req.params.id);
   const s = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [rid]))[0];
   if (!s) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  if (await respondeSeBloqueada(rid, res)) return;
   const ids = await idsFamilia(rid);
   // Complementar ainda em aprovação: o valor dela ainda vai ser liberado (ou a OT cancelada). Fechar agora fecharia a conta errada.
   const emAprovacao = ids.length > 1 ? await query(`SELECT ordem_trabalho FROM erp_viaticos_solicitacoes WHERE id = ANY($1::int[]) AND id <> $2 AND status='em_approvals'`, [ids, rid]) : [];
@@ -7197,7 +7262,7 @@ app.post('/api/viaticos/solicitacoes/:id/fechar', requireAuth, requireEdit('viat
     const fl = reprFlash;
     if (fl > 0) { valor_pendencia = Math.round((valor_pendencia + fl) * 100) / 100; pendencia_resolvida = false; }
   }
-  await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4 WHERE id=$5`,
+  await query(`UPDATE erp_viaticos_solicitacoes SET status=$1, valor_devolvido=$2, valor_pendencia=$3, pendencia_resolvida=$4, comprovacao_fechada_em=NOW() WHERE id=$5`,
     [status, valor_devolvido, valor_pendencia, pendencia_resolvida, rid]);
   await propagarStatusFamilia(ids, rid, status, ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao']);
   await recalcularSaldoConferir(Number(rid));
@@ -7217,8 +7282,10 @@ app.post('/api/viaticos/solicitacoes/:id/arquivar', requireAuth, requireEdit('vi
 app.post('/api/viaticos/solicitacoes/:id/reabrir', requireAuth, requireAdmin, h(async (req, res) => {
   const rid = await raizFamilia(req.params.id);
   const up = await query(`UPDATE erp_viaticos_solicitacoes SET status='aguardando_comprovacao', valor_devolvido=0, valor_pendencia=0, pendencia_resolvida=true,
-      conferir_valor=0, conferir_decisao=NULL, conferir_nota=NULL, conferir_decidida_em=NULL
-    WHERE id=$1 AND status IN ('comprovado','devolvido','divergente') RETURNING id`, [rid]);
+      conferir_valor=0, conferir_decisao=NULL, conferir_nota=NULL, conferir_decidida_em=NULL, comprovacao_fechada_em=NULL,
+      comprovacao_liberada_em=COALESCE(comprovacao_liberada_em, NOW()), comprovacao_liberada_por=COALESCE(comprovacao_liberada_por, $2),
+      comprovacao_liberada_motivo=COALESCE(comprovacao_liberada_motivo, 'Comprovação reaberta pelo administrador')
+    WHERE id=$1 AND status IN ('comprovado','devolvido','divergente') RETURNING id`, [rid, req.user.name]);
   if (up.length) await propagarStatusFamilia(await idsFamilia(rid), rid, 'aguardando_comprovacao', ['comprovado', 'devolvido', 'divergente']);
   res.json({ ok: true });
 }));
@@ -7271,6 +7338,17 @@ app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'
   res.json({ ok: true });
 }));
 
+// Libera uma comprovação em atraso (só administrador, com justificativa). O atraso continua contando nos indicadores.
+app.post('/api/viaticos/solicitacoes/:id/liberar-comprovacao', requireAuth, requireAdmin, h(async (req, res) => {
+  const motivo = String(sanitize(req.body && req.body.motivo) || '');
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa do atraso.' });
+  const rid = await raizFamilia(req.params.id);
+  const up = await query(`UPDATE erp_viaticos_solicitacoes SET comprovacao_liberada_em=NOW(), comprovacao_liberada_por=$2, comprovacao_liberada_motivo=$3
+    WHERE id=$1 AND status='aguardando_comprovacao' RETURNING id`, [rid, req.user.name, motivo.slice(0, 500)]);
+  if (!up.length) return res.status(400).json({ error: 'Esta solicitação não está aguardando comprovação.' });
+  res.json({ ok: true });
+}));
+
 // ---- Despesas (itens de comprovação) ----
 app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny(['viaticos']), h(async (req, res) => {
   const escopo = await viaticosEscopo(req.user);
@@ -7283,6 +7361,7 @@ app.get('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireViewAny([
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  if (await respondeSeBloqueada(req.params.id, res)) return;
   const b = req.body;
   if (!['alimentacao', 'aluguel_carro', 'combustivel', 'estacionamento', 'hospedagem', 'outro', 'passagem_aviao', 'passagem_onibus', 'pedagio', 'taxi_uber', 'veiculo'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
@@ -7294,6 +7373,7 @@ app.post('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('vi
 }));
 
 app.put('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  if (await respondeSeBloqueadaDespesa(req.params.id, res)) return;
   const b = req.body;
   if (!['alimentacao', 'aluguel_carro', 'combustivel', 'estacionamento', 'hospedagem', 'outro', 'passagem_aviao', 'passagem_onibus', 'pedagio', 'taxi_uber', 'veiculo'].includes(b.categoria)) return res.status(400).json({ error: 'Categoria inválida.' });
   if (!isDate(b.data)) return res.status(400).json({ error: 'Data inválida.' });
@@ -7305,6 +7385,7 @@ app.put('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(as
 }));
 
 app.delete('/api/viaticos/despesas/:id', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  if (await respondeSeBloqueadaDespesa(req.params.id, res)) return;
   await query('DELETE FROM erp_viaticos_despesas WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 }));
@@ -7321,6 +7402,7 @@ app.delete('/api/viaticos/solicitacoes/:id/despesas', requireAuth, requireEdit('
   // justamente nesses dois casos. Um if (escopo) neste ponto seria codigo morto
   // se passando por guarda de seguranca. E o mesmo motivo pelo qual o POST e o
   // DELETE de despesa individual tambem nao checam.
+  if (await respondeSeBloqueada(req.params.id, res)) return;
   const apagadas = await query('DELETE FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[]) RETURNING valor', [await idsFamilia(req.params.id)]);
   const total = apagadas.reduce((acc, r) => acc + n(r.valor), 0);
   res.json({ ok: true, removidas: apagadas.length, total });

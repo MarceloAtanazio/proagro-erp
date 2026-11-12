@@ -60,7 +60,7 @@
     sec.innerHTML = `${hero}<div class="nd-via-grade">
       ${V.escopoProprio ? '' : card('blue', ICONE.mes, 'Transferido no mês', num(d.transferidoMes), 'Contas a Pagar, categoria "Viáticos"', '', true)}
       ${km}
-      ${card('warn', ICONE.comp, 'Aguardando comprovação', num(d.aguardandoComprovacao.n), brl(d.aguardandoComprovacao.v) + ' · ver na lista', 'role="button" tabindex="0" data-via="aguardando_comprovacao"')}
+      ${(() => { const at = typeof viaAtrasoQtd === 'function' ? viaAtrasoQtd(V.sols) : { n: 0, bloq: 0 }; return card(at.n ? 'red' : 'warn', ICONE.comp, 'Aguardando comprovação', num(d.aguardandoComprovacao.n), brl(d.aguardandoComprovacao.v) + ' · ' + (at.n ? `<b class="nd-via-atraso">${at.n} em atraso</b>${at.bloq ? ' (' + at.bloq + ' bloqueada' + (at.bloq > 1 ? 's' : '') + ')' : ''}` : 'ver na lista'), 'role="button" tabindex="0" data-via="aguardando_comprovacao"'); })()}
       ${card(d.vencidas.n ? 'red' : '', ICONE.venc, 'Vencidas (Flash expirado)', num(d.vencidas.n), brl(d.vencidas.v))}
       ${card(d.divergentes.n ? 'red' : '', ICONE.div, 'Divergentes (estouro)', num(d.divergentes.n), brl(d.divergentes.v) + (d.divergentes.n ? ' · ver na lista' : ''), d.divergentes.n ? 'role="button" tabindex="0" data-via="divergente"' : '')}
       <article class="nd-kpi nd-via-k nd-via-filtro" role="button" tabindex="0" data-via="painel" title="Abrir o Painel do período">
@@ -184,6 +184,7 @@
         ${tile(aDescontar ? 'warn' : '', 'A descontar', brl(aDescontar), aDescontar ? 'pendência na próxima OT' : 'sem pendências')}
         ${tile('', 'Ticket médio', brl(ticket), 'liberado por OT')}
       </div>
+      ${prazoSecao(V.filtrados)}
       <div class="nd-pn-linha">
         <article class="nd-card"><div class="nd-card-cab"><h3>Prestação de contas por situação</h3><span class="nd-chip">${f.porStatus.length} situação(ões)</span></div>
           <div class="nd-pn-legenda"><span><i class="lib"></i>liberado</span><span><i class="comp"></i>comprovado</span></div><div class="nd-pn-sits">${sit}</div></article>
@@ -205,12 +206,63 @@
     p.querySelectorAll('.nd-pn-sit').forEach(b => { b.onclick = () => filtra({ status: b.dataset.status, lista: true }); });
     const ligaRank = () => p.querySelectorAll('#nd-pn-rank tr').forEach(tr => { tr.onclick = () => filtra({ q: tr.dataset.nome, status: '', lista: true }); });
     ligaRank();
+    p.querySelectorAll('.nd-pn-prazo tr[data-nome]').forEach(tr => { tr.onclick = () => filtra({ q: tr.dataset.nome, status: '', lista: true }); });
     const mais = $('#nd-pn-mais', p); if (mais) mais.onclick = () => { $('#nd-pn-rank').innerHTML = rank.map(linhaRank).join(''); mais.remove(); ligaRank(); };
     if (f.porCategoria.length) novoGrafico('nd-pn-cat', { type: 'doughnut', data: { labels: catLista.map(c => c.categoria), datasets: [{ data: catLista.map(c => c.total), backgroundColor: catLista.map((_, i) => CORES[i % CORES.length]), borderWidth: 0, hoverOffset: 6 }] },
       options: { responsive: true, maintainAspectRatio: false, cutout: '66%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + c.label + ': ' + brl(c.parsed) + ' (' + pct(c.parsed / (totalCat || 1), 1) + ')' } } } } });
     if (tempo) novoGrafico('nd-pn-tempo', { type: 'bar', data: { labels: tempo.labels, datasets: [{ label: 'Gasto', data: tempo.valores, backgroundColor: '#3DAE43', borderRadius: 8, borderSkipped: false, maxBarThickness: 34 }] },
       options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + brl(c.parsed.y) } } },
         scales: { x: { grid: { display: false }, border: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } }, y: { border: { display: false }, ticks: { maxTicksLimit: 5, callback: v => 'R$ ' + compacto(v) } } } } });
+  }
+
+  // ---------- prazo de comprovação (3 dias úteis após o fim da viagem) ----------
+  const FECHADOS = ['comprovado', 'devolvido', 'divergente', 'arquivado'];
+  const media = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+  const dias1 = v => (Math.round(v * 10) / 10).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + (Math.round(v * 10) / 10 === 1 ? ' dia' : ' dias');
+  function prazoSecao(sols) {
+    const raizes = sols.filter(s => (s.familia_raiz_id || s.id) === s.id && s.comprov_prazo);
+    const itens = [];
+    raizes.forEach(s => {
+      if (s.status === 'aguardando_comprovacao') itens.push({ s, pend: true, atraso: num(s.comprov_atraso), tempo: null });
+      else if (FECHADOS.includes(s.status) && s.comprov_entrega) itens.push({ s, pend: false, atraso: num(s.comprov_atraso), tempo: num(s.comprov_tempo) });
+    });
+    const semData = raizes.filter(s => FECHADOS.includes(s.status) && !s.comprov_entrega).length;
+    const noPrazoAberto = itens.filter(i => i.pend && !i.atraso).length;
+    const aval = itens.filter(i => !i.pend || i.atraso > 0), atr = aval.filter(i => i.atraso > 0);
+    if (!aval.length && !noPrazoAberto) return '';
+    const pctNo = aval.length ? (aval.length - atr.length) / aval.length : 1;
+    const abertasAtraso = itens.filter(i => i.pend && i.atraso > 0), bloq = abertasAtraso.filter(i => i.s.comprov_bloqueada).length;
+    const mAtraso = media(atr.map(i => i.atraso)), maior = atr.reduce((m, i) => Math.max(m, i.atraso), 0);
+    const tempos = itens.filter(i => !i.pend && i.tempo != null).map(i => i.tempo), mTempo = media(tempos);
+    const faixas = [['No prazo', i => i.atraso === 0, 'ok'], ['1 a 3 dias', i => i.atraso >= 1 && i.atraso <= 3, 'aviso'], ['4 a 7 dias', i => i.atraso >= 4 && i.atraso <= 7, 'alerta'], ['Mais de 7 dias', i => i.atraso > 7, 'grave']]
+      .map(([rot, fn, cls]) => ({ rot, cls, n: aval.filter(fn).length }));
+    const por = new Map();
+    aval.forEach(i => {
+      const k = i.s.colaborador_name || '—', o = por.get(k) || { nome: k, aval: 0, atr: 0, soma: 0, maior: 0, abertas: 0, tempos: [] };
+      o.aval++; if (i.atraso > 0) { o.atr++; o.soma += i.atraso; o.maior = Math.max(o.maior, i.atraso); } if (i.pend && i.atraso > 0) o.abertas++; if (!i.pend && i.tempo != null) o.tempos.push(i.tempo);
+      por.set(k, o);
+    });
+    const rank = [...por.values()].sort((a, b) => b.atr - a.atr || (b.atr ? b.soma / b.atr : 0) - (a.atr ? a.soma / a.atr : 0) || b.aval - a.aval).slice(0, 10);
+    const corPct = pctNo >= 0.9 ? 'ok' : pctNo >= 0.7 ? 'warn' : 'red';
+    return `
+      <article class="nd-card nd-pn-largo nd-pn-prazo">
+        <div class="nd-card-cab"><h3>Prazo de comprovação <small>(3 dias úteis após o fim da viagem)</small></h3>
+          <span class="nd-chip ${abertasAtraso.length ? 'late' : 'ok'}">${abertasAtraso.length ? abertasAtraso.length + ' em atraso agora' : 'nenhuma em atraso agora'}</span></div>
+        <div class="nd-pn-pz-kpis">
+          ${tile(corPct === 'red' ? 'warn' : '', 'Comprovadas no prazo', pct(pctNo), `${aval.length - atr.length} de ${aval.length} avaliada(s)`)}
+          ${tile(abertasAtraso.length ? 'warn' : '', 'Em atraso agora', String(abertasAtraso.length), bloq ? `${bloq} bloqueada(s) · ${abertasAtraso.length - bloq} liberada(s)` : (abertasAtraso.length ? 'todas já liberadas' : 'tudo em dia') + (noPrazoAberto ? ` · ${noPrazoAberto} ainda no prazo` : ''))}
+          ${tile(atr.length ? 'warn' : '', 'Atraso médio', atr.length ? dias1(mAtraso) : '—', atr.length ? `maior atraso: ${maior} dia${maior > 1 ? 's' : ''}` : 'sem atrasos')}
+          ${tile('blue', 'Tempo médio para comprovar', tempos.length ? dias1(mTempo) : '—', tempos.length ? `após o fim da viagem · ${tempos.length} fechada(s)` : 'sem fechamentos com data')}
+        </div>
+        <div class="nd-pn-faixas" title="Distribuição das comprovações avaliadas por dias de atraso">
+          <div class="nd-pn-faixas-barra">${faixas.filter(f => f.n).map(f => `<i class="${f.cls}" style="flex:${f.n}" title="${f.rot}: ${f.n}"></i>`).join('')}</div>
+          <div class="nd-pn-faixas-leg">${faixas.map(f => `<span><i class="${f.cls}"></i>${f.rot} <b>${f.n}</b></span>`).join('')}</div>
+        </div>
+        ${rank.length ? `<div class="nd-pn-rolagem"><table class="nd-pn-tb"><thead><tr><th>Colaborador</th><th class="num">Avaliadas</th><th class="num">Em atraso</th><th class="num">Atraso médio</th><th class="num">Maior atraso</th><th class="num">Atrasadas agora</th><th class="num">Tempo médio</th></tr></thead><tbody>
+          ${rank.map(r => `<tr data-nome="${E(r.nome)}" title="Filtrar a lista por ${E(r.nome)}"><td><b>${E(r.nome)}</b></td><td class="num">${r.aval}</td><td class="num ${r.atr ? 'neg' : ''}">${r.atr ? r.atr + ' (' + pct(r.atr / r.aval) + ')' : '—'}</td>
+            <td class="num">${r.atr ? dias1(r.soma / r.atr) : '—'}</td><td class="num">${r.atr ? r.maior + ' d' : '—'}</td><td class="num ${r.abertas ? 'neg' : ''}">${r.abertas || '—'}</td><td class="num">${r.tempos.length ? dias1(media(r.tempos)) : '—'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <p class="nd-pn-nota">Prazo: 3 dias úteis (segunda a sexta, sem descontar feriados) depois do fim da última OT da viagem. "Avaliadas" = comprovações já fechadas + as abertas já vencidas.${semData ? ` ${semData} comprovação(ões) fechada(s) antes do controle de datas não entram nas médias.` : ''}</p>
+      </article>`;
   }
 
   function aplica() {

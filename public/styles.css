@@ -1947,3 +1947,10 @@ tr.via-fam-linha td.num { padding-left: 0; }
 
 /* Configurações de Viáticos: coluna "Dispensado" estreita e centralizada */
 .tbl-colaboradores th.c-inc, .tbl-colaboradores td.c-inc { text-align: center; width: 1%; white-space: nowrap; }
+
+/* Viáticos: prazo de comprovação (3 dias úteis) — mensagem sob o status e botão de liberar */
+.via-prazo { display: block; margin-top: 5px; font-size: 11.5px; line-height: 1.35; font-weight: 500; }
+.via-prazo.ok { color: var(--muted); }
+.via-prazo.aviso { color: var(--warn); font-weight: 600; }
+.via-prazo.atraso { color: var(--danger); font-weight: 600; }
+.btn-ic[disabled] { opacity: .45; cursor: not-allowed; }

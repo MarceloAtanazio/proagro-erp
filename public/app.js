@@ -5796,7 +5796,7 @@ async function renderViaticos() {
         <div class="value">${dash.kmPendentes.n}</div>
         <div class="detail">${dash.kmPendentes.n ? brl(dash.kmPendentes.valor) + ' · clique para revisar' : 'nada na fila'}</div></div>` : ''}
       <div class="card kpi warn"><div class="label">Aguardando comprovação</div><div class="value">${dash.aguardandoComprovacao.n}</div>
-        <div class="detail">${brl(dash.aguardandoComprovacao.v)}</div></div>
+        <div class="detail">${brl(dash.aguardandoComprovacao.v)}${viaAtrasoQtd(sols).n ? ` · <strong style="color:var(--danger)">${viaAtrasoQtd(sols).n} em atraso</strong>` : ''}</div></div>
       <div class="card kpi ${dash.vencidas.n ? 'red' : ''}"><div class="label">Vencidas (Flash expirado)</div>
         <div class="value ${dash.vencidas.n ? 'neg' : ''}">${dash.vencidas.n}</div><div class="detail">${brl(dash.vencidas.v)}</div></div>
       <div class="card kpi ${dash.divergentes.n ? 'red' : ''}"><div class="label">Divergentes (estouro)</div>
@@ -5866,7 +5866,8 @@ async function renderViaticos() {
     const topo = filtered.filter(x => !aninhada(x));
     const acoesHtml = (s, fechada) => `<td class="actions via-acoes">${READONLY
         ? `<button class="btn-ic ok" data-view="${s.id}" title="Ver detalhes" aria-label="Ver detalhes">👁</button>`
-        : `<button class="btn-ic ok" data-view="${s.id}" title="${fechada ? 'Ver' : 'Comprovar'}" aria-label="${fechada ? 'Ver' : 'Comprovar'}">${fechada ? '👁' : '✓'}</button>
+        : `<button class="btn-ic ok" data-view="${s.id}" title="${fechada ? 'Ver' : s.comprov_bloqueada ? 'Comprovação bloqueada por atraso: abrir' : 'Comprovar'}" aria-label="${fechada ? 'Ver' : 'Comprovar'}">${fechada ? '👁' : s.comprov_bloqueada ? '🔒' : '✓'}</button>
+        ${s.comprov_bloqueada && !fechada ? `<button class="btn-ic" data-liberar="${s.id}" ${USER.role === 'admin' ? '' : 'disabled'} title="${USER.role === 'admin' ? 'Liberar a comprovação em atraso (pede a justificativa)' : 'Só o administrador pode liberar uma comprovação em atraso'}" aria-label="Liberar comprovação">🔓</button>` : ''}
         <button class="btn-ic" data-transf="${s.id}" title="Transferência: confere as ocorrências anteriores e registra o valor a transferir no Flash" aria-label="Transferência">⇄</button>
         <button class="btn-ic" data-edit="${s.id}" title="Editar" aria-label="Editar">✎</button>`}
         ${meuColaborador && s.colaborador_id === meuColaborador.id && s.complementar_tipo !== 'custo_extra' && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) ? `<button class="btn-ic" data-compl="${s.id}" title="Complementar: estender esta OT no local, ir a um novo destino ou pedir só um custo extra (ex.: remarcação de passagem)" aria-label="Complementar">↪</button>` : ''}
@@ -5920,7 +5921,7 @@ async function renderViaticos() {
           <td class="num">${brl(solic)}${filhos.length ? `<br><small ${cor}>OT + ${filhos.length} compl.</small>` : ''}</td>
           <td class="num">${brl(lib)}${!lib && solic > 0 ? `<br><small ${cor}>a transferir</small>` : ''}</td>
           <td class="num">${brl(comp)}${s.anexos_count ? ` <small ${cor}>(📎${s.anexos_count})</small>` : ''}</td>
-          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span>${pendAprov ? `<br><small class="via-fam-aviso">${pendAprov} compl. em Approvals</small>` : ''}</td>
+          <td><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span>${viaPrazoHtml(s)}${pendAprov ? `<br><small class="via-fam-aviso">${pendAprov} compl. em Approvals</small>` : ''}</td>
           ${acoesHtml(s, viaSolFechada(s))}
         </tr>`;
     };
@@ -5946,6 +5947,7 @@ async function renderViaticos() {
       draw();
     });
     $('#tbl').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.view)));
+    $('#tbl').querySelectorAll('[data-liberar]').forEach(b => b.onclick = () => viaLiberarComprovacaoModal(sols.find(s => s.id == b.dataset.liberar)));
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formSolicitacao(sols.find(s => s.id == b.dataset.edit)));
     $('#tbl').querySelectorAll('[data-transf]').forEach(b => b.onclick = () => viaTransferenciaModal(sols.find(s => s.id == b.dataset.transf)));
     $('#tbl').querySelectorAll('[data-cancelar]').forEach(b => b.onclick = () => viaCancelarModal(sols.find(s => s.id == b.dataset.cancelar)));
@@ -6323,6 +6325,40 @@ function viaConfirmarExclusao(s) {
            } }]);
      } }]);
 }
+// ---- Prazo de comprovação (3 dias úteis após o fim da viagem; o servidor calcula os campos comprov_*) ----
+function viaPrazoInfo(s) {
+  if (s.status !== 'aguardando_comprovacao' || !s.comprov_prazo) return null;
+  const d = s.comprov_dias, pl = n => `${n} dia${n > 1 ? 's' : ''}`;
+  if (d < 0) return { cls: 'atraso', txt: `Em atraso há ${pl(-d)}`, sub: s.comprov_bloqueada ? '🔒 bloqueada até a liberação' : `liberada${s.comprov_liberada_por ? ' por ' + s.comprov_liberada_por : ''}` };
+  if (d === 0) return { cls: 'aviso', txt: 'Último dia para comprovar (hoje)' };
+  return { cls: d <= 1 ? 'aviso' : 'ok', txt: d === 1 ? 'Falta 1 dia para comprovar' : `Faltam ${d} dias para comprovar` };
+}
+function viaPrazoHtml(s) {
+  const p = viaPrazoInfo(s);
+  return p ? `<small class="via-prazo ${p.cls}" title="Prazo: 3 dias úteis após o fim da viagem (até ${brDate(s.comprov_prazo)})${s.comprov_liberada_motivo ? ' · Justificativa: ' + esc(s.comprov_liberada_motivo) : ''}">${esc(p.txt)}${p.sub ? `<br>${esc(p.sub)}` : ''}</small>` : '';
+}
+function viaAtrasoQtd(sols) {   // OTs de origem aguardando comprovação já vencidas (bloqueadas = ainda sem liberação)
+  const r = (sols || []).filter(x => viaRaizDe(x) === x.id && x.status === 'aguardando_comprovacao' && x.comprov_atraso > 0);
+  return { n: r.length, bloq: r.filter(x => x.comprov_bloqueada).length };
+}
+function viaLiberarComprovacaoModal(s, depois) {
+  if (USER.role !== 'admin') return toast('Só o administrador pode liberar uma comprovação em atraso.');
+  openModal(`Liberar comprovação — ${esc(s.colaborador_name)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">A comprovação da OT <strong>${esc(s.ordem_trabalho || s.id)}</strong> venceu em <strong>${brDate(s.comprov_prazo)}</strong>
+      (${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso) e está bloqueada. Ao liberar, o lançamento das despesas e o fechamento voltam a funcionar.
+      O atraso continua aparecendo nos indicadores, e a justificativa fica registrada.</p>
+    <div class="field"><label for="lb-motivo">Justificativa do atraso</label><textarea id="lb-motivo" rows="3" placeholder="Ex.: viagem estendida, atestado médico, problema no Flash…"></textarea></div>`,
+    [{ label: 'Voltar', onClick: closeModal },
+     { label: 'Liberar comprovação', cls: 'primary', onClick: async (ev) => {
+        const motivo = $('#lb-motivo').value.trim();
+        if (motivo.length < 5) return modalError('Informe a justificativa do atraso.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Liberando…'; }
+        try {
+          await api(`/api/viaticos/solicitacoes/${s.id}/liberar-comprovacao`, { method: 'POST', body: { motivo } });
+          closeModal(); toast('Comprovação liberada.'); if (depois) depois(); else renderViaticos();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Liberar comprovação'; } }
+     } }]);
+}
 function viaPodeCancelar(s) {
   if (s.status === 'em_approvals') return true;
   return ['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() < String(s.data_inicio).slice(0, 10);
@@ -6385,7 +6421,8 @@ async function viewSolicitacao(id) {
   const finalizada = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
   // Usuário só-leitura abre o mesmo modal em modo consulta: vê os dados
   // completos da OT e a comprovação, sem nenhum controle de edição.
-  const somenteLeitura = READONLY;
+  const bloqueada = !!s.comprov_bloqueada && !finalizada;   // prazo vencido e sem liberação do administrador
+  const somenteLeitura = READONLY || bloqueada;
   const comprovado = despesas.reduce((sum, d) => sum + d.valor, 0);
   const liberadoTot = totaisFam.liberado;      // liberado da família (sem as canceladas)
   const solicitadoTot = totaisFam.solicitado;
@@ -6538,7 +6575,12 @@ async function viewSolicitacao(id) {
       </table>
     </div>` : '';
 
+  const prazoInfo = viaPrazoInfo(s);
+  const prazoBanner = bloqueada
+    ? `<div class="alert-item late" style="margin-bottom:14px">🔒 <strong>Comprovação bloqueada por atraso.</strong> O prazo (3 dias úteis após o fim da viagem) venceu em <strong>${brDate(s.comprov_prazo)}</strong> — ${s.comprov_atraso} dia${s.comprov_atraso > 1 ? 's' : ''} de atraso. ${USER.role === 'admin' ? 'Use <strong>Liberar comprovação</strong> (abaixo) depois de ouvir a justificativa do colaborador.' : 'Para lançar despesas ou fechar, um administrador precisa liberar.'}</div>`
+    : prazoInfo ? `<div class="alert-item ${prazoInfo.cls === 'atraso' ? 'late' : prazoInfo.cls === 'aviso' ? 'warn' : 'ok'}" style="margin-bottom:14px">⏱ <strong>${esc(prazoInfo.txt)}</strong> (prazo: ${brDate(s.comprov_prazo)}, 3 dias úteis após o fim da viagem)${prazoInfo.sub ? ` — ${esc(prazoInfo.sub)}${s.comprov_liberada_motivo ? ': ' + esc(s.comprov_liberada_motivo) : ''}` : ''}</div>` : '';
   const body = `
+    ${prazoBanner}
     ${infoOT}
     <div class="grid kpis" style="margin-bottom:14px">
       <div class="card kpi"><div class="label">Solicitado${familia.length > 1 ? ' (OTs somadas)' : ''}</div><div class="value">${brl(solicitadoTot)}</div></div>
@@ -6586,7 +6628,9 @@ async function viewSolicitacao(id) {
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
   botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
-  if (somenteLeitura) {
+  if (bloqueada) {
+    if (USER.role === 'admin' && !READONLY) botoes.push({ label: 'Liberar comprovação', cls: 'primary', onClick: () => { closeModal(); viaLiberarComprovacaoModal(s, () => viewSolicitacao(id)); } });
+  } else if (somenteLeitura) {
     // consulta pura — nenhuma ação além de fechar
   } else if (!finalizada) {
     botoes.push({ label: 'Fechar / conferir', cls: 'primary', onClick: async () => {
@@ -6606,7 +6650,7 @@ async function viewSolicitacao(id) {
     botoes.push({ label: 'Arquivar', cls: 'primary', onClick: async () => { await api(`/api/viaticos/solicitacoes/${id}/arquivar`, { method: 'POST' }); closeModal(); toast('Arquivado.'); renderViaticos(); } });
   }
 
-  openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(totaisFam.inicio || s.data_inicio)}–${brDate(totaisFam.fim || s.data_fim)})${familia.length > 1 ? ` · ${familia.length} OTs` : ''}`,
+  openModal(`${bloqueada ? 'Comprovação bloqueada' : somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(totaisFam.inicio || s.data_inicio)}–${brDate(totaisFam.fim || s.data_fim)})${familia.length > 1 ? ` · ${familia.length} OTs` : ''}`,
     body, botoes, { wide: true });
 
   document.querySelectorAll('[data-conf]').forEach(b => b.onclick = async () => {

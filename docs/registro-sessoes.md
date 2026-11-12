@@ -8298,3 +8298,22 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador em 1500px: cabeçalho "Dispensado", coluna de 105px centralizada, dica completa no cabeçalho, nota atualizada. Não testado: produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 221: Viáticos — prazo de 3 dias úteis para comprovar, bloqueio por atraso e métricas no Painel
+
+**Solicitação:** com um print da lista, o Marcelo pediu: (1) avisar o colaborador de quantos dias faltam para comprovar (prazo de 3 dias úteis) e, se atrasado, há quantos dias; (2) bloquear a solicitação com comprovação em atraso, deixando um botão para o administrador liberar quando houver justificativa; (3) medir o atraso no Painel do período.
+
+**Regra:** prazo = 3 dias úteis (segunda a sexta, feriados não descontados) depois do fim da ÚLTIMA OT da família (origem + complementares). O servidor calcula e devolve `comprov_prazo`, `comprov_dias`, `comprov_atraso`, `comprov_bloqueada`, `comprov_liberada*`, `comprov_entrega` e `comprov_tempo` em cada linha da lista. Fechamento grava `comprovacao_fechada_em`; reabrir (admin) já deixa a OT liberada.
+
+**O que mudou:** (a) Lista: sob o status aparece "Faltam N dias para comprovar" / "Último dia (hoje)" / "Em atraso há N dias" com 🔒 e, para vencidas, o ✓ vira 🔒 e surge o botão 🔓 (habilitado só para administrador; os demais veem desabilitado). Cartão "Aguardando comprovação" ganha "N em atraso (M bloqueadas)". (b) Bloqueio no servidor (HTTP 423, vale também para administrador até liberar): lançar/editar/apagar despesa, limpar lançamentos, lançar reprovada do Flash e Fechar/conferir. A tela de comprovação abre em consulta com faixa explicando o bloqueio e o botão "Liberar comprovação" (administrador), que exige justificativa, grava quem/quando/motivo e entra no log de auditoria. O atraso continua contando nos indicadores mesmo depois de liberada. (c) Painel (visual Novo): seção "Prazo de comprovação" com % no prazo, em atraso agora (bloqueadas × liberadas), atraso médio e maior, tempo médio para comprovar, barra por faixa de atraso (no prazo, 1–3, 4–7, +7 dias) e ranking por colaborador (clique filtra a lista).
+
+**Banco (migração, depende de autorização):** `supabase/migrations/2026-11-12-viaticos-prazo-comprovacao.sql` — 4 colunas novas e anuláveis em `erp_viaticos_solicitacoes` (`comprovacao_fechada_em`, `comprovacao_liberada_em/_por/_motivo`) e preenchimento de `comprovacao_fechada_em` das já fechadas a partir do log de auditoria (as sem registro ficam fora das médias).
+
+**Arquivos:** `api/index.js`, `public/app.js`, `public/styles.css`, `public/tema-viaticos.js`, `public/tema-viaticos.css`, `supabase/migrations/2026-11-12-viaticos-prazo-comprovacao.sql`, `scripts/2026-11-12_viaticos_prazo_comprovacao.js` (+ `_blocos.txt`), `scripts/2026-11-12_verifica_prazo_comprovacao.js`, `scripts/2026-11-12_mock_prazo_comprovacao.js`.
+
+**Verificação:** teste de backend com banco simulado, 20/20 (prazo com fim de semana e família, campos, 423 em todas as rotas, só administrador libera, exige justificativa, desbloqueia). Simulador no navegador (visual Novo, escuro): mensagens na lista, cartão, modal de liberação (a OT liberada some do bloqueio), tela de comprovação bloqueada sem botões de edição, seção do Painel. Não testado: visual Clássico em tela, tema claro, produção logada.
+
+**Atenção ao publicar:** as 4 OTs hoje em "Aguardando comprovação" (Fabricio OT 42, Mayara OT 170, Mayara OT 170 e Idalino OT 173; fins em 06 e 07/11) já nascem vencidas e bloqueadas; o administrador precisa liberar cada uma.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

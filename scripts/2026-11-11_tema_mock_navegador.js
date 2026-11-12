@@ -24,6 +24,19 @@
   for (let k = 0; k < 22; k++) { const di = new Date(2026, 9, 2 + k * 1.4), df = new Date(di.getTime() + (2 + k % 3) * 86400000), lib = 900 + (k * 377) % 3100;
     SOLS.push(base({ id: 200 + k, familia_raiz_id: 200 + k, ordem_trabalho: String(150 + k), colaborador_name: NOMES[k % NOMES.length], status: STS[k % STS.length], data_inicio: di.toISOString().slice(0, 10), data_fim: df.toISOString().slice(0, 10),
       valor_solicitado: lib, valor_liberado: lib, valor_comprovado: Math.round(lib * (0.55 + (k % 5) * 0.1)), valor_devolvido: k % 4 === 3 ? 120 : 0, valor_pendencia: k % 7 === 6 ? 210.5 : 0, destinos: k % 5 === 0 ? ['Jaguapitã', 'Iguaraçu', 'Ângulo', 'Astorga', 'Munhoz de Melo', 'Godoy Moreira', 'Fênix', 'São João do Ivaí'].map(m => ({ uf: 'PR', municipio: m })) : [{ uf: 'PR', municipio: ['Maringá', 'Cascavel', 'Londrina'][k % 3] }] })); }
+  // prazo de comprovação (mesma conta do servidor: 3 dias úteis após o fim da última OT da família)
+  const LIB = new Set();
+  const iso = d => d.toISOString().slice(0, 10), parse = v => { const [y, m, d] = v.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+  const uteis = (v, n) => { const d = parse(v); for (let c = 0; c < n;) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() % 6) c++; } return iso(d); };
+  const dif = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
+  const HOJE = iso(new Date());
+  const withPrazo = rows => rows.map(r => {
+    const fam = rows.filter(x => (x.familia_raiz_id || x.id) === (r.familia_raiz_id || r.id) && !['cancelada', 'em_approvals'].includes(x.status)), fim = fam.map(x => x.data_fim).sort().pop() || r.data_fim, prazo = uteis(fim, 3);
+    const lib = LIB.has(r.familia_raiz_id || r.id);
+    if (r.status === 'aguardando_comprovacao') { const dias = dif(HOJE, prazo); return { ...r, comprov_prazo: prazo, comprov_dias: dias, comprov_atraso: dias < 0 ? -dias : 0, comprov_bloqueada: dias < 0 && !lib, comprov_liberada: lib, comprov_liberada_por: lib ? 'Fulano de Tal' : null, comprov_liberada_motivo: lib ? 'Atestado médico' : null }; }
+    if (['comprovado', 'devolvido', 'divergente'].includes(r.status) && r.id >= 200 && r.id % 5 !== 0) { const ent = iso(new Date(parse(fim).getTime() + (1 + (r.id * 7) % 9) * 864e5)); return { ...r, comprov_prazo: prazo, comprov_entrega: ent, comprov_tempo: dif(fim, ent), comprov_atraso: Math.max(0, dif(prazo, ent)), comprov_bloqueada: false }; }
+    return { ...r, comprov_bloqueada: false };
+  });
   const CATS = ['hospedagem', 'alimentacao', 'combustivel', 'pedagio', 'aluguel_carro', 'estacionamento', 'taxi_uber'];
   const despesasMock = id => { const s = SOLS.find(x => x.id === id); if (!s || id < 200) return null; const out = []; const n = 3 + id % 4; for (let j = 0; j < n; j++) { const d = new Date(new Date(s.data_inicio + 'T12:00:00').getTime() + (j % 3) * 86400000);
       out.push({ id: id * 10 + j, solicitacao_id: id, categoria: CATS[(id + j) % CATS.length], data: d.toISOString().slice(0, 10), valor: Math.round((s.valor_comprovado / n) * (0.7 + (j % 3) * 0.3) * 100) / 100, descricao: ['Hotel', 'Almoço', 'Abastecimento', 'Pedágio BR-376', 'Locadora', 'Estacionamento', 'Corrida'][(id + j) % 7] }); } return out; };
@@ -36,7 +49,8 @@
     window.__CHAMADAS.push(m + ' ' + u);
     if (u.includes('/api/auth/me')) return json({ user: { id: 1, name: 'Fulano de Tal', email: 'f@x.com', role: 'admin', is_super: true, permissions: { viaticos: (location.search.includes('admin') ? 'edit' : 'view') }, must_change_password: false } });
     if (u.includes('/api/viaticos/dashboard')) return json({ aguardandoComprovacao: { n: 13, v: 41569.18 }, divergentes: { n: 2, v: 1830.4 }, vencidas: { n: 0, v: 0 }, kmPendentes: { n: 2, valor: 314.5 }, saldoCarteira: 60155.59, transferido: 219793.18, transferidoMes: 18400 });
-    if (u.endsWith('/api/viaticos/solicitacoes') && m === 'GET') return json(SOLS);
+    if (u.includes('/liberar-comprovacao') && m === 'POST') { LIB.add(Number(u.split('/solicitacoes/')[1].split('/')[0])); return json({ ok: true }); }
+    if (u.endsWith('/api/viaticos/solicitacoes') && m === 'GET') return json(withPrazo(SOLS));
     if (u.includes('/api/viaticos/autosservico/meu-colaborador')) return json(COLAB);
     if (u.endsWith('/api/colaboradores')) return json([COLAB]);
     if (u.endsWith('/api/viaticos/tud')) return json(TUD);
