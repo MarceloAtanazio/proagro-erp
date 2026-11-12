@@ -164,8 +164,10 @@
     const pessoal = -T(m.pessoal);
     const meses = Math.max(1, ate), burn = despesa / meses;
     const p = d.posicao, runway = burn > 0 ? p.saldoCaixa / burn : null;
-    const exec = despesaO > 0 ? (despesa / despesaO) * 100 : null, execRec = recO > 0 ? (rec / recO) * 100 : null;
-    return { rec, recP, recO, rl, liq, liqP, eb, despesa, despesaP, despesaO, pessoal, burn, runway, exec, execRec, meses,
+    // receita × orçado compara a receita TOTAL (todas as categorias) com o orçamento de receitas inteiro: o orçamento pode estar lançado numa categoria diferente da realizada
+    const somaRec = lista => (lista || []).filter(r => r.month <= ate).reduce((t, r) => t + (Number(r.total) || 0), 0), recTot = somaRec(d.atual.rec), recOTot = somaRec(d.orcado.rec);
+    const exec = despesaO > 0 ? (despesa / despesaO) * 100 : null, execRec = recOTot > 0 ? (recTot / recOTot) * 100 : null;
+    return { rec, recP, recO, recTot, recOTot, rl, liq, liqP, eb, despesa, despesaP, despesaO, pessoal, burn, runway, exec, execRec, meses,
       margLiq: rl > 0 ? (liq / rl) * 100 : null, margEb: rl > 0 ? (eb / rl) * 100 : null, pesoPessoal: rl > 0 ? (pessoal / rl) * 100 : null,
       mensal: { rec: m.receita.v.cur.slice(0, ate), desp: m.receita.v.cur.slice(0, ate).map((_, i) => -(m.tributos.v.cur[i] + m.gCustos.concat(m.gAdmin).reduce((t, g) => t + g.v.cur[i], 0) + Math.min(0, m.financ.v.cur[i]) + m.invest.v.cur[i])), liq: m.liquido.v.cur.slice(0, ate) } };
   }
@@ -188,7 +190,7 @@
       ${k(cor(K.eb), 'EBITDA', `<span class="${K.eb >= 0 ? 'pos' : 'neg'}">${brlFull(K.eb)}</span>`, `<span class="nd-chip ${K.eb >= 0 ? 'ok' : 'late'}">margem ${pct(K.margEb)}</span> resultado operacional`)}
       ${k('', 'Peso do pessoal', pct(K.pesoPessoal), `${brlFull(K.pessoal)} sobre a receita líquida`, medidor(K.pesoPessoal))}
       ${k(K.exec != null && K.exec > 100 ? 'red' : '', 'Execução do orçamento', K.exec == null ? '—' : pct(K.exec, 0), K.exec == null ? 'sem orçamento de despesas' : `${brlFull(K.despesa)} de ${brlFull(K.despesaO)} orçados`, K.exec == null ? '' : medidor(K.exec, true))}
-      ${k(K.execRec != null && K.execRec < 85 ? 'warn' : '', 'Receita × orçado', K.execRec == null ? '—' : pct(K.execRec, 0), K.execRec == null ? 'sem orçamento de receitas' : `${brlFull(K.rec)} de ${brlFull(K.recO)} orçados`, K.execRec == null ? '' : medidor(K.execRec, true))}
+      ${k(K.execRec != null && K.execRec < 85 ? 'warn' : '', 'Receita × orçado', K.execRec == null ? '—' : pct(K.execRec, 0), K.execRec == null ? 'sem orçamento de receitas' : `${brlFull(K.recTot)} de ${brlFull(K.recOTot)} orçados`, K.execRec == null ? '' : medidor(K.execRec, true))}
       ${k(d.posicao.saldoCaixa < 0 ? 'red' : 'blue', 'Saldo de caixa', brlFull(d.posicao.saldoCaixa), `fôlego de <b>${runwayTxt}</b> · queima média ${brlFull(K.burn)}/mês`)}
     </div>`;
   }
@@ -203,7 +205,7 @@
     if (mesesNeg) ins.push([mesesNeg >= 3 ? 'late' : 'warn', `${mesesNeg} mês(es) com resultado negativo`, 'Veja a ponte do resultado e os meses em vermelho no DRE.']);
     if (K.exec != null && K.exec > 100) ins.push(['late', 'Despesas acima do orçado', `${pct(K.exec, 0)} do orçamento do período (${brlFull(K.despesa - K.despesaO)} a mais).`]);
     else if (K.exec != null && K.exec < 70 && d.regime === 'caixa') ins.push(['ok', 'Despesas abaixo do orçado', `${pct(K.exec, 0)} do orçamento do período.`]);
-    if (K.execRec != null && K.execRec < 90) ins.push(['warn', 'Receita abaixo do orçado', `${pct(K.execRec, 0)} do orçamento de receitas (${brlFull(K.rec - K.recO)}).`]);
+    if (K.execRec != null && K.execRec < 90) ins.push(['warn', 'Receita abaixo do orçado', `${pct(K.execRec, 0)} do orçamento de receitas (${brlFull(K.recTot - K.recOTot)}).`]);
     if (K.pesoPessoal != null && K.pesoPessoal >= 60) ins.push([K.pesoPessoal >= 80 ? 'late' : 'warn', 'Pessoal pesa na receita', `${pct(K.pesoPessoal)} da receita líquida vai para pessoal e benefícios.`]);
     if (conc != null && conc >= 70) ins.push(['warn', 'Receita concentrada', `${E(topCli.nome)} responde por ${pct(conc)} da receita.`]);
     if (p.pagarVencido > 0) ins.push(['late', 'Contas a pagar vencidas', `${brlFull(p.pagarVencido)} em atraso.`]);
