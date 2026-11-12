@@ -1,0 +1,27 @@
+// Propósito: no Painel do período de Viáticos (visual Novo), o cartão "Gastos por categoria" ocupava pouco do espaço (rosca de 190px num cartão alto). Agora a rosca cresce com o cartão
+//   (até 340px), o texto central fica maior (total + nº de categorias), e a legenda ganha linhas mais altas e espaçadas, nome maior e uma barrinha de participação por categoria.
+//   Mantém o que já existia: rosca, total no centro, valor e % de cada categoria, categorias agrupadas em "Outras (n)", dica ao passar o mouse.
+// Entrada: public/tema-viaticos.js e public/tema-viaticos.css (ou a pasta em argv[2]). Saída: arquivos editados. Uso: node scripts/2026-11-12_viaticos_painel_rosca_maior.js [raiz]
+const fs = require('fs'), path = require('path');
+const raiz = process.argv[2] || path.join(__dirname, '..');
+const edita = (rel, fn) => {
+  const arq = path.join(raiz, rel); let s = fs.readFileSync(arq, 'utf8'); const crlf = s.includes('\r\n'); if (crlf) s = s.replace(/\r\n/g, '\n');
+  const troca = (de, para) => { const i = s.indexOf(de); if (i < 0) throw new Error(rel + ': trecho não achado: ' + de.slice(0, 80)); if (s.indexOf(de, i + 1) >= 0) throw new Error(rel + ': trecho repetido: ' + de.slice(0, 80)); s = s.replace(de, () => para); };
+  fn(troca); fs.writeFileSync(arq, crlf ? s.replace(/\n/g, '\r\n') : s);
+};
+edita('public/tema-viaticos.js', troca => {
+  troca("const leg = catLista.map((c, i) => `<li><span class=\"nd-pn-cor\" style=\"background:${CORES[i % CORES.length]}\"></span><span class=\"nd-pn-cat\">${E(c.categoria)}</span><b>${brl(c.total)}</b><small>${pct(c.pct, 1)}</small></li>`).join('');",
+    "const maiorCat = Math.max(1, ...catLista.map(c => c.total));\n    const leg = catLista.map((c, i) => `<li title=\"${E(c.categoria)}: ${brl(c.total)} (${pct(c.pct, 1)}) em ${c.lancamentos} lançamento(s)\"><span class=\"nd-pn-cor\" style=\"background:${CORES[i % CORES.length]}\"></span><span class=\"nd-pn-cat\"><span class=\"nd-pn-cat-n\">${E(c.categoria)}</span><span class=\"nd-pn-mini\"><i style=\"width:${(c.total / maiorCat * 100).toFixed(1)}%;background:${CORES[i % CORES.length]}\"></i></span></span><b>${brl(c.total)}</b><small>${pct(c.pct, 1)}</small></li>`).join('');");
+  troca("<div class=\"nd-pn-donut-tx\"><small>total</small><b>${compacto(totalCat)}</b></div>", "<div class=\"nd-pn-donut-tx\"><small>total</small><b>${compacto(totalCat)}</b><em>${f.porCategoria.length} categoria${f.porCategoria.length > 1 ? 's' : ''}</em></div>");
+  troca("cutout: '68%'", "cutout: '66%'");
+});
+edita('public/tema-viaticos.css', troca => {
+  troca(".nd-pn-donut { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 22px; align-items: center; }\n.nd-pn-donut-cv { position: relative; height: 190px; }",
+    ".nd-pn-linha > article:has(.nd-pn-donut) { display: flex; flex-direction: column; }\n.nd-pn-donut { flex: 1; display: grid; grid-template-columns: minmax(220px, .95fr) minmax(0, 1.05fr); gap: 32px; align-items: center; padding: 6px 0 4px; }\n.nd-pn-donut-cv { position: relative; width: 100%; max-width: 340px; aspect-ratio: 1; justify-self: center; }");
+  troca(".nd-pn-donut-tx small { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }\n.nd-pn-donut-tx b { font-size: 21px; letter-spacing: -.03em; }",
+    ".nd-pn-donut-tx small { font-size: 12px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 600; }\n.nd-pn-donut-tx b { font-size: clamp(28px, 2.4vw, 38px); letter-spacing: -.04em; line-height: 1.1; }\n.nd-pn-donut-tx em { font-style: normal; font-size: 12.5px; color: var(--muted); margin-top: 4px; }");
+  troca(".nd-pn-leg { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }\n.nd-pn-leg li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto 48px; align-items: center; gap: 10px; font-size: 13px; }\n.nd-pn-cor { width: 12px; height: 12px; border-radius: 4px; }\n.nd-pn-cat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.nd-pn-leg b { font-variant-numeric: tabular-nums; }\n.nd-pn-leg small { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }",
+    ".nd-pn-leg { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }\n.nd-pn-leg li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 56px; align-items: center; gap: 14px; font-size: 14.5px; padding: 10px 12px; border-radius: 14px; transition: background .18s; }\n.nd-pn-leg li:hover { background: color-mix(in srgb, var(--verde-500) 8%, transparent); }\n.nd-pn-cor { width: 14px; height: 14px; border-radius: 5px; }\n.nd-pn-cat { min-width: 0; display: flex; flex-direction: column; gap: 6px; }\n.nd-pn-cat-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }\n.nd-pn-mini { display: block; height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 14%, transparent); overflow: hidden; }\n.nd-pn-mini i { display: block; height: 100%; border-radius: 999px; transition: width .8s var(--curva); }\n.nd-pn-leg b { font-variant-numeric: tabular-nums; font-size: 15px; letter-spacing: -.01em; }\n.nd-pn-leg small { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }");
+  troca(".nd-pn-donut { grid-template-columns: 1fr; }", ".nd-pn-donut { grid-template-columns: 1fr; gap: 18px; }");
+});
+console.log('ok');

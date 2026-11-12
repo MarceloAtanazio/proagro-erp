@@ -8272,3 +8272,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** a consulta nova, rodada na base real, devolve exatamente os valores esperados acima. Não testado: a tela depois do deploy (esperado: Saldo R$ 1.733.401,54; selo "30 d → 828 mil"). Observação: não há nenhum título a receber pendente no sistema (por isso "Entradas 30 d" é R$ 0,00 e a projeção é pessimista).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-12 — Sessão 219: Painel de Viáticos — "Gastos por categoria" maior e melhor distribuído (visual Novo)
+
+**Solicitação:** com um print, o Marcelo pediu para melhorar o indicador "Gastos por categoria" do Painel do período de Viáticos, que ficava pequeno para o espaço disponível (cartão alto, ao lado do de prestação de contas), mantendo o que já existia.
+
+**O que mudou (só no visual "Novo"):** a rosca passou de 190px para até 340px e cresce com o cartão, que agora ocupa toda a altura; o centro mostra o total em fonte maior e o nº de categorias; a legenda ganhou linhas mais altas e espaçadas, nome e valores maiores, uma barrinha de participação em cada categoria (na cor dela), destaque ao passar o mouse e dica com valor, % e nº de lançamentos. Mantidos: rosca, total no centro, valor e % por categoria, agrupamento "Outras (n)". Em telas estreitas a rosca fica em cima e a legenda embaixo. Sem servidor nem banco; Clássico intacto.
+
+**Arquivos:** `public/tema-viaticos.js`, `public/tema-viaticos.css`, `scripts/2026-11-12_viaticos_painel_rosca_maior.js`.
+
+**Verificação:** simulador, escuro: em tela estreita a rosca de 245px centralizada com legenda e barras; lado a lado o cartão preenche a altura da coluna. Não testado: tema claro neste ajuste, tela larga real (≥1500px) e produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

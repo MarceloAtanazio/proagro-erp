@@ -145,7 +145,8 @@
     // categorias (legenda)
     const topCat = f.porCategoria.slice(0, 8), resto = f.porCategoria.slice(8), outros = resto.reduce((a, c) => a + c.total, 0);
     const catLista = topCat.concat(outros > 0 ? [{ categoria: 'Outras (' + resto.length + ')', total: outros, lancamentos: resto.reduce((a, c) => a + c.lancamentos, 0), pct: totalCat ? outros / totalCat : 0 }] : []);
-    const leg = catLista.map((c, i) => `<li><span class="nd-pn-cor" style="background:${CORES[i % CORES.length]}"></span><span class="nd-pn-cat">${E(c.categoria)}</span><b>${brl(c.total)}</b><small>${pct(c.pct, 1)}</small></li>`).join('');
+    const maiorCat = Math.max(1, ...catLista.map(c => c.total));
+    const leg = catLista.map((c, i) => `<li title="${E(c.categoria)}: ${brl(c.total)} (${pct(c.pct, 1)}) em ${c.lancamentos} lançamento(s)"><span class="nd-pn-cor" style="background:${CORES[i % CORES.length]}"></span><span class="nd-pn-cat"><span class="nd-pn-cat-n">${E(c.categoria)}</span><span class="nd-pn-mini"><i style="width:${(c.total / maiorCat * 100).toFixed(1)}%;background:${CORES[i % CORES.length]}"></i></span></span><b>${brl(c.total)}</b><small>${pct(c.pct, 1)}</small></li>`).join('');
 
     // ranking
     const MAXR = 10, rank = f.porColaborador;
@@ -187,7 +188,7 @@
         <article class="nd-card"><div class="nd-card-cab"><h3>Prestação de contas por situação</h3><span class="nd-chip">${f.porStatus.length} situação(ões)</span></div>
           <div class="nd-pn-legenda"><span><i class="lib"></i>liberado</span><span><i class="comp"></i>comprovado</span></div><div class="nd-pn-sits">${sit}</div></article>
         <article class="nd-card"><div class="nd-card-cab"><h3>Gastos por categoria</h3><span class="nd-chip">${brl(totalCat)}</span></div>
-          ${f.porCategoria.length ? `<div class="nd-pn-donut"><div class="nd-pn-donut-cv"><canvas id="nd-pn-cat"></canvas><div class="nd-pn-donut-tx"><small>total</small><b>${compacto(totalCat)}</b></div></div><ul class="nd-pn-leg">${leg}</ul></div>` : '<p class="nd-pn-nota">Nenhuma despesa lançada no filtro.</p>'}</article>
+          ${f.porCategoria.length ? `<div class="nd-pn-donut"><div class="nd-pn-donut-cv"><canvas id="nd-pn-cat"></canvas><div class="nd-pn-donut-tx"><small>total</small><b>${compacto(totalCat)}</b><em>${f.porCategoria.length} categoria${f.porCategoria.length > 1 ? 's' : ''}</em></div></div><ul class="nd-pn-leg">${leg}</ul></div>` : '<p class="nd-pn-nota">Nenhuma despesa lançada no filtro.</p>'}</article>
       </div>
       ${tempo ? `<article class="nd-card nd-pn-largo"><div class="nd-card-cab"><h3>Quando se gastou <small>(${tempo.titulo})</small></h3><span class="nd-chip">${tempo.labels.length} ${tempo.modo === 'dia' ? 'dia(s)' : tempo.modo === 'semana' ? 'semana(s)' : 'mês(es)'}</span></div><div class="nd-pn-grafico"><canvas id="nd-pn-tempo"></canvas></div></article>` : ''}
       <article class="nd-card nd-pn-largo"><div class="nd-card-cab"><h3>Ranking por colaborador</h3><span class="nd-chip">${rank.length} colaborador(es)</span></div>
@@ -206,7 +207,7 @@
     ligaRank();
     const mais = $('#nd-pn-mais', p); if (mais) mais.onclick = () => { $('#nd-pn-rank').innerHTML = rank.map(linhaRank).join(''); mais.remove(); ligaRank(); };
     if (f.porCategoria.length) novoGrafico('nd-pn-cat', { type: 'doughnut', data: { labels: catLista.map(c => c.categoria), datasets: [{ data: catLista.map(c => c.total), backgroundColor: catLista.map((_, i) => CORES[i % CORES.length]), borderWidth: 0, hoverOffset: 6 }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + c.label + ': ' + brl(c.parsed) + ' (' + pct(c.parsed / (totalCat || 1), 1) + ')' } } } } });
+      options: { responsive: true, maintainAspectRatio: false, cutout: '66%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + c.label + ': ' + brl(c.parsed) + ' (' + pct(c.parsed / (totalCat || 1), 1) + ')' } } } } });
     if (tempo) novoGrafico('nd-pn-tempo', { type: 'bar', data: { labels: tempo.labels, datasets: [{ label: 'Gasto', data: tempo.valores, backgroundColor: '#3DAE43', borderRadius: 8, borderSkipped: false, maxBarThickness: 34 }] },
       options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ' ' + brl(c.parsed.y) } } },
         scales: { x: { grid: { display: false }, border: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } }, y: { border: { display: false }, ticks: { maxTicksLimit: 5, callback: v => 'R$ ' + compacto(v) } } } } });
