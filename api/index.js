@@ -5060,6 +5060,7 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
   // ---------- headcount ----------
   const base = await query(`
     SELECT c.id, c.name, c.sexo, c.data_nascimento, c.ativo, c.arquivado_em,
+           c.cidade_base_uf, c.cidade_base_municipio, c.uf AS res_uf, c.municipio AS res_municipio,
            v.id AS vinculo_id, v.admissao, v.desligamento, v.departamento, v.cargo, v.nivel,
            v.modelo_trabalho, v.regime, v.tipo, v.salario, v.periculosidade_pct,
            v.vr_dia, v.home_office_dia,
@@ -5297,6 +5298,14 @@ app.get('/api/rh/painel', requireAuth, requireViewAny(['rh']), h(async (req, res
       por_cargo: contarPor(comVinculo, 'cargo'),
       por_modelo: contarPor(comVinculo, 'modelo_trabalho'),
       por_sexo: contarPor(ativos, 'sexo'),
+      // Onde cada colaborador ativo está alocado (mapa do Brasil): cidade-base (a mesma de Viáticos); sem ela, a cidade de residência do cadastro de RH.
+      localizacao: ativos.map(r => {
+        const ufB = String(r.cidade_base_uf || '').trim().toUpperCase(), munB = String(r.cidade_base_municipio || '').trim();
+        const temBase = ufB.length === 2 && !!munB;
+        const uf = temBase ? ufB : String(r.res_uf || '').trim().toUpperCase(), mun = temBase ? munB : String(r.res_municipio || '').trim();
+        return { id: r.id, nome: r.name, uf: uf.length === 2 ? uf : null, municipio: mun || null, origem: temBase ? 'base' : (uf.length === 2 ? 'residencia' : null),
+          departamento: r.departamento || null, modelo: r.modelo_trabalho || null };
+      }),
       tempo_casa_dias: mediaDias(comVinculo, 'admissao'),
       idade_media: idades.length ? Math.round(idades.reduce((a, b) => a + b, 0) / idades.length) : null,
       movimentacao: mov.map(m => ({ mes: m.mes, admissoes: Number(m.admissoes), desligamentos: Number(m.desligamentos) }))

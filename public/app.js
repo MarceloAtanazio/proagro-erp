@@ -12470,6 +12470,8 @@ async function rhPainel(c) {
       <div class="rh-legenda"><span class="l adm"></span>admissões <span class="l des"></span>desligamentos</div>
     </div>
 
+    <div class="rh-painel-sec" id="rh-sec-mapa"><h3>Onde estamos</h3><div id="rh-mapa"></div></div>
+
     <div class="rh-painel-sec"><h3>Recrutamento</h3>
       <h5>Vagas</h5>
       <div class="kpis">
@@ -12605,6 +12607,7 @@ async function rhPainel(c) {
     olho.textContent = RH_CUSTO_OCULTO ? '🙈' : '👁';
     olho.title = olho.ariaLabel = RH_CUSTO_OCULTO ? 'Mostrar valores' : 'Ocultar valores';
   };
+  if (typeof rhMapaRender === 'function') { try { rhMapaRender($('#rh-mapa'), hc.localizacao || []); } catch (e) { console.error('[mapa RH]', e); } }   // mapa do Brasil (rh-mapa.js)
   setTimeout(() => document.dispatchEvent(new CustomEvent('proagro:rh')), 0);   // visual Novo (tema-rh.js)
 }
 

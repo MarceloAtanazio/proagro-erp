@@ -8371,3 +8371,20 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador: os quatro quadros com valor de 22px, detalhe de 13px e trecho colorido herdando o tamanho. Não testado: produção logada neste ajuste.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-13 — Sessão 226: Recursos Humanos — mapa do Brasil com a distribuição da equipe
+
+**Solicitação:** o Marcelo pediu, no painel de Recursos Humanos, um mapa do Brasil mostrando onde cada funcionário está alocado, para ter a visão da distribuição da equipe.
+
+**O que mudou (Clássico e Novo):** nova seção "Onde estamos" logo depois do Headcount. O mapa pinta cada estado conforme o nº de colaboradores ativos e põe uma bolha por cidade (tamanho = pessoas; coordenada de cada município a partir de `BR_LOCALIDADES.coords`). Ao lado: resumo (estados, cidades, maior concentração) e a lista por estado com barra e %, que abre mostrando as cidades e as pessoas (departamento · modelo de trabalho). Passar o mouse no mapa destaca o estado na lista e mostra uma dica com as cidades ou as pessoas; clicar num estado abre a lista dele. Botão "Ampliar na equipe" aproxima o mapa dos estados onde há gente (e "Brasil inteiro" volta). Quem não tem localização aparece num aviso com os nomes.
+
+**Regra do local:** cidade-base do colaborador (a mesma de Viáticos); se ela não estiver preenchida, a cidade de residência do cadastro de RH. A nota da tela explica isso e quantas pessoas usaram a residência.
+
+**Servidor:** `/api/rh/painel` ganhou `headcount.localizacao` (somente leitura; sem mudança de banco). Geometria: malha oficial do IBGE por UF (`public/br-mapa.js`, gerada por script).
+
+**Arquivos:** `api/index.js`, `public/app.js`, `public/index.html`, `public/styles.css`, `public/rh-mapa.js`, `public/br-mapa.js`, `scripts/2026-11-13_mapa_brasil_gerar.js` (+ `_ibge_uf.svg`), `scripts/2026-11-13_rh_mapa.js` (+ `_css.txt`), `scripts/2026-11-13_rh_mapa_zoom.js`, `scripts/2026-11-13_mock_rh_mapa.js`.
+
+**Verificação:** simulador (dados de exemplo com 23 pessoas em PR, SP, MS e DF): mapa, bolhas, lista por estado, abrir/fechar, zoom, Clássico e Novo. Não testado: produção logada, tema claro e tela larga real.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
