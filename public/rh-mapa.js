@@ -98,7 +98,7 @@ function rhMapaRender(el, pessoas) {
   const unidadePorPx = () => vb[2] / larguraPx();
 
   // ---------- desenho dependente do zoom: grupos de cidades, números e nomes (tudo em pixels) ----------
-  const medidor = (() => { const c = document.createElement('canvas').getContext('2d'); c.font = '600 12px "DM Sans", "Segoe UI", sans-serif'; return t => c.measureText(t).width; })();
+  const medidor = (() => { const c = document.createElement('canvas').getContext('2d'); c.font = '600 13px "DM Sans", "Segoe UI", sans-serif'; return t => c.measureText(t).width; })();
   const raioPx = n => 7 + 2.8 * Math.sqrt(n);
   function agrupa(pxU) {
     const cs = [];
@@ -113,24 +113,24 @@ function rhMapaRender(el, pessoas) {
     const px = larguraPx(), pxU = px / vb[2], u = 1 / pxU;
     // siglas dos estados (só as dos estados com equipe em negrito)
     gRot.innerHTML = Object.entries(BR_MAPA.ufs).filter(([, g]) => g.c.lon >= vb[0] - 1 && g.c.lon <= vb[0] + vb[2] + 1 && -g.c.lat >= vb[1] - 1 && -g.c.lat <= vb[1] + vb[3] + 1)
-      .map(([uf, g]) => `<text class="${porUF[uf] ? 'tem' : ''}" x="${g.c.lon}" y="${-g.c.lat}" style="font-size:${(porUF[uf] ? 11.5 : 10.5) * u}px;stroke-width:${3 * u}px" text-anchor="middle" dy=".35em">${uf}</text>`).join('');
+      .map(([uf, g]) => `<text class="${porUF[uf] ? 'tem' : ''}" x="${g.c.lon}" y="${-g.c.lat}" style="font-size:${(porUF[uf] ? 12.5 : 11) * u}px;stroke-width:${3 * u}px" text-anchor="middle" dy=".35em">${uf}</text>`).join('');
     clusters = agrupa(pxU);
     const visiveis = clusters.map((g, i) => ({ g, i, x: (g.X - vb[0]) * pxU, y: (g.Y - vb[1]) * pxU, r: raioPx(g.n) })).filter(o => o.x > -30 && o.x < px + 30 && o.y > -30 && o.y < px / ASP + 30);
     gPts.innerHTML = visiveis.map(o => {
       const varias = o.g.cidades.length > 1;
-      return `<g class="pt${varias ? ' grupo' : ''}${!varias && o.g.cidades[0].aprox ? ' aprox' : ''}" data-i="${o.i}" tabindex="0"><circle cx="${o.g.X}" cy="${o.g.Y}" r="${o.r * u}"/>${o.g.n > 1 || varias ? `<text x="${o.g.X}" y="${o.g.Y}" dy=".35em" text-anchor="middle" style="font-size:${(o.r >= 12 ? 13 : 11.5) * u}px">${o.g.n}</text>` : ''}</g>`;
+      return `<g class="pt${varias ? ' grupo' : ''}${!varias && o.g.cidades[0].aprox ? ' aprox' : ''}" data-i="${o.i}" tabindex="0"><circle cx="${o.g.X}" cy="${o.g.Y}" r="${o.r * u}"/>${o.g.n > 1 || varias ? `<text x="${o.g.X}" y="${o.g.Y}" dy=".35em" text-anchor="middle" style="font-size:${(o.r >= 12 ? 14 : 12.5) * u}px">${o.g.n}</text>` : ''}</g>`;
     }).join('');
     // nomes das cidades: tenta à direita, à esquerda, acima e abaixo, sem tocar em bolhas nem em outros nomes
     const ocupados = visiveis.map(o => [o.x - o.r - 2, o.y - o.r - 2, o.x + o.r + 2, o.y + o.r + 2]), colide = (a, b) => !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
     const lbls = [];
     visiveis.filter(o => o.g.cidades.length === 1).sort((a, b) => b.g.n - a.g.n).forEach(o => {
-      const nome = o.g.cidades[0].nome, w = medidor(nome) + 4, h = 15, r = o.r + 4;
+      const nome = o.g.cidades[0].nome, w = medidor(nome) + 6, h = 17, r = o.r + 4;
       const tent = [['start', o.x + r, o.y, [o.x + r, o.y - h / 2, o.x + r + w, o.y + h / 2]], ['end', o.x - r, o.y, [o.x - r - w, o.y - h / 2, o.x - r, o.y + h / 2]],
         ['middle', o.x, o.y - o.r - 8, [o.x - w / 2, o.y - o.r - 15, o.x + w / 2, o.y - o.r - 1]], ['middle', o.x, o.y + o.r + 9, [o.x - w / 2, o.y + o.r + 1, o.x + w / 2, o.y + o.r + 15]]];
       const ok = tent.find(t => t[3][0] > 0 && t[3][2] < px && t[3][1] > 0 && !ocupados.some(b => colide(t[3], b)));
       if (!ok) return;
       ocupados.push(ok[3]);
-      lbls.push(`<text class="nome" x="${vb[0] + ok[1] * u}" y="${vb[1] + ok[2] * u}" dy=".35em" text-anchor="${ok[0]}" style="font-size:${12 * u}px;stroke-width:${3.2 * u}px">${E(nome)}</text>`);
+      lbls.push(`<text class="nome" x="${vb[0] + ok[1] * u}" y="${vb[1] + ok[2] * u}" dy=".35em" text-anchor="${ok[0]}" style="font-size:${13 * u}px;stroke-width:${3.4 * u}px">${E(nome)}</text>`);
     });
     gLbl.innerHTML = lbls.join('');
     const zoomado = vb[2] < FW * 0.98;
