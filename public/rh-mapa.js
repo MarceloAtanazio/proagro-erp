@@ -70,13 +70,21 @@ function rhMapaRender(el, pessoas) {
       </div>
       <div class="rhm-grid">
         <div class="rhm-fig">
-          <svg class="rhm-svg" viewBox="${BR_MAPA.viewBox}" role="img" aria-label="Mapa do Brasil com a distribuição dos colaboradores por estado e cidade"><g class="ufs" transform="scale(0.0001,-0.0001)">${paths}</g><g class="rots"></g><g class="pts"></g><g class="lbls"></g></svg>
+          <svg class="rhm-svg" viewBox="${BR_MAPA.viewBox}" role="img" aria-label="Mapa do Brasil com a distribuição dos colaboradores por estado e cidade">
+            <defs>
+              <radialGradient id="rhm-gc" cx="35%" cy="28%" r="80%"><stop offset="0" stop-color="#5E93D8"/><stop offset="1" stop-color="#1F4E78"/></radialGradient>
+              <radialGradient id="rhm-gg" cx="35%" cy="28%" r="80%"><stop offset="0" stop-color="#3DAE43"/><stop offset="1" stop-color="#06301C"/></radialGradient>
+              <radialGradient id="rhm-gs" cx="35%" cy="28%" r="80%"><stop offset="0" stop-color="#F0C56A"/><stop offset="1" stop-color="#B8791A"/></radialGradient>
+              <filter id="rhm-sm" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow class="sombra-mapa" dx="0" dy="0.1" stdDeviation="0.15" flood-color="#06301C" flood-opacity=".28"/></filter>
+              <filter id="rhm-sp" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow class="sombra-pt" dx="0" dy="0.06" stdDeviation="0.07" flood-color="#06301C" flood-opacity=".4"/></filter>
+            </defs>
+            <g class="mapa" filter="url(#rhm-sm)"><g class="ufs" transform="scale(0.0001,-0.0001)">${paths}</g></g><g class="rots"></g><g class="pts"></g><g class="lbls"></g></svg>
           <div class="rhm-ctl" role="group" aria-label="Controles do mapa">
             <button type="button" data-z="in" title="Aproximar" aria-label="Aproximar">+</button><button type="button" data-z="out" title="Afastar" aria-label="Afastar">−</button>
             <button type="button" data-z="equipe" title="Enquadrar a equipe" aria-label="Enquadrar a equipe">◎</button><button type="button" data-z="brasil" title="Brasil inteiro" aria-label="Brasil inteiro">⌂</button>
           </div>
           <div class="rhm-dica" hidden></div>
-          <div class="rhm-leg"><span class="rhm-leg-esc"><i class="n1"></i><i class="n2"></i><i class="n3"></i><i class="n4"></i></span><span>menos → mais pessoas no estado</span><span class="rhm-leg-b"><i></i>cidade</span><span class="rhm-leg-b g"><i>5</i>grupo de cidades (clique para abrir)</span></div>
+          <div class="rhm-leg"><span class="rhm-leg-esc"><i class="n1"></i><i class="n2"></i><i class="n3"></i><i class="n4"></i></span><span>menos → mais pessoas no estado</span><span class="rhm-leg-b"><i></i>cidade</span><span class="rhm-leg-b g"><i>5</i>grupo de cidades (clique para abrir)</span><span class="rhm-leg-b s"><i></i>selecionada</span></div>
           <p class="rhm-ajuda">Arraste para mover · Ctrl + rolagem ou duplo clique para ampliar · clique num estado, cidade ou grupo para aproximar.</p>
         </div>
         <div class="rhm-painel">
@@ -88,6 +96,7 @@ function rhMapaRender(el, pessoas) {
       </div></div>`;
   const $ = s => el.querySelector(s), $$ = (s, r) => [...(r || el).querySelectorAll(s)];
   const svg = $('.rhm-svg'), fig = $('.rhm-fig'), dica = $('.rhm-dica'), gRot = svg.querySelector('.rots'), gPts = svg.querySelector('.pts'), gLbl = svg.querySelector('.lbls');
+  const sombraMapa = svg.querySelector('.sombra-mapa'), sombraPt = svg.querySelector('.sombra-pt');
 
   // ---------- KPIs, regiões e listas ----------
   function kpis() {
@@ -135,7 +144,9 @@ function rhMapaRender(el, pessoas) {
   // ---------- câmera ----------
   const [FX, FY, FW, FH] = BR_MAPA.viewBox.split(' ').map(Number), ASP = FW / FH;
   let vb = [FX, FY, FW, FH], clusters = [], anim = 0, movido = false, arrasto = null;
-  const larguraPx = () => Math.max(200, svg.getBoundingClientRect().width || 600);
+  // Escala real (px por unidade do viewBox). O SVG tem max-height: quando a caixa é mais larga que alta, o mapa é limitado pela altura e sobra faixa
+  // dos lados — por isso não dá para usar só a largura, senão todo texto em px sai menor do que o pedido.
+  const escala = () => { const r = svg.getBoundingClientRect(), w = Math.max(200, r.width || 600), h = r.height || w / ASP; return Math.min(w / vb[2], h / vb[3]); };
   const prende = (x, y, w) => { w = Math.min(FW, Math.max(0.8, w)); const hh = w / ASP; return [Math.min(FX + FW - w, Math.max(FX, x)), Math.min(FY + FH - hh, Math.max(FY, y)), w, hh]; };
   const aplica = () => { svg.setAttribute('viewBox', vb.map(v => +v.toFixed(4)).join(' ')); desenha(); };
   const vaiPara = (alvo, imediato) => {
@@ -154,11 +165,11 @@ function rhMapaRender(el, pessoas) {
     const w = Math.min(FW, Math.max(0.8, vb[2] * fator)), cx = px == null ? vb[0] + vb[2] / 2 : px, cy = py == null ? vb[1] + vb[3] / 2 : py;
     vaiPara([cx - (cx - vb[0]) / vb[2] * w, cy - (cy - vb[1]) / vb[3] * (w / ASP), w], true);
   };
-  const unidadePorPx = () => vb[2] / larguraPx();
+  const unidadePorPx = () => 1 / escala();
 
   // ---------- desenho dependente do zoom ----------
-  const medidor = (() => { const c = document.createElement('canvas').getContext('2d'); c.font = '600 13px "DM Sans", "Segoe UI", sans-serif'; return t => c.measureText(t).width; })();
-  const raioPx = n => 7 + 2.8 * Math.sqrt(n);
+  const medidor = (() => { const c = document.createElement('canvas').getContext('2d'); return (t, fonte) => { c.font = (fonte || '700 12.5px') + ' "DM Sans", "Segoe UI", Arial, sans-serif'; return c.measureText(t).width + 2; }; })();
+  const raioPx = n => 8 + 3 * Math.sqrt(n);
   function agrupa(pxU) {
     const cs = [];
     D.cidades.forEach(c => {
@@ -169,25 +180,38 @@ function rhMapaRender(el, pessoas) {
     return cs;
   }
   function desenha() {
-    const px = larguraPx(), pxU = px / vb[2], u = 1 / pxU;
-    gRot.innerHTML = Object.entries(BR_MAPA.ufs).filter(([, g]) => g.c.lon >= vb[0] - 1 && g.c.lon <= vb[0] + vb[2] + 1 && -g.c.lat >= vb[1] - 1 && -g.c.lat <= vb[1] + vb[3] + 1)
-      .map(([uf, g]) => `<text class="${D.porUF[uf] ? 'tem' : ''}" x="${g.c.lon}" y="${-g.c.lat}" style="font-size:${(D.porUF[uf] ? 12.5 : 11) * u}px;stroke-width:${3 * u}px" text-anchor="middle" dy=".35em">${uf}</text>`).join('');
+    const pxU = escala(), u = 1 / pxU, px = vb[2] * pxU, pxH = vb[3] * pxU, comNome = vb[2] < 16;   // comNome: aproximado o bastante para caber o nome do estado
+    // sombras em px (os filtros vivem em unidades do viewBox, então acompanham o zoom)
+    sombraMapa.setAttribute('stdDeviation', (4 * u).toFixed(4)); sombraMapa.setAttribute('dy', (3 * u).toFixed(4));
+    sombraPt.setAttribute('stdDeviation', (1.8 * u).toFixed(4)); sombraPt.setAttribute('dy', (1.5 * u).toFixed(4));
     clusters = agrupa(pxU);
-    const vis = clusters.map((g, i) => ({ g, i, x: (g.X - vb[0]) * pxU, y: (g.Y - vb[1]) * pxU, r: raioPx(g.n) })).filter(o => o.x > -30 && o.x < px + 30 && o.y > -30 && o.y < px / ASP + 30);
+    const vis = clusters.map((g, i) => ({ g, i, x: (g.X - vb[0]) * pxU, y: (g.Y - vb[1]) * pxU, r: raioPx(g.n) })).filter(o => o.x > -30 && o.x < px + 30 && o.y > -30 && o.y < pxH + 30);
+    const ocup = vis.map(o => [o.x - o.r - 2, o.y - o.r - 2, o.x + o.r + 2, o.y + o.r + 2]), colide = (a, b) => !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
+    // siglas dos estados (nome por extenso quando aproximado), desviando das bolhas; texto claro sobre os estados mais escuros
+    gRot.innerHTML = Object.entries(BR_MAPA.ufs).filter(([, g]) => g.c.lon >= vb[0] - 1 && g.c.lon <= vb[0] + vb[2] + 1 && -g.c.lat >= vb[1] - 1 && -g.c.lat <= vb[1] + vb[3] + 1)
+      .map(([uf, g]) => {
+        const t = D.porUF[uf], esc = t && nivel(t.n) >= 3, nome = comNome ? (NOME_UF[uf] || '') : '', tamSg = t ? 14 : 12.5;
+        const w = Math.max(medidor(uf, `800 ${tamSg}px`) + 4, nome ? medidor(nome, '600 10.5px') : 0) + 6, h = nome ? 30 : 18;
+        const cx0 = (g.c.lon - vb[0]) * pxU, cy0 = (-g.c.lat - vb[1]) * pxU;
+        const livre = [[0, 0], [0, -h - 6], [0, h + 6], [-(w / 2 + 24), 0], [w / 2 + 24, 0], [0, -2 * h], [0, 2 * h]].map(([dx, dy]) => [cx0 + dx - w / 2, cy0 + dy - h / 2, cx0 + dx + w / 2, cy0 + dy + h / 2]).find(b => !ocup.some(k => colide(b, k)));
+        const b = livre || [cx0 - w / 2, cy0 - h / 2, cx0 + w / 2, cy0 + h / 2];
+        if (livre) ocup.push(b);
+        const x = vb[0] + ((b[0] + b[2]) / 2) * u, y = vb[1] + ((b[1] + b[3]) / 2) * u;
+        return `<g class="rot${t ? ' tem' : ''}${esc ? ' esc' : ''}${livre ? '' : ' tampado'}"><text class="sg" x="${x}" y="${nome ? y - 7 * u : y}" dy=".35em" text-anchor="middle" style="font-size:${tamSg * u}px;letter-spacing:${1.2 * u}px;stroke-width:${3.5 * u}px">${uf}</text>${nome ? `<text class="nm" x="${x}" y="${y + 8 * u}" dy=".35em" text-anchor="middle" style="font-size:${10.5 * u}px;stroke-width:${3 * u}px">${E(nome)}</text>` : ''}</g>`;
+      }).join('');
     gPts.innerHTML = vis.map(o => {
       const varias = o.g.cidades.length > 1, sel = S.sel && S.sel.cidade && o.g.cidades.some(c => c.uf === S.sel.uf && c.nome === S.sel.cidade);
-      return `<g class="pt${varias ? ' grupo' : ''}${!varias && o.g.cidades[0].aprox ? ' aprox' : ''}${sel ? ' sel' : ''}" data-i="${o.i}" tabindex="0">${sel ? `<circle class="pulso" cx="${o.g.X}" cy="${o.g.Y}" r="${o.r * u}"/>` : ''}<circle cx="${o.g.X}" cy="${o.g.Y}" r="${o.r * u}"/>${o.g.n > 1 || varias ? `<text x="${o.g.X}" y="${o.g.Y}" dy=".35em" text-anchor="middle" style="font-size:${(o.r >= 12 ? 14 : 12.5) * u}px">${o.g.n}</text>` : ''}</g>`;
+      return `<g class="pt${varias ? ' grupo' : ''}${!varias && o.g.cidades[0].aprox ? ' aprox' : ''}${sel ? ' sel' : ''}" data-i="${o.i}" tabindex="0" filter="url(#rhm-sp)">${sel ? `<circle class="pulso" cx="${o.g.X}" cy="${o.g.Y}" r="${o.r * u}"/>` : ''}<circle class="b" cx="${o.g.X}" cy="${o.g.Y}" r="${o.r * u}" style="stroke-width:${2.2 * u}px"/>${o.g.n > 1 || varias ? `<text x="${o.g.X}" y="${o.g.Y}" dy=".36em" text-anchor="middle" style="font-size:${(o.r >= 13 ? 14.5 : 13) * u}px">${o.g.n}</text>` : ''}</g>`;
     }).join('');
-    const ocup = vis.map(o => [o.x - o.r - 2, o.y - o.r - 2, o.x + o.r + 2, o.y + o.r + 2]), colide = (a, b) => !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3]);
+    // nomes das cidades em pílulas, sem sobrepor bolhas, siglas nem outros nomes (direita, esquerda, acima, abaixo)
     const lbls = [];
     vis.filter(o => o.g.cidades.length === 1).sort((a, b) => b.g.n - a.g.n).forEach(o => {
-      const nome = o.g.cidades[0].nome, w = medidor(nome) + 6, h = 17, r = o.r + 4;
-      const tent = [['start', o.x + r, o.y, [o.x + r, o.y - h / 2, o.x + r + w, o.y + h / 2]], ['end', o.x - r, o.y, [o.x - r - w, o.y - h / 2, o.x - r, o.y + h / 2]],
-        ['middle', o.x, o.y - o.r - 9, [o.x - w / 2, o.y - o.r - 17, o.x + w / 2, o.y - o.r - 1]], ['middle', o.x, o.y + o.r + 10, [o.x - w / 2, o.y + o.r + 1, o.x + w / 2, o.y + o.r + 17]]];
-      const ok = tent.find(t => t[3][0] > 0 && t[3][2] < px && t[3][1] > 0 && !ocup.some(b => colide(t[3], b)));
-      if (!ok) return;
-      ocup.push(ok[3]);
-      lbls.push(`<text class="nome" x="${vb[0] + ok[1] * u}" y="${vb[1] + ok[2] * u}" dy=".35em" text-anchor="${ok[0]}" style="font-size:${13 * u}px;stroke-width:${3.4 * u}px">${E(nome)}</text>`);
+      const nome = o.g.cidades[0].nome, w = medidor(nome) + 16, h = 21, d = o.r + 5;
+      const tent = [[o.x + d, o.y - h / 2], [o.x - d - w, o.y - h / 2], [o.x - w / 2, o.y - o.r - 5 - h], [o.x - w / 2, o.y + o.r + 5]].map(([x0, y0]) => [x0, y0, x0 + w, y0 + h]);
+      const b = tent.find(t => t[0] > 0 && t[2] < px && t[1] > 0 && t[3] < pxH && !ocup.some(k => colide(t, k)));
+      if (!b) return;
+      ocup.push(b);
+      lbls.push(`<g class="lbl"><rect x="${vb[0] + b[0] * u}" y="${vb[1] + b[1] * u}" width="${w * u}" height="${h * u}" rx="${(h / 2) * u}" style="stroke-width:${1 * u}px"/><text x="${vb[0] + (b[0] + w / 2) * u}" y="${vb[1] + (b[1] + h / 2) * u}" dy=".36em" text-anchor="middle" style="font-size:${12.5 * u}px">${E(nome)}</text></g>`);
     });
     gLbl.innerHTML = lbls.join('');
     const zoomado = vb[2] < FW * 0.98;
@@ -216,7 +240,7 @@ function rhMapaRender(el, pessoas) {
   };
   const esconde = () => { dica.hidden = true; limpaHl(); };
   const grupoDe = alvo => { const n = alvo.closest && alvo.closest('.pt'); return n ? clusters[Number(n.dataset.i)] : null; };
-  const unidadeDoPonto = ev => { const r = svg.getBoundingClientRect(), u = unidadePorPx(); return [vb[0] + (ev.clientX - r.left) * u, vb[1] + (ev.clientY - r.top) * u]; };
+  const unidadeDoPonto = ev => { const r = svg.getBoundingClientRect(), k = escala(), ox = (r.width - vb[2] * k) / 2, oy = (r.height - vb[3] * k) / 2; return [vb[0] + (ev.clientX - r.left - ox) / k, vb[1] + (ev.clientY - r.top - oy) / k]; };
 
   svg.addEventListener('mousemove', ev => {
     if (arrasto && movido) return;

@@ -8414,3 +8414,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador (23 pessoas de exemplo): KPIs, faixa por região, filtro "Campo" (5 pessoas, 2 estados), busca "Marina" → zoom em Jateí com pulso, abas, Clássico e Novo, sem erros no console. Não testado: produção logada, mouse real, toque, tema claro no Novo.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+
+
+## 2026-11-13 — Sessão 229: "Onde estamos" (RH) — rótulos legíveis e mapa mais moderno
+
+**Solicitação:** o Marcelo mandou um print do mapa em produção: nomes de cidade e siglas de estado quase ilegíveis; pediu visual mais moderno.
+
+**Causa:** o JS calculava os tamanhos em pixels a partir da largura do SVG, mas o SVG tem altura máxima (600px); quando a caixa é mais larga que alta, o mapa é limitado pela altura e sobra faixa dos lados, então todo texto saía uns 35% menor que o pedido (13px viravam ~8px).
+
+**O que mudou (Clássico, Novo e escuro):** (1) escala real do SVG (menor razão entre largura e altura), que também corrige o ponto do duplo clique e do Ctrl + rolagem; (2) siglas maiores (14px nos estados com gente, 12,5px nos demais, espaçadas) e, ao aproximar, o nome do estado por extenso embaixo; nas cores escuras o texto fica branco com contorno; (3) os rótulos de estado desviam das bolhas (tentam centro, acima, abaixo, lados) e ficam esmaecidos se não houver lugar; (4) nomes de cidade em pílulas brancas com contorno, 12,5px negrito, sem sobrepor bolhas, siglas nem outras pílulas; (5) bolhas maiores com degradê (azul = cidade, verde = grupo, dourado = selecionada ou sob o mouse), borda branca e sombra; sombra suave sob o mapa; fundo com grade de pontos; (6) legenda com os três tipos de bolha. Sem servidor nem banco.
+
+**Arquivos:** `public/rh-mapa.js`, `public/styles.css`, `scripts/2026-11-13_rh_mapa_legivel.js` (+ `_css.txt`).
+
+**Verificação:** simulador (23 pessoas de exemplo) a 1024px de largura: visão do Brasil, "Enquadrar a equipe", claro e escuro; tamanhos computados conferidos (12,5px de pílula e 14px de sigla). Não testado: produção logada, mouse real, toque.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
