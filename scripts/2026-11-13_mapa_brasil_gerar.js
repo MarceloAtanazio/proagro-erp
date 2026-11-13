@@ -22,11 +22,13 @@ function centro(d) {
     else if (c === 'v') n.forEach(v => { y += v; atual.pts.push([x, y]); });
   }
   const caixa = s => { const xs = s.pts.map(p => p[0]), ys = s.pts.map(p => p[1]); return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }; };
+  const todos = subs.flatMap(s => s.pts), bx = todos.map(p => p[0] * 0.0001), by = todos.map(p => -p[1] * 0.0001);
+  const caixaTotal = [+Math.min(...bx).toFixed(3), +Math.min(...by).toFixed(3), +Math.max(...bx).toFixed(3), +Math.max(...by).toFixed(3)];   // x0, y0, x1, y1 em unidades do viewBox (x = lon, y = −lat)
   const maior = subs.map(s => ({ s, b: caixa(s) })).sort((a, b) => (b.b.x1 - b.b.x0) * (b.b.y1 - b.b.y0) - (a.b.x1 - a.b.x0) * (a.b.y1 - a.b.y0))[0].b;
   // no arquivo y já é a latitude NEGADA pelo grupo (scale(0.0001,-0.0001)): lat = y * 0.0001 * -1 * -1 ... os caminhos guardam y = −lat/0,0001 × −1; na prática lat = −(y × −0.0001) = y × 0,0001
-  return { lon: +(((maior.x0 + maior.x1) / 2) * 0.0001).toFixed(3), lat: +(((maior.y0 + maior.y1) / 2) * 0.0001).toFixed(3) };
+  return { lon: +(((maior.x0 + maior.x1) / 2) * 0.0001).toFixed(3), lat: +(((maior.y0 + maior.y1) / 2) * 0.0001).toFixed(3), b: caixaTotal };
 }
-const ufs = {}; caminhos.forEach(([, id, d]) => { ufs[COD[id]] = { d, c: centro(d) }; });
+const ufs = {}; caminhos.forEach(([, id, d]) => { { const { b, ...c } = centro(d); ufs[COD[id]] = { d, c, b }; } });
 const out = '// Mapa do Brasil por estado (malha do IBGE, qualidade mínima). Gerado por scripts/2026-11-13_mapa_brasil_gerar.js — não editar à mão.\n' +
   '// Cada caminho está em 1/10000 de grau dentro de um grupo com transform="scale(0.0001,-0.0001)": x = longitude, y = −latitude em unidades do viewBox.\n' +
   'const BR_MAPA = ' + JSON.stringify({ viewBox: vb, ufs }) + ';\n';

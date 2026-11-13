@@ -8388,3 +8388,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador (dados de exemplo com 23 pessoas em PR, SP, MS e DF): mapa, bolhas, lista por estado, abrir/fechar, zoom, Clássico e Novo. Não testado: produção logada, tema claro e tela larga real.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-13 — Sessão 227: Mapa de RH — cidades legíveis em todo o Brasil (zoom, grupos e nomes)
+
+**Solicitação:** o Marcelo pediu para melhorar o mapa para mostrar melhor as cidades, não só as do Paraná mas de todo o Brasil.
+
+**O que mudou (Clássico e Novo):** o mapa agora é explorável. (1) Zoom com botões +/−, Ctrl + rolagem ou duplo clique, arrastar para mover, "Brasil inteiro" e "Ampliar na equipe"; clicar num estado (no mapa ou na lista) aproxima dele. (2) Cidades próximas se juntam numa bolha única com o total de pessoas e se separam à medida que se aproxima, em qualquer região do país; as bolhas escuras são grupos de cidades. (3) O nome de cada cidade aparece ao lado da bolha quando há espaço (tenta direita, esquerda, acima e abaixo, sem sobrepor outras bolhas ou nomes) e mais nomes surgem a cada aproximação. (4) Bolhas, números e nomes mantêm o tamanho em pixels em qualquer zoom. (5) A dica ao passar o mouse lista as cidades do grupo e as pessoas. Sem servidor nem banco.
+
+**Arquivos:** `public/rh-mapa.js` (reescrito), `public/br-mapa.js` (agora com a caixa envolvente de cada estado), `public/styles.css`, `scripts/2026-11-13_mapa_brasil_gerar.js`, `scripts/2026-11-13_rh_mapa_explorar.js`.
+
+**Verificação:** simulador (23 pessoas em PR, SP, MS e DF): visão do Brasil, "Ampliar na equipe", zoom no Paraná e +/−, nomes e grupos. Não testado: produção logada, Ctrl + rolagem e arrastar com mouse real, toque no celular, tema claro.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
