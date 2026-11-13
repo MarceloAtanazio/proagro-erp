@@ -1981,8 +1981,8 @@ tr.via-fam-linha td.num { padding-left: 0; }
 .rhm-busca span { color: var(--muted); font-size: 15px; } .rhm-busca input { border: 0; background: transparent; color: var(--ink); font: 500 13px var(--font); padding: 8px 0; width: 100%; outline: none; }
 .rhm-busca:focus-within { border-color: var(--verde-500); box-shadow: 0 0 0 3px color-mix(in srgb, var(--verde-500) 22%, transparent); }
 .rhm-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .9fr); gap: 18px; align-items: start; }
-.rhm-fig { position: relative; border-radius: 18px; padding: 10px 10px 8px; background: radial-gradient(circle, color-mix(in srgb, var(--azul-700) 14%, transparent) 1px, transparent 1.2px) 0 0 / 18px 18px, radial-gradient(120% 90% at 20% 0%, color-mix(in srgb, var(--azul-700) 10%, var(--card)), color-mix(in srgb, var(--muted) 7%, var(--card)) 60%); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); user-select: none; -webkit-user-select: none; }
-.rhm-svg { width: 100%; height: auto; max-height: 600px; display: block; touch-action: pan-y; overflow: visible; }
+.rhm-fig { position: relative; overflow: hidden; border-radius: 18px; padding: 10px 10px 8px; background: radial-gradient(circle, color-mix(in srgb, var(--azul-700) 14%, transparent) 1px, transparent 1.2px) 0 0 / 18px 18px, radial-gradient(120% 90% at 20% 0%, color-mix(in srgb, var(--azul-700) 10%, var(--card)), color-mix(in srgb, var(--muted) 7%, var(--card)) 60%); border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); user-select: none; -webkit-user-select: none; }
+.rhm-svg { width: 100%; height: auto; max-height: 600px; display: block; touch-action: pan-y; overflow: hidden; }
 .rhm-svg.zoomado { cursor: grab; touch-action: none; } .rhm-svg.arrastando { cursor: grabbing; }
 .rhm-svg .uf { fill: color-mix(in srgb, var(--muted) 11%, var(--card)); stroke: var(--card); stroke-width: 1.4px; vector-effect: non-scaling-stroke; transition: fill .25s, filter .15s; }
 .rhm-svg .uf.n1 { fill: color-mix(in srgb, var(--verde-500) 30%, var(--card)); } .rhm-svg .uf.n2 { fill: color-mix(in srgb, var(--verde-500) 58%, var(--card)); }

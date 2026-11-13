@@ -8429,3 +8429,5 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 **Verificação:** simulador (23 pessoas de exemplo) a 1024px de largura: visão do Brasil, "Enquadrar a equipe", claro e escuro; tamanhos computados conferidos (12,5px de pílula e 14px de sigla). Não testado: produção logada, mouse real, toque.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+
+**Correção (mesma sessão):** com zoom o mapa vazava da caixa para o resto da página — a regra nova do SVG tinha `overflow: visible`. Agora `overflow: hidden` no SVG e na moldura (`public/styles.css`, `scripts/2026-11-13_rh_mapa_legivel_css.txt`). Conferido no simulador com três níveis de zoom.
