@@ -8401,3 +8401,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador (23 pessoas em PR, SP, MS e DF): visão do Brasil, "Ampliar na equipe", zoom no Paraná e +/−, nomes e grupos. Não testado: produção logada, Ctrl + rolagem e arrastar com mouse real, toque no celular, tema claro.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-13 — Sessão 228: "Onde estamos" (RH) — mapa e KPIs redesenhados, modernos e interativos
+
+**Solicitação:** o Marcelo achou a visualização do mapa e dos seus KPIs muito ruim e pediu para melhorar por completo, mais moderno e interativo.
+
+**O que mudou (Clássico e Novo):** a seção foi refeita. (1) **KPIs no topo:** pessoas no mapa (de quantos ativos), estados (e quantas regiões), cidades (quantas com 1 pessoa), maior polo (UF, % e pessoas) e maior cidade. (2) **Faixa por região** (Norte, Nordeste, Centro-Oeste, Sudeste, Sul) com % e legenda; clicar numa região aproxima o mapa dela. (3) **Filtros** por departamento e por modelo de trabalho: mapa, KPIs, faixa e listas recalculam na hora. (4) **Busca** por pessoa, cidade ou departamento: lista as pessoas e, com Enter ou clique, o mapa voa até a cidade da pessoa. (5) **Painel com abas** Estados / Cidades / Pessoas ligado ao mapa: passar o mouse destaca o estado ou a bolha; clicar seleciona e aproxima; o estado selecionado abre as cidades em chips. (6) **Mapa:** fundo em degradê, controles + − ◎ (equipe) ⌂ (Brasil), estado selecionado com contorno dourado, cidade selecionada com pulso animado, grupos de cidades (bolha escura) que abrem ao clicar, nomes das cidades sem sobreposição, dica com cidades e pessoas. Sem servidor nem banco.
+
+**Arquivos:** `public/rh-mapa.js` (reescrito), `public/styles.css` (regras antigas `.rh-mapa*` removidas; novas `rhm-*`), `scripts/2026-11-13_rh_mapa_redesenho.js` (+ `_css.txt`).
+
+**Verificação:** simulador (23 pessoas de exemplo): KPIs, faixa por região, filtro "Campo" (5 pessoas, 2 estados), busca "Marina" → zoom em Jateí com pulso, abas, Clássico e Novo, sem erros no console. Não testado: produção logada, mouse real, toque, tema claro no Novo.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
