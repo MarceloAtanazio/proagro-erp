@@ -8491,3 +8491,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (16 PASS, incluindo o caso do Notebook Asus: apagar a entrada sem custo e a saída de correção deixa CMP R$ 2.951,74); simulador: botões, bloqueios, excluir, editar e toast. Não testado: produção logada. Cuidado: o recálculo trata entrada sem custo como sem valor; em item que só tinha custo de cadastro e depois recebeu compra, corrigir um lançamento antigo pode mudar o CMP para o custo das compras.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+**Ajuste (mesma sessão, 2026-11-16):** a coluna "Detalhe" do Histórico, que quebrava a tabela com as observações de edição, virou um botão 👁 "Ver detalhes" ao lado de Editar e Excluir. Ele abre a janela do lançamento completo (movimento, data, quantidade, custo unitário e total, fornecedor/NF/colaborador, título em Contas a Pagar, observação inteira, quem registrou e quando) com "Voltar ao histórico". A coluna Ações aparece também para quem só consulta (só com o 👁) e "Por" não quebra mais de linha. Arquivos: `public/app.js`, `scripts/2026-11-16_suprimentos_historico_detalhe_botao.js`. Conferido no simulador.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

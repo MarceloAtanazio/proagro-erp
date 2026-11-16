@@ -3662,7 +3662,7 @@ async function supHistorico(i) {
   const ORIG = { compra: 'Compra', envio: 'Envio', ajuste: 'Ajuste', devolucao: 'Devolução' };
   openModal(`Histórico — ${esc(i.nome)}`, `
     <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Movimento</th><th class="num">Qtd</th><th class="num">Custo un.</th><th>Detalhe</th><th>Por</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
+      <thead><tr><th>Data</th><th>Movimento</th><th class="num">Qtd</th><th class="num">Custo un.</th><th>Por</th><th class="actions">Ações</th></tr></thead>
       <tbody>${movs.map(m => {
         const entrada = m.tipo === 'entrada';
         const corrigivel = edit && ['ajuste', 'compra'].includes(m.origem);
@@ -3675,19 +3675,40 @@ async function supHistorico(i) {
           <td><span class="badge ${entrada ? 'ok' : 'late'}">${entrada ? '+ ' : '− '}${ORIG[m.origem] || m.origem}</span></td>
           <td class="num">${supNum(m.quantidade)} ${esc(i.unidade)}</td>
           <td class="num">${m.custo_unitario != null ? brl(m.custo_unitario) : '—'}</td>
-          <td>${det || '—'}${m.status ? ` <small style="color:var(--muted)">(${m.status})</small>` : ''}</td>
-          <td><small>${esc(m.created_by_name || '—')}</small></td>
-          ${edit ? `<td class="actions sup-acoes">${corrigivel ? `<button class="btn-ic" data-lcedit="${m.id}" ${bloqPag || m.unidade_id ? 'disabled' : ''} title="${bloqPag || (m.unidade_id ? 'Baixa de unidade: exclua e refaça' : 'Editar este lançamento (pede a justificativa)')}" aria-label="Editar lançamento">✎</button><button class="btn-ic exc" data-lcdel="${m.id}" ${bloqPag ? 'disabled' : ''} title="${bloqPag || 'Excluir este lançamento (pede a justificativa)'}" aria-label="Excluir lançamento">🗑</button>` : ''}</td>` : ''}
+          <td style="white-space:nowrap"><small>${esc(m.created_by_name || '—')}</small></td>
+          <td class="actions sup-acoes"><button class="btn-ic ok" data-lcver="${m.id}" title="Ver o detalhe deste lançamento" aria-label="Ver detalhes">👁</button>${edit ? `${corrigivel ? `<button class="btn-ic" data-lcedit="${m.id}" ${bloqPag || m.unidade_id ? 'disabled' : ''} title="${bloqPag || (m.unidade_id ? 'Baixa de unidade: exclua e refaça' : 'Editar este lançamento (pede a justificativa)')}" aria-label="Editar lançamento">✎</button><button class="btn-ic exc" data-lcdel="${m.id}" ${bloqPag ? 'disabled' : ''} title="${bloqPag || 'Excluir este lançamento (pede a justificativa)'}" aria-label="Excluir lançamento">🗑</button>` : ''}` : ''}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="${edit ? 7 : 6}"><div class="empty">Sem movimentações.</div></td></tr>`}</tbody>
+      }).join('') || `<tr><td colspan="6"><div class="empty">Sem movimentações.</div></td></tr>`}</tbody>
     </table></div>`,
     [{ label: 'Fechar', onClick: closeModal }], { wide: true });
   const depois = async () => { closeModal(); const its = await api('/api/suprimentos/itens'); renderSuprimentos(); supHistorico(its.find(x => x.id === i.id) || i); };
+  document.querySelectorAll('[data-lcver]').forEach(b => b.onclick = () => supVerLancamento(i, movs.find(m => m.id == b.dataset.lcver), () => supHistorico(i)));
   document.querySelectorAll('[data-lcedit]').forEach(b => b.onclick = () => supEditarLancamento(i, movs.find(m => m.id == b.dataset.lcedit), depois));
   document.querySelectorAll('[data-lcdel]').forEach(b => b.onclick = () => supExcluirLancamento(i, movs.find(m => m.id == b.dataset.lcdel), depois));
 }
 
 const SUP_ORIG_LANC = { compra: 'Compra', ajuste: 'Ajuste' };
+// Detalhe completo de um lançamento do histórico (substitui a antiga coluna "Detalhe", que quebrava a tabela).
+function supVerLancamento(i, m, voltar) {
+  const ORIG = { compra: 'Compra', envio: 'Envio', ajuste: 'Ajuste', devolucao: 'Devolução' }, entrada = m.tipo === 'entrada';
+  const linha = (rot, val) => val ? `<div style="color:var(--muted)">${rot}</div><div>${val}</div>` : '';
+  const quando = m.created_at ? new Date(m.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : '';
+  openModal(`Lançamento — ${esc(i.nome)}`, `
+    <div style="display:grid; grid-template-columns:160px 1fr; gap:10px 16px; font-size:13.5px; line-height:1.45">
+      ${linha('Movimento', `<span class="badge ${entrada ? 'ok' : 'late'}">${entrada ? '+ ' : '− '}${ORIG[m.origem] || esc(m.origem)}</span>${m.status ? ` <small style="color:var(--muted)">(${esc(m.status)})</small>` : ''}`)}
+      ${linha('Data', brDate(m.data))}
+      ${linha('Quantidade', `<strong>${supNum(m.quantidade)} ${esc(i.unidade)}</strong>`)}
+      ${linha('Custo unitário', m.custo_unitario != null ? brl(m.custo_unitario) : '—')}
+      ${linha('Valor total', m.valor_total != null ? brl(m.valor_total) : '')}
+      ${linha('Fornecedor', esc(m.supplier_name || ''))}
+      ${linha('Documento (NF)', esc(m.documento || ''))}
+      ${linha('Colaborador', esc(m.colaborador_name || ''))}
+      ${linha('Contas a Pagar', m.payable_id ? 'Título #' + m.payable_id : '')}
+      ${linha('Observação', m.notes ? `<span style="white-space:pre-wrap">${esc(m.notes)}</span>` : '—')}
+      ${linha('Registrado por', esc(m.created_by_name || '—') + (quando ? ` em ${quando}` : ''))}
+    </div>`,
+    [{ label: 'Voltar ao histórico', onClick: voltar }]);
+}
 function supEditarLancamento(i, m, depois) {
   const entrada = m.tipo === 'entrada';
   openModal(`Editar lançamento — ${esc(i.nome)}`, `
