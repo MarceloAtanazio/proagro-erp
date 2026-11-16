@@ -8444,3 +8444,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (14 verificações: permissões, justificativa, status, duplicidade, km previsto, valor liberado intocado, aviso de documento, km alugado recusado); simulador: botão, modal, justificativa curta recusada, troca, aviso e "A devolver ao Flash" inalterado. Não testado: produção logada e o fluxo completo de aprovação do km pós-troca. Obs.: se alguém editar depois a solicitação pelo assistente de nova OT, aluguel e carro próprio juntos podem ser recusados pela validação do formulário; a troca não passa por ali.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+**Correção (mesma sessão, 2026-11-16):** o botão não aparecia na OT 180 porque o Arthur já tinha lançado a km como "carro alugado" (aguardando aprovação) e a troca era bloqueada nesse caso. Agora o botão aparece mesmo assim e a troca **converte** o(s) registro(s) de km de alugado para carro próprio: taxa vigente por km, reembolso recalculado (km rodado x taxa), km previsto da rota própria; um registro já aprovado como alugado volta para "aguardando aprovação" para gerar a conta a pagar. O modal avisa da conversão e do valor (ex.: 1.286 km x R$ 0,70 = R$ 900,20). Permissão inalterada: quem edita Viáticos (que é quem vê todas as OTs) e admin. Arquivos: `api/index.js`, `public/app.js`, `scripts/2026-11-16_viaticos_trocar_converte_km.js`; teste `scripts/2026-11-16_verifica_trocar_carro_proprio.js` atualizado (14 PASS).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

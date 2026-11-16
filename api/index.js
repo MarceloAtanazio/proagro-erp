@@ -7433,8 +7433,7 @@ app.post('/api/viaticos/solicitacoes/:id/trocar-carro-proprio', requireAuth, req
   if (t.troca_veiculo) return res.status(409).json({ error: 'Esta viagem já foi trocada para carro próprio.' });
   if (!t.aluguel_carro) return res.status(409).json({ error: 'Esta viagem não foi solicitada com aluguel de carro.' });
   if (t.carro_proprio) return res.status(409).json({ error: 'Esta viagem já tem carro próprio.' });
-  const kmAlugado = await query("SELECT 1 FROM erp_viaticos_km WHERE solicitacao_id=$1 AND modelo='alugado' AND status <> 'rejeitado' LIMIT 1", [solId]);
-  if (kmAlugado.length) return res.status(409).json({ error: 'Já existe quilometragem de carro alugado nesta viagem. Exclua esse registro antes de trocar.' });
+  const kmAlugados = await query("SELECT id, km_rodado, status FROM erp_viaticos_km WHERE solicitacao_id=$1 AND modelo='alugado' ORDER BY id", [solId]);
 
   const alugueis = Array.isArray(t.alugueis) ? t.alugueis : [];
   const dist = alugueis.reduce((a, x) => a + (Number(x && x.distancia_km) || 0), 0);
@@ -7444,10 +7443,23 @@ app.post('/api/viaticos/solicitacoes/:id/trocar-carro-proprio', requireAuth, req
   t.carro_proprio_rota = { distancia_km: dist > 0 ? Number(dist.toFixed(1)) : '', combustivel_valor: 0, pedagio_valor: 0, estacionamento_qtd: 0, estacionamento_valor: 0, trechos: [], manual_override: false, de_aluguel: true };
   t.troca_veiculo = { de: 'aluguel_carro', para: 'carro_proprio', em: new Date().toISOString(), por: req.user.name, motivo: motivo.slice(0, 500), aluguel_valor_mantido: aluguelValor };
   await query('UPDATE erp_viaticos_solicitacoes SET transporte_detalhes=$2 WHERE id=$1', [solId, JSON.stringify(t)]);
+  // Km já lançado como "alugado" (sem reembolso) vira carro próprio: taxa vigente, valor recalculado, previsto da rota própria. Um registro já aprovado como
+  // alugado volta para a fila (status enviado) para poder gerar a conta a pagar; os demais mantêm o status (rascunho, enviado ou devolvido).
+  let kmConvertidos = 0, kmValor = 0;
+  if (kmAlugados.length) {
+    const taxa = await kmTaxaVigente(), previsto = kmPrevistoDe({ transporte_detalhes: t }, 'proprio');
+    for (const k of kmAlugados) {
+      const valor = Number((n(k.km_rodado) * taxa).toFixed(2));
+      await query(`UPDATE erp_viaticos_km SET modelo='proprio', taxa_km=$2, valor_reembolso=$3, km_previsto=$4,
+          status = CASE WHEN status='aprovado' THEN 'enviado' ELSE status END,
+          decisao_motivo = CASE WHEN status='aprovado' THEN NULL ELSE decisao_motivo END, updated_at=now() WHERE id=$1`, [k.id, taxa, valor, previsto]);
+      kmConvertidos++; kmValor += valor;
+    }
+  }
 
   const colab = (await query('SELECT * FROM erp_colaboradores WHERE id=$1', [sol.colaborador_id]))[0];
   const hab = colab ? viaBloqueiosDirecao(colab) : { proprio: [] };
-  res.json({ ok: true, aluguel_valor_mantido: aluguelValor, km_previsto: dist > 0 ? Number(dist.toFixed(1)) : null, avisos: hab.podeCarroProprio === false ? hab.proprio : [] });
+  res.json({ ok: true, km_convertidos: kmConvertidos, km_valor_reembolso: Number(kmValor.toFixed(2)), aluguel_valor_mantido: aluguelValor, km_previsto: dist > 0 ? Number(dist.toFixed(1)) : null, avisos: hab.podeCarroProprio === false ? hab.proprio : [] });
 }));
 
 app.post('/api/viaticos/solicitacoes/:id/liberar-comprovacao', requireAuth, requireAdmin, h(async (req, res) => {

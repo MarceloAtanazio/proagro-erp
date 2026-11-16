@@ -1,4 +1,4 @@
-// Propósito: verifica no backend (banco simulado) a troca de aluguel para carro próprio em Viáticos: só admin/quem edita, justificativa obrigatória, só em
+// Propósito: verifica no backend (banco simulado) a troca (incluindo a conversão do km já lançado como alugado) de aluguel para carro próprio em Viáticos: só admin/quem edita, justificativa obrigatória, só em
 //   "aguardando comprovação", grava troca_veiculo e carro_proprio sem mexer no valor liberado, km previsto = soma do aluguel, aviso de documento do veículo sem bloquear,
 //   e depois da troca o km "alugado" é recusado (409) enquanto o km "próprio" é aceito.
 // Entrada: raiz do projeto (argv[2]). Saída: PASS/FALHA por verificação; código de saída 1 se algo falhar.
@@ -13,7 +13,7 @@ const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Pau
 const soma = (iso, d) => { const [y, m, dd] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd) + d * 864e5).toISOString().slice(0, 10); };
 const SOL = (id, status, t) => ({ id, colaborador_id: 7, status, data_inicio: soma(hoje, -8), data_fim: soma(hoje, -3), valor_liberado: 5595.96, transporte_detalhes: t });
 const T_ALUG = () => ({ aluguel_carro: true, alugueis: [{ valor_diaria: '440,00', dias: 5, distancia_km: 900, combustivel_valor: 995.96 }, { valor_diaria: 0, dias: 0, distancia_km: 100 }] });
-let SOLS = {}, KM_ALUG = false, UPD = [];
+let SOLS = {}, KM_ALUG = [], UPD = [], KM_UPD = [];
 const dbPath = require.resolve(path.join(ROOT, 'src/db.js'));
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { n: v => (v == null ? 0 : Number(v)), pool: {}, query: async (sql, p = []) => {
   const s = sql.replace(/\s+/g, ' ').trim();
@@ -21,7 +21,9 @@ require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: {
   if (/^(INSERT INTO erp_audit_log|UPDATE erp_users)/.test(s)) return [];
   if (s.includes('FROM erp_rh_movimentacoes')) return [];
   if (s.startsWith('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1')) return [SOLS[Number(p[0])]].filter(Boolean);
-  if (s.startsWith("SELECT 1 FROM erp_viaticos_km WHERE solicitacao_id=$1 AND modelo='alugado'")) return KM_ALUG ? [{ '?column?': 1 }] : [];
+  if (s.startsWith("SELECT id, km_rodado, status FROM erp_viaticos_km WHERE solicitacao_id=$1 AND modelo='alugado'")) return KM_ALUG;
+  if (s.includes('SELECT km_taxa_reembolso FROM erp_viaticos_config')) return [{ km_taxa_reembolso: 0.7 }];
+  if (s.startsWith("UPDATE erp_viaticos_km SET modelo='proprio'")) { KM_UPD.push(p); return []; }
   if (s.startsWith('UPDATE erp_viaticos_solicitacoes SET transporte_detalhes=$2 WHERE id=$1')) { UPD.push(p); SOLS[Number(p[0])].transporte_detalhes = JSON.parse(p[1]); return []; }
   if (s.startsWith('SELECT * FROM erp_colaboradores WHERE id=$1')) return [{ id: 7, cnh_numero: '1', cnh_validade: '2099-01-01', veiculo_crlv_validade: null, veiculo_seguro_validade: null }];
   if (s.startsWith('SELECT colaborador_id FROM erp_viaticos_solicitacoes WHERE id=$1')) return [{ colaborador_id: 7 }];
@@ -43,9 +45,9 @@ const chama = async (quem, metodo, rota, corpo) => { const r = await fetch(`http
   ok('viagem já comprovada não troca (409)', r.status === 409, r);
   r = await chama(9, 'POST', rota(182), { motivo: 'locadora sem carro' });
   ok('viagem sem aluguel não troca (409)', r.status === 409, r);
-  KM_ALUG = true; r = await chama(9, 'POST', rota(183), { motivo: 'locadora sem carro' });
-  ok('com km de alugado já lançado não troca (409)', r.status === 409, r); KM_ALUG = false;
+  KM_ALUG = [{ id: 31, km_rodado: 1286, status: 'enviado' }, { id: 32, km_rodado: 10, status: 'aprovado' }];
   r = await chama(2, 'POST', rota(180), { motivo: 'Locadora sem veículo disponível na retirada' });
+  ok('km já lançado como alugado é convertido (2 registros, 1296 km x 0,70 = 907,20)', r.body && r.body.km_convertidos === 2 && r.body.km_valor_reembolso === 907.2 && KM_UPD.length === 2 && KM_UPD[0][1] === 0.7 && KM_UPD[0][2] === 900.2 && KM_UPD[0][3] === 1000, [r.body, KM_UPD]);
   ok('editor troca com justificativa (200)', r.status === 200 && r.body.ok, r);
   ok('km previsto = soma do aluguel (1000)', r.body && r.body.km_previsto === 1000, r.body);
   ok('valor do aluguel mantido informado (2200)', r.body && r.body.aluguel_valor_mantido === 2200, r.body);
