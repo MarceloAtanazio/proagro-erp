@@ -8246,6 +8246,10 @@ async function recalcularCmpItem(itemId) {
   await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [cmp, itemId]);
   return cmp;
 }
+// Depois de corrigir ou apagar uma compra: o preço da última compra do item passa a ser o da compra mais recente que restou (sem apagar o preço do cadastro se não restar nenhuma).
+async function atualizaPrecoUltimaCompra(itemId) {
+  await query("UPDATE erp_estoque_itens SET preco_ultima_compra = COALESCE((SELECT custo_unitario FROM erp_estoque_movimentos WHERE item_id=$1 AND origem='compra' ORDER BY data DESC, id DESC LIMIT 1), preco_ultima_compra) WHERE id=$1", [itemId]);
+}
 async function carregaLancamentoEditavel(id) {
   const mov = (await query('SELECT * FROM erp_estoque_movimentos WHERE id=$1', [id]))[0];
   if (!mov) return { st: 404, erro: 'Lançamento não encontrado.' };
@@ -8291,10 +8295,22 @@ app.put('/api/suprimentos/movimentos/:id', requireAuth, SUP_EDIT, h(async (req, 
   if (tm.erro) return res.status(400).json({ error: tm.erro });
   const neg = await saldoNegativoNaCorrecao(item, mov, qtd, tm.grade ? tm.tamanho : undefined);
   if (neg) return res.status(409).json({ error: `Com essa alteração ${neg}` });
+  let fornecedor = mov.supplier_id == null ? null : mov.supplier_id, documento = mov.documento == null ? null : mov.documento;
+  if (mov.origem === 'compra') {
+    if (b.supplier_id !== undefined) {
+      fornecedor = (b.supplier_id === '' || b.supplier_id == null) ? null : Number(b.supplier_id);
+      if (fornecedor != null && !(await query('SELECT id FROM erp_suppliers WHERE id=$1', [fornecedor])).length) return res.status(400).json({ error: 'Fornecedor inválido.' });
+    }
+    if (b.documento !== undefined) documento = sanitize(b.documento) || null;
+  }
   const trilha = `[Editado em ${brDateBR(hojeISO())} por ${req.user.name}: ${motivo}]`;
   const notes = [sanitize(b.notes) || '', trilha].filter(Boolean).join(' ');
   await query('UPDATE erp_estoque_movimentos SET quantidade=$1, custo_unitario=$2, valor_total=$3, data=COALESCE($4::date, data), notes=$5, tamanho=$6 WHERE id=$7',
     [qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, isDate(b.data) ? b.data : null, notes, tm.grade ? tm.tamanho : (mov.tamanho == null ? null : mov.tamanho), mov.id]);
+  if (mov.origem === 'compra') {
+    await query('UPDATE erp_estoque_movimentos SET documento=$1, supplier_id=$2 WHERE id=$3', [documento, fornecedor, mov.id]);
+    await atualizaPrecoUltimaCompra(item.id);
+  }
   const cmp = await recalcularCmpItem(item.id);
   res.json({ ok: true, custo_medio: cmp });
 }));
@@ -8310,6 +8326,7 @@ app.post('/api/suprimentos/movimentos/:id/excluir', requireAuth, SUP_EDIT, h(asy
   const resumo = `${mov.tipo} por ${mov.origem}, ${Number(mov.quantidade)} ${item.unidade}${mov.custo_unitario != null ? ' a R$ ' + Number(mov.custo_unitario) : ''}, ${brDateBR(mov.data)}, item "${item.nome}"${mov.notes ? ', obs.: ' + String(mov.notes).slice(0, 120) : ''}`;
   if (mov.unidade_id) await query("UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1 AND estado='baixado'", [mov.unidade_id]);
   await query('DELETE FROM erp_estoque_movimentos WHERE id=$1', [mov.id]);
+  if (mov.origem === 'compra') await atualizaPrecoUltimaCompra(item.id);
   const cmp = await recalcularCmpItem(item.id);
   res.json({ ok: true, custo_medio: cmp, resumo });
 }));

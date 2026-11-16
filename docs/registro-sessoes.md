@@ -8510,3 +8510,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (24 PASS: cadastro, compra, ajuste, envio, troca de tamanho do envio, resumo e correção de lançamentos) e simulador (tabela com etiquetas, cadastro com sugestão por categoria, formulários de ajuste, compra e envio, ficha e histórico). Os testes anteriores de Suprimentos seguem passando. Não testado: produção logada. Limites: itens existentes sem grade seguem como antes; se uma grade for ligada num item que já tem estoque, o saldo antigo aparece como "Sem tam." até ser classificado editando os lançamentos no histórico; termos e etiquetas de envio não mostram o tamanho (só equipamento tem termo).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-16 — Sessão 235: Suprimentos > Compras — editar e excluir compras com justificativa
+
+**Solicitação:** o Marcelo pediu, na aba Compras, um botão Editar e um Excluir (com justificativa) em cada lançamento, para corrigir compras registradas errado.
+
+**O que mudou:** a aba Compras ganhou a coluna **Ações** com ✎ Editar e 🗑 Excluir (padrão `.btn-ic`, vermelho afastado), visíveis só para quem edita Suprimentos e reaproveitando as janelas do histórico, com **justificativa obrigatória**. A edição de compra altera quantidade, custo unitário, data, tamanho (item com grade), observação e também **Fornecedor** e **Documento/NF**; fornecedor inexistente é recusado antes de gravar. Compra que gerou título ainda existente em Contas a Pagar fica com os botões desabilitados (o servidor também barra, com o número do título). Depois de editar ou excluir, o **preço da última compra** do item passa a ser o da compra mais recente que sobrou (sem apagar o do cadastro se não sobrar nenhuma) e o **CMP é recalculado** pelo histórico, como já era. Valem as mesmas barras de estoque negativo e de tamanho sem saldo. Sem migração.
+
+**Arquivos:** `api/index.js`, `public/app.js`, `scripts/2026-11-16_suprimentos_compras_editar_excluir.js`, `scripts/2026-11-16_verifica_compras_editar_excluir.js`.
+
+**Verificação:** teste de backend com banco simulado (7 PASS) e os quatro anteriores de Suprimentos seguem passando; simulador: coluna, botão desabilitado em compra com título, editar (fornecedor, NF e custo), excluir e recarga. Não testado: produção logada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

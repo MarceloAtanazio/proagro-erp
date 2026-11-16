@@ -3800,7 +3800,7 @@ function supVerLancamento(i, m, voltar) {
     </div>`,
     [{ label: 'Voltar ao histórico', onClick: voltar }]);
 }
-function supEditarLancamento(i, m, depois) {
+function supEditarLancamento(i, m, depois, forn) {
   const entrada = m.tipo === 'entrada';
   openModal(`Editar lançamento — ${esc(i.nome)}`, `
     <p class="hint">${SUP_ORIG_LANC[m.origem]} (${entrada ? 'entrada' : 'saída'}) de <strong>${brDate(m.data)}</strong>. Ao salvar, o custo médio do item é recalculado a partir do histórico.</p>
@@ -3813,6 +3813,7 @@ function supEditarLancamento(i, m, depois) {
       ${fld('lc-data', 'Data', 'date', String(m.data).slice(0, 10))}
       ${fld('lc-notes', m.origem === 'ajuste' ? 'Motivo do ajuste *' : 'Observação', 'text', m.notes || '')}
     </div>
+    ${m.origem === 'compra' ? `<div class="form-row">${fldSel('lc-forn', 'Fornecedor', [{ v: '', t: '—' }, ...(forn || []).filter(s => s.status === 'ativo' || s.id === m.supplier_id).map(s => ({ v: s.id, t: s.name }))], m.supplier_id || '')}${fld('lc-doc', 'Documento / NF', 'text', m.documento || '')}</div>` : ''}
     ${entrada && m.origem === 'ajuste' ? '<p class="hint" style="margin-top:-4px">Custo em branco = entrada sem custo (não entra na média do custo médio).</p>' : ''}
     ${fld('lc-motivo', 'Justificativa da alteração *', 'text', '', 'placeholder="Ex.: quantidade digitada errada"')}`,
     [{ label: 'Cancelar', onClick: closeModal },
@@ -3821,7 +3822,8 @@ function supEditarLancamento(i, m, depois) {
         if (motivo.length < 5) return modalError('Informe a justificativa da alteração.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
         try {
-          const r = await api(`/api/suprimentos/movimentos/${m.id}`, { method: 'PUT', body: { quantidade: $('#lc-qtd').value, custo_unitario: entrada ? $('#lc-custo').value : undefined, data: $('#lc-data').value, notes: $('#lc-notes').value, motivo, tamanho: $('#lc-tam') ? $('#lc-tam').value : undefined } });
+          const r = await api(`/api/suprimentos/movimentos/${m.id}`, { method: 'PUT', body: { quantidade: $('#lc-qtd').value, custo_unitario: entrada ? $('#lc-custo').value : undefined, data: $('#lc-data').value, notes: $('#lc-notes').value, motivo, tamanho: $('#lc-tam') ? $('#lc-tam').value : undefined,
+            documento: $('#lc-doc') ? $('#lc-doc').value : undefined, supplier_id: $('#lc-forn') ? $('#lc-forn').value : undefined } });
           toast('Lançamento corrigido.' + (r.custo_medio != null ? ' Custo médio: ' + brl(r.custo_medio) + '.' : '')); depois();
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Salvar alteração'; } }
      } }]);
@@ -3855,16 +3857,21 @@ async function supRenderCompras(panel) {
   panel.innerHTML = `
     <div class="toolbar"><div class="spacer"></div>${edit ? '<button class="btn primary" id="sup-new-compra">+ Registrar compra</button>' : ''}</div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th class="num">Custo un.</th><th class="num">Total</th><th>Fornecedor</th><th>Documento</th><th>Financeiro</th></tr></thead>
+      <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th class="num">Custo un.</th><th class="num">Total</th><th>Fornecedor</th><th>Documento</th><th>Financeiro</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
       <tbody>${movs.map(m => `<tr>
         <td>${brDate(m.data)}</td><td>${esc(m.item_nome)}${m.tamanho ? ` <span class="badge off">Tam. ${esc(m.tamanho)}</span>` : ''}</td>
         <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
         <td class="num">${brl(m.custo_unitario)}</td><td class="num">${brl(m.valor_total)}</td>
         <td>${esc(m.supplier_name || '—')}</td><td>${esc(m.documento || '—')}</td>
         <td>${m.payable_id ? '<span class="badge ok">Em Contas a Pagar</span>' : '<span class="badge off">—</span>'}</td>
-      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">Nenhuma compra registrada ainda.</div></td></tr>'}</tbody>
+        ${edit ? `<td class="actions sup-acoes"><button class="btn-ic" data-cpedit="${m.id}" ${m.payable_id ? 'disabled' : ''} title="${m.payable_id ? 'Compra lançada em Contas a Pagar (#' + m.payable_id + '): resolva o título antes de corrigir' : 'Editar esta compra (pede a justificativa)'}" aria-label="Editar compra">✎</button><button class="btn-ic exc" data-cpdel="${m.id}" ${m.payable_id ? 'disabled' : ''} title="${m.payable_id ? 'Compra lançada em Contas a Pagar (#' + m.payable_id + '): resolva o título antes de corrigir' : 'Excluir esta compra (pede a justificativa)'}" aria-label="Excluir compra">🗑</button></td>` : ''}
+      </tr>`).join('') || `<tr><td colspan="${edit ? 9 : 8}"><div class="empty">Nenhuma compra registrada ainda.</div></td></tr>`}</tbody>
     </table></div>`;
   if (edit) $('#sup-new-compra').onclick = () => supFormCompra(itens, fornecedores);
+  const itemDe = m => itens.find(x => x.id === m.item_id) || { id: m.item_id, nome: m.item_nome, unidade: m.unidade, grade_tamanhos: m.item_grade };
+  const depois = () => { closeModal(); renderSuprimentos(); };
+  panel.querySelectorAll('[data-cpedit]').forEach(b => b.onclick = () => { const m = movs.find(x => x.id == b.dataset.cpedit); supEditarLancamento(itemDe(m), m, depois, fornecedores); });
+  panel.querySelectorAll('[data-cpdel]').forEach(b => b.onclick = () => { const m = movs.find(x => x.id == b.dataset.cpdel); supExcluirLancamento(itemDe(m), m, depois); });
 }
 
 function supFormCompra(itens, fornecedores) {
