@@ -6367,6 +6367,30 @@ function viaLiberarComprovacaoModal(s, depois) {
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Liberar bloqueio'; } }
      } }]);
 }
+function viaTrocarCarroProprioModal(s, depois) {
+  const t = (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {};
+  const diaria = a => (String(a && a.valor_diaria || '').includes(',') ? Number(String(a.valor_diaria).replace(/\./g, '').replace(',', '.')) : Number(a && a.valor_diaria)) || 0;
+  const alug = (Array.isArray(t.alugueis) ? t.alugueis : []).reduce((a, x) => a + diaria(x) * (Number(x && x.dias) || 0), 0);
+  openModal(`Trocar para carro próprio — ${esc(s.colaborador_name)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">Use quando <strong>${esc(s.colaborador_name)}</strong> pediu aluguel, não havia carro disponível na locadora e ele rodou com o <strong>próprio veículo</strong>.</p>
+    <ul style="font-size:13.5px; color:var(--ink-2); margin:0 0 12px; padding-left:18px; line-height:1.55">
+      <li>A quilometragem passa a ser comprovada e <strong>reembolsada como carro próprio</strong> (valor por km, fila de aprovação normal).</li>
+      <li>O valor do aluguel já liberado (<strong>${brl(alug)}</strong>) <strong>não é alterado</strong>: sem comprovação nesse item, ele aparece em "A devolver ao Flash".</li>
+      <li>A troca e a justificativa ficam registradas no histórico. A documentação do veículo não bloqueia, mas você será avisado se houver pendência.</li>
+    </ul>
+    <div class="field"><label for="tc-motivo">Justificativa</label><textarea id="tc-motivo" rows="3" placeholder="Ex.: locadora sem veículo disponível na retirada; viagem feita com o carro próprio."></textarea></div>`,
+    [{ label: 'Voltar', onClick: () => { closeModal(); if (depois) depois(); } },
+     { label: 'Trocar para carro próprio', cls: 'primary', onClick: async (ev) => {
+        const motivo = $('#tc-motivo').value.trim();
+        if (motivo.length < 5) return modalError('Informe a justificativa da troca.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Trocando…'; }
+        try {
+          const r = await api(`/api/viaticos/solicitacoes/${s.id}/trocar-carro-proprio`, { method: 'POST', body: { motivo } });
+          closeModal(); toast('Viagem trocada para carro próprio.' + ((r.avisos || []).length ? ' Atenção: ' + r.avisos.join('; ') + '.' : ''));
+          if (depois) depois();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Trocar para carro próprio'; } }
+     } }]);
+}
 function viaPodeCancelar(s) {
   if (s.status === 'em_approvals') return true;
   return ['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() < String(s.data_inicio).slice(0, 10);
@@ -6680,6 +6704,7 @@ async function viewSolicitacao(id) {
   const voltar = () => viewSolicitacao(id);
   const taxaKm = km.taxa_vigente || 0.70;
   const acharKm = i => (km.registros || []).find(x => x.id === Number(i));
+  document.querySelectorAll('[data-trocarprop]').forEach(b => b.onclick = () => viaTrocarCarroProprioModal(s, voltar));
   document.querySelectorAll('[data-kmnovo]').forEach(b => b.onclick = () => viaKmForm(s, b.dataset.kmnovo, null, taxaKm, voltar));
   document.querySelectorAll('[data-kmedit]').forEach(b => b.onclick = () => {
     const k = acharKm(b.dataset.kmedit); if (k) viaKmForm(s, k.modelo, k, taxaKm, voltar);
@@ -15753,14 +15778,19 @@ function viaKmSecao(s, dados) {
   const jaTem = m => regs.some(k => k.modelo === m && k.status !== 'rejeitado');
   const novos = [];
   if (t.carro_proprio && !jaTem('proprio')) novos.push('proprio');
-  if (t.aluguel_carro && !jaTem('alugado')) novos.push('alugado');
+  if (t.aluguel_carro && !t.troca_veiculo && !jaTem('alugado')) novos.push('alugado');
+  const finalizadaKm = ['comprovado', 'devolvido', 'divergente', 'arquivado'].includes(s.status);
+  const podeTrocar = !READONLY && t.aluguel_carro && !t.carro_proprio && !t.troca_veiculo && !finalizadaKm && !regs.some(k => k.modelo === 'alugado' && k.status !== 'rejeitado');
+  const tv = t.troca_veiculo;
 
   return `<div class="via-km-sec">
     <div class="via-km-cab">
       <h4>Quilometragem rodada</h4>
       <span class="via-km-taxa">Carro próprio: <strong>${brl(taxa)}/km</strong> pelo uso do veículo — seguro, manutenção, depreciação e pneus. O combustível é custeado à parte pela empresa.</span>
     </div>
+    ${tv ? `<div class="rh-nota" style="margin-bottom:10px">🚙 <strong>Trocado de aluguel para carro próprio</strong> por ${esc(tv.por || '—')} em ${brDate(String(tv.em || '').slice(0, 10))}. Justificativa: <em>${esc(tv.motivo || '—')}</em>. O valor do aluguel liberado (${brl(tv.aluguel_valor_mantido || 0)}) permanece na solicitação e, sem comprovação, volta ao Flash.</div>` : ''}
     ${linhas || '<div class="via-km-vazio">Nenhuma quilometragem informada nesta viagem.</div>'}
+    ${podeTrocar ? `<div class="via-km-acoes"><button class="btn sm" data-trocarprop="${s.id}" title="Para quando o colaborador pediu aluguel, não havia carro disponível e ele rodou com o próprio">🚙 Trocar para carro próprio</button></div>` : ''}
     ${!terminou ? `<div class="via-km-vazio">A viagem termina em ${brDate(s.data_fim)}. A quilometragem se comprova depois do retorno.</div>`
       : podeEditar && novos.length ? `<div class="via-km-acoes">${novos.map(m =>
         `<button class="btn sm primary" data-kmnovo="${m}">+ Informar km do ${KM_MODELO_LABEL[m].toLowerCase()}</button>`).join('')}</div>` : ''}

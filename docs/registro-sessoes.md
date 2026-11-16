@@ -8431,3 +8431,16 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 
 **Correção (mesma sessão):** com zoom o mapa vazava da caixa para o resto da página — a regra nova do SVG tinha `overflow: visible`. Agora `overflow: hidden` no SVG e na moldura (`public/styles.css`, `scripts/2026-11-13_rh_mapa_legivel_css.txt`). Conferido no simulador com três níveis de zoom.
+
+
+## 2026-11-16 — Sessão 230: Viáticos — "Trocar para carro próprio" na comprovação
+
+**Solicitação:** na OT 180 o Arthur pediu aluguel de carro, não havia veículo na locadora e ele rodou com o próprio; como a viagem só tinha aluguel, não era possível comprovar a quilometragem. O Marcelo pediu um botão, só para admin e quem edita, para trocar para carro próprio, e decidiu: o valor do aluguel já liberado não é zerado (sem comprovação nesse item volta ao Flash em "A devolver"), a km passa a ser reembolsada como carro próprio e a documentação do veículo não bloqueia.
+
+**O que mudou:** (1) no modal "Comprovar viagem", na seção Quilometragem, botão **🚙 Trocar para carro próprio** (admin e quem edita Viáticos; só em "aguardando comprovação", só se a viagem tem aluguel e ainda não há km de alugado); pede justificativa (mín. 5 caracteres). (2) `POST /api/viaticos/solicitacoes/:id/trocar-carro-proprio`: grava em `transporte_detalhes` `carro_proprio=true`, rota própria com km previsto = soma das distâncias do aluguel (custos zerados na rota para não duplicar) e `troca_veiculo` (quem, quando, motivo, valor do aluguel mantido); não mexe no valor liberado nem nas diárias do aluguel; devolve avisos se CNH/CRLV/seguro estiverem pendentes, sem bloquear; entra no histórico de auditoria. (3) Depois da troca o km "alugado" é recusado (409) e só o km de carro próprio é oferecido; ele segue o fluxo normal de aprovação e gera a conta a pagar por km. (4) A seção mostra um aviso com quem trocou, quando e por quê. Sem migração.
+
+**Arquivos:** `api/index.js`, `public/app.js`, `scripts/2026-11-16_viaticos_trocar_carro_proprio.js`, `scripts/2026-11-16_verifica_trocar_carro_proprio.js`.
+
+**Verificação:** teste de backend com banco simulado (14 verificações: permissões, justificativa, status, duplicidade, km previsto, valor liberado intocado, aviso de documento, km alugado recusado); simulador: botão, modal, justificativa curta recusada, troca, aviso e "A devolver ao Flash" inalterado. Não testado: produção logada e o fluxo completo de aprovação do km pós-troca. Obs.: se alguém editar depois a solicitação pelo assistente de nova OT, aluguel e carro próprio juntos podem ser recusados pela validação do formulário; a troca não passa por ali.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

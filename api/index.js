@@ -347,6 +347,7 @@ const AUDIT_MAP = {
   'POST /api/viaticos/km/:id/decidir': (req, body) => `${req.body.aprovar ? 'APROVOU' : 'Rejeitou'} a comprovação de quilometragem ID ${req.params.id}${body && body.payable_id ? ` — gerou a conta a pagar ${body.payable_id} (R$ ${body.valor})` : ''}${req.body.motivo ? ` — ${req.body.motivo}` : ''}`,
   'DELETE /api/viaticos/km/:id': req => `Excluiu a comprovação de quilometragem ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/arquivar': req => `Arquivou a solicitação de viático ID ${req.params.id}`,
+  'POST /api/viaticos/solicitacoes/:id/trocar-carro-proprio': req => `Trocou de aluguel para CARRO PRÓPRIO (uso do veículo do colaborador) na solicitação de viático ID ${req.params.id}: ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
   'POST /api/viaticos/solicitacoes/:id/liberar-comprovacao': req => `Liberou (admin) a comprovação em atraso da solicitação de viático ID ${req.params.id}: ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
   'POST /api/viaticos/solicitacoes/:id/reabrir': req => `Reabriu (admin) a solicitação de viático ID ${req.params.id}`,
   'POST /api/viaticos/solicitacoes/:id/excesso-status': req => `${req.body.status === 'aprovado' ? 'Aprovou' : 'Reprovou'} o excesso da TUD ("${req.body.chave}") na solicitação de viático ID ${req.params.id}` +
@@ -7416,6 +7417,39 @@ app.delete('/api/viaticos/solicitacoes/:id', requireAuth, requireEdit('viaticos'
 }));
 
 // Libera uma comprovação em atraso (só administrador, com justificativa). O atraso continua contando nos indicadores.
+// Trocar de aluguel para carro próprio (admin e quem edita Viáticos). Caso real: o colaborador pediu aluguel, não havia carro na locadora e rodou com o
+// próprio. O valor do aluguel que o Flash já repassou continua na solicitação — sem comprovação nesse item ele volta ao Flash em "a devolver". A
+// quilometragem passa a ser comprovada e reembolsada como carro próprio. A documentação do veículo NÃO bloqueia (a justificativa fica no histórico), mas
+// a resposta avisa o que está pendente. Previsão de km = soma das distâncias do aluguel; combustível/pedágio/estacionamento seguem nos itens do aluguel
+// (zerados na rota própria para não contar duas vezes se a solicitação for recalculada).
+app.post('/api/viaticos/solicitacoes/:id/trocar-carro-proprio', requireAuth, requireEdit('viaticos'), h(async (req, res) => {
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa da troca.' });
+  const solId = Number(req.params.id);
+  const sol = (await query('SELECT * FROM erp_viaticos_solicitacoes WHERE id=$1', [solId]))[0];
+  if (!sol) return res.status(404).json({ error: 'Viagem não encontrada.' });
+  if (sol.status !== 'aguardando_comprovacao') return res.status(409).json({ error: 'A troca só é possível enquanto a viagem aguarda comprovação.' });
+  const t = (sol.transporte_detalhes && typeof sol.transporte_detalhes === 'object') ? { ...sol.transporte_detalhes } : {};
+  if (t.troca_veiculo) return res.status(409).json({ error: 'Esta viagem já foi trocada para carro próprio.' });
+  if (!t.aluguel_carro) return res.status(409).json({ error: 'Esta viagem não foi solicitada com aluguel de carro.' });
+  if (t.carro_proprio) return res.status(409).json({ error: 'Esta viagem já tem carro próprio.' });
+  const kmAlugado = await query("SELECT 1 FROM erp_viaticos_km WHERE solicitacao_id=$1 AND modelo='alugado' AND status <> 'rejeitado' LIMIT 1", [solId]);
+  if (kmAlugado.length) return res.status(409).json({ error: 'Já existe quilometragem de carro alugado nesta viagem. Exclua esse registro antes de trocar.' });
+
+  const alugueis = Array.isArray(t.alugueis) ? t.alugueis : [];
+  const dist = alugueis.reduce((a, x) => a + (Number(x && x.distancia_km) || 0), 0);
+  const diaria = a => (String(a && a.valor_diaria || '').includes(',') ? Number(String(a.valor_diaria).replace(/\./g, '').replace(',', '.')) : Number(a && a.valor_diaria)) || 0;
+  const aluguelValor = Number(alugueis.reduce((a, x) => a + diaria(x) * (Number(x && x.dias) || 0), 0).toFixed(2));
+  t.carro_proprio = true;
+  t.carro_proprio_rota = { distancia_km: dist > 0 ? Number(dist.toFixed(1)) : '', combustivel_valor: 0, pedagio_valor: 0, estacionamento_qtd: 0, estacionamento_valor: 0, trechos: [], manual_override: false, de_aluguel: true };
+  t.troca_veiculo = { de: 'aluguel_carro', para: 'carro_proprio', em: new Date().toISOString(), por: req.user.name, motivo: motivo.slice(0, 500), aluguel_valor_mantido: aluguelValor };
+  await query('UPDATE erp_viaticos_solicitacoes SET transporte_detalhes=$2 WHERE id=$1', [solId, JSON.stringify(t)]);
+
+  const colab = (await query('SELECT * FROM erp_colaboradores WHERE id=$1', [sol.colaborador_id]))[0];
+  const hab = colab ? viaBloqueiosDirecao(colab) : { proprio: [] };
+  res.json({ ok: true, aluguel_valor_mantido: aluguelValor, km_previsto: dist > 0 ? Number(dist.toFixed(1)) : null, avisos: hab.podeCarroProprio === false ? hab.proprio : [] });
+}));
+
 app.post('/api/viaticos/solicitacoes/:id/liberar-comprovacao', requireAuth, requireAdmin, h(async (req, res) => {
   const motivo = String(sanitize(req.body && req.body.motivo) || '');
   if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa do atraso.' });
@@ -7772,6 +7806,9 @@ app.post('/api/viaticos/solicitacoes/:id/km', requireAuth, h(async (req, res) =>
   const t = (sol.transporte_detalhes && typeof sol.transporte_detalhes === 'object') ? sol.transporte_detalhes : {};
   if (modelo === 'proprio' && !t.carro_proprio) {
     return res.status(409).json({ error: 'Esta viagem não foi solicitada com carro próprio.' });
+  }
+  if (modelo === 'alugado' && t.troca_veiculo) {
+    return res.status(409).json({ error: 'Esta viagem foi trocada de aluguel para carro próprio: informe a quilometragem como carro próprio.' });
   }
   if (modelo === 'alugado' && !t.aluguel_carro) {
     return res.status(409).json({ error: 'Esta viagem não foi solicitada com carro alugado.' });
