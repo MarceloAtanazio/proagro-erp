@@ -3367,18 +3367,21 @@ async function supRenderEstoque(panel) {
     <div class="toolbar">
       <input type="search" id="sup-q" placeholder="Buscar item, código, categoria…">
       <select id="sup-ftipo"><option value="">Todos os tipos</option><option value="material">Material</option><option value="equipamento">Equipamento</option></select>
+      <label class="sup-mostra-inat"><input type="checkbox" id="sup-inat"> Mostrar inativos e excluídos</label>
       <div class="spacer"></div>
       ${edit ? '<button class="btn primary" id="sup-new-item">+ Novo item</button>' : ''}
     </div>
     <div class="table-wrap"><table id="sup-tbl"></table></div>`;
   const draw = () => {
     const q = $('#sup-q').value.toLowerCase(), ft = $('#sup-ftipo').value;
-    const rows = itens.filter(i => (!ft || i.tipo === ft) && (!q || (i.nome + ' ' + (i.sku || '') + ' ' + (i.categoria || '')).toLowerCase().includes(q)));
+    const mostraInat = $('#sup-inat').checked;
+    const rows = itens.filter(i => (mostraInat || i.ativo) && (!ft || i.tipo === ft) && (!q || (i.nome + ' ' + (i.sku || '') + ' ' + (i.categoria || '')).toLowerCase().includes(q)));
     $('#sup-tbl').innerHTML = `
       <thead><tr><th>Item</th><th>Tipo</th><th>Categoria</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="num">Custo médio</th><th class="num">Valor total</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${rows.map(i => {
         const atual = Number(i.estoque_atual), min = Number(i.estoque_minimo), baixo = atual < min, zero = atual <= 0;
-        const sit = !i.ativo ? '<span class="badge off">Inativo</span>' : zero ? '<span class="badge late">Sem estoque</span>' : baixo ? '<span class="badge warn">Baixo</span>' : '<span class="badge ok">OK</span>';
+        const excl = !i.ativo && /^\[Excluído/.test(String(i.notes || ''));
+        const sit = excl ? '<span class="badge late" title="' + esc(String(i.notes).split('\n')[0]) + '">Excluído</span>' : !i.ativo ? '<span class="badge off">Inativo</span>' : zero ? '<span class="badge late">Sem estoque</span>' : baixo ? '<span class="badge warn">Baixo</span>' : '<span class="badge ok">OK</span>';
         return `<tr${!i.ativo ? ' style="opacity:.55"' : ''}>
           <td><strong>${esc(i.nome)}</strong>${i.sku ? '<br><small class="mono" style="color:var(--muted)">' + esc(i.sku) + '</small>' : ''}</td>
           <td>${i.tipo === 'equipamento' ? 'Equipamento' : 'Material'}</td>
@@ -3388,12 +3391,13 @@ async function supRenderEstoque(panel) {
           <td class="num">${brl(i.custo_medio)}</td>
           <td class="num">${brl(atual * Number(i.custo_medio))}</td>
           <td>${sit}</td>
-          <td class="actions">
-            <button class="btn sm" data-ficha="${i.id}">Ficha</button>
-            ${i.tipo === 'equipamento' ? `<button class="btn sm" data-unid="${i.id}">Unidades</button>` : ''}
-            ${edit ? `<button class="btn sm" data-mov="${i.id}">Ajustar</button>
-            <button class="btn sm" data-hist="${i.id}">Histórico</button>
-            <button class="btn sm" data-edit="${i.id}">Editar</button>` : ''}
+          <td class="actions sup-acoes">
+            <button class="btn-ic ok" data-ficha="${i.id}" title="Ficha do item" aria-label="Ficha do item">👁</button>
+            ${i.tipo === 'equipamento' ? `<button class="btn-ic" data-unid="${i.id}" title="Unidades (nº de série e patrimônio)" aria-label="Unidades">🏷</button>` : ''}
+            ${edit ? `${excl ? '' : `<button class="btn-ic" data-mov="${i.id}" title="Ajustar o estoque (entrada ou saída manual)" aria-label="Ajustar estoque">±</button>`}
+            <button class="btn-ic" data-hist="${i.id}" title="Histórico de movimentações" aria-label="Histórico">🕘</button>
+            ${excl ? '' : `<button class="btn-ic" data-edit="${i.id}" title="Editar" aria-label="Editar">✎</button>
+            <button class="btn-ic exc" data-exc="${i.id}" title="Excluir o item (pede a justificativa)" aria-label="Excluir">🗑</button>`}` : ''}
           </td>
         </tr>`;
       }).join('') || `<tr><td colspan="9"><div class="empty">Nenhum item cadastrado ainda.</div></td></tr>`}</tbody>`;
@@ -3401,13 +3405,33 @@ async function supRenderEstoque(panel) {
     $('#sup-tbl').querySelectorAll('[data-unid]').forEach(b => b.onclick = () => supUnidades(itens.find(i => i.id == b.dataset.unid)));
     if (edit) {
       $('#sup-tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => supFormItem(itens.find(i => i.id == b.dataset.edit)));
+      $('#sup-tbl').querySelectorAll('[data-exc]').forEach(b => b.onclick = () => supExcluirItem(itens.find(i => i.id == b.dataset.exc)));
       $('#sup-tbl').querySelectorAll('[data-mov]').forEach(b => b.onclick = () => supFormAjuste(itens.find(i => i.id == b.dataset.mov)));
       $('#sup-tbl').querySelectorAll('[data-hist]').forEach(b => b.onclick = () => supHistorico(itens.find(i => i.id == b.dataset.hist)));
     }
   };
   ['sup-q', 'sup-ftipo'].forEach(id => $('#' + id).oninput = draw);
+  $('#sup-inat').onchange = draw;
   if (edit) $('#sup-new-item').onclick = () => supFormItem(null);
   draw();
+}
+
+function supExcluirItem(i) {
+  const atual = Number(i.estoque_atual) || 0, valor = atual * Number(i.custo_medio || 0);
+  openModal(`Excluir item — ${esc(i.nome)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">O item sai do estoque e das listas. O <strong>histórico de movimentações é preservado</strong> e a justificativa fica registrada (no item e no histórico de auditoria).</p>
+    ${atual > 0 ? `<div class="alert-item late" style="margin-bottom:10px">⚠️ Ainda há <strong>${supNum(atual)} ${esc(i.unidade)}</strong> em estoque (${brl(valor)}). Ao excluir, esse saldo é baixado do estoque.</div>` : ''}
+    <div class="field"><label for="ex-motivo">Justificativa da exclusão</label><textarea id="ex-motivo" rows="3" placeholder="Ex.: item cadastrado em duplicidade; equipamento descontinuado."></textarea></div>`,
+    [{ label: 'Voltar', onClick: closeModal },
+     { label: 'Excluir item', cls: 'primary', onClick: async (ev) => {
+        const motivo = $('#ex-motivo').value.trim();
+        if (motivo.length < 5) return modalError('Informe a justificativa da exclusão.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Excluindo…'; }
+        try {
+          await api(`/api/suprimentos/itens/${i.id}/excluir`, { method: 'POST', body: { motivo } });
+          closeModal(); toast('Item excluído.'); renderSuprimentos();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Excluir item'; } }
+     } }]);
 }
 
 // Origem da mercadoria (tabela B do SPED) — exigida na nota fiscal.

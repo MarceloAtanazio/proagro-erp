@@ -2051,3 +2051,12 @@ tr.via-fam-linha td.num { padding-left: 0; }
 @media (max-width: 1280px) { .rhm-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 1000px) { .rhm-grid { grid-template-columns: 1fr; } .rhm-svg { max-height: 520px; } .rhm-busca { margin-left: 0; width: 100%; } }
 @media (max-width: 640px) { .rhm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rhm-uf-cab { grid-template-columns: 38px minmax(0, 1fr) 30px 42px; } .rhm-uf-cab .bar { display: none; } .rhm-uf-cid { padding-left: 12px; } }
+
+/* Suprimentos > Estoque: ações da linha em ícones (padrão .btn-ic, como Viáticos). Ficha em verde cheio; Excluir em vermelho, afastado dos demais. */
+td.sup-acoes { white-space: nowrap; }
+td.sup-acoes .btn-ic { margin: 0 0 0 3px; }
+td.sup-acoes .btn-ic.ok { background: var(--verde-700); border-color: var(--verde-700); color: #fff; }
+td.sup-acoes .btn-ic.ok:hover { background: var(--verde-500); border-color: var(--verde-500); }
+td.sup-acoes .btn-ic.exc { margin-left: 12px; color: var(--danger); border-color: var(--danger); }
+td.sup-acoes .btn-ic.exc:hover { background: var(--danger-050); }
+.sup-mostra-inat { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }

@@ -363,6 +363,7 @@ const AUDIT_MAP = {
   // Suprimentos (estoque é área sensível: todo movimento fica registrado)
   'POST /api/suprimentos/itens': (req, body) => `Cadastrou o item de estoque "${req.body.nome}" (ID ${body && body.id})`,
   'PUT /api/suprimentos/itens/:id': req => `Editou o item de estoque ID ${req.params.id} ("${req.body.nome}"${req.body.ativo === false ? ', inativado' : ''})`,
+  'POST /api/suprimentos/itens/:id/excluir': req => `Excluiu o item de estoque ID ${req.params.id} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
   'DELETE /api/suprimentos/itens/:id': req => `Excluiu o item de estoque ID ${req.params.id}`,
   'POST /api/suprimentos/compras': (req, body) => `Registrou compra de ${req.body.quantidade} un. do item ID ${req.body.item_id} a ${fmtBRL(req.body.custo_unitario)}/un` +
     (body && body.payable_id ? ` — lançada em Contas a Pagar (título ID ${body.payable_id})` : ''),
@@ -8138,6 +8139,34 @@ app.delete('/api/suprimentos/itens/:id', requireAuth, SUP_EDIT, h(async (req, re
   if (used > 0) return res.status(409).json({ error: `Item possui ${used} movimentação(ões). Inative-o em vez de excluir.` });
   await query('DELETE FROM erp_estoque_itens WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
+}));
+
+// Excluir item com justificativa. Sem movimentação nem unidade: apaga de vez. Com histórico: inativa e preserva tudo (o saldo restante sai por ajuste, as
+// unidades em estoque são baixadas e a justificativa fica nas observações do item e na auditoria). Equipamento em custódia com colaborador barra.
+app.post('/api/suprimentos/itens/:id/excluir', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa da exclusão.' });
+  const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [req.params.id]))[0];
+  if (!item) return res.status(404).json({ error: 'Item não encontrado.' });
+  if (!item.ativo && /^\[Excluído/.test(String(item.notes || ''))) return res.status(409).json({ error: 'Este item já foi excluído.' });
+  const env = (await query("SELECT COUNT(*)::int AS n FROM erp_estoque_movimentos WHERE item_id=$1 AND origem='envio' AND status <> 'devolvido'", [item.id]))[0].n;
+  const cust = (await query("SELECT COUNT(*)::int AS n FROM erp_estoque_unidades WHERE item_id=$1 AND estado='em_custodia'", [item.id]))[0].n;
+  if (env > 0 || cust > 0) return res.status(409).json({ error: `Há ${Math.max(env, cust)} unidade(s) em custódia com colaboradores. Registre a devolução em "Envios a funcionários" antes de excluir.` });
+  const movs = (await query('SELECT COUNT(*)::int AS n FROM erp_estoque_movimentos WHERE item_id=$1', [item.id]))[0].n;
+  const unids = (await query('SELECT COUNT(*)::int AS n FROM erp_estoque_unidades WHERE item_id=$1', [item.id]))[0].n;
+  if (!movs && !unids) {
+    await query('DELETE FROM erp_estoque_itens WHERE id=$1', [item.id]);
+    return res.json({ ok: true, modo: 'removido' });
+  }
+  const saldo = await estoqueAtualItem(item.id);
+  if (saldo > 0) {
+    await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, data, notes, created_by)
+      VALUES ($1,'saida','ajuste',$2,$3,$4,$5)`, [item.id, saldo, hojeISO(), `Exclusão do item: ${motivo}`, req.user.id]);
+  }
+  await query("UPDATE erp_estoque_unidades SET estado='baixado' WHERE item_id=$1 AND estado='em_estoque'", [item.id]);
+  const marca = `[Excluído em ${brDateBR(hojeISO())} por ${req.user.name}] ${motivo}`;
+  await query("UPDATE erp_estoque_itens SET ativo=false, notes = CASE WHEN COALESCE(notes,'')='' THEN $2::text ELSE $2::text || E'\\n' || notes END WHERE id=$1", [item.id, marca]);
+  res.json({ ok: true, modo: 'inativado', saldo_baixado: saldo });
 }));
 
 app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res) => {

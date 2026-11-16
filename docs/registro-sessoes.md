@@ -8448,3 +8448,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Correção (mesma sessão, 2026-11-16):** o botão não aparecia na OT 180 porque o Arthur já tinha lançado a km como "carro alugado" (aguardando aprovação) e a troca era bloqueada nesse caso. Agora o botão aparece mesmo assim e a troca **converte** o(s) registro(s) de km de alugado para carro próprio: taxa vigente por km, reembolso recalculado (km rodado x taxa), km previsto da rota própria; um registro já aprovado como alugado volta para "aguardando aprovação" para gerar a conta a pagar. O modal avisa da conversão e do valor (ex.: 1.286 km x R$ 0,70 = R$ 900,20). Permissão inalterada: quem edita Viáticos (que é quem vê todas as OTs) e admin. Arquivos: `api/index.js`, `public/app.js`, `scripts/2026-11-16_viaticos_trocar_converte_km.js`; teste `scripts/2026-11-16_verifica_trocar_carro_proprio.js` atualizado (14 PASS).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-16 — Sessão 231: Suprimentos > Estoque — excluir item com justificativa e ações em ícones
+
+**Solicitação:** o Marcelo quis entender como o custo médio (CMP) é calculado, ganhar um botão para excluir o equipamento com justificativa e melhorar os botões de ação no padrão das outras páginas.
+
+**CMP (explicação dada no chat):** média ponderada móvel. Cada entrada com custo (compra, ou ajuste de entrada com custo informado) recalcula `novo = (custo médio atual × saldo antes da entrada + valor da entrada) ÷ (saldo antes + quantidade)`, arredondado em centavos. Saídas, envios e devoluções não mexem no CMP. Editar o "preço de custo" do item só vira CMP se o item ainda não tinha custo médio. Entrada por ajuste sem custo usa o CMP atual (ou o último preço); se o CMP é zero, essas unidades entram a custo zero e diluem a média das compras seguintes (caso do "Notebook Asus X1504VANJ1723W": 6 un sem custo + 6 un a R$ 2.951,74 resultaram em CMP R$ 1.477,99, que ficou mesmo depois de a saída corrigir as 6 sem custo).
+
+**O que mudou:** (1) botão **Excluir** (🗑 vermelho) com justificativa obrigatória (mín. 5 caracteres): item sem movimentação é apagado; item com histórico é inativado, o saldo restante sai por ajuste "Exclusão do item: motivo", as unidades em estoque são baixadas e a justificativa vai para o início das observações do item e para a auditoria; equipamento em custódia com colaborador barra a exclusão. (2) Ações da linha em ícones no padrão `.btn-ic`: 👁 Ficha (verde cheio), 🏷 Unidades, ± Ajustar, 🕘 Histórico, ✎ Editar, 🗑 Excluir (vermelho, afastado). (3) Itens inativos/excluídos ficam escondidos por padrão; caixa "Mostrar inativos e excluídos" os traz de volta, com a etiqueta "Excluído" e só Ficha e Histórico. Sem migração.
+
+**Arquivos:** `api/index.js`, `public/app.js`, `public/styles.css`, `scripts/2026-11-16_suprimentos_excluir_item_acoes.js`, `scripts/2026-11-16_verifica_excluir_item_estoque.js`.
+
+**Verificação:** teste de backend com banco simulado (10 PASS) e simulador em Clássico e Novo (ícones, caixa de inativos, modal, justificativa curta recusada, envio e recarga). Não testado: produção logada. As abas Compras e Envios continuam com botões de texto.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
