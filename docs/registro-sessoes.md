@@ -8463,3 +8463,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (10 PASS) e simulador em Clássico e Novo (ícones, caixa de inativos, modal, justificativa curta recusada, envio e recarga). Não testado: produção logada. As abas Compras e Envios continuam com botões de texto.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-16 — Sessão 232: Suprimentos — CMP sem diluição por estoque sem custo
+
+**Solicitação:** o Marcelo viu que o Notebook Asus X1504VANJ1723W continuava com CMP R$ 1.477,99 mesmo depois de corrigir o lançamento antigo, sendo a primeira compra real (R$ 2.951,74).
+
+**Causa:** o item recebeu 6 unidades por ajuste sem custo (CMP zero) e depois 6 unidades a R$ 2.951,74; a fórmula ponderou as 6 sem custo a R$ 0 e o CMP caiu para quase a metade. A saída de correção das 6 unidades não recalcula o CMP (saída nunca altera a média).
+
+**O que mudou:** compra e ajuste de entrada com custo passam por `cmpNovo()`: com CMP zero o saldo anterior não entra na média e o novo CMP é o custo da entrada; com CMP > 0 a fórmula é a mesma. O CMP desse item foi corrigido no banco para R$ 2.951,74 (valor anterior R$ 1.477,99, registrado na bitácora). Sem migração. O item "Notebook Asus X11605VMuB7B3W" segue com CMP zero (4 un sem custo): falta informar o custo.
+
+**Arquivos:** `api/index.js`, `scripts/2026-11-16_suprimentos_cmp_sem_diluicao.js`, `scripts/2026-11-16_verifica_cmp_estoque.js`, `scripts/2026-11-16_corrige_cmp_notebook_x1504.sql`.
+
+**Verificação:** teste de backend com banco simulado (5 PASS: caso real, compra, ajuste, ponderação normal e primeira compra). Limite que continua: corrigir uma entrada errada com uma saída não desfaz o efeito dela na média; nesses casos o CMP precisa de correção manual.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

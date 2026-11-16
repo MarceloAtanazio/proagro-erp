@@ -8044,6 +8044,11 @@ const SUP_ESTOQUE_SELECT = `
               FROM erp_estoque_movimentos m WHERE m.item_id = i.id), 0) AS estoque_atual
   FROM erp_estoque_itens i`;
 
+// Custo médio ponderado após uma entrada. Com CMP zero (estoque sem custo) o saldo anterior NÃO entra na média: senão diluiria o custo real da compra.
+function cmpNovo(cmpAtual, baseQtd, qtd, valorEntrada) {
+  const base = Number(cmpAtual) > 0 ? baseQtd : 0;
+  return (base + qtd) > 0 ? ((Number(cmpAtual) * base) + valorEntrada) / (base + qtd) : valorEntrada / (qtd || 1);
+}
 async function estoqueAtualItem(itemId) {
   const r = await query(`SELECT COALESCE(SUM(CASE WHEN tipo='entrada' THEN quantidade ELSE -quantidade END),0) AS q
     FROM erp_estoque_movimentos WHERE item_id=$1`, [itemId]);
@@ -8217,7 +8222,7 @@ app.post('/api/suprimentos/compras', requireAuth, SUP_EDIT, h(async (req, res) =
 
   // Custo médio ponderado sobre o estoque ANTES desta entrada.
   const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);
-  const novoCusto = (baseQtd + qtd) > 0 ? ((Number(item.custo_medio) * baseQtd) + valorTotal) / (baseQtd + qtd) : custo;
+  const novoCusto = cmpNovo(item.custo_medio, baseQtd, qtd, valorTotal);
   await query('UPDATE erp_estoque_itens SET custo_medio=$1, preco_ultima_compra=$2 WHERE id=$3', [Number(novoCusto.toFixed(2)), custo, item.id]);
 
   res.json({ ok: true, id: mov[0].id, payable_id: payableId });
@@ -8499,7 +8504,7 @@ app.post('/api/suprimentos/ajustes', requireAuth, SUP_EDIT, h(async (req, res) =
 
   if (tipo === 'entrada' && custo != null) {
     const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);
-    const novoCusto = (baseQtd + qtd) > 0 ? ((n(item.custo_medio) * baseQtd) + qtd * custo) / (baseQtd + qtd) : custo;
+    const novoCusto = cmpNovo(item.custo_medio, baseQtd, qtd, qtd * custo);
     await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [Number(novoCusto.toFixed(2)), item.id]);
   }
   res.json({ ok: true });
