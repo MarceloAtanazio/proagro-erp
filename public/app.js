@@ -3379,15 +3379,15 @@ async function supRenderEstoque(panel) {
     $('#sup-tbl').innerHTML = `
       <thead><tr><th>Item</th><th>Tipo</th><th>Categoria</th><th class="num">Estoque</th><th class="num">Mínimo</th><th class="num">Custo médio</th><th class="num">Valor total</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
       <tbody>${rows.map(i => {
-        const atual = Number(i.estoque_atual), min = Number(i.estoque_minimo), baixo = atual < min, zero = atual <= 0;
+        const atual = Number(i.estoque_atual), min = Number(i.estoque_minimo), baixo = supAbaixoMin(i), zero = atual <= 0;
         const excl = !i.ativo && /^\[Excluído/.test(String(i.notes || ''));
         const sit = excl ? '<span class="badge late" title="' + esc(String(i.notes).split('\n')[0]) + '">Excluído</span>' : !i.ativo ? '<span class="badge off">Inativo</span>' : zero ? '<span class="badge late">Sem estoque</span>' : baixo ? '<span class="badge warn">Baixo</span>' : '<span class="badge ok">OK</span>';
         return `<tr${!i.ativo ? ' style="opacity:.55"' : ''}>
           <td><strong>${esc(i.nome)}</strong>${i.sku ? '<br><small class="mono" style="color:var(--muted)">' + esc(i.sku) + '</small>' : ''}</td>
           <td>${i.tipo === 'equipamento' ? 'Equipamento' : 'Material'}</td>
           <td>${esc(i.categoria || '—')}</td>
-          <td class="num"><strong>${supNum(atual)}</strong> <small style="color:var(--muted)">${esc(i.unidade)}</small></td>
-          <td class="num">${supNum(min)}</td>
+          <td class="num"><strong>${supNum(atual)}</strong> <small style="color:var(--muted)">${esc(i.unidade)}</small>${supGradeDe(i).length ? `<div class="sup-tams">${supChipsTam(i)}</div>` : ''}</td>
+          <td class="num">${supNum(min)}${supGradeDe(i).length ? '<div><small style="color:var(--muted)">por tamanho</small></div>' : ''}</td>
           <td class="num">${brl(i.custo_medio)}</td>
           <td class="num">${brl(atual * Number(i.custo_medio))}</td>
           <td>${sit}</td>
@@ -3464,6 +3464,7 @@ const SUP_CATALOGO = {
   material: {
     'Escritório e Papelaria': ['Papel', 'Canetas e lápis', 'Pastas e arquivos', 'Etiquetas', 'Grampeadores e acessórios', 'Outros'],
     'EPI': ['Luvas', 'Capacete', 'Botas e calçados', 'Colete / Uniforme', 'Óculos de proteção', 'Protetor solar / repelente', 'Outros'],
+    'Uniformes': ['Camisa', 'Camiseta', 'Calça / bermuda', 'Jaqueta / agasalho', 'Boné / chapéu', 'Calçado / bota', 'Outros'],
     'Limpeza e Copa': ['Produtos de limpeza', 'Descartáveis', 'Café, água e alimentos', 'Outros'],
     'Informática (consumo)': ['Cabos e adaptadores', 'Pilhas e baterias', 'Toner e cartuchos', 'Mídias e pen drives', 'Outros'],
     'Campo e Operação': ['Formulários', 'Embalagens', 'Material de coleta', 'Sinalização', 'Outros'],
@@ -3495,9 +3496,79 @@ function supLigarClassificacao(i) {
   desenharCat();
 }
 
+// ---- Grade de tamanhos (uniformes, calçados etc.) ----
+// O item pode controlar o estoque por tamanho: a grade e o mínimo de cada tamanho ficam no cadastro; compra, ajuste, envio e devolução pedem o tamanho.
+const SUP_GRADES = {
+  'Vestuário': ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XXG'],
+  'Calçado': ['34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46'],
+  'Calça / bermuda': ['36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '56']
+};
+const supGradeDe = i => (i && Array.isArray(i.grade_tamanhos) ? i.grade_tamanhos : []);
+const supPorTam = i => (i && i.estoque_por_tamanho) || {};
+function supAbaixoMin(i) {
+  const g = supGradeDe(i);
+  if (g.length) { const mn = i.minimos_tamanho || {}, st = supPorTam(i); return g.some(t => Number(mn[t]) > 0 && Number(st[t] || 0) < Number(mn[t])); }
+  return Number(i.estoque_atual) < Number(i.estoque_minimo);
+}
+// Etiquetinhas "P 5 · M 8 · G 7" sob o estoque total: vermelho quando o tamanho está abaixo do mínimo, apagado quando zerado.
+function supChipsTam(i) {
+  const g = supGradeDe(i), st = supPorTam(i), mn = i.minimos_tamanho || {}, sem = Number(st['']) || 0;
+  const chip = (t, q, baixo) => `<span class="sup-tam${baixo ? ' baixo' : ''}${q === 0 ? ' zero' : ''}" title="${esc(t)}: ${supNum(q)} em estoque${Number(mn[t]) > 0 ? ' (mínimo ' + supNum(mn[t]) + ')' : ''}">${esc(t)} <b>${supNum(q)}</b></span>`;
+  return g.map(t => chip(t, Number(st[t]) || 0, Number(mn[t]) > 0 && (Number(st[t]) || 0) < Number(mn[t]))).join('')
+    + (sem ? `<span class="sup-tam sem" title="Saldo sem tamanho definido: classifique os lançamentos no histórico do item (editar)">Sem tam. <b>${supNum(sem)}</b></span>` : '');
+}
+function supTabelaTamanhos(i) {
+  const g = supGradeDe(i), st = supPorTam(i), mn = i.minimos_tamanho || {}, sem = Number(st['']) || 0;
+  return `<table class="via-resumo-tbl"><thead><tr><th>Tamanho</th><th class="num">Estoque</th><th class="num">Mínimo</th><th>Situação</th></tr></thead><tbody>${g.map(t => {
+    const q = Number(st[t]) || 0, m = Number(mn[t]) || 0, baixo = m > 0 && q < m;
+    return `<tr><td><strong>${esc(t)}</strong></td><td class="num">${supNum(q)} ${esc(i.unidade || 'un')}</td><td class="num">${m ? supNum(m) : '—'}</td><td>${baixo ? '<span class="badge late">Abaixo do mínimo</span>' : q === 0 ? '<span class="badge off">Zerado</span>' : '<span class="badge ok">OK</span>'}</td></tr>`;
+  }).join('')}${sem ? `<tr><td><strong>Sem tamanho</strong></td><td class="num">${supNum(sem)} ${esc(i.unidade || 'un')}</td><td class="num">—</td><td><span class="badge warn">Classificar</span></td></tr>` : ''}</tbody></table>`;
+}
+// Opções do seletor de tamanho; `rotuloSaldo` (ex.: "em estoque") acrescenta o saldo de cada tamanho.
+const supOpcoesTam = (i, rotuloSaldo) => [{ v: '', t: '— escolha —' }, ...supGradeDe(i).map(t => ({ v: t, t: rotuloSaldo ? `${t} — ${supNum(supPorTam(i)[t] || 0)} ${rotuloSaldo}` : t }))];
+
+// Editor da grade dentro do cadastro do item (liga os botões e devolve `corpo()` com a grade e os mínimos para salvar).
+function supLigarGrade(i) {
+  let grade = supGradeDe(i).slice(), minimos = { ...(i.minimos_tamanho || {}) }, tocado = grade.length > 0;
+  const porTam = supPorTam(i);
+  const box = $('#it-grade-box'), usa = $('#it-usa-grade'), det = $('#it-grade-det'), lista = $('#it-grade-lista');
+  const campoMin = $('#it-min').closest('.field');
+  const aplicaVis = () => {
+    const material = $('#it-tipo').value === 'material', ativa = material && usa.checked;
+    box.style.display = material ? '' : 'none'; det.style.display = ativa ? '' : 'none'; campoMin.style.display = ativa ? 'none' : '';
+  };
+  const desenha = () => {
+    lista.innerHTML = grade.length ? grade.map(t => `<div class="sup-tam-card"><b>${esc(t)}</b>
+        <label>Mínimo<input type="number" min="0" step="1" data-tmin="${esc(t)}" value="${Number(minimos[t]) ? minimos[t] : ''}" placeholder="0"></label>
+        ${i.id ? `<small>Estoque: ${supNum(porTam[t] || 0)}</small>` : ''}
+        <button type="button" class="btn-ic perigo" data-trem="${esc(t)}" title="Tirar este tamanho da grade" aria-label="Tirar o tamanho ${esc(t)}">×</button></div>`).join('')
+      : '<p class="hint">Nenhum tamanho na grade. Escolha um modelo ou adicione os tamanhos.</p>';
+    lista.querySelectorAll('[data-tmin]').forEach(inp => inp.oninput = () => { minimos[inp.dataset.tmin] = Number(inp.value) || 0; });
+    lista.querySelectorAll('[data-trem]').forEach(b => b.onclick = () => { grade = grade.filter(x => x !== b.dataset.trem); delete minimos[b.dataset.trem]; desenha(); });
+  };
+  const add = t => { t = String(t || '').trim(); if (!t || t.length > 12 || grade.some(x => x.toLowerCase() === t.toLowerCase())) return; grade.push(t); desenha(); };
+  box.querySelectorAll('[data-gp]').forEach(b => b.onclick = () => { if (b.dataset.gp === '__limpar') { grade = []; minimos = {}; desenha(); } else SUP_GRADES[b.dataset.gp].forEach(add); });
+  const novo = $('#it-grade-novo');
+  $('#it-grade-add').onclick = () => { novo.value.split(/[,;]+/).forEach(add); novo.value = ''; novo.focus(); };
+  novo.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); $('#it-grade-add').click(); } };
+  usa.checked = grade.length > 0;
+  usa.onchange = () => { tocado = true; aplicaVis(); };
+  $('#it-tipo').addEventListener('change', aplicaVis);
+  // Categoria de uniforme sugere o controle por tamanho com a grade de vestuário (só enquanto a pessoa não mexeu na caixa).
+  const sugere = () => {
+    if (tocado || usa.checked || !/unif/i.test(supValorClass('it-cat', 'it-cat-outra'))) return;
+    usa.checked = true; SUP_GRADES['Vestuário'].forEach(add); aplicaVis();
+    toast('Categoria de uniforme: ativei o controle por tamanho com a grade de vestuário. Ajuste os tamanhos se precisar.');
+  };
+  $('#it-cat').addEventListener('change', sugere); $('#it-cat-outra').addEventListener('input', sugere);
+  aplicaVis(); desenha();
+  return { corpo: () => (usa.checked && $('#it-tipo').value === 'material' ? { grade_tamanhos: grade, minimos_tamanho: minimos } : { grade_tamanhos: [], minimos_tamanho: {} }) };
+}
+
 function supFormItem(i) {
   const isEdit = !!i; i = i || {};
   const num = v => (v == null ? '' : v);
+  let gradeCtl = null;
   openModal(isEdit ? 'Editar item' : 'Novo item de estoque', `
     ${supSecTitle('1 · Identificação básica')}
     ${isEdit ? `<p class="hint" style="margin-top:0">Código interno (ID): <strong>#${i.id}</strong></p>` : ''}
@@ -3522,6 +3593,19 @@ function supFormItem(i) {
 
     ${supSecTitle('3 · Logística e estoque')}
     ${isEdit ? `<p class="hint" style="margin-top:0">Quantidade em estoque: <strong>${supNum(i.estoque_atual)} ${esc(i.unidade || 'un')}</strong> — controlada por movimentações, não editável aqui.</p>` : ''}
+    <div id="it-grade-box" class="sup-grade-box" style="display:none">
+      <label class="check-chip"><input type="checkbox" id="it-usa-grade"> Controlar o estoque por tamanho (grade)</label>
+      <div id="it-grade-det" style="display:none">
+        <p class="hint" style="margin:6px 0">Com a grade, toda compra, ajuste e envio deste item pede o tamanho, e o estoque mínimo passa a valer por tamanho. O custo médio continua único por item.</p>
+        <div class="sup-grade-modelos"><span>Modelos:</span>
+          <button type="button" class="btn sm" data-gp="Vestuário">Vestuário (PP–XXG)</button>
+          <button type="button" class="btn sm" data-gp="Calçado">Calçado (34–46)</button>
+          <button type="button" class="btn sm" data-gp="Calça / bermuda">Calça (36–56)</button>
+          <button type="button" class="btn sm" data-gp="__limpar">Limpar</button></div>
+        <div class="sup-grade-novo"><input id="it-grade-novo" placeholder="Outro tamanho (ex.: Único, 3XL); separe vários por vírgula" autocomplete="off"><button type="button" class="btn sm" id="it-grade-add">Adicionar</button></div>
+        <div id="it-grade-lista" class="sup-grade-lista"></div>
+      </div>
+    </div>
     <div class="form-row">
       ${fld('it-min', 'Estoque mínimo (ressuprimento)', 'number', num(i.estoque_minimo != null ? i.estoque_minimo : 0), 'step="0.001" min="0"')}
       ${fld('it-max', 'Estoque máximo', 'number', num(i.estoque_maximo), 'step="0.001" min="0"')}
@@ -3565,7 +3649,8 @@ function supFormItem(i) {
           peso_liquido: $('#it-pliq').value, peso_bruto: $('#it-pbru').value,
           dim_altura: $('#it-dalt').value, dim_largura: $('#it-dlar').value, dim_profundidade: $('#it-dpro').value,
           preco_ultima_compra: $('#it-preco').value, ncm: $('#it-ncm').value, cest: $('#it-cest').value,
-          origem_mercadoria: $('#it-origem').value, numero_serie: $('#it-serie').value, notes: $('#it-notes').value
+          origem_mercadoria: $('#it-origem').value, numero_serie: $('#it-serie').value, notes: $('#it-notes').value,
+          ...(gradeCtl ? gradeCtl.corpo() : {})
         };
         if (isEdit) body.ativo = $('#it-ativo').value === 'true';
         try {
@@ -3575,6 +3660,7 @@ function supFormItem(i) {
         } catch (e) { modalError(e.message); }
      }}], { wide: true });
   supLigarClassificacao(i);
+  gradeCtl = supLigarGrade(i);
 }
 
 // Ficha completa do item (somente leitura) — mostra todos os dados do cadastro.
@@ -3606,6 +3692,7 @@ function supFichaItem(i) {
       ${linha('Peso líquido / bruto', `${i.peso_liquido != null ? supNum(i.peso_liquido) + ' kg' : '—'} / ${i.peso_bruto != null ? supNum(i.peso_bruto) + ' kg' : '—'}`)}
       ${linha('Dimensões (A×L×P)', dim)}
     </table>
+    ${supGradeDe(i).length ? supSecTitle('Estoque por tamanho') + supTabelaTamanhos(i) : ''}
     ${supSecTitle('Financeiro')}
     <table class="via-resumo-tbl">
       ${linha('Preço da última compra', i.preco_ultima_compra != null ? brl(i.preco_ultima_compra) : '—')}
@@ -3638,11 +3725,12 @@ function supFormAjuste(i) {
       ${fld('aj-data', 'Data', 'date', todayISO())}
     </div>
     <p class="hint" id="aj-custo-hint" style="margin-top:-4px">Informe o custo para o estoque ser valorizado (entra na média ponderada). Em branco, usa o custo médio atual ou o preço de custo do cadastro.</p>
+    ${supGradeDe(i).length ? fldSel('aj-tam', 'Tamanho *', supOpcoesTam(i, 'em estoque'), '') : ''}
     ${fld('aj-notes', 'Motivo do ajuste *', 'text', '', 'placeholder="Ex.: contagem física, perda, correção"')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Registrar ajuste', cls: 'primary', onClick: async () => {
         try {
-          await api('/api/suprimentos/ajustes', { method: 'POST', body: { item_id: i.id, tipo: $('#aj-tipo').value, quantidade: $('#aj-qtd').value, custo_unitario: $('#aj-custo').value, data: $('#aj-data').value, notes: $('#aj-notes').value } });
+          await api('/api/suprimentos/ajustes', { method: 'POST', body: { item_id: i.id, tipo: $('#aj-tipo').value, quantidade: $('#aj-qtd').value, custo_unitario: $('#aj-custo').value, data: $('#aj-data').value, notes: $('#aj-notes').value, tamanho: $('#aj-tam') ? $('#aj-tam').value : undefined } });
           closeModal(); toast('Ajuste registrado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
@@ -3660,9 +3748,10 @@ async function supHistorico(i) {
   const edit = !READONLY;
   const movs = await api('/api/suprimentos/movimentos?item_id=' + i.id);
   const ORIG = { compra: 'Compra', envio: 'Envio', ajuste: 'Ajuste', devolucao: 'Devolução' };
+  const comTam = supGradeDe(i).length > 0 || movs.some(m => m.tamanho);
   openModal(`Histórico — ${esc(i.nome)}`, `
     <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Movimento</th><th class="num">Qtd</th><th class="num">Custo un.</th><th>Por</th><th class="actions">Ações</th></tr></thead>
+      <thead><tr><th>Data</th><th>Movimento</th>${comTam ? '<th>Tam.</th>' : ''}<th class="num">Qtd</th><th class="num">Custo un.</th><th>Por</th><th class="actions">Ações</th></tr></thead>
       <tbody>${movs.map(m => {
         const entrada = m.tipo === 'entrada';
         const corrigivel = edit && ['ajuste', 'compra'].includes(m.origem);
@@ -3673,12 +3762,13 @@ async function supHistorico(i) {
         return `<tr>
           <td>${brDate(m.data)}</td>
           <td><span class="badge ${entrada ? 'ok' : 'late'}">${entrada ? '+ ' : '− '}${ORIG[m.origem] || m.origem}</span></td>
+          ${comTam ? `<td>${m.tamanho ? esc(m.tamanho) : '—'}</td>` : ''}
           <td class="num">${supNum(m.quantidade)} ${esc(i.unidade)}</td>
           <td class="num">${m.custo_unitario != null ? brl(m.custo_unitario) : '—'}</td>
           <td style="white-space:nowrap"><small>${esc(m.created_by_name || '—')}</small></td>
           <td class="actions sup-acoes"><button class="btn-ic ok" data-lcver="${m.id}" title="Ver o detalhe deste lançamento" aria-label="Ver detalhes">👁</button>${edit ? `${corrigivel ? `<button class="btn-ic" data-lcedit="${m.id}" ${bloqPag || m.unidade_id ? 'disabled' : ''} title="${bloqPag || (m.unidade_id ? 'Baixa de unidade: exclua e refaça' : 'Editar este lançamento (pede a justificativa)')}" aria-label="Editar lançamento">✎</button><button class="btn-ic exc" data-lcdel="${m.id}" ${bloqPag ? 'disabled' : ''} title="${bloqPag || 'Excluir este lançamento (pede a justificativa)'}" aria-label="Excluir lançamento">🗑</button>` : ''}` : ''}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="6"><div class="empty">Sem movimentações.</div></td></tr>`}</tbody>
+      }).join('') || `<tr><td colspan="${comTam ? 7 : 6}"><div class="empty">Sem movimentações.</div></td></tr>`}</tbody>
     </table></div>`,
     [{ label: 'Fechar', onClick: closeModal }], { wide: true });
   const depois = async () => { closeModal(); const its = await api('/api/suprimentos/itens'); renderSuprimentos(); supHistorico(its.find(x => x.id === i.id) || i); };
@@ -3698,6 +3788,7 @@ function supVerLancamento(i, m, voltar) {
       ${linha('Movimento', `<span class="badge ${entrada ? 'ok' : 'late'}">${entrada ? '+ ' : '− '}${ORIG[m.origem] || esc(m.origem)}</span>${m.status ? ` <small style="color:var(--muted)">(${esc(m.status)})</small>` : ''}`)}
       ${linha('Data', brDate(m.data))}
       ${linha('Quantidade', `<strong>${supNum(m.quantidade)} ${esc(i.unidade)}</strong>`)}
+      ${linha('Tamanho', esc(m.tamanho || ''))}
       ${linha('Custo unitário', m.custo_unitario != null ? brl(m.custo_unitario) : '—')}
       ${linha('Valor total', m.valor_total != null ? brl(m.valor_total) : '')}
       ${linha('Fornecedor', esc(m.supplier_name || ''))}
@@ -3713,6 +3804,7 @@ function supEditarLancamento(i, m, depois) {
   const entrada = m.tipo === 'entrada';
   openModal(`Editar lançamento — ${esc(i.nome)}`, `
     <p class="hint">${SUP_ORIG_LANC[m.origem]} (${entrada ? 'entrada' : 'saída'}) de <strong>${brDate(m.data)}</strong>. Ao salvar, o custo médio do item é recalculado a partir do histórico.</p>
+    ${supGradeDe(i).length ? fldSel('lc-tam', 'Tamanho *', supOpcoesTam(i), m.tamanho || '') : ''}
     <div class="form-row">
       ${fld('lc-qtd', 'Quantidade', 'number', m.quantidade, 'step="0.001" min="0.001"')}
       ${entrada ? fld('lc-custo', 'Custo unitário (R$)', 'number', m.custo_unitario == null ? '' : m.custo_unitario, 'step="0.01" min="0"') : ''}
@@ -3729,7 +3821,7 @@ function supEditarLancamento(i, m, depois) {
         if (motivo.length < 5) return modalError('Informe a justificativa da alteração.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
         try {
-          const r = await api(`/api/suprimentos/movimentos/${m.id}`, { method: 'PUT', body: { quantidade: $('#lc-qtd').value, custo_unitario: entrada ? $('#lc-custo').value : undefined, data: $('#lc-data').value, notes: $('#lc-notes').value, motivo } });
+          const r = await api(`/api/suprimentos/movimentos/${m.id}`, { method: 'PUT', body: { quantidade: $('#lc-qtd').value, custo_unitario: entrada ? $('#lc-custo').value : undefined, data: $('#lc-data').value, notes: $('#lc-notes').value, motivo, tamanho: $('#lc-tam') ? $('#lc-tam').value : undefined } });
           toast('Lançamento corrigido.' + (r.custo_medio != null ? ' Custo médio: ' + brl(r.custo_medio) + '.' : '')); depois();
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Salvar alteração'; } }
      } }]);
@@ -3765,7 +3857,7 @@ async function supRenderCompras(panel) {
     <div class="table-wrap"><table>
       <thead><tr><th>Data</th><th>Item</th><th class="num">Qtd</th><th class="num">Custo un.</th><th class="num">Total</th><th>Fornecedor</th><th>Documento</th><th>Financeiro</th></tr></thead>
       <tbody>${movs.map(m => `<tr>
-        <td>${brDate(m.data)}</td><td>${esc(m.item_nome)}</td>
+        <td>${brDate(m.data)}</td><td>${esc(m.item_nome)}${m.tamanho ? ` <span class="badge off">Tam. ${esc(m.tamanho)}</span>` : ''}</td>
         <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
         <td class="num">${brl(m.custo_unitario)}</td><td class="num">${brl(m.valor_total)}</td>
         <td>${esc(m.supplier_name || '—')}</td><td>${esc(m.documento || '—')}</td>
@@ -3780,6 +3872,7 @@ function supFormCompra(itens, fornecedores) {
   if (!ativos.length) { toast('Cadastre um item no Estoque antes de registrar compras.'); return; }
   openModal('Registrar compra', `
     ${fldSel('co-item', 'Item *', ativos.map(i => ({ v: i.id, t: `${i.nome}${i.sku ? ' (' + i.sku + ')' : ''}` })), ativos[0].id)}
+    <div id="co-tam-wrap" style="display:none">${fldSel('co-tam', 'Tamanho *', [{ v: '', t: '— escolha —' }], '')}</div>
     <div class="form-row">
       ${fld('co-qtd', 'Quantidade *', 'number', '', 'step="0.001" min="0.001"')}
       ${fld('co-custo', 'Custo unitário (R$) *', 'number', '', 'step="0.01" min="0"')}
@@ -3803,11 +3896,18 @@ function supFormCompra(itens, fornecedores) {
           const r = await api('/api/suprimentos/compras', { method: 'POST', body: {
             item_id: $('#co-item').value, quantidade: $('#co-qtd').value, custo_unitario: $('#co-custo').value,
             supplier_id: $('#co-forn').value || null, documento: $('#co-doc').value, data: $('#co-data').value,
-            lancar_pagar: $('#co-pagar').checked, due_date: $('#co-venc').value, categoria_pagar: $('#co-catpag').value, notes: $('#co-notes').value } });
+            lancar_pagar: $('#co-pagar').checked, due_date: $('#co-venc').value, categoria_pagar: $('#co-catpag').value, notes: $('#co-notes').value,
+            tamanho: $('#co-tam-wrap').style.display === 'none' ? undefined : $('#co-tam').value } });
           closeModal(); toast(r.payable_id ? 'Compra registrada e lançada em Contas a Pagar.' : 'Compra registrada.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
   $('#co-pagar').onchange = e => { $('#co-pagar-fields').style.display = e.target.checked ? '' : 'none'; };
+  const ajustaTam = () => {
+    const it = ativos.find(x => x.id == $('#co-item').value) || {}, g = supGradeDe(it);
+    $('#co-tam-wrap').style.display = g.length ? '' : 'none';
+    $('#co-tam').innerHTML = supOpcoesTam(it, 'em estoque').map(o => `<option value="${esc(o.v)}">${esc(o.t)}</option>`).join('');
+  };
+  $('#co-item').onchange = ajustaTam; ajustaTam();
 }
 
 // ---- Aba Envios a funcionários ----
@@ -3856,7 +3956,7 @@ async function supRenderEnvios(panel) {
           : `<button class="btn sm" data-termo="${m.id}" data-att="envio_termo:${m.id}" title="Ainda sem termo assinado">📎</button> <span class="badge warn">Pendente</span>`;
         return `<tr>
           <td>${brDate(m.data)}</td>
-          <td>${esc(m.item_nome)}${ident ? `<br><small class="mono" style="color:var(--muted)">${ident}</small>` : ''}${semUnidade ? '<br><small style="color:#B23A2F">Sem nº de série vinculado</small>' : ''}${m.linha_telefonica ? `<br><small style="color:var(--muted)">${supLinhaTxt(m)}</small>` : ''}</td>
+          <td>${esc(m.item_nome)}${m.tamanho ? ` <span class="badge off">Tam. ${esc(m.tamanho)}</span>` : ''}${ident ? `<br><small class="mono" style="color:var(--muted)">${ident}</small>` : ''}${semUnidade ? '<br><small style="color:#B23A2F">Sem nº de série vinculado</small>' : ''}${m.linha_telefonica ? `<br><small style="color:var(--muted)">${supLinhaTxt(m)}</small>` : ''}</td>
           <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
           <td>${esc(m.colaborador_name || '—')}</td>
           <td>${envio || '<small style="color:var(--muted)">—</small>'}</td>
@@ -3911,6 +4011,7 @@ async function supFormEnvio(itens, colaboradores) {
   const unids = await api('/api/suprimentos/unidades?estado=em_estoque');
   openModal('Registrar envio a funcionário', `
     ${fldSel('en-item', 'Item *', disp.map(i => ({ v: i.id, t: `${i.nome} — ${supNum(i.estoque_atual)} ${i.unidade} disp.` })), disp[0].id)}
+    <div id="en-tam-wrap" style="display:none">${fldSel('en-tam', 'Tamanho *', [{ v: '', t: '— escolha —' }], '')}</div>
     <div id="en-unid-wrap" style="display:none">
       <div class="form-row">
         ${fld('en-serie', 'Nº de série do equipamento *', 'text', '', 'list="en-serie-lista" autocomplete="off" placeholder="Número individual deste aparelho"')}
@@ -3944,7 +4045,8 @@ async function supFormEnvio(itens, colaboradores) {
           await api('/api/suprimentos/envios', { method: 'POST', body: {
             item_id: $('#en-item').value, numero_serie: equip ? $('#en-serie').value : null, patrimonio: equip ? $('#en-pat').value : null, linha_telefonica: supFone($('#en-linha').value), operadora: $('#en-operadora').value, quantidade: $('#en-qtd').value,
             colaborador_id: $('#en-colab').value, data: $('#en-data').value, forma_envio: $('#en-forma').value,
-            codigo_rastreio: $('#en-rastreio').value, condicao_saida: $('#en-cond').value, notes: $('#en-notes').value } });
+            codigo_rastreio: $('#en-rastreio').value, condicao_saida: $('#en-cond').value, notes: $('#en-notes').value,
+            tamanho: $('#en-tam-wrap').style.display === 'none' ? undefined : $('#en-tam').value } });
           closeModal(); toast(equip ? 'Envio registrado. Gere o termo de responsabilidade em Detalhes.' : 'Envio registrado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}]);
@@ -3954,6 +4056,8 @@ async function supFormEnvio(itens, colaboradores) {
     $('#en-unid-wrap').style.display = equip ? '' : 'none';
     $('#en-linha-wrap').style.display = supEhCelular(item) ? '' : 'none';
     $('#en-qtd').disabled = equip;
+    $('#en-tam-wrap').style.display = supGradeDe(item).length ? '' : 'none';
+    $('#en-tam').innerHTML = supOpcoesTam(item, 'disp.').map(o => `<option value="${esc(o.v)}">${esc(o.t)}</option>`).join('');
     if (equip) {
       $('#en-qtd').value = 1;
       const lista = unids.filter(u => u.item_id == item.id && u.numero_serie);
@@ -4002,6 +4106,7 @@ function supDetalheEnvio(m, colaboradores) {
       ${linha('Marca / SKU', txt([m.item_marca, m.item_sku].filter(Boolean).join(' / ')))}
       ${m.linha_telefonica ? linha('Linha telefônica', esc(supFone(m.linha_telefonica)) + (m.operadora ? ' · ' + esc(m.operadora) : '')) : ''}
       ${linha('Quantidade', supNum(m.quantidade) + ' ' + esc(m.unidade))}
+      ${m.tamanho ? linha('Tamanho', esc(m.tamanho)) : ''}
       <tr><td colspan="2">${supSecTitle('Destinatário e envio')}</td></tr>
       ${linha('Colaborador', txt(m.colaborador_name) + (m.colaborador_cargo ? ' — ' + esc(m.colaborador_cargo) : ''))}
       ${linha('Data do envio', brDate(m.data))}
@@ -4026,6 +4131,7 @@ function supFormEditarEnvio(m, colaboradores) {
   const celular = supEhCelular(m) || m.linha_telefonica;
   openModal(`Editar envio #${m.id}`, `
     <p class="hint" style="margin-top:0"><strong>${esc(m.item_nome)}</strong> — para trocar o item, exclua este envio e registre outro.</p>
+    ${(m.item_grade || []).length ? fldSel('ee-tam', 'Tamanho', [{ v: '', t: '— escolha —' }, ...m.item_grade.map(t => ({ v: t, t }))], m.tamanho || '') : ''}
     <div class="form-row">
       ${fldSel('ee-colab', 'Colaborador destinatário', colabs.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), m.colaborador_id)}
       ${fld('ee-data', 'Data do envio', 'date', (m.data || '').slice(0, 10))}
@@ -4053,7 +4159,7 @@ function supFormEditarEnvio(m, colaboradores) {
             colaborador_id: v('ee-colab'), data: v('ee-data'), numero_serie: v('ee-serie'), patrimonio: v('ee-pat'),
             quantidade: v('ee-qtd'), forma_envio: v('ee-forma'), codigo_rastreio: v('ee-rastreio'),
             linha_telefonica: v('ee-linha') === undefined ? undefined : supFone(v('ee-linha')), operadora: v('ee-operadora'),
-            condicao_saida: v('ee-cond'), condicao_devolucao: v('ee-cond-dev'), notes: v('ee-notes') } });
+            condicao_saida: v('ee-cond'), condicao_devolucao: v('ee-cond-dev'), notes: v('ee-notes'), tamanho: v('ee-tam') } });
           closeModal(); toast('Envio atualizado.'); renderSuprimentos();
         } catch (e) { modalError(e.message); }
      }}], { wide: true });

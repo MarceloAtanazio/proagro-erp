@@ -1,0 +1,16 @@
+
+/* Suprimentos: grade de tamanhos (uniformes, calçados). Cadastro do item, etiquetinhas de estoque por tamanho na tabela e na ficha. */
+.sup-grade-box { margin: 4px 0 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--verde-500) 5%, var(--card)); }
+.sup-grade-modelos { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 12.5px; color: var(--muted); }
+.sup-grade-novo { display: flex; gap: 6px; margin: 6px 0 10px; } .sup-grade-novo input { flex: 1; min-width: 0; }
+.sup-grade-lista { display: flex; flex-wrap: wrap; gap: 8px; }
+.sup-tam-card { position: relative; display: flex; flex-direction: column; gap: 4px; width: 104px; padding: 8px 10px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-size: 12px; }
+.sup-tam-card > b { font-size: 15px; letter-spacing: -.01em; } .sup-tam-card label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 11px; }
+.sup-tam-card input { width: 100%; padding: 4px 6px; font-size: 13px; } .sup-tam-card small { color: var(--muted); font-size: 11px; }
+.sup-tam-card .btn-ic { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; font-size: 14px; }
+.sup-tams { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; margin-top: 5px; max-width: 220px; margin-left: auto; }
+.sup-tam { font-size: 10.5px; line-height: 1; padding: 3px 7px; border-radius: 999px; background: color-mix(in srgb, var(--verde-500) 14%, var(--card)); color: var(--ink-2); white-space: nowrap; }
+.sup-tam b { font-variant-numeric: tabular-nums; color: var(--ink); }
+.sup-tam.zero { background: color-mix(in srgb, var(--muted) 12%, var(--card)); color: var(--muted); } .sup-tam.zero b { color: var(--muted); }
+.sup-tam.baixo { background: var(--danger-050); color: var(--danger); } .sup-tam.baixo b { color: var(--danger); }
+.sup-tam.sem { background: var(--warn-050); color: var(--warn); } .sup-tam.sem b { color: var(--warn); }

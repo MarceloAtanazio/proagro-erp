@@ -1,0 +1,69 @@
+// ---- Grade de tamanhos (uniformes, calçados etc.) ----
+// O item pode controlar o estoque por tamanho: a grade e o mínimo de cada tamanho ficam no cadastro; compra, ajuste, envio e devolução pedem o tamanho.
+const SUP_GRADES = {
+  'Vestuário': ['PP', 'P', 'M', 'G', 'GG', 'XG', 'XXG'],
+  'Calçado': ['34', '35', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46'],
+  'Calça / bermuda': ['36', '38', '40', '42', '44', '46', '48', '50', '52', '54', '56']
+};
+const supGradeDe = i => (i && Array.isArray(i.grade_tamanhos) ? i.grade_tamanhos : []);
+const supPorTam = i => (i && i.estoque_por_tamanho) || {};
+function supAbaixoMin(i) {
+  const g = supGradeDe(i);
+  if (g.length) { const mn = i.minimos_tamanho || {}, st = supPorTam(i); return g.some(t => Number(mn[t]) > 0 && Number(st[t] || 0) < Number(mn[t])); }
+  return Number(i.estoque_atual) < Number(i.estoque_minimo);
+}
+// Etiquetinhas "P 5 · M 8 · G 7" sob o estoque total: vermelho quando o tamanho está abaixo do mínimo, apagado quando zerado.
+function supChipsTam(i) {
+  const g = supGradeDe(i), st = supPorTam(i), mn = i.minimos_tamanho || {}, sem = Number(st['']) || 0;
+  const chip = (t, q, baixo) => `<span class="sup-tam${baixo ? ' baixo' : ''}${q === 0 ? ' zero' : ''}" title="${esc(t)}: ${supNum(q)} em estoque${Number(mn[t]) > 0 ? ' (mínimo ' + supNum(mn[t]) + ')' : ''}">${esc(t)} <b>${supNum(q)}</b></span>`;
+  return g.map(t => chip(t, Number(st[t]) || 0, Number(mn[t]) > 0 && (Number(st[t]) || 0) < Number(mn[t]))).join('')
+    + (sem ? `<span class="sup-tam sem" title="Saldo sem tamanho definido: classifique os lançamentos no histórico do item (editar)">Sem tam. <b>${supNum(sem)}</b></span>` : '');
+}
+function supTabelaTamanhos(i) {
+  const g = supGradeDe(i), st = supPorTam(i), mn = i.minimos_tamanho || {}, sem = Number(st['']) || 0;
+  return `<table class="via-resumo-tbl"><thead><tr><th>Tamanho</th><th class="num">Estoque</th><th class="num">Mínimo</th><th>Situação</th></tr></thead><tbody>${g.map(t => {
+    const q = Number(st[t]) || 0, m = Number(mn[t]) || 0, baixo = m > 0 && q < m;
+    return `<tr><td><strong>${esc(t)}</strong></td><td class="num">${supNum(q)} ${esc(i.unidade || 'un')}</td><td class="num">${m ? supNum(m) : '—'}</td><td>${baixo ? '<span class="badge late">Abaixo do mínimo</span>' : q === 0 ? '<span class="badge off">Zerado</span>' : '<span class="badge ok">OK</span>'}</td></tr>`;
+  }).join('')}${sem ? `<tr><td><strong>Sem tamanho</strong></td><td class="num">${supNum(sem)} ${esc(i.unidade || 'un')}</td><td class="num">—</td><td><span class="badge warn">Classificar</span></td></tr>` : ''}</tbody></table>`;
+}
+// Opções do seletor de tamanho; `rotuloSaldo` (ex.: "em estoque") acrescenta o saldo de cada tamanho.
+const supOpcoesTam = (i, rotuloSaldo) => [{ v: '', t: '— escolha —' }, ...supGradeDe(i).map(t => ({ v: t, t: rotuloSaldo ? `${t} — ${supNum(supPorTam(i)[t] || 0)} ${rotuloSaldo}` : t }))];
+
+// Editor da grade dentro do cadastro do item (liga os botões e devolve `corpo()` com a grade e os mínimos para salvar).
+function supLigarGrade(i) {
+  let grade = supGradeDe(i).slice(), minimos = { ...(i.minimos_tamanho || {}) }, tocado = grade.length > 0;
+  const porTam = supPorTam(i);
+  const box = $('#it-grade-box'), usa = $('#it-usa-grade'), det = $('#it-grade-det'), lista = $('#it-grade-lista');
+  const campoMin = $('#it-min').closest('.field');
+  const aplicaVis = () => {
+    const material = $('#it-tipo').value === 'material', ativa = material && usa.checked;
+    box.style.display = material ? '' : 'none'; det.style.display = ativa ? '' : 'none'; campoMin.style.display = ativa ? 'none' : '';
+  };
+  const desenha = () => {
+    lista.innerHTML = grade.length ? grade.map(t => `<div class="sup-tam-card"><b>${esc(t)}</b>
+        <label>Mínimo<input type="number" min="0" step="1" data-tmin="${esc(t)}" value="${Number(minimos[t]) ? minimos[t] : ''}" placeholder="0"></label>
+        ${i.id ? `<small>Estoque: ${supNum(porTam[t] || 0)}</small>` : ''}
+        <button type="button" class="btn-ic perigo" data-trem="${esc(t)}" title="Tirar este tamanho da grade" aria-label="Tirar o tamanho ${esc(t)}">×</button></div>`).join('')
+      : '<p class="hint">Nenhum tamanho na grade. Escolha um modelo ou adicione os tamanhos.</p>';
+    lista.querySelectorAll('[data-tmin]').forEach(inp => inp.oninput = () => { minimos[inp.dataset.tmin] = Number(inp.value) || 0; });
+    lista.querySelectorAll('[data-trem]').forEach(b => b.onclick = () => { grade = grade.filter(x => x !== b.dataset.trem); delete minimos[b.dataset.trem]; desenha(); });
+  };
+  const add = t => { t = String(t || '').trim(); if (!t || t.length > 12 || grade.some(x => x.toLowerCase() === t.toLowerCase())) return; grade.push(t); desenha(); };
+  box.querySelectorAll('[data-gp]').forEach(b => b.onclick = () => { if (b.dataset.gp === '__limpar') { grade = []; minimos = {}; desenha(); } else SUP_GRADES[b.dataset.gp].forEach(add); });
+  const novo = $('#it-grade-novo');
+  $('#it-grade-add').onclick = () => { novo.value.split(/[,;]+/).forEach(add); novo.value = ''; novo.focus(); };
+  novo.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); $('#it-grade-add').click(); } };
+  usa.checked = grade.length > 0;
+  usa.onchange = () => { tocado = true; aplicaVis(); };
+  $('#it-tipo').addEventListener('change', aplicaVis);
+  // Categoria de uniforme sugere o controle por tamanho com a grade de vestuário (só enquanto a pessoa não mexeu na caixa).
+  const sugere = () => {
+    if (tocado || usa.checked || !/unif/i.test(supValorClass('it-cat', 'it-cat-outra'))) return;
+    usa.checked = true; SUP_GRADES['Vestuário'].forEach(add); aplicaVis();
+    toast('Categoria de uniforme: ativei o controle por tamanho com a grade de vestuário. Ajuste os tamanhos se precisar.');
+  };
+  $('#it-cat').addEventListener('change', sugere); $('#it-cat-outra').addEventListener('input', sugere);
+  aplicaVis(); desenha();
+  return { corpo: () => (usa.checked && $('#it-tipo').value === 'material' ? { grade_tamanhos: grade, minimos_tamanho: minimos } : { grade_tamanhos: [], minimos_tamanho: {} }) };
+}
+

@@ -1,0 +1,13 @@
+    <div id="it-grade-box" class="sup-grade-box" style="display:none">
+      <label class="check-chip"><input type="checkbox" id="it-usa-grade"> Controlar o estoque por tamanho (grade)</label>
+      <div id="it-grade-det" style="display:none">
+        <p class="hint" style="margin:6px 0">Com a grade, toda compra, ajuste e envio deste item pede o tamanho, e o estoque mínimo passa a valer por tamanho. O custo médio continua único por item.</p>
+        <div class="sup-grade-modelos"><span>Modelos:</span>
+          <button type="button" class="btn sm" data-gp="Vestuário">Vestuário (PP–XXG)</button>
+          <button type="button" class="btn sm" data-gp="Calçado">Calçado (34–46)</button>
+          <button type="button" class="btn sm" data-gp="Calça / bermuda">Calça (36–56)</button>
+          <button type="button" class="btn sm" data-gp="__limpar">Limpar</button></div>
+        <div class="sup-grade-novo"><input id="it-grade-novo" placeholder="Outro tamanho (ex.: Único, 3XL); separe vários por vírgula" autocomplete="off"><button type="button" class="btn sm" id="it-grade-add">Adicionar</button></div>
+        <div id="it-grade-lista" class="sup-grade-lista"></div>
+      </div>
+    </div>

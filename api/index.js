@@ -8043,7 +8043,9 @@ const SUP_EDIT = requireEdit('suprimentos');
 const SUP_ESTOQUE_SELECT = `
   SELECT i.*,
     COALESCE((SELECT SUM(CASE WHEN m.tipo='entrada' THEN m.quantidade ELSE -m.quantidade END)
-              FROM erp_estoque_movimentos m WHERE m.item_id = i.id), 0) AS estoque_atual
+              FROM erp_estoque_movimentos m WHERE m.item_id = i.id), 0) AS estoque_atual,
+    COALESCE((SELECT json_object_agg(x.t, x.q) FROM (SELECT COALESCE(m.tamanho, '') AS t, SUM(CASE WHEN m.tipo='entrada' THEN m.quantidade ELSE -m.quantidade END) AS q
+              FROM erp_estoque_movimentos m WHERE m.item_id = i.id GROUP BY COALESCE(m.tamanho, '')) x WHERE x.q <> 0), '{}'::json) AS estoque_por_tamanho
   FROM erp_estoque_itens i`;
 
 // Custo médio ponderado após uma entrada. Com CMP zero (estoque sem custo) o saldo anterior NÃO entra na média: senão diluiria o custo real da compra.
@@ -8051,7 +8053,41 @@ function cmpNovo(cmpAtual, baseQtd, qtd, valorEntrada) {
   const base = Number(cmpAtual) > 0 ? baseQtd : 0;
   return (base + qtd) > 0 ? ((Number(cmpAtual) * base) + valorEntrada) / (base + qtd) : valorEntrada / (qtd || 1);
 }
-async function estoqueAtualItem(itemId) {
+// ---- Grade de tamanhos (uniformes, calçados etc.) ----
+// O item pode controlar o estoque por tamanho: `grade_tamanhos` (lista) e `minimos_tamanho` (mapa tamanho -> mínimo). Cada movimentação guarda `tamanho`. O saldo por
+// tamanho é a soma dos movimentos por (item, tamanho); o CMP segue único por item. Item sem grade ignora o tamanho.
+const gradeDe = item => { const g = item && item.grade_tamanhos; return Array.isArray(g) ? g.map(String) : []; };
+// Tamanho de um lançamento: item com grade exige um tamanho da grade; item sem grade ignora o que vier.
+function tamanhoDoLancamento(item, bruto) {
+  const g = gradeDe(item);
+  if (!g.length) return { tamanho: null, grade: false };
+  const t = String(sanitize(bruto) || '').trim();
+  if (!t) return { erro: `Informe o tamanho: este item controla o estoque por tamanho (${g.join(', ')}).` };
+  const ach = g.find(x => x.toLowerCase() === t.toLowerCase());
+  if (!ach) return { erro: `O tamanho "${t}" não existe na grade deste item (${g.join(', ')}).` };
+  return { tamanho: ach, grade: true };
+}
+const tamQ = tm => (tm.grade ? tm.tamanho : undefined);   // argumento de estoqueAtualItem: indefinido = saldo total do item
+const rotTam = tm => (tm.grade ? ` no tamanho ${tm.tamanho}` : '');
+// Grade e mínimos que vieram no corpo do cadastro (equipamento não tem grade).
+function gradeDoCorpo(b) {
+  if (b.tipo === 'equipamento' || !Array.isArray(b.grade_tamanhos)) return { grade: [], minimos: {} };
+  const grade = b.grade_tamanhos.map(t => String(t == null ? '' : t).trim()).filter(Boolean), minimos = {};
+  grade.forEach(t => { const v = Number((b.minimos_tamanho || {})[t]); minimos[t] = isFinite(v) && v > 0 ? v : 0; });
+  return { grade, minimos };
+}
+// Item abaixo do mínimo: com grade, qualquer tamanho com mínimo > 0 e saldo menor; sem grade, o saldo total contra o mínimo do item.
+function itemAbaixoMinimo(i) {
+  const g = gradeDe(i);
+  if (g.length) { const mn = i.minimos_tamanho || {}, st = i.estoque_por_tamanho || {}; return g.some(t => Number(mn[t]) > 0 && Number(st[t] || 0) < Number(mn[t])); }
+  return n(i.estoque_atual) < n(i.estoque_minimo);
+}
+async function estoqueAtualItem(itemId, tamanho) {
+  if (tamanho !== undefined) {   // saldo de UM tamanho (nulo = lançamentos sem tamanho)
+    const rt = await query(`SELECT COALESCE(SUM(CASE WHEN tipo='entrada' THEN quantidade ELSE -quantidade END),0) AS q
+      FROM erp_estoque_movimentos WHERE item_id=$1 AND tamanho IS NOT DISTINCT FROM $2`, [itemId, tamanho]);
+    return Number(rt[0].q);
+  }
   const r = await query(`SELECT COALESCE(SUM(CASE WHEN tipo='entrada' THEN quantidade ELSE -quantidade END),0) AS q
     FROM erp_estoque_movimentos WHERE item_id=$1`, [itemId]);
   return Number(r[0].q);
@@ -8070,7 +8106,7 @@ app.get('/api/suprimentos/resumo', requireAuth, SUP_VIEW, h(async (req, res) => 
   res.json({
     totalItens: itens.length,
     valorEstoque: itens.reduce((s, i) => s + n(i.estoque_atual) * n(i.custo_medio), 0),
-    abaixoMinimo: itens.filter(i => n(i.estoque_atual) < n(i.estoque_minimo)).length,
+    abaixoMinimo: itens.filter(itemAbaixoMinimo).length,
     emCustodia: n(custodia[0].q)
   });
 }));
@@ -8087,6 +8123,19 @@ function validItemEstoque(b) {
   const mn = Number(b.estoque_minimo), mx = Number(b.estoque_maximo);
   if (b.estoque_maximo != null && b.estoque_maximo !== '' && isFinite(mx) && isFinite(mn) && mx > 0 && mx < mn)
     return 'Estoque máximo não pode ser menor que o mínimo.';
+  if (b.grade_tamanhos != null && !Array.isArray(b.grade_tamanhos)) return 'Grade de tamanhos inválida.';
+  if (Array.isArray(b.grade_tamanhos) && b.grade_tamanhos.length) {
+    if (b.tipo === 'equipamento') return 'A grade de tamanhos vale só para material de consumo.';
+    if (b.grade_tamanhos.length > 40) return 'A grade aceita no máximo 40 tamanhos.';
+    const vistos = new Set();
+    for (const t of b.grade_tamanhos) {
+      const x = String(t == null ? '' : t).trim();
+      if (!x || x.length > 12) return 'Cada tamanho precisa ter de 1 a 12 caracteres.';
+      if (vistos.has(x.toLowerCase())) return `Tamanho repetido na grade: ${x}.`;
+      vistos.add(x.toLowerCase());
+    }
+    for (const k of Object.keys(b.minimos_tamanho || {})) if (!(Number((b.minimos_tamanho || {})[k]) >= 0)) return `Estoque mínimo inválido para o tamanho ${k}.`;
+  }
   if (sanitize(b.ncm) && String(b.ncm).replace(/\D/g, '').length !== 8) return 'NCM deve ter 8 dígitos.';
   if (sanitize(b.cest) && String(b.cest).replace(/\D/g, '').length !== 7) return 'CEST deve ter 7 dígitos.';
   return null;
@@ -8096,12 +8145,14 @@ function validItemEstoque(b) {
 // nomes fixos internos (não vêm do usuário), então é seguro interpolá-las.
 function itemValues(b) {
   const num = v => (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
+  const gr = gradeDoCorpo(b);   // com grade, o mínimo do item é a soma dos mínimos por tamanho
   return {
     nome: sanitize(b.nome), sku: sanitize(b.sku), categoria: sanitize(b.categoria),
     subcategoria: sanitize(b.subcategoria), marca: sanitize(b.marca),
     tipo: b.tipo === 'equipamento' ? 'equipamento' : 'material',
     unidade: sanitize(b.unidade) || 'un', descricao: sanitize(b.descricao),
-    estoque_minimo: Number(b.estoque_minimo) || 0, estoque_maximo: num(b.estoque_maximo),
+    estoque_minimo: gr.grade.length ? Object.values(gr.minimos).reduce((a, x) => a + x, 0) : (Number(b.estoque_minimo) || 0), estoque_maximo: num(b.estoque_maximo),
+    grade_tamanhos: gr.grade.length ? JSON.stringify(gr.grade) : null, minimos_tamanho: gr.grade.length ? JSON.stringify(gr.minimos) : null,
     peso_liquido: num(b.peso_liquido), peso_bruto: num(b.peso_bruto),
     dim_altura: num(b.dim_altura), dim_largura: num(b.dim_largura), dim_profundidade: num(b.dim_profundidade),
     preco_ultima_compra: num(b.preco_ultima_compra),
@@ -8129,6 +8180,10 @@ app.put('/api/suprimentos/itens/:id', requireAuth, SUP_EDIT, h(async (req, res) 
   const b = req.body, err = validItemEstoque(b);
   if (err) return res.status(400).json({ error: err });
   const v = itemValues(b); v.ativo = b.ativo !== false;
+  const gradeNova = JSON.parse(v.grade_tamanhos || '[]').map(t => String(t).toLowerCase());
+  const porTam = await query("SELECT tamanho, SUM(CASE WHEN tipo='entrada' THEN quantidade ELSE -quantidade END) AS q FROM erp_estoque_movimentos WHERE item_id=$1 AND tamanho IS NOT NULL GROUP BY tamanho", [req.params.id]);
+  const preso = porTam.find(r => Number(r.q) !== 0 && !gradeNova.includes(String(r.tamanho).toLowerCase()));
+  if (preso) return res.status(409).json({ error: `O tamanho ${preso.tamanho} ainda tem ${Number(preso.q)} em estoque. Zere-o (ajuste ou envio) antes de tirá-lo da grade.` });
   // Item ainda sem custo médio (nunca comprado): adota o preço de custo
   // informado, para o estoque passar a ser valorizado. Se já há custo médio
   // calculado por compras, ele é preservado.
@@ -8203,6 +8258,17 @@ async function carregaLancamentoEditavel(id) {
   return { mov, item };
 }
 const efeitoEstoque = (tipo, q) => (tipo === 'entrada' ? q : -q);
+// Estoque não pode ficar negativo ao corrigir um lançamento (item com grade: por tamanho). `tamNovo` indefinido = item sem grade. Devolve o texto do problema ou null.
+async function saldoNegativoNaCorrecao(item, mov, qtdNova, tamNovo) {
+  const antigo = efeitoEstoque(mov.tipo, Number(mov.quantidade)), novo = efeitoEstoque(mov.tipo, qtdNova), un = item.unidade || 'un';
+  if (tamNovo === undefined) { const r = (await estoqueAtualItem(item.id)) - antigo + novo; return r < 0 ? `o estoque ficaria negativo (${r} ${un}).` : null; }
+  const tamAnt = mov.tamanho == null ? null : mov.tamanho;
+  if (tamAnt === tamNovo) { const r = (await estoqueAtualItem(item.id, tamNovo)) - antigo + novo; return r < 0 ? `o tamanho ${tamNovo || '(sem tamanho)'} ficaria negativo (${r} ${un}).` : null; }
+  const ra = (await estoqueAtualItem(item.id, tamAnt)) - antigo;
+  if (ra < 0) return `o tamanho ${tamAnt || '(sem tamanho)'} ficaria negativo (${ra} ${un}).`;
+  const rn = (await estoqueAtualItem(item.id, tamNovo)) + novo;
+  return rn < 0 ? `o tamanho ${tamNovo} ficaria negativo (${rn} ${un}).` : null;
+}
 
 app.put('/api/suprimentos/movimentos/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
   const c = await carregaLancamentoEditavel(req.params.id);
@@ -8221,12 +8287,14 @@ app.put('/api/suprimentos/movimentos/:id', requireAuth, SUP_EDIT, h(async (req, 
     } else { custo = Number(b.custo_unitario); if (!isFinite(custo) || custo < 0) return res.status(400).json({ error: 'Custo unitário inválido.' }); }
   }
   if (mov.origem === 'ajuste' && !sanitize(b.notes)) return res.status(400).json({ error: 'Descreva o motivo do ajuste.' });
-  const saldo = await estoqueAtualItem(item.id), novoSaldo = saldo - efeitoEstoque(mov.tipo, Number(mov.quantidade)) + efeitoEstoque(mov.tipo, qtd);
-  if (novoSaldo < 0) return res.status(409).json({ error: `Com essa alteração o estoque ficaria negativo (${novoSaldo} ${item.unidade}).` });
+  const tm = tamanhoDoLancamento(item, b.tamanho === undefined ? mov.tamanho : b.tamanho);
+  if (tm.erro) return res.status(400).json({ error: tm.erro });
+  const neg = await saldoNegativoNaCorrecao(item, mov, qtd, tm.grade ? tm.tamanho : undefined);
+  if (neg) return res.status(409).json({ error: `Com essa alteração ${neg}` });
   const trilha = `[Editado em ${brDateBR(hojeISO())} por ${req.user.name}: ${motivo}]`;
   const notes = [sanitize(b.notes) || '', trilha].filter(Boolean).join(' ');
-  await query('UPDATE erp_estoque_movimentos SET quantidade=$1, custo_unitario=$2, valor_total=$3, data=COALESCE($4::date, data), notes=$5 WHERE id=$6',
-    [qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, isDate(b.data) ? b.data : null, notes, mov.id]);
+  await query('UPDATE erp_estoque_movimentos SET quantidade=$1, custo_unitario=$2, valor_total=$3, data=COALESCE($4::date, data), notes=$5, tamanho=$6 WHERE id=$7',
+    [qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, isDate(b.data) ? b.data : null, notes, tm.grade ? tm.tamanho : (mov.tamanho == null ? null : mov.tamanho), mov.id]);
   const cmp = await recalcularCmpItem(item.id);
   res.json({ ok: true, custo_medio: cmp });
 }));
@@ -8237,8 +8305,8 @@ app.post('/api/suprimentos/movimentos/:id/excluir', requireAuth, SUP_EDIT, h(asy
   const { mov, item } = c;
   const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
   if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa da exclusão.' });
-  const saldo = await estoqueAtualItem(item.id), novoSaldo = saldo - efeitoEstoque(mov.tipo, Number(mov.quantidade));
-  if (novoSaldo < 0) return res.status(409).json({ error: `Excluir esta entrada deixaria o estoque negativo (${novoSaldo} ${item.unidade}). Há saídas posteriores que dependem dela.` });
+  const neg = await saldoNegativoNaCorrecao(item, mov, 0, gradeDe(item).length ? (mov.tamanho == null ? null : mov.tamanho) : undefined);
+  if (neg) return res.status(409).json({ error: `Excluir este lançamento: ${neg} Há saídas posteriores que dependem dele.` });
   const resumo = `${mov.tipo} por ${mov.origem}, ${Number(mov.quantidade)} ${item.unidade}${mov.custo_unitario != null ? ' a R$ ' + Number(mov.custo_unitario) : ''}, ${brDateBR(mov.data)}, item "${item.nome}"${mov.notes ? ', obs.: ' + String(mov.notes).slice(0, 120) : ''}`;
   if (mov.unidade_id) await query("UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1 AND estado='baixado'", [mov.unidade_id]);
   await query('DELETE FROM erp_estoque_movimentos WHERE id=$1', [mov.id]);
@@ -8255,7 +8323,7 @@ app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res)
     SELECT m.*, i.nome AS item_nome, i.unidade, i.tipo AS item_tipo,
       s.name AS supplier_name, c.name AS colaborador_name, c.cargo AS colaborador_cargo, u.name AS created_by_name,
       un.numero_serie AS unidade_serie, un.patrimonio AS unidade_patrimonio,
-      i.marca AS item_marca, i.sku AS item_sku, i.subcategoria AS item_subcategoria,
+      i.marca AS item_marca, i.sku AS item_sku, i.subcategoria AS item_subcategoria, i.grade_tamanhos AS item_grade,
       (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='envio_termo' AND a.entity_id = m.id) AS termos
     FROM erp_estoque_movimentos m
     JOIN erp_estoque_itens i ON i.id = m.item_id
@@ -8276,6 +8344,8 @@ app.post('/api/suprimentos/compras', requireAuth, SUP_EDIT, h(async (req, res) =
   if (!isFinite(custo) || custo < 0) return res.status(400).json({ error: 'Custo unitário inválido.' });
   const data = isDate(b.data) ? b.data : hojeISO();
   const valorTotal = Number((qtd * custo).toFixed(2));
+  const tm = tamanhoDoLancamento(item, b.tamanho);
+  if (tm.erro) return res.status(400).json({ error: tm.erro });
 
   let payableId = null;
   if (b.lancar_pagar) {
@@ -8288,9 +8358,9 @@ app.post('/api/suprimentos/compras', requireAuth, SUP_EDIT, h(async (req, res) =
   }
 
   const mov = await query(`INSERT INTO erp_estoque_movimentos
-    (item_id, tipo, origem, quantidade, custo_unitario, valor_total, supplier_id, documento, data, payable_id, notes, created_by)
-    VALUES ($1,'entrada','compra',$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-    [item.id, qtd, custo, valorTotal, b.supplier_id || null, sanitize(b.documento), data, payableId, sanitize(b.notes), req.user.id]);
+    (item_id, tipo, origem, quantidade, custo_unitario, valor_total, supplier_id, documento, data, payable_id, notes, created_by, tamanho)
+    VALUES ($1,'entrada','compra',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+    [item.id, qtd, custo, valorTotal, b.supplier_id || null, sanitize(b.documento), data, payableId, sanitize(b.notes), req.user.id, tm.tamanho]);
 
   // Custo médio ponderado sobre o estoque ANTES desta entrada.
   const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);
@@ -8340,16 +8410,18 @@ app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) =>
     qtd = 1;
   }
   if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
-  const saldo = await estoqueAtualItem(item.id);
-  if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}, solicitado ${qtd}.` });
+  const tm = tamanhoDoLancamento(item, b.tamanho);
+  if (tm.erro) return res.status(400).json({ error: tm.erro });
+  const saldo = await estoqueAtualItem(item.id, tamQ(tm));
+  if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente${rotTam(tm)}: disponível ${saldo} ${item.unidade}, solicitado ${qtd}.` });
   const data = isDate(b.data) ? b.data : hojeISO();
   const mov = await query(`INSERT INTO erp_estoque_movimentos
     (item_id, tipo, origem, quantidade, colaborador_id, status, data, notes, created_by,
-     unidade_id, forma_envio, codigo_rastreio, condicao_saida, linha_telefonica, operadora)
-    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+     unidade_id, forma_envio, codigo_rastreio, condicao_saida, linha_telefonica, operadora, tamanho)
+    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
     [item.id, qtd, b.colaborador_id, data, sanitize(b.notes), req.user.id,
      unidade ? unidade.id : null, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida),
-     sanitize(b.linha_telefonica), sanitize(b.operadora)]);
+     sanitize(b.linha_telefonica), sanitize(b.operadora), tm.tamanho]);
   if (unidade) await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [unidade.id]);
   res.json({ ok: true, id: mov[0].id });
 }));
@@ -8378,10 +8450,21 @@ app.put('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res)
     if (!isFinite(nova) || nova <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
     const extra = nova - qtd;
     if (extra > 0) {
-      const saldo = await estoqueAtualItem(env.item_id);
+      const saldo = await estoqueAtualItem(env.item_id, gradeDe(item).length ? (env.tamanho == null ? null : env.tamanho) : undefined);
       if (extra > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}.` });
     }
     qtd = nova;
+  }
+
+  let tamanhoEnv = env.tamanho == null ? null : env.tamanho;
+  if (b.tamanho !== undefined && gradeDe(item).length) {
+    const tt = tamanhoDoLancamento(item, b.tamanho);
+    if (tt.erro) return res.status(400).json({ error: tt.erro });
+    if (tt.tamanho !== tamanhoEnv) {
+      const sd = await estoqueAtualItem(item.id, tt.tamanho);
+      if (qtd > sd) return res.status(400).json({ error: `Estoque insuficiente no tamanho ${tt.tamanho}: disponível ${sd} ${item.unidade}.` });
+      tamanhoEnv = tt.tamanho;
+    }
   }
 
   let unidadeId = env.unidade_id;
@@ -8408,10 +8491,11 @@ app.put('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res)
   }
 
   await query(`UPDATE erp_estoque_movimentos SET colaborador_id=$1, data=$2, quantidade=$3, unidade_id=$4, forma_envio=$5,
-      codigo_rastreio=$6, condicao_saida=$7, condicao_devolucao=$8, linha_telefonica=$9, operadora=$10, notes=$11 WHERE id=$12`,
+      codigo_rastreio=$6, condicao_saida=$7, condicao_devolucao=$8, linha_telefonica=$9, operadora=$10, notes=$11, tamanho=$12 WHERE id=$13`,
     [colabId, data, qtd, unidadeId, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida),
      devolvido ? sanitize(b.condicao_devolucao) : env.condicao_devolucao,
-     sanitize(b.linha_telefonica), sanitize(b.operadora), sanitize(b.notes), env.id]);
+     sanitize(b.linha_telefonica), sanitize(b.operadora), sanitize(b.notes), tamanhoEnv, env.id]);
+  if (tamanhoEnv !== (env.tamanho == null ? null : env.tamanho)) await query('UPDATE erp_estoque_movimentos SET tamanho=$1 WHERE devolucao_de=$2', [tamanhoEnv, env.id]);
   if (colabId !== env.colaborador_id) await query('UPDATE erp_estoque_movimentos SET colaborador_id=$1 WHERE devolucao_de=$2', [colabId, env.id]);
   res.json({ ok: true });
 }));
@@ -8525,9 +8609,9 @@ app.post('/api/suprimentos/envios/:id/status', requireAuth, SUP_EDIT, h(async (r
   if (env.status === 'devolvido') return res.status(400).json({ error: 'Este envio já foi devolvido.' });
   if (novo === 'devolvido') {
     const data = isDate(req.body.data) ? req.body.data : hojeISO();
-    await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, colaborador_id, data, devolucao_de, notes, created_by, unidade_id)
-      VALUES ($1,'entrada','devolucao',$2,$3,$4,$5,$6,$7,$8)`,
-      [env.item_id, env.quantidade, env.colaborador_id, data, env.id, sanitize(req.body.notes), req.user.id, env.unidade_id]);
+    await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, colaborador_id, data, devolucao_de, notes, created_by, unidade_id, tamanho)
+      VALUES ($1,'entrada','devolucao',$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [env.item_id, env.quantidade, env.colaborador_id, data, env.id, sanitize(req.body.notes), req.user.id, env.unidade_id, env.tamanho == null ? null : env.tamanho]);
     await query(`UPDATE erp_estoque_movimentos SET status='devolvido', data_devolucao=$1, condicao_devolucao=$2 WHERE id=$3`,
       [data, sanitize(req.body.condicao_devolucao), env.id]);
     if (env.unidade_id) await query(`UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1`, [env.unidade_id]);
@@ -8554,9 +8638,11 @@ app.post('/api/suprimentos/ajustes', requireAuth, SUP_EDIT, h(async (req, res) =
   const qtd = Number(b.quantidade);
   if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
   if (!sanitize(b.notes)) return res.status(400).json({ error: 'Descreva o motivo do ajuste.' });
+  const tm = tamanhoDoLancamento(item, b.tamanho);
+  if (tm.erro) return res.status(400).json({ error: tm.erro });
   if (tipo === 'saida') {
-    const saldo = await estoqueAtualItem(item.id);
-    if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente: disponível ${saldo} ${item.unidade}.` });
+    const saldo = await estoqueAtualItem(item.id, tamQ(tm));
+    if (qtd > saldo) return res.status(400).json({ error: `Estoque insuficiente${rotTam(tm)}: disponível ${saldo} ${item.unidade}.` });
   }
   // Entrada por ajuste também precisa valorizar o estoque: sem custo, o item
   // ficava com custo médio 0 e o "Valor em estoque" zerado. Se o usuário não
@@ -8570,9 +8656,9 @@ app.post('/api/suprimentos/ajustes', requireAuth, SUP_EDIT, h(async (req, res) =
     if (!(custo > 0)) custo = null;
   }
   const data = isDate(b.data) ? b.data : hojeISO();
-  await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, custo_unitario, valor_total, data, notes, created_by)
-    VALUES ($1,$2,'ajuste',$3,$4,$5,$6,$7,$8)`,
-    [item.id, tipo, qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, data, sanitize(b.notes), req.user.id]);
+  await query(`INSERT INTO erp_estoque_movimentos (item_id, tipo, origem, quantidade, custo_unitario, valor_total, data, notes, created_by, tamanho)
+    VALUES ($1,$2,'ajuste',$3,$4,$5,$6,$7,$8,$9)`,
+    [item.id, tipo, qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, data, sanitize(b.notes), req.user.id, tm.tamanho]);
 
   if (tipo === 'entrada' && custo != null) {
     const baseQtd = Math.max(0, (await estoqueAtualItem(item.id)) - qtd);

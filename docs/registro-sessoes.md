@@ -8495,3 +8495,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Ajuste (mesma sessão, 2026-11-16):** a coluna "Detalhe" do Histórico, que quebrava a tabela com as observações de edição, virou um botão 👁 "Ver detalhes" ao lado de Editar e Excluir. Ele abre a janela do lançamento completo (movimento, data, quantidade, custo unitário e total, fornecedor/NF/colaborador, título em Contas a Pagar, observação inteira, quem registrou e quando) com "Voltar ao histórico". A coluna Ações aparece também para quem só consulta (só com o 👁) e "Por" não quebra mais de linha. Arquivos: `public/app.js`, `scripts/2026-11-16_suprimentos_historico_detalhe_botao.js`. Conferido no simulador.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-16 — Sessão 234: Suprimentos — grade de tamanhos (uniformes, calçados)
+
+**Solicitação:** o Marcelo quis que um item de uniforme abra, no cadastro, a grade de tamanhos e que toda movimentação peça o tamanho. Decisões dele: CMP único por item; estoque mínimo por tamanho; os lançamentos já feitos dos uniformes são desconsiderados (ele cadastra tudo de novo), então nada foi alterado nos dados existentes.
+
+**Migração (autorizada por ele ao responder o plano):** `supabase/migrations/2026-11-16-suprimentos-grade-tamanhos.sql`, só aditiva: `erp_estoque_itens.grade_tamanhos` (jsonb), `erp_estoque_itens.minimos_tamanho` (jsonb), `erp_estoque_movimentos.tamanho` (text) e um índice por (item, tamanho). Aplicada antes do deploy.
+
+**O que mudou:** (1) **Cadastro:** em material, a caixa "Controlar o estoque por tamanho (grade)" abre o editor: modelos Vestuário (PP–XXG), Calçado (34–46), Calça (36–56), tamanhos próprios separados por vírgula, e o estoque mínimo de cada tamanho; categoria de uniforme liga a caixa sozinha com a grade de vestuário; "Uniformes" entrou no catálogo de categorias. Grade só vale para material; o mínimo do item vira a soma dos mínimos por tamanho. (2) **Movimentação:** compra, ajuste, envio e a correção de lançamentos pedem o tamanho (deve estar na grade); o saldo é por tamanho, então saída de ajuste e envio são barrados se o tamanho não tem saldo mesmo havendo outros tamanhos; a devolução herda o tamanho do envio; o envio pode trocar de tamanho na edição. (3) **Telas:** a tabela do estoque mostra etiquetinhas por tamanho (vermelho abaixo do mínimo, cinza zerado), a situação "Baixo" e o resumo "Abaixo do mínimo" consideram o mínimo por tamanho; a ficha mostra a tabela por tamanho; histórico, detalhe do lançamento, envios e compras mostram o tamanho. (4) Tirar da grade um tamanho que ainda tem saldo é barrado. O CMP segue único e calculado sobre todo o item.
+
+**Arquivos:** `api/index.js`, `public/app.js`, `public/styles.css`, `supabase/migrations/2026-11-16-suprimentos-grade-tamanhos.sql`, `scripts/2026-11-16_suprimentos_grade_tamanhos.js` (+ blocos `2026-11-16_grade_*.txt`), `scripts/2026-11-16_verifica_grade_tamanhos.js`.
+
+**Verificação:** teste de backend com banco simulado (24 PASS: cadastro, compra, ajuste, envio, troca de tamanho do envio, resumo e correção de lançamentos) e simulador (tabela com etiquetas, cadastro com sugestão por categoria, formulários de ajuste, compra e envio, ficha e histórico). Os testes anteriores de Suprimentos seguem passando. Não testado: produção logada. Limites: itens existentes sem grade seguem como antes; se uma grade for ligada num item que já tem estoque, o saldo antigo aparece como "Sem tam." até ser classificado editando os lançamentos no histórico; termos e etiquetas de envio não mostram o tamanho (só equipamento tem termo).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

@@ -1,0 +1,29 @@
+// ---- Grade de tamanhos (uniformes, calçados etc.) ----
+// O item pode controlar o estoque por tamanho: `grade_tamanhos` (lista) e `minimos_tamanho` (mapa tamanho -> mínimo). Cada movimentação guarda `tamanho`. O saldo por
+// tamanho é a soma dos movimentos por (item, tamanho); o CMP segue único por item. Item sem grade ignora o tamanho.
+const gradeDe = item => { const g = item && item.grade_tamanhos; return Array.isArray(g) ? g.map(String) : []; };
+// Tamanho de um lançamento: item com grade exige um tamanho da grade; item sem grade ignora o que vier.
+function tamanhoDoLancamento(item, bruto) {
+  const g = gradeDe(item);
+  if (!g.length) return { tamanho: null, grade: false };
+  const t = String(sanitize(bruto) || '').trim();
+  if (!t) return { erro: `Informe o tamanho: este item controla o estoque por tamanho (${g.join(', ')}).` };
+  const ach = g.find(x => x.toLowerCase() === t.toLowerCase());
+  if (!ach) return { erro: `O tamanho "${t}" não existe na grade deste item (${g.join(', ')}).` };
+  return { tamanho: ach, grade: true };
+}
+const tamQ = tm => (tm.grade ? tm.tamanho : undefined);   // argumento de estoqueAtualItem: indefinido = saldo total do item
+const rotTam = tm => (tm.grade ? ` no tamanho ${tm.tamanho}` : '');
+// Grade e mínimos que vieram no corpo do cadastro (equipamento não tem grade).
+function gradeDoCorpo(b) {
+  if (b.tipo === 'equipamento' || !Array.isArray(b.grade_tamanhos)) return { grade: [], minimos: {} };
+  const grade = b.grade_tamanhos.map(t => String(t == null ? '' : t).trim()).filter(Boolean), minimos = {};
+  grade.forEach(t => { const v = Number((b.minimos_tamanho || {})[t]); minimos[t] = isFinite(v) && v > 0 ? v : 0; });
+  return { grade, minimos };
+}
+// Item abaixo do mínimo: com grade, qualquer tamanho com mínimo > 0 e saldo menor; sem grade, o saldo total contra o mínimo do item.
+function itemAbaixoMinimo(i) {
+  const g = gradeDe(i);
+  if (g.length) { const mn = i.minimos_tamanho || {}, st = i.estoque_por_tamanho || {}; return g.some(t => Number(mn[t]) > 0 && Number(st[t] || 0) < Number(mn[t])); }
+  return n(i.estoque_atual) < n(i.estoque_minimo);
+}

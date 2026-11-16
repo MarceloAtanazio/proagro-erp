@@ -36,7 +36,7 @@ require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: {
   if (s.startsWith('UPDATE erp_estoque_itens SET custo_medio=$1')) { LOG.cmp = p[0]; return []; }
   if (s.startsWith('DELETE FROM erp_estoque_movimentos WHERE id=$1')) { MOVS = MOVS.filter(m => m.id !== Number(p[0])); return []; }
   if (s.startsWith("UPDATE erp_estoque_unidades SET estado='em_estoque'")) { UNID[p[0]] = 'em_estoque'; return []; }
-  if (s.startsWith('UPDATE erp_estoque_movimentos SET quantidade=$1')) { LOG.update = p; const m = MOVS.find(x => x.id === p[5]); m.quantidade = p[0]; m.custo_unitario = p[1]; m.notes = p[4]; return []; }
+  if (s.startsWith('UPDATE erp_estoque_movimentos SET quantidade=$1')) { LOG.update = p; const m = MOVS.find(x => x.id === p[6]); m.quantidade = p[0]; m.custo_unitario = p[1]; m.notes = p[4]; return []; }
   throw new Error('SQL não previsto no stub: ' + s.slice(0, 160));
 } } };
 const jwt = require(path.join(ROOT, 'node_modules/jsonwebtoken')); const app = require(path.join(ROOT, 'api/index.js')); const server = app.listen(0);
