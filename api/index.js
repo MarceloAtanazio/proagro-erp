@@ -364,6 +364,8 @@ const AUDIT_MAP = {
   'POST /api/suprimentos/itens': (req, body) => `Cadastrou o item de estoque "${req.body.nome}" (ID ${body && body.id})`,
   'PUT /api/suprimentos/itens/:id': req => `Editou o item de estoque ID ${req.params.id} ("${req.body.nome}"${req.body.ativo === false ? ', inativado' : ''})`,
   'POST /api/suprimentos/itens/:id/excluir': req => `Excluiu o item de estoque ID ${req.params.id} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
+  'PUT /api/suprimentos/movimentos/:id': req => `Editou o lançamento de estoque ID ${req.params.id}: ${req.body && req.body.quantidade} un${req.body && req.body.custo_unitario !== undefined && req.body.custo_unitario !== '' ? ', custo R$ ' + req.body.custo_unitario : ''}, data ${req.body && req.body.data} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
+  'POST /api/suprimentos/movimentos/:id/excluir': (req, body) => `Excluiu o lançamento de estoque ID ${req.params.id}${body && body.resumo ? ' (' + body.resumo + ')' : ''} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
   'DELETE /api/suprimentos/itens/:id': req => `Excluiu o item de estoque ID ${req.params.id}`,
   'POST /api/suprimentos/compras': (req, body) => `Registrou compra de ${req.body.quantidade} un. do item ID ${req.body.item_id} a ${fmtBRL(req.body.custo_unitario)}/un` +
     (body && body.payable_id ? ` — lançada em Contas a Pagar (título ID ${body.payable_id})` : ''),
@@ -8172,6 +8174,76 @@ app.post('/api/suprimentos/itens/:id/excluir', requireAuth, SUP_EDIT, h(async (r
   const marca = `[Excluído em ${brDateBR(hojeISO())} por ${req.user.name}] ${motivo}`;
   await query("UPDATE erp_estoque_itens SET ativo=false, notes = CASE WHEN COALESCE(notes,'')='' THEN $2::text ELSE $2::text || E'\\n' || notes END WHERE id=$1", [item.id, marca]);
   res.json({ ok: true, modo: 'inativado', saldo_baixado: saldo });
+}));
+
+// ---- Corrigir lançamentos errados (editar / excluir) ----
+// Recalcula o CMP repetindo o histórico do item em ordem. Sem nenhuma entrada com custo no histórico, mantém o CMP gravado (itens que só têm o custo do cadastro).
+async function recalcularCmpItem(itemId) {
+  const movs = await query('SELECT tipo, quantidade, custo_unitario FROM erp_estoque_movimentos WHERE item_id=$1 ORDER BY data, id', [itemId]);
+  let qtd = 0, cmp = 0, tem = false;
+  for (const m of movs) {
+    const q = Number(m.quantidade);
+    if (m.tipo === 'entrada') { const c = Number(m.custo_unitario); if (c > 0) { cmp = cmpNovo(cmp, Math.max(0, qtd), q, q * c); tem = true; } qtd += q; }
+    else qtd -= q;
+  }
+  if (!tem) return null;
+  cmp = Number(cmp.toFixed(2));
+  await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [cmp, itemId]);
+  return cmp;
+}
+async function carregaLancamentoEditavel(id) {
+  const mov = (await query('SELECT * FROM erp_estoque_movimentos WHERE id=$1', [id]))[0];
+  if (!mov) return { st: 404, erro: 'Lançamento não encontrado.' };
+  if (!['ajuste', 'compra'].includes(mov.origem)) return { st: 409, erro: 'Envios e devoluções se corrigem na aba "Envios a funcionários". Aqui só dá para corrigir compras e ajustes.' };
+  if (mov.payable_id) {
+    const pg = await query('SELECT 1 FROM erp_payables WHERE id=$1', [mov.payable_id]);
+    if (pg.length) return { st: 409, erro: `Esta compra gerou o título #${mov.payable_id} em Contas a Pagar. Resolva o título primeiro (exclua ou ajuste lá) e depois corrija o lançamento.` };
+  }
+  const item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [mov.item_id]))[0];
+  return { mov, item };
+}
+const efeitoEstoque = (tipo, q) => (tipo === 'entrada' ? q : -q);
+
+app.put('/api/suprimentos/movimentos/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const c = await carregaLancamentoEditavel(req.params.id);
+  if (c.erro) return res.status(c.st).json({ error: c.erro });
+  const { mov, item } = c, b = req.body || {};
+  if (mov.unidade_id) return res.status(409).json({ error: 'Esta é a baixa de uma unidade específica. Exclua o lançamento (a unidade volta ao estoque) e refaça a baixa.' });
+  const motivo = String(sanitize(b.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa da alteração.' });
+  const qtd = Number(b.quantidade);
+  if (!isFinite(qtd) || qtd <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero.' });
+  let custo = mov.custo_unitario != null ? Number(mov.custo_unitario) : null;
+  if (mov.tipo === 'entrada') {
+    if (b.custo_unitario === '' || b.custo_unitario == null) {
+      if (mov.origem === 'compra') return res.status(400).json({ error: 'Informe o custo unitário da compra.' });
+      custo = null;
+    } else { custo = Number(b.custo_unitario); if (!isFinite(custo) || custo < 0) return res.status(400).json({ error: 'Custo unitário inválido.' }); }
+  }
+  if (mov.origem === 'ajuste' && !sanitize(b.notes)) return res.status(400).json({ error: 'Descreva o motivo do ajuste.' });
+  const saldo = await estoqueAtualItem(item.id), novoSaldo = saldo - efeitoEstoque(mov.tipo, Number(mov.quantidade)) + efeitoEstoque(mov.tipo, qtd);
+  if (novoSaldo < 0) return res.status(409).json({ error: `Com essa alteração o estoque ficaria negativo (${novoSaldo} ${item.unidade}).` });
+  const trilha = `[Editado em ${brDateBR(hojeISO())} por ${req.user.name}: ${motivo}]`;
+  const notes = [sanitize(b.notes) || '', trilha].filter(Boolean).join(' ');
+  await query('UPDATE erp_estoque_movimentos SET quantidade=$1, custo_unitario=$2, valor_total=$3, data=COALESCE($4::date, data), notes=$5 WHERE id=$6',
+    [qtd, custo, custo != null ? Number((qtd * custo).toFixed(2)) : null, isDate(b.data) ? b.data : null, notes, mov.id]);
+  const cmp = await recalcularCmpItem(item.id);
+  res.json({ ok: true, custo_medio: cmp });
+}));
+
+app.post('/api/suprimentos/movimentos/:id/excluir', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const c = await carregaLancamentoEditavel(req.params.id);
+  if (c.erro) return res.status(c.st).json({ error: c.erro });
+  const { mov, item } = c;
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa da exclusão.' });
+  const saldo = await estoqueAtualItem(item.id), novoSaldo = saldo - efeitoEstoque(mov.tipo, Number(mov.quantidade));
+  if (novoSaldo < 0) return res.status(409).json({ error: `Excluir esta entrada deixaria o estoque negativo (${novoSaldo} ${item.unidade}). Há saídas posteriores que dependem dela.` });
+  const resumo = `${mov.tipo} por ${mov.origem}, ${Number(mov.quantidade)} ${item.unidade}${mov.custo_unitario != null ? ' a R$ ' + Number(mov.custo_unitario) : ''}, ${brDateBR(mov.data)}, item "${item.nome}"${mov.notes ? ', obs.: ' + String(mov.notes).slice(0, 120) : ''}`;
+  if (mov.unidade_id) await query("UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1 AND estado='baixado'", [mov.unidade_id]);
+  await query('DELETE FROM erp_estoque_movimentos WHERE id=$1', [mov.id]);
+  const cmp = await recalcularCmpItem(item.id);
+  res.json({ ok: true, custo_medio: cmp, resumo });
 }));
 
 app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res) => {

@@ -8478,3 +8478,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (5 PASS: caso real, compra, ajuste, ponderação normal e primeira compra). Limite que continua: corrigir uma entrada errada com uma saída não desfaz o efeito dela na média; nesses casos o CMP precisa de correção manual.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-16 — Sessão 233: Suprimentos — editar e excluir lançamentos errados do histórico
+
+**Solicitação:** o Marcelo pediu para poder excluir (ou editar) lançamentos feitos de forma errada no histórico do item, como as entradas sem custo do notebook.
+
+**O que mudou:** no Histórico do item (Suprimentos > Estoque > 🕘) há agora, nas compras e nos ajustes, os botões ✎ Editar e 🗑 Excluir (padrão `.btn-ic`), ambos com **justificativa obrigatória** e visíveis só para quem edita Suprimentos. (1) **Excluir** apaga a linha do histórico; o que foi apagado e o motivo ficam na auditoria. (2) **Editar** altera quantidade, custo unitário (entradas), data e observação; a justificativa vai para o fim das observações ("[Editado em dd/mm/aaaa por Fulano: motivo]") e para a auditoria. (3) Depois de qualquer um dos dois, o **custo médio é recalculado repetindo o histórico** (entrada com custo pondera; entrada sem custo e saída só mexem na quantidade; com CMP zero a entrada define o custo), então corrigir um lançamento errado desfaz o efeito dele na média. Itens cujo histórico não tem nenhuma entrada com custo mantêm o CMP gravado. (4) Barras: envio e devolução (corrigem-se em "Envios a funcionários"); compra que gerou título ainda existente em Contas a Pagar; correção que deixaria o estoque negativo; edição de baixa de unidade (a exclusão dela devolve a unidade ao estoque). (5) O histórico ganhou a coluna "Custo un.". Sem migração.
+
+**Arquivos:** `api/index.js`, `public/app.js`, `scripts/2026-11-16_suprimentos_editar_excluir_lancamento.js`, `scripts/2026-11-16_verifica_editar_excluir_lancamento.js`.
+
+**Verificação:** teste de backend com banco simulado (16 PASS, incluindo o caso do Notebook Asus: apagar a entrada sem custo e a saída de correção deixa CMP R$ 2.951,74); simulador: botões, bloqueios, excluir, editar e toast. Não testado: produção logada. Cuidado: o recálculo trata entrada sem custo como sem valor; em item que só tinha custo de cadastro e depois recebeu compra, corrigir um lançamento antigo pode mudar o CMP para o custo das compras.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

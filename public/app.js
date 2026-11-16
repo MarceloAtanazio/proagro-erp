@@ -3657,13 +3657,16 @@ function supFormAjuste(i) {
 }
 
 async function supHistorico(i) {
+  const edit = !READONLY;
   const movs = await api('/api/suprimentos/movimentos?item_id=' + i.id);
   const ORIG = { compra: 'Compra', envio: 'Envio', ajuste: 'Ajuste', devolucao: 'Devolução' };
   openModal(`Histórico — ${esc(i.nome)}`, `
     <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Movimento</th><th class="num">Qtd</th><th>Detalhe</th><th>Por</th></tr></thead>
+      <thead><tr><th>Data</th><th>Movimento</th><th class="num">Qtd</th><th class="num">Custo un.</th><th>Detalhe</th><th>Por</th>${edit ? '<th class="actions">Ações</th>' : ''}</tr></thead>
       <tbody>${movs.map(m => {
         const entrada = m.tipo === 'entrada';
+        const corrigivel = edit && ['ajuste', 'compra'].includes(m.origem);
+        const bloqPag = corrigivel && m.payable_id ? `Compra lançada em Contas a Pagar (#${m.payable_id}): resolva o título antes de corrigir` : '';
         const det = m.origem === 'compra' ? [m.supplier_name ? 'Forn.: ' + esc(m.supplier_name) : '', m.documento ? 'NF ' + esc(m.documento) : ''].filter(Boolean).join(' · ')
           : (m.origem === 'envio' || m.origem === 'devolucao') ? (m.colaborador_name ? 'Colab.: ' + esc(m.colaborador_name) : '')
           : esc(m.notes || '');
@@ -3671,12 +3674,61 @@ async function supHistorico(i) {
           <td>${brDate(m.data)}</td>
           <td><span class="badge ${entrada ? 'ok' : 'late'}">${entrada ? '+ ' : '− '}${ORIG[m.origem] || m.origem}</span></td>
           <td class="num">${supNum(m.quantidade)} ${esc(i.unidade)}</td>
+          <td class="num">${m.custo_unitario != null ? brl(m.custo_unitario) : '—'}</td>
           <td>${det || '—'}${m.status ? ` <small style="color:var(--muted)">(${m.status})</small>` : ''}</td>
           <td><small>${esc(m.created_by_name || '—')}</small></td>
+          ${edit ? `<td class="actions sup-acoes">${corrigivel ? `<button class="btn-ic" data-lcedit="${m.id}" ${bloqPag || m.unidade_id ? 'disabled' : ''} title="${bloqPag || (m.unidade_id ? 'Baixa de unidade: exclua e refaça' : 'Editar este lançamento (pede a justificativa)')}" aria-label="Editar lançamento">✎</button><button class="btn-ic exc" data-lcdel="${m.id}" ${bloqPag ? 'disabled' : ''} title="${bloqPag || 'Excluir este lançamento (pede a justificativa)'}" aria-label="Excluir lançamento">🗑</button>` : ''}</td>` : ''}
         </tr>`;
-      }).join('') || '<tr><td colspan="5"><div class="empty">Sem movimentações.</div></td></tr>'}</tbody>
+      }).join('') || `<tr><td colspan="${edit ? 7 : 6}"><div class="empty">Sem movimentações.</div></td></tr>`}</tbody>
     </table></div>`,
     [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+  const depois = async () => { closeModal(); const its = await api('/api/suprimentos/itens'); renderSuprimentos(); supHistorico(its.find(x => x.id === i.id) || i); };
+  document.querySelectorAll('[data-lcedit]').forEach(b => b.onclick = () => supEditarLancamento(i, movs.find(m => m.id == b.dataset.lcedit), depois));
+  document.querySelectorAll('[data-lcdel]').forEach(b => b.onclick = () => supExcluirLancamento(i, movs.find(m => m.id == b.dataset.lcdel), depois));
+}
+
+const SUP_ORIG_LANC = { compra: 'Compra', ajuste: 'Ajuste' };
+function supEditarLancamento(i, m, depois) {
+  const entrada = m.tipo === 'entrada';
+  openModal(`Editar lançamento — ${esc(i.nome)}`, `
+    <p class="hint">${SUP_ORIG_LANC[m.origem]} (${entrada ? 'entrada' : 'saída'}) de <strong>${brDate(m.data)}</strong>. Ao salvar, o custo médio do item é recalculado a partir do histórico.</p>
+    <div class="form-row">
+      ${fld('lc-qtd', 'Quantidade', 'number', m.quantidade, 'step="0.001" min="0.001"')}
+      ${entrada ? fld('lc-custo', 'Custo unitário (R$)', 'number', m.custo_unitario == null ? '' : m.custo_unitario, 'step="0.01" min="0"') : ''}
+    </div>
+    <div class="form-row">
+      ${fld('lc-data', 'Data', 'date', String(m.data).slice(0, 10))}
+      ${fld('lc-notes', m.origem === 'ajuste' ? 'Motivo do ajuste *' : 'Observação', 'text', m.notes || '')}
+    </div>
+    ${entrada && m.origem === 'ajuste' ? '<p class="hint" style="margin-top:-4px">Custo em branco = entrada sem custo (não entra na média do custo médio).</p>' : ''}
+    ${fld('lc-motivo', 'Justificativa da alteração *', 'text', '', 'placeholder="Ex.: quantidade digitada errada"')}`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Salvar alteração', cls: 'primary', onClick: async (ev) => {
+        const motivo = $('#lc-motivo').value.trim();
+        if (motivo.length < 5) return modalError('Informe a justificativa da alteração.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Salvando…'; }
+        try {
+          const r = await api(`/api/suprimentos/movimentos/${m.id}`, { method: 'PUT', body: { quantidade: $('#lc-qtd').value, custo_unitario: entrada ? $('#lc-custo').value : undefined, data: $('#lc-data').value, notes: $('#lc-notes').value, motivo } });
+          toast('Lançamento corrigido.' + (r.custo_medio != null ? ' Custo médio: ' + brl(r.custo_medio) + '.' : '')); depois();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Salvar alteração'; } }
+     } }]);
+}
+function supExcluirLancamento(i, m, depois) {
+  const entrada = m.tipo === 'entrada';
+  openModal(`Excluir lançamento — ${esc(i.nome)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">${SUP_ORIG_LANC[m.origem]} de <strong>${brDate(m.data)}</strong>: <strong>${entrada ? '+' : '−'} ${supNum(m.quantidade)} ${esc(i.unidade)}</strong>${m.custo_unitario != null ? ` a ${brl(m.custo_unitario)}` : ''}.
+      O lançamento é <strong>apagado do histórico</strong> (fica registrado na auditoria com a justificativa) e o custo médio é recalculado.${m.unidade_id ? ' A unidade baixada volta ao estoque.' : ''}</p>
+    <div class="field"><label for="lx-motivo">Justificativa da exclusão</label><textarea id="lx-motivo" rows="3" placeholder="Ex.: lançamento feito por engano."></textarea></div>`,
+    [{ label: 'Voltar', onClick: closeModal },
+     { label: 'Excluir lançamento', cls: 'primary', onClick: async (ev) => {
+        const motivo = $('#lx-motivo').value.trim();
+        if (motivo.length < 5) return modalError('Informe a justificativa da exclusão.');
+        const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Excluindo…'; }
+        try {
+          const r = await api(`/api/suprimentos/movimentos/${m.id}/excluir`, { method: 'POST', body: { motivo } });
+          toast('Lançamento excluído.' + (r.custo_medio != null ? ' Custo médio: ' + brl(r.custo_medio) + '.' : '')); depois();
+        } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Excluir lançamento'; } }
+     } }]);
 }
 
 // ---- Aba Compras ----
