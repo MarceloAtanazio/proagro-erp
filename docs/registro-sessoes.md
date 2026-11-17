@@ -8523,3 +8523,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado (7 PASS) e os quatro anteriores de Suprimentos seguem passando; simulador: coluna, botão desabilitado em compra com título, editar (fornecedor, NF e custo), excluir e recarga. Não testado: produção logada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-17 — Sessão 236: Suprimentos > Envios a funcionários — ações em ícones no padrão das outras telas
+
+**Solicitação:** o Marcelo pediu que a aba Envios a funcionários ficasse no padrão visual das outras páginas, principalmente os botões de ação (sete botões de texto por linha).
+
+**O que mudou:** as ações da linha viraram ícones `.btn-ic` com o rótulo no title e no aria-label: 👁 Detalhes (verde cheio), 🖨 Etiqueta, ✓ Marcar entregue, ↺ Registrar devolução, ✎ Editar e 🗑 Excluir (vermelho, afastado). Os botões que não se aplicam à linha (✓ fora do status Enviado, ↺ em material ou já devolvido) deixam um espaço reservado, então os ícones ficam alinhados em todas as linhas. A coluna Termo virou o ícone 📎 com a contagem de anexos (ou 📎 + "Pendente" quando falta o termo) e a Situação não quebra mais de linha. Só aparência: os data-atributos, os comportamentos e as permissões (quem só consulta vê 👁 e 🖨) são os mesmos. Sem servidor nem banco.
+
+**Arquivos:** `public/app.js`, `public/styles.css`, `scripts/2026-11-17_suprimentos_envios_icones.js`, `scripts/2026-11-17_suprimentos_envios_icones_alinha.js`.
+
+**Verificação:** simulador com três envios (enviado, entregue e devolvido): conjunto de ícones por situação, alinhamento por posição e termo pendente. Não testado: produção logada, tema escuro.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

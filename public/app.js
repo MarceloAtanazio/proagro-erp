@@ -3958,21 +3958,21 @@ async function supRenderEnvios(panel) {
         const semUnidade = equip && !m.unidade_id;
         const envio = [m.forma_envio ? esc(m.forma_envio) : '', m.codigo_rastreio ? '<span class="mono">' + esc(m.codigo_rastreio) + '</span>' : ''].filter(Boolean).join('<br>');
         const termo = !equip ? '<small style="color:var(--muted)">—</small>'
-          : m.termos ? `<button class="btn sm" data-termo="${m.id}" data-att="envio_termo:${m.id}">📎 ${m.termos}</button>`
+          : m.termos ? `<button class="btn-ic" data-termo="${m.id}" data-att="envio_termo:${m.id}" title="Termo assinado e anexos (${m.termos})" aria-label="Termo assinado e anexos">📎<span class="ic-cont">${m.termos}</span></button>`
           : m.status === 'devolvido' ? '<small style="color:var(--muted)">—</small>'
-          : `<button class="btn sm" data-termo="${m.id}" data-att="envio_termo:${m.id}" title="Ainda sem termo assinado">📎</button> <span class="badge warn">Pendente</span>`;
+          : `<button class="btn-ic" data-termo="${m.id}" data-att="envio_termo:${m.id}" title="Ainda sem termo assinado: anexar" aria-label="Anexar o termo assinado">📎</button> <span class="badge warn">Pendente</span>`;
         return `<tr>
           <td>${brDate(m.data)}</td>
           <td>${esc(m.item_nome)}${m.tamanho ? ` <span class="badge off">Tam. ${esc(m.tamanho)}</span>` : ''}${ident ? `<br><small class="mono" style="color:var(--muted)">${ident}</small>` : ''}${semUnidade ? '<br><small style="color:#B23A2F">Sem nº de série vinculado</small>' : ''}${m.linha_telefonica ? `<br><small style="color:var(--muted)">${supLinhaTxt(m)}</small>` : ''}</td>
           <td class="num">${supNum(m.quantidade)} ${esc(m.unidade)}</td>
           <td>${esc(m.colaborador_name || '—')}</td>
           <td>${envio || '<small style="color:var(--muted)">—</small>'}</td>
-          <td><span class="badge ${st[0]}">${st[1]}</span>${m.data_devolucao ? ` <small style="color:var(--muted)">${brDate(m.data_devolucao)}</small>` : m.data_entrega ? ` <small style="color:var(--muted)">${brDate(m.data_entrega)}</small>` : ''}</td>
-          <td>${termo}</td>
-          <td class="actions"><button class="btn sm" data-det="${m.id}">Detalhes</button><button class="btn sm" data-etiq="${m.id}">Etiqueta</button>
-            ${edit && m.status === 'enviado' ? `<button class="btn sm" data-entregue="${m.id}">Marcar entregue</button>` : ''}
-            ${edit && equip && m.status !== 'devolvido' ? `<button class="btn sm" data-devolver="${m.id}">Registrar devolução</button>` : ''}
-            ${edit ? `<button class="btn sm" data-edit-env="${m.id}">Editar</button><button class="btn sm danger-ghost" data-del-env="${m.id}">Excluir</button>` : ''}</td>
+          <td style="white-space:nowrap"><span class="badge ${st[0]}">${st[1]}</span>${m.data_devolucao ? ` <small style="color:var(--muted)">${brDate(m.data_devolucao)}</small>` : m.data_entrega ? ` <small style="color:var(--muted)">${brDate(m.data_entrega)}</small>` : ''}</td>
+          <td style="white-space:nowrap">${termo}</td>
+          <td class="actions sup-acoes"><button class="btn-ic ok" data-det="${m.id}" title="Detalhes do envio (termo, etiqueta e histórico)" aria-label="Detalhes">👁</button><button class="btn-ic" data-etiq="${m.id}" title="Etiqueta de envio (PDF)" aria-label="Etiqueta">🖨</button>
+            ${edit && m.status === 'enviado' ? `<button class="btn-ic" data-entregue="${m.id}" title="Marcar como entregue" aria-label="Marcar entregue">✓</button>` : (edit ? '<span class="sup-ic-vazio"></span>' : '')}
+            ${edit && equip && m.status !== 'devolvido' ? `<button class="btn-ic" data-devolver="${m.id}" title="Registrar a devolução do equipamento" aria-label="Registrar devolução">↺</button>` : (edit ? '<span class="sup-ic-vazio"></span>' : '')}
+            ${edit ? `<button class="btn-ic" data-edit-env="${m.id}" title="Editar o envio" aria-label="Editar">✎</button><button class="btn-ic exc" data-del-env="${m.id}" title="Excluir o envio (o item volta ao estoque)" aria-label="Excluir">🗑</button>` : ''}</td>
         </tr>`;
       }).join('') || `<tr><td colspan="8"><div class="empty">Nenhum envio encontrado.</div></td></tr>`}</tbody>`;
     const T = $('#en-tbl'), achar = id => movs.find(m => m.id == id);

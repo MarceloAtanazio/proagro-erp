@@ -2076,3 +2076,4 @@ td.sup-acoes .btn-ic.exc:hover { background: var(--danger-050); }
 .sup-tam.zero { background: color-mix(in srgb, var(--muted) 12%, var(--card)); color: var(--muted); } .sup-tam.zero b { color: var(--muted); }
 .sup-tam.baixo { background: var(--danger-050); color: var(--danger); } .sup-tam.baixo b { color: var(--danger); }
 .sup-tam.sem { background: var(--warn-050); color: var(--warn); } .sup-tam.sem b { color: var(--warn); }
+td.sup-acoes .sup-ic-vazio { display: inline-block; width: 30px; height: 26px; margin-left: 3px; vertical-align: middle; }
