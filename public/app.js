@@ -3386,8 +3386,8 @@ async function supRenderEstoque(panel) {
           <td><strong>${esc(i.nome)}</strong>${i.sku ? '<br><small class="mono" style="color:var(--muted)">' + esc(i.sku) + '</small>' : ''}</td>
           <td>${i.tipo === 'equipamento' ? 'Equipamento' : 'Material'}</td>
           <td>${esc(i.categoria || '—')}</td>
-          <td class="num"><strong>${supNum(atual)}</strong> <small style="color:var(--muted)">${esc(i.unidade)}</small>${supGradeDe(i).length ? `<div class="sup-tams">${supChipsTam(i)}</div>` : ''}</td>
-          <td class="num">${supNum(min)}${supGradeDe(i).length ? '<div><small style="color:var(--muted)">por tamanho</small></div>' : ''}</td>
+          <td class="num"><strong>${supNum(atual)}</strong> <small style="color:var(--muted)">${esc(i.unidade)}</small>${supGradeDe(i).length ? `<div><button type="button" class="sup-tam-tog${SUP_TAM_ABERTOS.has(i.id) ? ' on' : ''}" data-tamtog="${i.id}" aria-expanded="${SUP_TAM_ABERTOS.has(i.id)}" title="Mostrar ou ocultar o estoque de cada tamanho">${SUP_TAM_ABERTOS.has(i.id) ? '▴ Ocultar tamanhos' : '▾ Ver por tamanho'}${supQtdAbaixo(i) ? ` <b>· ${supQtdAbaixo(i)} abaixo do mínimo</b>` : ''}</button></div>` : ''}</td>
+          <td class="num"${supGradeDe(i).length ? ' title="Soma dos mínimos de cada tamanho"' : ''}>${supNum(min)}</td>
           <td class="num">${brl(i.custo_medio)}</td>
           <td class="num">${brl(atual * Number(i.custo_medio))}</td>
           <td>${sit}</td>
@@ -3399,8 +3399,9 @@ async function supRenderEstoque(panel) {
             ${excl ? '' : `<button class="btn-ic" data-edit="${i.id}" title="Editar" aria-label="Editar">✎</button>
             <button class="btn-ic exc" data-exc="${i.id}" title="Excluir o item (pede a justificativa)" aria-label="Excluir">🗑</button>`}` : ''}
           </td>
-        </tr>`;
+        </tr>${supGradeDe(i).length && SUP_TAM_ABERTOS.has(i.id) ? `<tr class="sup-tam-det"><td colspan="9">${supCardsTam(i)}</td></tr>` : ''}`;
       }).join('') || `<tr><td colspan="9"><div class="empty">Nenhum item cadastrado ainda.</div></td></tr>`}</tbody>`;
+    $('#sup-tbl').querySelectorAll('[data-tamtog]').forEach(b => b.onclick = () => { const id = Number(b.dataset.tamtog); if (SUP_TAM_ABERTOS.has(id)) SUP_TAM_ABERTOS.delete(id); else SUP_TAM_ABERTOS.add(id); draw(); });
     $('#sup-tbl').querySelectorAll('[data-ficha]').forEach(b => b.onclick = () => supFichaItem(itens.find(i => i.id == b.dataset.ficha)));
     $('#sup-tbl').querySelectorAll('[data-unid]').forEach(b => b.onclick = () => supUnidades(itens.find(i => i.id == b.dataset.unid)));
     if (edit) {
@@ -3516,6 +3517,15 @@ function supChipsTam(i) {
   const chip = (t, q, baixo) => `<span class="sup-tam${baixo ? ' baixo' : ''}${q === 0 ? ' zero' : ''}" title="${esc(t)}: ${supNum(q)} em estoque${Number(mn[t]) > 0 ? ' (mínimo ' + supNum(mn[t]) + ')' : ''}">${esc(t)} <b>${supNum(q)}</b></span>`;
   return g.map(t => chip(t, Number(st[t]) || 0, Number(mn[t]) > 0 && (Number(st[t]) || 0) < Number(mn[t]))).join('')
     + (sem ? `<span class="sup-tam sem" title="Saldo sem tamanho definido: classifique os lançamentos no histórico do item (editar)">Sem tam. <b>${supNum(sem)}</b></span>` : '');
+}
+// Itens com a lista de tamanhos aberta na tabela do estoque (lembrado ao filtrar/buscar).
+const SUP_TAM_ABERTOS = new Set();
+const supQtdAbaixo = i => { const mn = i.minimos_tamanho || {}, st = supPorTam(i); return supGradeDe(i).filter(t => Number(mn[t]) > 0 && Number(st[t] || 0) < Number(mn[t])).length; };
+// Cartões por tamanho (estoque e mínimo), mostrados abaixo da linha do item quando a pessoa pede o detalhe.
+function supCardsTam(i) {
+  const g = supGradeDe(i), st = supPorTam(i), mn = i.minimos_tamanho || {}, sem = Number(st['']) || 0;
+  const card = (t, q, m) => `<div class="sup-tam-c${m > 0 && q < m ? ' baixo' : ''}${q === 0 ? ' zero' : ''}"><b>${esc(t)}</b><span>${supNum(q)} <small>${esc(i.unidade || 'un')}</small></span><em>${m > 0 ? 'mín. ' + supNum(m) : 'sem mínimo'}</em></div>`;
+  return `<div class="sup-tam-cards"><span class="sup-tam-tit">Estoque por tamanho</span>${g.map(t => card(t, Number(st[t]) || 0, Number(mn[t]) || 0)).join('')}${sem ? `<div class="sup-tam-c sem" title="Saldo sem tamanho definido: classifique os lançamentos no histórico do item (editar)"><b>Sem tam.</b><span>${supNum(sem)}</span><em>classificar</em></div>` : ''}</div>`;
 }
 function supTabelaTamanhos(i) {
   const g = supGradeDe(i), st = supPorTam(i), mn = i.minimos_tamanho || {}, sem = Number(st['']) || 0;

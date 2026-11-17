@@ -2077,3 +2077,16 @@ td.sup-acoes .btn-ic.exc:hover { background: var(--danger-050); }
 .sup-tam.baixo { background: var(--danger-050); color: var(--danger); } .sup-tam.baixo b { color: var(--danger); }
 .sup-tam.sem { background: var(--warn-050); color: var(--warn); } .sup-tam.sem b { color: var(--warn); }
 td.sup-acoes .sup-ic-vazio { display: inline-block; width: 30px; height: 26px; margin-left: 3px; vertical-align: middle; }
+
+/* Suprimentos > Estoque: botão "Ver por tamanho" e cartões por tamanho abaixo da linha do item. */
+.sup-tam-tog { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--ink-2); font: 600 11px var(--font); cursor: pointer; white-space: nowrap; transition: border-color .15s, background .15s; }
+.sup-tam-tog:hover { border-color: var(--verde-500); color: var(--ink); } .sup-tam-tog.on { background: color-mix(in srgb, var(--verde-500) 12%, var(--card)); border-color: var(--verde-500); }
+.sup-tam-tog b { color: var(--danger); font-weight: 700; }
+tr.sup-tam-det > td { padding: 0 16px 14px !important; background: color-mix(in srgb, var(--verde-500) 4%, var(--card)); }
+.sup-tam-cards { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; padding-top: 10px; }
+.sup-tam-tit { flex-basis: 100%; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.sup-tam-c { min-width: 76px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); display: flex; flex-direction: column; gap: 2px; text-align: center; }
+.sup-tam-c b { font-size: 13px; } .sup-tam-c span { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; } .sup-tam-c small { font-size: 11px; color: var(--muted); font-weight: 500; }
+.sup-tam-c em { font-style: normal; font-size: 10.5px; color: var(--muted); }
+.sup-tam-c.zero { opacity: .6; } .sup-tam-c.baixo { border-color: var(--danger); background: var(--danger-050); } .sup-tam-c.baixo span, .sup-tam-c.baixo em { color: var(--danger); }
+.sup-tam-c.sem { border-color: var(--warn); background: var(--warn-050); }

@@ -8536,3 +8536,16 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador com três envios (enviado, entregue e devolvido): conjunto de ícones por situação, alinhamento por posição e termo pendente. Não testado: produção logada, tema escuro.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-17 — Sessão 237: Suprimentos > Estoque — total na coluna e tamanhos sob demanda
+
+**Solicitação:** o Marcelo achou a coluna Estoque poluída pelas etiquetas de tamanho e pediu que ela mostre só o estoque geral, com uma opção para ver o detalhe nos itens que têm variações.
+
+**O que mudou:** a coluna Estoque mostra só o total do item. Nos itens com grade aparece o botão **▾ Ver por tamanho** (com "· N abaixo do mínimo" em vermelho quando há tamanho abaixo do mínimo, para o alerta não depender de abrir). Ao clicar, abre abaixo da linha uma faixa **Estoque por tamanho** com um cartão por tamanho (estoque e mínimo; vermelho abaixo do mínimo, apagado se zerado, "Sem tam." quando há saldo a classificar) e o botão vira "▴ Ocultar tamanhos". O estado aberto de cada item é lembrado ao buscar ou filtrar. A coluna Mínimo mostra só a soma dos mínimos (sem o texto "por tamanho"). Só aparência; sem servidor nem banco.
+
+**Arquivos:** `public/app.js`, `public/styles.css`, `scripts/2026-11-17_suprimentos_estoque_detalhe_tamanhos.js`.
+
+**Verificação:** simulador com bota (5 tamanhos abaixo do mínimo), camisa e um item sem grade: botão só nos itens com grade, abrir e fechar, cartões por situação. Não testado: produção logada, tema escuro.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
