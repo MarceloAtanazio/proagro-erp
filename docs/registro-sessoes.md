@@ -8549,3 +8549,18 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** simulador com bota (5 tamanhos abaixo do mínimo), camisa e um item sem grade: botão só nos itens com grade, abrir e fechar, cartões por situação. Não testado: produção logada, tema escuro.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
+## 2026-11-18 — Sessão 238: Suprimentos — aba "Requisições de compra" (do pedido à aprovação)
+
+**Solicitação:** o Marcelo pediu uma aba em Suprimentos para registrar todo o processo da requisição de compra até a aprovação, antes de efetivar a compra: quem solicita, por quê, se está aprovado ou não, orçamentos com valores e a decisão da escolha.
+
+**O que foi feito:** nova aba **Requisições de compra** (depois de Compras), com KPIs (em cotação, aguardando aprovação, aprovadas a comprar com o valor, compradas), busca, filtro por situação e a lista. (1) **Requisição:** solicitante (colaborador ou outra pessoa), data, título, urgência, justificativa de por que comprar e itens (do estoque, com tamanho quando o item tem grade, ou texto livre). (2) **Orçamentos:** fornecedor (do cadastro ou digitado), valor total, prazo de entrega, condição de pagamento, validade, observação e anexo (PDF ou foto) com o 📎; destaca o menor valor. (3) **Escolha:** um orçamento é escolhido; se não é o de menor valor ou é o único, a justificativa da escolha é obrigatória. (4) **Aprovação:** enviar para aprovação exige ter escolhido; aprovar ou reprovar (motivo obrigatório na reprovação) registra quem, quando e por quê; reprovada pode ser reaberta; voltar para cotação com motivo. (5) **Compra efetivada:** marcar como comprada (data, NF, observação); o lançamento no estoque e no Contas a Pagar continua na aba Compras. (6) **Cancelar** e **excluir** (só cotação, reprovada ou cancelada) com justificativa. (7) **Linha do tempo** de tudo (quem fez o quê e quando) e auditoria. Depois de enviada para aprovação, itens, orçamentos, escolha e anexos ficam congelados. Quem só consulta vê tudo; quem edita Suprimentos escreve e decide.
+
+**Banco:** migração aditiva `supabase/migrations/2026-11-18-suprimentos-requisicao-compra.sql` (tabelas erp_compra_requisicoes, erp_compra_req_itens, erp_compra_req_orcamentos, erp_compra_req_eventos e o tipo de anexo rc_orcamento). **Ainda não aplicada: aguarda a autorização expressa do Marcelo.** O código só entra no ar depois dela.
+
+**Arquivos:** `api/index.js`, `public/app.js`, `public/styles.css`, `supabase/migrations/2026-11-18-suprimentos-requisicao-compra.sql`, `scripts/2026-11-18_suprimentos_requisicao_compra.js` (+ blocos `2026-11-18_rc_*.txt`), `scripts/2026-11-18_verifica_requisicao_compra.js`.
+
+**Verificação:** teste de backend com banco simulado em memória (44 PASS: permissões, validações, fluxo completo, escolha com justificativa, congelamento incluindo anexos, cancelar e excluir, linha do tempo) e os cinco testes anteriores de Suprimentos seguem passando; simulador (lista, detalhe, formulário com item de grade, orçamento, escolha e botões por situação). Não testado: banco real (migração pendente), produção logada. Premissas a confirmar: quem edita Suprimentos também aprova; a efetivação só marca a requisição, sem gerar compra automática.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

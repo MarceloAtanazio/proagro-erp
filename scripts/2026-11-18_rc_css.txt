@@ -1,0 +1,17 @@
+
+/* Suprimentos > Requisições de compra: formulário (linhas de itens), detalhe (dados, orçamentos, escolha, aprovação) e linha do tempo. */
+.rc-linha { display: grid; grid-template-columns: minmax(150px, 1.3fr) minmax(130px, 1.2fr) minmax(90px, .7fr) 84px 60px 30px; gap: 6px; align-items: center; margin-bottom: 6px; }
+.rc-linha input, .rc-linha select { width: 100%; min-width: 0; }
+@media (max-width: 760px) { .rc-linha { grid-template-columns: 1fr 1fr; } }
+.rc-topo { display: flex; gap: 8px; margin: 0 0 10px; }
+.rc-infos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 18px; }
+.rc-info > span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+.rc-info > div { font-size: 13.5px; }
+.rc-orc { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.rc-orc th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.rc-orc th.num, .rc-orc td.num { text-align: right; } .rc-orc td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.rc-orc tr.rc-escolhido td { background: color-mix(in srgb, var(--verde-500) 9%, var(--card)); }
+.rc-escolha { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--verde-500) 9%, var(--card)); border: 1px solid color-mix(in srgb, var(--verde-500) 35%, var(--line)); font-size: 13.5px; line-height: 1.5; }
+.rc-linha-tempo { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
+.rc-linha-tempo li { position: relative; font-size: 13px; line-height: 1.4; } .rc-linha-tempo li::before { content: ''; position: absolute; left: -20px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--verde-500); border: 2px solid var(--card); }
+.rc-linha-tempo li span { color: var(--ink-2); } .rc-linha-tempo li small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }

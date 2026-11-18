@@ -366,6 +366,18 @@ const AUDIT_MAP = {
   'POST /api/suprimentos/itens/:id/excluir': req => `Excluiu o item de estoque ID ${req.params.id} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
   'PUT /api/suprimentos/movimentos/:id': req => `Editou o lançamento de estoque ID ${req.params.id}: ${req.body && req.body.quantidade} un${req.body && req.body.custo_unitario !== undefined && req.body.custo_unitario !== '' ? ', custo R$ ' + req.body.custo_unitario : ''}, data ${req.body && req.body.data} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
   'POST /api/suprimentos/movimentos/:id/excluir': (req, body) => `Excluiu o lançamento de estoque ID ${req.params.id}${body && body.resumo ? ' (' + body.resumo + ')' : ''} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
+  'POST /api/suprimentos/requisicoes': (req, body) => `Criou a requisição de compra ID ${body && body.id}: "${String(req.body && req.body.titulo || '').slice(0, 120)}"`,
+  'PUT /api/suprimentos/requisicoes/:id': req => `Editou a requisição de compra ID ${req.params.id}`,
+  'POST /api/suprimentos/requisicoes/:id/orcamentos': req => `Adicionou orçamento (${req.body && (req.body.fornecedor_nome || 'fornecedor ' + req.body.supplier_id)}, R$ ${req.body && req.body.valor_total}) à requisição de compra ID ${req.params.id}`,
+  'PUT /api/suprimentos/requisicoes/:id/orcamentos/:oid': req => `Alterou o orçamento ID ${req.params.oid} da requisição de compra ID ${req.params.id} (R$ ${req.body && req.body.valor_total})`,
+  'DELETE /api/suprimentos/requisicoes/:id/orcamentos/:oid': req => `Removeu o orçamento ID ${req.params.oid} da requisição de compra ID ${req.params.id}`,
+  'POST /api/suprimentos/requisicoes/:id/escolher': req => `Escolheu o orçamento ID ${req.body && req.body.orcamento_id} na requisição de compra ID ${req.params.id} — justificativa: "${String(req.body && req.body.justificativa || '').slice(0, 200)}"`,
+  'POST /api/suprimentos/requisicoes/:id/enviar-aprovacao': req => `Enviou a requisição de compra ID ${req.params.id} para aprovação`,
+  'POST /api/suprimentos/requisicoes/:id/decidir': req => `${req.body && req.body.aprovar === true ? 'APROVOU' : 'REPROVOU'} a requisição de compra ID ${req.params.id}${req.body && req.body.motivo ? ' — ' + String(req.body.motivo).slice(0, 200) : ''}`,
+  'POST /api/suprimentos/requisicoes/:id/reabrir': req => `Reabriu para cotação a requisição de compra ID ${req.params.id} — ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
+  'POST /api/suprimentos/requisicoes/:id/comprar': req => `Marcou como comprada a requisição de compra ID ${req.params.id}`,
+  'POST /api/suprimentos/requisicoes/:id/cancelar': req => `Cancelou a requisição de compra ID ${req.params.id} — ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
+  'POST /api/suprimentos/requisicoes/:id/excluir': (req, body) => `Excluiu a requisição de compra ID ${req.params.id}${body && body.resumo ? ' (' + body.resumo + ')' : ''} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
   'DELETE /api/suprimentos/itens/:id': req => `Excluiu o item de estoque ID ${req.params.id}`,
   'POST /api/suprimentos/compras': (req, body) => `Registrou compra de ${req.body.quantidade} un. do item ID ${req.body.item_id} a ${fmtBRL(req.body.custo_unitario)}/un` +
     (body && body.payable_id ? ` — lançada em Contas a Pagar (título ID ${body.payable_id})` : ''),
@@ -971,7 +983,8 @@ const ATTACH_TYPES = {
   contrato: 'contratos',
   rh_doc: 'rh',   // dossiê do colaborador; o tipo do documento vai em doc_tipo
   rh_admissao_doc: 'rh',   // laudo da avaliação técnica/psicotécnico; o tipo vai em doc_tipo
-  envio_termo: 'suprimentos'   // termo de responsabilidade assinado do envio a colaborador
+  envio_termo: 'suprimentos',   // termo de responsabilidade assinado do envio a colaborador
+  rc_orcamento: 'suprimentos'   // orçamento (PDF/foto) de uma requisição de compra
 };
 const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)', colab_seguro: 'apólice de seguro' };
 // CNH e apólice são documentos pessoais: quem tem apenas leitura em Viáticos
@@ -1179,6 +1192,10 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
       return res.status(409).json({ error: 'Este registro já foi enviado — não dá para trocar as fotos agora.' });
     }
   }
+  if (req.params.type === 'rc_orcamento') {
+    const st = (await query('SELECT r.status FROM erp_compra_req_orcamentos o JOIN erp_compra_requisicoes r ON r.id = o.requisicao_id WHERE o.id=$1', [Number(req.params.id)]))[0];
+    if (st && st.status !== 'em_cotacao') return res.status(409).json({ error: 'A requisição já saiu da cotação: os anexos dos orçamentos ficam congelados.' });
+  }
 
   const fileName = sanitize(req.body.file_name);
   // O MIME vem do cliente e antes era aceito como veio: um anexo
@@ -1209,7 +1226,7 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
     colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
     viatico_km: 'erp_viaticos_km',
     contrato: 'erp_contratos', rh_doc: 'erp_colaboradores', rh_admissao_doc: 'erp_rh_admissoes',
-    envio_termo: 'erp_estoque_movimentos'
+    envio_termo: 'erp_estoque_movimentos', rc_orcamento: 'erp_compra_req_orcamentos'
   }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
   if (!own.length) return res.status(404).json({ error: (ehAnexoColaborador(req.params.type) || req.params.type === 'rh_doc') ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : req.params.type === 'rh_admissao_doc' ? 'Processo de admissão não encontrado.' : 'Título não encontrado.' });
@@ -1257,6 +1274,10 @@ app.delete('/api/attachments/:id', requireAuth, h(async (req, res) => {
     if (st && !['rascunho', 'rejeitado'].includes(st.status)) {
       return res.status(409).json({ error: 'Este registro já foi enviado — a foto faz parte da comprovação.' });
     }
+  }
+  if (a.entity_type === 'rc_orcamento') {
+    const st = (await query('SELECT r.status FROM erp_compra_req_orcamentos o JOIN erp_compra_requisicoes r ON r.id = o.requisicao_id WHERE o.id=$1', [a.entity_id]))[0];
+    if (st && st.status !== 'em_cotacao') return res.status(409).json({ error: 'A requisição já saiu da cotação: os anexos dos orçamentos ficam congelados.' });
   }
   await query('DELETE FROM erp_attachments WHERE id=$1', [Number(req.params.id)]);
   res.json({ ok: true });
@@ -8683,6 +8704,262 @@ app.post('/api/suprimentos/ajustes', requireAuth, SUP_EDIT, h(async (req, res) =
     await query('UPDATE erp_estoque_itens SET custo_medio=$1 WHERE id=$2', [Number(novoCusto.toFixed(2)), item.id]);
   }
   res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
+// Suprimentos: REQUISIÇÃO DE COMPRA — do pedido até a aprovação, antes de efetivar a compra.
+// Quem pediu e por quê, os itens, os orçamentos (valor, prazo, condição, anexo), a escolha de um orçamento com a justificativa, a aprovação/reprovação e a efetivação,
+// com a linha do tempo de tudo. Fluxo: em_cotacao -> em_aprovacao -> aprovada | reprovada; aprovada -> comprada; cancelada a qualquer momento antes de comprada.
+// Orçamentos e itens só mudam em cotação; depois de enviada para aprovação ficam congelados (anexos também). Leitura: quem vê Suprimentos; escrita: quem edita.
+// ------------------------------------------------------------
+async function rcEvento(reqId, user, evento, detalhe) {
+  await query('INSERT INTO erp_compra_req_eventos (requisicao_id, evento, detalhe, usuario_id, usuario_nome) VALUES ($1,$2,$3,$4,$5)', [reqId, evento, detalhe || null, user.id, user.name]);
+}
+const rcCarregar = async id => (await query('SELECT * FROM erp_compra_requisicoes WHERE id=$1', [Number(id)]))[0];
+const rcMoeda = v => 'R$ ' + Number(v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+// Itens da requisição: do estoque (item_id; com grade exige o tamanho) ou texto livre.
+async function rcLerItens(lista) {
+  if (!Array.isArray(lista) || !lista.length) return { erro: 'Inclua ao menos um item na requisição.' };
+  if (lista.length > 60) return { erro: 'A requisição aceita no máximo 60 itens.' };
+  const out = [];
+  for (const it of lista) {
+    const qtd = Number(it && it.quantidade);
+    if (!isFinite(qtd) || qtd <= 0) return { erro: 'Cada item precisa de quantidade maior que zero.' };
+    let item = null, descricao = String(sanitize(it.descricao) || '').trim(), tamanho = String(sanitize(it.tamanho) || '').trim() || null, unidade = sanitize(it.unidade) || null;
+    if (it.item_id) {
+      item = (await query('SELECT * FROM erp_estoque_itens WHERE id=$1', [Number(it.item_id)]))[0];
+      if (!item) return { erro: 'Item de estoque inválido na requisição.' };
+      if (!descricao) descricao = item.nome;
+      if (!unidade) unidade = item.unidade;
+      const tm = tamanhoDoLancamento(item, tamanho);
+      if (tm.erro) return { erro: `${item.nome}: ${tm.erro}` };
+      tamanho = tm.grade ? tm.tamanho : tamanho;
+    }
+    if (!descricao) return { erro: 'Descreva cada item da requisição.' };
+    out.push({ item_id: item ? item.id : null, descricao: descricao.slice(0, 200), tamanho, quantidade: qtd, unidade, observacao: sanitize(it.observacao) || null });
+  }
+  return { itens: out };
+}
+async function rcGravarItens(reqId, itens) {
+  await query('DELETE FROM erp_compra_req_itens WHERE requisicao_id=$1', [reqId]);
+  for (const i of itens) {
+    await query('INSERT INTO erp_compra_req_itens (requisicao_id, item_id, descricao, tamanho, quantidade, unidade, observacao) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [reqId, i.item_id, i.descricao, i.tamanho, i.quantidade, i.unidade, i.observacao]);
+  }
+}
+async function rcLerOrcamento(b) {
+  let fornecedorId = null, nome = String(sanitize(b.fornecedor_nome) || '').trim();
+  if (b.supplier_id !== undefined && b.supplier_id !== null && b.supplier_id !== '') {
+    const f = (await query('SELECT id, name FROM erp_suppliers WHERE id=$1', [Number(b.supplier_id)]))[0];
+    if (!f) return { erro: 'Fornecedor inválido.' };
+    fornecedorId = f.id; if (!nome) nome = f.name;
+  }
+  if (!nome) return { erro: 'Informe o fornecedor do orçamento.' };
+  const valor = Number(b.valor_total);
+  if (!isFinite(valor) || valor <= 0) return { erro: 'Informe o valor total do orçamento.' };
+  let prazo = null;
+  if (b.prazo_entrega_dias !== undefined && b.prazo_entrega_dias !== null && b.prazo_entrega_dias !== '') {
+    prazo = Number(b.prazo_entrega_dias);
+    if (!Number.isInteger(prazo) || prazo < 0) return { erro: 'Prazo de entrega inválido (em dias).' };
+  }
+  return { v: { supplier_id: fornecedorId, nome: nome.slice(0, 160), valor: Number(valor.toFixed(2)), prazo, condicao: sanitize(b.condicao_pagamento) || null, validade: isDate(b.validade) ? b.validade : null, obs: sanitize(b.observacao) || null } };
+}
+const rcSoEmCotacao = (r, res, o) => {
+  if (!r) { res.status(404).json({ error: 'Requisição não encontrada.' }); return true; }
+  if (r.status !== 'em_cotacao') { res.status(409).json({ error: `Esta requisição está "${r.status}". ${o || 'Itens e orçamentos só mudam enquanto ela está em cotação; reabra-a para alterar.'}` }); return true; }
+  return false;
+};
+
+app.get('/api/suprimentos/requisicoes', requireAuth, SUP_VIEW, h(async (req, res) => {
+  res.json(await query(`
+    SELECT r.*,
+      (SELECT COUNT(*)::int FROM erp_compra_req_itens i WHERE i.requisicao_id = r.id) AS itens_qtd,
+      (SELECT string_agg(i.descricao, ' · ' ORDER BY i.id) FROM erp_compra_req_itens i WHERE i.requisicao_id = r.id) AS itens_resumo,
+      (SELECT COUNT(*)::int FROM erp_compra_req_orcamentos o WHERE o.requisicao_id = r.id) AS orcamentos_qtd,
+      (SELECT MIN(o.valor_total) FROM erp_compra_req_orcamentos o WHERE o.requisicao_id = r.id) AS menor_valor,
+      (SELECT o.valor_total FROM erp_compra_req_orcamentos o WHERE o.id = r.orcamento_escolhido_id) AS valor_escolhido,
+      (SELECT o.fornecedor_nome FROM erp_compra_req_orcamentos o WHERE o.id = r.orcamento_escolhido_id) AS fornecedor_escolhido
+    FROM erp_compra_requisicoes r ORDER BY r.id DESC`));
+}));
+
+app.get('/api/suprimentos/requisicoes/:id', requireAuth, SUP_VIEW, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Requisição não encontrada.' });
+  const itens = await query('SELECT * FROM erp_compra_req_itens WHERE requisicao_id=$1 ORDER BY id', [r.id]);
+  const orcamentos = await query(`SELECT o.*, (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='rc_orcamento' AND a.entity_id = o.id) AS anexos
+    FROM erp_compra_req_orcamentos o WHERE o.requisicao_id=$1 ORDER BY o.valor_total, o.id`, [r.id]);
+  const eventos = await query('SELECT * FROM erp_compra_req_eventos WHERE requisicao_id=$1 ORDER BY created_at, id', [r.id]);
+  res.json({ ...r, itens, orcamentos, eventos });
+}));
+
+app.post('/api/suprimentos/requisicoes', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body || {};
+  let solId = null, solNome = String(sanitize(b.solicitante_nome) || '').trim();
+  if (b.solicitante_id) {
+    const c = (await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [Number(b.solicitante_id)]))[0];
+    if (!c) return res.status(400).json({ error: 'Solicitante inválido.' });
+    solId = c.id; solNome = c.name;
+  }
+  if (!solNome) return res.status(400).json({ error: 'Informe quem está solicitando.' });
+  const titulo = String(sanitize(b.titulo) || '').trim(), just = String(sanitize(b.justificativa) || '').trim();
+  if (titulo.length < 3) return res.status(400).json({ error: 'Descreva o que está sendo solicitado (título).' });
+  if (just.length < 5) return res.status(400).json({ error: 'Informe por que a compra é necessária (justificativa).' });
+  const urg = ['baixa', 'normal', 'alta'].includes(b.urgencia) ? b.urgencia : 'normal';
+  const li = await rcLerItens(b.itens);
+  if (li.erro) return res.status(400).json({ error: li.erro });
+  const ins = await query(`INSERT INTO erp_compra_requisicoes (data_solicitacao, solicitante_id, solicitante_nome, titulo, justificativa, urgencia, created_by, created_by_nome)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, [isDate(b.data_solicitacao) ? b.data_solicitacao : hojeISO(), solId, solNome.slice(0, 160), titulo.slice(0, 200), just, urg, req.user.id, req.user.name]);
+  await rcGravarItens(ins[0].id, li.itens);
+  await rcEvento(ins[0].id, req.user, 'criada', `Solicitante: ${solNome}. ${li.itens.length} item(ns). Urgência: ${urg}.`);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/suprimentos/requisicoes/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (rcSoEmCotacao(r, res)) return;
+  const b = req.body || {};
+  let solId = r.solicitante_id, solNome = r.solicitante_nome;
+  if (b.solicitante_id !== undefined || b.solicitante_nome !== undefined) {
+    if (b.solicitante_id) {
+      const c = (await query('SELECT id, name FROM erp_colaboradores WHERE id=$1', [Number(b.solicitante_id)]))[0];
+      if (!c) return res.status(400).json({ error: 'Solicitante inválido.' });
+      solId = c.id; solNome = c.name;
+    } else { solId = null; solNome = String(sanitize(b.solicitante_nome) || '').trim(); }
+  }
+  if (!solNome) return res.status(400).json({ error: 'Informe quem está solicitando.' });
+  const titulo = String(sanitize(b.titulo) || '').trim(), just = String(sanitize(b.justificativa) || '').trim();
+  if (titulo.length < 3) return res.status(400).json({ error: 'Descreva o que está sendo solicitado (título).' });
+  if (just.length < 5) return res.status(400).json({ error: 'Informe por que a compra é necessária (justificativa).' });
+  const li = await rcLerItens(b.itens);
+  if (li.erro) return res.status(400).json({ error: li.erro });
+  await query(`UPDATE erp_compra_requisicoes SET solicitante_id=$1, solicitante_nome=$2, titulo=$3, justificativa=$4, urgencia=$5, data_solicitacao=COALESCE($6::date, data_solicitacao), updated_at=now() WHERE id=$7`,
+    [solId, solNome.slice(0, 160), titulo.slice(0, 200), just, ['baixa', 'normal', 'alta'].includes(b.urgencia) ? b.urgencia : r.urgencia, isDate(b.data_solicitacao) ? b.data_solicitacao : null, r.id]);
+  await rcGravarItens(r.id, li.itens);
+  await rcEvento(r.id, req.user, 'editada', `Requisição alterada (${li.itens.length} item(ns)).`);
+  res.json({ ok: true });
+}));
+
+app.post('/api/suprimentos/requisicoes/:id/orcamentos', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (rcSoEmCotacao(r, res)) return;
+  const o = await rcLerOrcamento(req.body || {});
+  if (o.erro) return res.status(400).json({ error: o.erro });
+  const v = o.v;
+  const ins = await query(`INSERT INTO erp_compra_req_orcamentos (requisicao_id, supplier_id, fornecedor_nome, valor_total, prazo_entrega_dias, condicao_pagamento, validade, observacao, created_by, created_by_nome)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, [r.id, v.supplier_id, v.nome, v.valor, v.prazo, v.condicao, v.validade, v.obs, req.user.id, req.user.name]);
+  await rcEvento(r.id, req.user, 'orcamento_adicionado', `${v.nome}: ${rcMoeda(v.valor)}`);
+  res.json({ ok: true, id: ins[0].id });
+}));
+
+app.put('/api/suprimentos/requisicoes/:id/orcamentos/:oid', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (rcSoEmCotacao(r, res)) return;
+  const atual = (await query('SELECT * FROM erp_compra_req_orcamentos WHERE id=$1 AND requisicao_id=$2', [Number(req.params.oid), r.id]))[0];
+  if (!atual) return res.status(404).json({ error: 'Orçamento não encontrado.' });
+  const o = await rcLerOrcamento(req.body || {});
+  if (o.erro) return res.status(400).json({ error: o.erro });
+  const v = o.v;
+  await query(`UPDATE erp_compra_req_orcamentos SET supplier_id=$1, fornecedor_nome=$2, valor_total=$3, prazo_entrega_dias=$4, condicao_pagamento=$5, validade=$6, observacao=$7 WHERE id=$8`,
+    [v.supplier_id, v.nome, v.valor, v.prazo, v.condicao, v.validade, v.obs, atual.id]);
+  await rcEvento(r.id, req.user, 'orcamento_alterado', `${v.nome}: ${rcMoeda(v.valor)}${Number(atual.valor_total) !== v.valor ? ` (antes ${rcMoeda(atual.valor_total)})` : ''}`);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/suprimentos/requisicoes/:id/orcamentos/:oid', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (rcSoEmCotacao(r, res)) return;
+  const atual = (await query('SELECT * FROM erp_compra_req_orcamentos WHERE id=$1 AND requisicao_id=$2', [Number(req.params.oid), r.id]))[0];
+  if (!atual) return res.status(404).json({ error: 'Orçamento não encontrado.' });
+  await query("DELETE FROM erp_attachments WHERE entity_type='rc_orcamento' AND entity_id=$1", [atual.id]);
+  await query('DELETE FROM erp_compra_req_orcamentos WHERE id=$1', [atual.id]);
+  if (r.orcamento_escolhido_id === atual.id) {
+    await query('UPDATE erp_compra_requisicoes SET orcamento_escolhido_id=NULL, justificativa_escolha=NULL, escolhido_por=NULL, escolhido_em=NULL, updated_at=now() WHERE id=$1', [r.id]);
+  }
+  await rcEvento(r.id, req.user, 'orcamento_removido', `${atual.fornecedor_nome}: ${rcMoeda(atual.valor_total)}${r.orcamento_escolhido_id === atual.id ? ' (era o escolhido: a escolha foi desfeita)' : ''}`);
+  res.json({ ok: true });
+}));
+
+// Escolha do orçamento. Se não é o de menor valor (ou é o único), a justificativa da escolha é obrigatória.
+app.post('/api/suprimentos/requisicoes/:id/escolher', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (rcSoEmCotacao(r, res)) return;
+  const orcs = await query('SELECT id, fornecedor_nome, valor_total FROM erp_compra_req_orcamentos WHERE requisicao_id=$1', [r.id]);
+  const esc = orcs.find(o => o.id === Number(req.body && req.body.orcamento_id));
+  if (!esc) return res.status(400).json({ error: 'Escolha um dos orçamentos desta requisição.' });
+  const menor = Math.min(...orcs.map(o => Number(o.valor_total)));
+  const exige = orcs.length === 1 || Number(esc.valor_total) > menor;
+  const just = String(sanitize(req.body.justificativa) || '').trim();
+  if (exige && just.length < 5) return res.status(400).json({ error: orcs.length === 1 ? 'Só há um orçamento: justifique a escolha (por que não buscar outros?).' : `Este não é o orçamento de menor valor (${rcMoeda(menor)}): explique por que ele foi o escolhido.` });
+  await query('UPDATE erp_compra_requisicoes SET orcamento_escolhido_id=$1, justificativa_escolha=$2, escolhido_por=$3, escolhido_em=now(), updated_at=now() WHERE id=$4', [esc.id, just || null, req.user.name, r.id]);
+  await rcEvento(r.id, req.user, 'orcamento_escolhido', `${esc.fornecedor_nome}: ${rcMoeda(esc.valor_total)}${just ? '. Justificativa: ' + just : ''}`);
+  res.json({ ok: true, justificativa_obrigatoria: exige });
+}));
+
+app.post('/api/suprimentos/requisicoes/:id/enviar-aprovacao', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (rcSoEmCotacao(r, res)) return;
+  if (!r.orcamento_escolhido_id) return res.status(409).json({ error: 'Registre os orçamentos e escolha um deles antes de enviar para aprovação.' });
+  await query("UPDATE erp_compra_requisicoes SET status='em_aprovacao', enviada_aprovacao_em=now(), updated_at=now() WHERE id=$1", [r.id]);
+  await rcEvento(r.id, req.user, 'enviada_aprovacao', 'Enviada para aprovação.');
+  res.json({ ok: true });
+}));
+
+app.post('/api/suprimentos/requisicoes/:id/decidir', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Requisição não encontrada.' });
+  if (r.status !== 'em_aprovacao') return res.status(409).json({ error: 'Só uma requisição enviada para aprovação pode ser aprovada ou reprovada.' });
+  const aprovar = req.body && req.body.aprovar === true, motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (!aprovar && motivo.length < 5) return res.status(400).json({ error: 'Diga por que a requisição foi reprovada.' });
+  await query('UPDATE erp_compra_requisicoes SET status=$1, decidido_por=$2, decidido_por_nome=$3, decidido_em=now(), decisao_motivo=$4, updated_at=now() WHERE id=$5',
+    [aprovar ? 'aprovada' : 'reprovada', req.user.id, req.user.name, motivo || null, r.id]);
+  await rcEvento(r.id, req.user, aprovar ? 'aprovada' : 'reprovada', motivo || null);
+  res.json({ ok: true, status: aprovar ? 'aprovada' : 'reprovada' });
+}));
+
+app.post('/api/suprimentos/requisicoes/:id/reabrir', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Requisição não encontrada.' });
+  if (!['em_aprovacao', 'reprovada'].includes(r.status)) return res.status(409).json({ error: 'Só uma requisição em aprovação ou reprovada pode voltar para cotação.' });
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe por que a requisição volta para cotação.' });
+  await query("UPDATE erp_compra_requisicoes SET status='em_cotacao', decidido_por=NULL, decidido_por_nome=NULL, decidido_em=NULL, decisao_motivo=NULL, enviada_aprovacao_em=NULL, updated_at=now() WHERE id=$1", [r.id]);
+  await rcEvento(r.id, req.user, 'reaberta', motivo);
+  res.json({ ok: true });
+}));
+
+app.post('/api/suprimentos/requisicoes/:id/comprar', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Requisição não encontrada.' });
+  if (r.status !== 'aprovada') return res.status(409).json({ error: 'Só uma requisição aprovada pode ser marcada como comprada.' });
+  const b = req.body || {}, data = isDate(b.data) ? b.data : hojeISO(), doc = sanitize(b.documento) || null, obs = sanitize(b.observacao) || null;
+  await query("UPDATE erp_compra_requisicoes SET status='comprada', comprada_em=$1, compra_documento=$2, compra_obs=$3, updated_at=now() WHERE id=$4", [data, doc, obs, r.id]);
+  await rcEvento(r.id, req.user, 'comprada', [`Compra efetivada em ${brDateBR(data)}`, doc ? `Documento/NF ${doc}` : '', obs || ''].filter(Boolean).join('. '));
+  res.json({ ok: true });
+}));
+
+app.post('/api/suprimentos/requisicoes/:id/cancelar', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Requisição não encontrada.' });
+  if (['comprada', 'cancelada'].includes(r.status)) return res.status(409).json({ error: `Esta requisição já está "${r.status}".` });
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe o motivo do cancelamento.' });
+  await query("UPDATE erp_compra_requisicoes SET status='cancelada', cancelada_motivo=$1, updated_at=now() WHERE id=$2", [motivo, r.id]);
+  await rcEvento(r.id, req.user, 'cancelada', motivo);
+  res.json({ ok: true });
+}));
+
+// Exclusão definitiva (erro de lançamento): só em cotação, reprovada ou cancelada, com justificativa; o resumo vai para a auditoria.
+app.post('/api/suprimentos/requisicoes/:id/excluir', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const r = await rcCarregar(req.params.id);
+  if (!r) return res.status(404).json({ error: 'Requisição não encontrada.' });
+  if (!['em_cotacao', 'reprovada', 'cancelada'].includes(r.status)) return res.status(409).json({ error: 'Só dá para excluir uma requisição em cotação, reprovada ou cancelada. Se já foi aprovada ou comprada, cancele-a.' });
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe a justificativa da exclusão.' });
+  const orcs = await query('SELECT id FROM erp_compra_req_orcamentos WHERE requisicao_id=$1', [r.id]);
+  for (const o of orcs) await query("DELETE FROM erp_attachments WHERE entity_type='rc_orcamento' AND entity_id=$1", [o.id]);
+  await query('DELETE FROM erp_compra_requisicoes WHERE id=$1', [r.id]);
+  res.json({ ok: true, resumo: `RC ${r.id} "${r.titulo}" de ${r.solicitante_nome}, status ${r.status}, ${orcs.length} orçamento(s)` });
 }));
 
 // ------------------------------------------------------------

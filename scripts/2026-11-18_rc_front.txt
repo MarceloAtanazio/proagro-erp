@@ -1,0 +1,235 @@
+// ---- Aba Requisições de compra ----
+// Registra o processo todo antes de comprar: quem pediu e por quê, os itens, os orçamentos (com anexo), a escolha de um deles (com justificativa), a aprovação ou reprovação
+// e a efetivação da compra, com a linha do tempo. Orçamentos e itens só mudam em cotação; depois de enviada para aprovação ficam congelados.
+const RC_ST = { em_cotacao: ['pend', 'Em cotação'], em_aprovacao: ['warn', 'Aguardando aprovação'], aprovada: ['ok', 'Aprovada'], reprovada: ['late', 'Reprovada'], comprada: ['ok', 'Comprada'], cancelada: ['off', 'Cancelada'] };
+const RC_URG = { baixa: ['off', 'Baixa'], normal: ['pend', 'Normal'], alta: ['late', 'Alta'] };
+const RC_EVENTO = { criada: 'Requisição criada', editada: 'Requisição alterada', orcamento_adicionado: 'Orçamento adicionado', orcamento_alterado: 'Orçamento alterado', orcamento_removido: 'Orçamento removido',
+  orcamento_escolhido: 'Orçamento escolhido', enviada_aprovacao: 'Enviada para aprovação', aprovada: 'Aprovada', reprovada: 'Reprovada', reaberta: 'Voltou para cotação', comprada: 'Compra efetivada', cancelada: 'Cancelada' };
+const rcNum = id => 'RC-' + String(id).padStart(4, '0');
+const rcDia = v => brDate(String(v || '').slice(0, 10));
+const rcQuando = v => (v ? new Date(v).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : '');
+const rcBadge = (mapa, k) => `<span class="badge ${(mapa[k] || ['off'])[0]}">${esc((mapa[k] || [0, k])[1])}</span>`;
+
+async function supRenderRequisicoes(panel) {
+  const lista = await api('/api/suprimentos/requisicoes');
+  const edit = !READONLY;
+  const cont = s => lista.filter(r => r.status === s).length;
+  const valorAprovadas = lista.filter(r => r.status === 'aprovada').reduce((a, r) => a + Number(r.valor_escolhido || 0), 0);
+  panel.innerHTML = `
+    <div class="grid kpis" style="margin-bottom:14px">
+      <div class="card kpi"><div class="label">Em cotação</div><div class="value">${cont('em_cotacao')}</div></div>
+      <div class="card kpi"><div class="label">Aguardando aprovação</div><div class="value">${cont('em_aprovacao')}</div></div>
+      <div class="card kpi blue"><div class="label">Aprovadas, a comprar</div><div class="value">${cont('aprovada')}</div>${valorAprovadas ? `<div style="font-size:11.5px; color:var(--muted)">${brl(valorAprovadas)} em orçamentos escolhidos</div>` : ''}</div>
+      <div class="card kpi"><div class="label">Compradas</div><div class="value">${cont('comprada')}</div></div>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="rc-q" placeholder="Buscar solicitante, item, fornecedor, nº…">
+      <select id="rc-fst"><option value="">Todas as situações</option>${Object.entries(RC_ST).map(([k, v]) => `<option value="${k}">${v[1]}</option>`).join('')}</select>
+      <div class="spacer"></div>${edit ? '<button class="btn primary" id="rc-nova">+ Nova requisição</button>' : ''}
+    </div>
+    <div class="table-wrap"><table id="rc-tbl"></table></div>`;
+  const draw = () => {
+    const q = $('#rc-q').value.toLowerCase().trim(), fs = $('#rc-fst').value;
+    const rows = lista.filter(r => (!fs || r.status === fs) && (!q || [rcNum(r.id), r.solicitante_nome, r.titulo, r.itens_resumo, r.fornecedor_escolhido].join(' ').toLowerCase().includes(q)));
+    $('#rc-tbl').innerHTML = `
+      <thead><tr><th>Nº</th><th>Data</th><th>Solicitante</th><th>Requisição</th><th class="num">Orçamentos</th><th>Escolhido</th><th>Situação</th><th class="actions">Ações</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td style="white-space:nowrap"><strong>${rcNum(r.id)}</strong></td>
+        <td>${rcDia(r.data_solicitacao)}</td>
+        <td>${esc(r.solicitante_nome)}</td>
+        <td><strong>${esc(r.titulo)}</strong> ${r.urgencia !== 'normal' ? rcBadge(RC_URG, r.urgencia) : ''}<br><small style="color:var(--muted)">${r.itens_qtd} item(ns): ${esc(String(r.itens_resumo || '').slice(0, 90))}</small></td>
+        <td class="num">${r.orcamentos_qtd}${r.menor_valor != null ? `<br><small style="color:var(--muted)">menor ${brl(r.menor_valor)}</small>` : ''}</td>
+        <td>${r.fornecedor_escolhido ? `${esc(r.fornecedor_escolhido)}<br><strong>${brl(r.valor_escolhido)}</strong>` : '<small style="color:var(--muted)">—</small>'}</td>
+        <td style="white-space:nowrap">${rcBadge(RC_ST, r.status)}</td>
+        <td class="actions sup-acoes"><button class="btn-ic ok" data-rcver="${r.id}" title="Abrir a requisição (orçamentos, escolha, aprovação e histórico)" aria-label="Abrir">👁</button>${edit ? `${r.status === 'em_cotacao' ? `<button class="btn-ic" data-rcedit="${r.id}" title="Editar a requisição" aria-label="Editar">✎</button>` : '<span class="sup-ic-vazio"></span>'}${['em_cotacao', 'reprovada', 'cancelada'].includes(r.status) ? `<button class="btn-ic exc" data-rcdel="${r.id}" title="Excluir a requisição (pede a justificativa)" aria-label="Excluir">🗑</button>` : ''}` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="8"><div class="empty">Nenhuma requisição de compra registrada.</div></td></tr>'}</tbody>`;
+    $('#rc-tbl').querySelectorAll('[data-rcver]').forEach(b => b.onclick = () => supRcAbrir(Number(b.dataset.rcver)));
+    $('#rc-tbl').querySelectorAll('[data-rcedit]').forEach(b => b.onclick = async () => supRcForm(await api('/api/suprimentos/requisicoes/' + b.dataset.rcedit)));
+    $('#rc-tbl').querySelectorAll('[data-rcdel]').forEach(b => b.onclick = () => supRcExcluir(lista.find(x => x.id == b.dataset.rcdel)));
+  };
+  $('#rc-q').oninput = draw; $('#rc-fst').oninput = draw;
+  if (edit) $('#rc-nova').onclick = () => supRcForm(null);
+  draw();
+}
+
+// Pede um motivo e executa a ação; `obrig` = motivo obrigatório (mín. 5 caracteres).
+function supRcMotivo(titulo, texto, rotulo, botao, obrig, acao) {
+  openModal(titulo, `<p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">${texto}</p>
+    <div class="field"><label for="rc-mot">${rotulo}${obrig ? ' *' : ' (opcional)'}</label><textarea id="rc-mot" rows="3"></textarea></div>`,
+    [{ label: 'Voltar', onClick: closeModal },
+     { label: botao, cls: 'primary', onClick: async (ev) => {
+        const m = $('#rc-mot').value.trim();
+        if (obrig && m.length < 5) return modalError('Preencha o motivo (mínimo de 5 caracteres).');
+        const btn = ev && ev.target; if (btn) btn.disabled = true;
+        try { await acao(m); } catch (e) { modalError(e.message); if (btn) btn.disabled = false; }
+     } }]);
+}
+function supRcExcluir(r) {
+  supRcMotivo(`Excluir ${rcNum(r.id)}`, `A requisição <strong>${esc(r.titulo)}</strong> será apagada com seus itens, orçamentos e anexos. O que foi apagado e o motivo ficam no histórico de auditoria.`, 'Justificativa da exclusão', 'Excluir requisição', true, async m => {
+    await api(`/api/suprimentos/requisicoes/${r.id}/excluir`, { method: 'POST', body: { motivo: m } });
+    closeModal(); toast('Requisição excluída.'); renderSuprimentos();
+  });
+}
+
+// Nova requisição / edição (itens do estoque ou texto livre).
+async function supRcForm(r) {
+  const [colabs, itens] = await Promise.all([api('/api/suprimentos/colaboradores'), api('/api/suprimentos/itens')]);
+  const ativos = itens.filter(i => i.ativo);
+  const linhaVazia = () => ({ item_id: '', descricao: '', tamanho: '', quantidade: '', unidade: '' });
+  let linhas = r && r.itens.length ? r.itens.map(i => ({ item_id: i.item_id || '', descricao: i.descricao, tamanho: i.tamanho || '', quantidade: i.quantidade, unidade: i.unidade || '' })) : [linhaVazia()];
+  const solSel = r ? (r.solicitante_id || '__outro') : '';
+  openModal(r ? `Editar ${rcNum(r.id)}` : 'Nova requisição de compra', `
+    <div class="form-row">
+      ${fldSel('rc-sol', 'Quem está solicitando *', [{ v: '', t: '— escolha —' }, ...colabs.map(c => ({ v: c.id, t: `${c.name}${c.cargo ? ' — ' + c.cargo : ''}` })), { v: '__outro', t: 'Outra pessoa (digitar)…' }], solSel)}
+      ${fld('rc-data', 'Data da solicitação', 'date', r ? String(r.data_solicitacao).slice(0, 10) : todayISO())}
+    </div>
+    <div id="rc-sol-outro-wrap" style="display:${solSel === '__outro' ? '' : 'none'}">${fld('rc-sol-outro', 'Nome de quem solicita', 'text', r && !r.solicitante_id ? r.solicitante_nome : '')}</div>
+    <div class="form-row">
+      ${fld('rc-titulo', 'O que está sendo solicitado *', 'text', r ? r.titulo : '', 'placeholder="Ex.: Reposição de uniformes do campo"')}
+      ${fldSel('rc-urg', 'Urgência', [{ v: 'baixa', t: 'Baixa' }, { v: 'normal', t: 'Normal' }, { v: 'alta', t: 'Alta' }], r ? r.urgencia : 'normal')}
+    </div>
+    ${fldArea('rc-just', 'Por que precisa comprar? (justificativa) *', r ? r.justificativa : '', 'placeholder="Ex.: estoque zerado; novos colaboradores; troca por desgaste"')}
+    ${supSecTitle('Itens solicitados')}
+    <div id="rc-linhas"></div>
+    <button type="button" class="btn sm" id="rc-add-linha">+ Adicionar item</button>
+    <p class="hint">Escolha o item do estoque (com tamanho, se tiver grade) ou use "Item fora do estoque" e descreva. Os orçamentos são adicionados depois de salvar.</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: r ? 'Salvar' : 'Criar requisição', cls: 'primary', onClick: async (ev) => {
+        lerLinhas();
+        const body = { solicitante_id: $('#rc-sol').value && $('#rc-sol').value !== '__outro' ? $('#rc-sol').value : null, solicitante_nome: $('#rc-sol').value === '__outro' ? $('#rc-sol-outro').value : '',
+          data_solicitacao: $('#rc-data').value, titulo: $('#rc-titulo').value, urgencia: $('#rc-urg').value, justificativa: $('#rc-just').value,
+          itens: linhas.map(l => ({ item_id: l.item_id || null, descricao: l.descricao, tamanho: l.tamanho, quantidade: l.quantidade, unidade: l.unidade })) };
+        if (!body.solicitante_id && !String(body.solicitante_nome).trim()) return modalError('Informe quem está solicitando.');
+        const btn = ev && ev.target; if (btn) btn.disabled = true;
+        try {
+          const resp = r ? await api('/api/suprimentos/requisicoes/' + r.id, { method: 'PUT', body }) : await api('/api/suprimentos/requisicoes', { method: 'POST', body });
+          toast(r ? 'Requisição atualizada.' : 'Requisição criada. Agora registre os orçamentos.'); renderSuprimentos(); supRcAbrir(r ? r.id : resp.id);
+        } catch (e) { modalError(e.message); if (btn) btn.disabled = false; }
+     } }], { wide: true });
+  const lerLinhas = () => {
+    document.querySelectorAll('#rc-linhas .rc-linha').forEach((row, k) => {
+      const g = c => (row.querySelector(c) || {}).value;
+      linhas[k] = { item_id: g('.rc-sel') || '', descricao: g('.rc-desc') || '', tamanho: g('.rc-tam') || '', quantidade: g('.rc-qtd') || '', unidade: g('.rc-un') || '' };
+    });
+  };
+  const desenhaLinhas = () => {
+    $('#rc-linhas').innerHTML = linhas.map((l, k) => {
+      const it = l.item_id ? ativos.find(x => x.id == l.item_id) : null, g = it ? supGradeDe(it) : [];
+      const tam = g.length ? `<select class="rc-tam">${supOpcoesTam(it).map(o => `<option value="${esc(o.v)}"${o.v === l.tamanho ? ' selected' : ''}>${esc(o.t)}</option>`).join('')}</select>` : `<input class="rc-tam" placeholder="Tamanho (se houver)" value="${esc(l.tamanho)}">`;
+      return `<div class="rc-linha"><select class="rc-sel"><option value="">Item fora do estoque (descrever)</option>${ativos.map(i => `<option value="${i.id}"${i.id == l.item_id ? ' selected' : ''}>${esc(i.nome)}</option>`).join('')}</select>
+        <input class="rc-desc" placeholder="Descrição do item" value="${esc(l.descricao)}">${tam}
+        <input class="rc-qtd" type="number" min="0.001" step="0.001" placeholder="Qtd" value="${esc(l.quantidade)}">
+        <input class="rc-un" placeholder="Un." value="${esc(l.unidade)}">
+        <button type="button" class="btn-ic perigo" data-rcrem="${k}" title="Tirar este item" aria-label="Tirar o item">×</button></div>`;
+    }).join('');
+    document.querySelectorAll('#rc-linhas .rc-sel').forEach((s, k) => s.onchange = () => {
+      lerLinhas(); const it = ativos.find(x => x.id == s.value);
+      if (it) { linhas[k].descricao = it.nome; linhas[k].unidade = it.unidade || ''; linhas[k].tamanho = ''; }
+      desenhaLinhas();
+    });
+    document.querySelectorAll('#rc-linhas [data-rcrem]').forEach(b => b.onclick = () => { lerLinhas(); linhas.splice(Number(b.dataset.rcrem), 1); if (!linhas.length) linhas.push(linhaVazia()); desenhaLinhas(); });
+  };
+  $('#rc-add-linha').onclick = () => { lerLinhas(); linhas.push(linhaVazia()); desenhaLinhas(); };
+  $('#rc-sol').onchange = () => { $('#rc-sol-outro-wrap').style.display = $('#rc-sol').value === '__outro' ? '' : 'none'; };
+  desenhaLinhas();
+}
+
+// Detalhe da requisição: dados, itens, orçamentos (com escolha), aprovação e linha do tempo; as ações mudam conforme a situação.
+async function supRcAbrir(id) {
+  const r = await api('/api/suprimentos/requisicoes/' + id);
+  const edit = !READONLY, cot = r.status === 'em_cotacao', orcs = r.orcamentos;
+  const menor = orcs.length ? Math.min(...orcs.map(o => Number(o.valor_total))) : null;
+  const info = (rot, val) => (val ? `<div class="rc-info"><span>${rot}</span><div>${val}</div></div>` : '');
+  const escolhido = orcs.find(o => o.id === r.orcamento_escolhido_id);
+  const itensHtml = `<table class="via-resumo-tbl"><thead><tr><th>Item</th><th>Tamanho</th><th class="num">Quantidade</th></tr></thead><tbody>${r.itens.map(i => `<tr><td>${esc(i.descricao)}${i.item_id ? ' <small style="color:var(--muted)">(estoque)</small>' : ''}</td><td>${esc(i.tamanho || '—')}</td><td class="num">${supNum(i.quantidade)} ${esc(i.unidade || '')}</td></tr>`).join('')}</tbody></table>`;
+  const orcHtml = orcs.length ? `<table class="rc-orc"><thead><tr><th>Fornecedor</th><th class="num">Valor</th><th>Condições</th><th class="actions">Ações</th></tr></thead><tbody>${orcs.map(o => {
+      const esc1 = o.id === r.orcamento_escolhido_id, cond = [o.prazo_entrega_dias != null ? `entrega em ${o.prazo_entrega_dias} dia(s)` : '', o.condicao_pagamento ? esc(o.condicao_pagamento) : '', o.validade ? 'válido até ' + rcDia(o.validade) : ''].filter(Boolean).join(' · ');
+      return `<tr class="${esc1 ? 'rc-escolhido' : ''}"><td><strong>${esc(o.fornecedor_nome)}</strong> ${orcs.length > 1 && Number(o.valor_total) === menor ? '<span class="badge ok">Menor valor</span>' : ''} ${esc1 ? '<span class="badge warn">Escolhido</span>' : ''}${o.observacao ? `<br><small style="color:var(--muted)">${esc(o.observacao)}</small>` : ''}</td>
+        <td class="num"><strong>${brl(o.valor_total)}</strong></td><td><small>${cond || '—'}</small></td>
+        <td class="actions sup-acoes"><button class="btn-ic" data-rcanexo="${o.id}" title="Anexos do orçamento (PDF, foto)" aria-label="Anexos">📎${o.anexos ? `<span class="ic-cont">${o.anexos}</span>` : ''}</button>${cot && edit ? `${esc1 ? '<span class="sup-ic-vazio"></span>' : `<button class="btn-ic ok" data-rcesc="${o.id}" title="Escolher este orçamento" aria-label="Escolher">✓</button>`}<button class="btn-ic" data-rcorcedit="${o.id}" title="Editar o orçamento" aria-label="Editar">✎</button><button class="btn-ic exc" data-rcorcdel="${o.id}" title="Remover o orçamento" aria-label="Remover">🗑</button>` : ''}</td></tr>`;
+    }).join('')}</tbody></table>` : '<div class="empty" style="padding:14px">Nenhum orçamento registrado ainda.</div>';
+  const linha = r.eventos.map(e => `<li><b>${esc(RC_EVENTO[e.evento] || e.evento)}</b>${e.detalhe ? `<br><span>${esc(e.detalhe)}</span>` : ''}<small>${esc(e.usuario_nome || '')} · ${rcQuando(e.created_at)}</small></li>`).join('');
+  const btns = [{ label: 'Fechar', onClick: closeModal }];
+  if (edit) {
+    if (cot) { btns.push({ label: 'Editar requisição', onClick: () => supRcForm(r) }); btns.push({ label: 'Cancelar requisição', cls: 'danger-ghost', onClick: () => supRcCancelar(r) });
+      btns.push({ label: 'Enviar para aprovação', cls: 'primary', onClick: async () => { try { await api(`/api/suprimentos/requisicoes/${r.id}/enviar-aprovacao`, { method: 'POST' }); toast('Enviada para aprovação.'); renderSuprimentos(); supRcAbrir(r.id); } catch (e) { toast(e.message); } } }); }
+    if (r.status === 'em_aprovacao') {
+      btns.push({ label: 'Voltar para cotação', onClick: () => supRcMotivo('Voltar para cotação', 'A requisição volta a permitir alterações nos orçamentos e na escolha.', 'Por que voltar para cotação', 'Voltar para cotação', true, async m => { await api(`/api/suprimentos/requisicoes/${r.id}/reabrir`, { method: 'POST', body: { motivo: m } }); toast('Voltou para cotação.'); renderSuprimentos(); supRcAbrir(r.id); }) });
+      btns.push({ label: 'Reprovar', cls: 'danger-ghost', onClick: () => supRcMotivo('Reprovar a requisição', 'Diga por que a compra não foi aprovada. Fica registrado com seu nome e a data.', 'Motivo da reprovação', 'Reprovar', true, async m => { await api(`/api/suprimentos/requisicoes/${r.id}/decidir`, { method: 'POST', body: { aprovar: false, motivo: m } }); toast('Requisição reprovada.'); renderSuprimentos(); supRcAbrir(r.id); }) });
+      btns.push({ label: 'Aprovar', cls: 'primary', onClick: () => supRcMotivo('Aprovar a requisição', `Aprovar a compra com o orçamento de <strong>${esc(escolhido ? escolhido.fornecedor_nome : '—')}</strong>${escolhido ? ' por <strong>' + brl(escolhido.valor_total) + '</strong>' : ''}? Fica registrado com seu nome e a data.`, 'Observação da aprovação', 'Aprovar', false, async m => { await api(`/api/suprimentos/requisicoes/${r.id}/decidir`, { method: 'POST', body: { aprovar: true, motivo: m } }); toast('Requisição aprovada.'); renderSuprimentos(); supRcAbrir(r.id); }) });
+    }
+    if (r.status === 'reprovada') btns.push({ label: 'Reabrir para cotação', onClick: () => supRcMotivo('Reabrir para cotação', 'A requisição volta para cotação e pode ser ajustada e enviada de novo.', 'Por que reabrir', 'Reabrir', true, async m => { await api(`/api/suprimentos/requisicoes/${r.id}/reabrir`, { method: 'POST', body: { motivo: m } }); toast('Reaberta para cotação.'); renderSuprimentos(); supRcAbrir(r.id); }) });
+    if (['aprovada', 'reprovada'].includes(r.status)) btns.push({ label: 'Cancelar requisição', cls: 'danger-ghost', onClick: () => supRcCancelar(r) });
+    if (r.status === 'aprovada') btns.push({ label: 'Marcar como comprada', cls: 'primary', onClick: () => supRcComprar(r) });
+  }
+  openModal(`${rcNum(r.id)} · ${r.titulo}`, `
+    <div class="rc-topo">${rcBadge(RC_ST, r.status)} ${rcBadge(RC_URG, r.urgencia)}</div>
+    <div class="rc-infos">${info('Solicitante', esc(r.solicitante_nome))}${info('Data da solicitação', rcDia(r.data_solicitacao))}${info('Registrada por', esc(r.created_by_nome || '—'))}${info('Por que comprar', `<span style="white-space:pre-wrap">${esc(r.justificativa)}</span>`)}</div>
+    ${supSecTitle('Itens solicitados')}${itensHtml}
+    ${supSecTitle(`Orçamentos (${orcs.length})`)}${orcHtml}
+    ${cot && edit ? '<div style="margin-top:8px"><button type="button" class="btn sm" id="rc-add-orc">+ Adicionar orçamento</button> <small style="color:var(--muted)">Boa prática: pelo menos três orçamentos. Anexe o PDF com o 📎.</small></div>' : ''}
+    ${escolhido ? `<div class="rc-escolha"><b>Orçamento escolhido:</b> ${esc(escolhido.fornecedor_nome)} · ${brl(escolhido.valor_total)}${r.justificativa_escolha ? `<br><b>Por que:</b> ${esc(r.justificativa_escolha)}` : ''}<br><small>${esc(r.escolhido_por || '')} · ${rcQuando(r.escolhido_em)}</small></div>` : (cot ? '<p class="hint">Escolha um dos orçamentos (✓) para poder enviar para aprovação.</p>' : '')}
+    ${['aprovada', 'reprovada', 'comprada'].includes(r.status) || r.decidido_em ? `${supSecTitle('Aprovação')}<div class="rc-infos">${info('Decisão', r.status === 'reprovada' ? 'Reprovada' : 'Aprovada')}${info('Por', esc(r.decidido_por_nome || '—'))}${info('Quando', rcQuando(r.decidido_em))}${info('Observação', esc(r.decisao_motivo || ''))}</div>` : ''}
+    ${r.status === 'comprada' ? `${supSecTitle('Compra efetivada')}<div class="rc-infos">${info('Data', rcDia(r.comprada_em))}${info('Documento / NF', esc(r.compra_documento || ''))}${info('Observação', esc(r.compra_obs || ''))}</div>` : ''}
+    ${r.status === 'cancelada' ? `${supSecTitle('Cancelamento')}<div class="rc-infos">${info('Motivo', esc(r.cancelada_motivo || ''))}</div>` : ''}
+    ${supSecTitle('Linha do tempo')}<ul class="rc-linha-tempo">${linha}</ul>`, btns, { wide: true });
+  document.querySelectorAll('[data-rcanexo]').forEach(b => b.onclick = () => {
+    const o = orcs.find(x => x.id == b.dataset.rcanexo); openAttachments('rc_orcamento', o.id, `Orçamento ${o.fornecedor_nome} — ${rcNum(r.id)}`);
+    const f = document.querySelector('#modal-footer .btn'); if (f) { f.textContent = 'Voltar à requisição'; f.onclick = () => supRcAbrir(r.id); }
+  });
+  document.querySelectorAll('[data-rcesc]').forEach(b => b.onclick = () => supRcEscolher(r, orcs.find(x => x.id == b.dataset.rcesc), menor, orcs.length));
+  document.querySelectorAll('[data-rcorcedit]').forEach(b => b.onclick = () => supRcOrcForm(r, orcs.find(x => x.id == b.dataset.rcorcedit)));
+  document.querySelectorAll('[data-rcorcdel]').forEach(b => b.onclick = () => {
+    const o = orcs.find(x => x.id == b.dataset.rcorcdel);
+    openModal('Remover orçamento', `<p>Remover o orçamento de <strong>${esc(o.fornecedor_nome)}</strong> (${brl(o.valor_total)})? Os anexos dele também são removidos${o.id === r.orcamento_escolhido_id ? ' e a escolha é desfeita' : ''}. Fica registrado na linha do tempo.</p>`,
+      [{ label: 'Voltar', onClick: () => supRcAbrir(r.id) }, { label: 'Remover', cls: 'primary', onClick: async () => { try { await api(`/api/suprimentos/requisicoes/${r.id}/orcamentos/${o.id}`, { method: 'DELETE' }); toast('Orçamento removido.'); renderSuprimentos(); supRcAbrir(r.id); } catch (e) { modalError(e.message); } } }]);
+  });
+  if ($('#rc-add-orc')) $('#rc-add-orc').onclick = () => supRcOrcForm(r, null);
+}
+
+function supRcCancelar(r) {
+  supRcMotivo(`Cancelar ${rcNum(r.id)}`, 'A requisição fica como cancelada (não é apagada) e o motivo vai para a linha do tempo.', 'Motivo do cancelamento', 'Cancelar requisição', true, async m => {
+    await api(`/api/suprimentos/requisicoes/${r.id}/cancelar`, { method: 'POST', body: { motivo: m } }); toast('Requisição cancelada.'); renderSuprimentos(); supRcAbrir(r.id);
+  });
+}
+function supRcComprar(r) {
+  openModal(`Compra efetivada — ${rcNum(r.id)}`, `
+    <p class="hint" style="margin-top:0">Marque quando a compra aprovada for feita. Para dar entrada no estoque e lançar no Contas a Pagar, use a aba <strong>Compras</strong>.</p>
+    <div class="form-row">${fld('rc-cdata', 'Data da compra', 'date', todayISO())}${fld('rc-cdoc', 'Documento / NF', 'text', '')}</div>
+    ${fld('rc-cobs', 'Observação', 'text', '')}`,
+    [{ label: 'Voltar', onClick: () => supRcAbrir(r.id) },
+     { label: 'Marcar como comprada', cls: 'primary', onClick: async () => {
+        try { await api(`/api/suprimentos/requisicoes/${r.id}/comprar`, { method: 'POST', body: { data: $('#rc-cdata').value, documento: $('#rc-cdoc').value, observacao: $('#rc-cobs').value } }); toast('Compra registrada na requisição.'); renderSuprimentos(); supRcAbrir(r.id); }
+        catch (e) { modalError(e.message); }
+     } }]);
+}
+function supRcEscolher(r, o, menor, total) {
+  const exige = total === 1 || Number(o.valor_total) > menor;
+  openModal(`Escolher orçamento — ${rcNum(r.id)}`, `
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">Escolher <strong>${esc(o.fornecedor_nome)}</strong> por <strong>${brl(o.valor_total)}</strong>.${exige ? (total === 1 ? ' Só há um orçamento: explique a escolha.' : ` Não é o menor valor (${brl(menor)}): explique por que ele foi o escolhido.`) : ' É o menor valor; a justificativa é opcional.'}</p>
+    <div class="field"><label for="rc-esc-just">Justificativa da escolha${exige ? ' *' : ' (opcional)'}</label><textarea id="rc-esc-just" rows="3" placeholder="Ex.: prazo de entrega menor; já fornecedor homologado; qualidade do material"></textarea></div>`,
+    [{ label: 'Voltar', onClick: () => supRcAbrir(r.id) },
+     { label: 'Escolher este orçamento', cls: 'primary', onClick: async () => {
+        try { await api(`/api/suprimentos/requisicoes/${r.id}/escolher`, { method: 'POST', body: { orcamento_id: o.id, justificativa: $('#rc-esc-just').value } }); toast('Orçamento escolhido.'); renderSuprimentos(); supRcAbrir(r.id); }
+        catch (e) { modalError(e.message); }
+     } }]);
+}
+async function supRcOrcForm(r, o) {
+  const forn = await api('/api/suppliers').catch(() => []);
+  openModal(o ? 'Editar orçamento' : 'Novo orçamento', `
+    ${fldSel('rc-of', 'Fornecedor *', [{ v: '', t: '— fornecedor fora do cadastro (digitar) —' }, ...forn.filter(s => s.status === 'ativo' || (o && s.id === o.supplier_id)).map(s => ({ v: s.id, t: s.name }))], o && o.supplier_id ? o.supplier_id : '')}
+    <div id="rc-of-nome-wrap">${fld('rc-ofn', 'Nome do fornecedor', 'text', o && !o.supplier_id ? o.fornecedor_nome : '')}</div>
+    <div class="form-row">${fld('rc-ov', 'Valor total do orçamento (R$) *', 'number', o ? o.valor_total : '', 'step="0.01" min="0"')}${fld('rc-op', 'Prazo de entrega (dias)', 'number', o && o.prazo_entrega_dias != null ? o.prazo_entrega_dias : '', 'step="1" min="0"')}</div>
+    <div class="form-row">${fld('rc-oc', 'Condição de pagamento', 'text', o ? o.condicao_pagamento || '' : '', 'placeholder="Ex.: 30 dias, à vista, 3x"')}${fld('rc-oval', 'Validade do orçamento', 'date', o && o.validade ? String(o.validade).slice(0, 10) : '')}</div>
+    ${fld('rc-oo', 'Observações', 'text', o ? o.observacao || '' : '', 'placeholder="Ex.: frete incluso; marca; garantia"')}
+    <p class="hint">Depois de salvar, anexe o PDF ou a foto do orçamento com o 📎 na lista.</p>`,
+    [{ label: 'Cancelar', onClick: () => supRcAbrir(r.id) },
+     { label: o ? 'Salvar orçamento' : 'Adicionar orçamento', cls: 'primary', onClick: async () => {
+        const body = { supplier_id: $('#rc-of').value || null, fornecedor_nome: $('#rc-ofn').value, valor_total: $('#rc-ov').value, prazo_entrega_dias: $('#rc-op').value, condicao_pagamento: $('#rc-oc').value, validade: $('#rc-oval').value, observacao: $('#rc-oo').value };
+        try { await api(`/api/suprimentos/requisicoes/${r.id}/orcamentos${o ? '/' + o.id : ''}`, { method: o ? 'PUT' : 'POST', body }); toast(o ? 'Orçamento atualizado.' : 'Orçamento adicionado.'); renderSuprimentos(); supRcAbrir(r.id); }
+        catch (e) { modalError(e.message); }
+     } }]);
+  const ajusta = () => { $('#rc-of-nome-wrap').style.display = $('#rc-of').value ? 'none' : ''; };
+  $('#rc-of').onchange = ajusta; ajusta();
+}
+
