@@ -8564,3 +8564,5 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado em memória (44 PASS: permissões, validações, fluxo completo, escolha com justificativa, congelamento incluindo anexos, cancelar e excluir, linha do tempo) e os cinco testes anteriores de Suprimentos seguem passando; simulador (lista, detalhe, formulário com item de grade, orçamento, escolha e botões por situação). Não testado: banco real (migração pendente), produção logada. Premissas a confirmar: quem edita Suprimentos também aprova; a efetivação só marca a requisição, sem gerar compra automática.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+**Publicação (2026-11-18):** o Marcelo autorizou a migração ("Pode seguir"); ela foi aplicada no banco (4 tabelas `erp_compra_*` e o tipo de anexo `rc_orcamento`, conferidos em somente leitura) e a aba foi publicada na main.
