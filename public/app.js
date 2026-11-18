@@ -7882,7 +7882,7 @@ async function renderSolicitacaoAutosservico(pai) {
   }
   const [tud, viaConfig] = await Promise.all([api('/api/viaticos/tud'), api('/api/viaticos/config')]);
   VIA_WIZ = {
-    colab, tud, preco_combustivel: viaConfig.preco_combustivel_litro,
+    colab, tud, preco_combustivel: viaConfig.preco_combustivel_litro, km_taxa: viaConfig.km_taxa_reembolso,
     // Motivo começa vazio de propósito: com todos os campos obrigatórios, deixar
     // um valor pré-selecionado faria a solicitação sair com um motivo que a
     // pessoa nunca escolheu (antes vinha "Monitoramento" por ser o 1º da lista).
@@ -8839,6 +8839,7 @@ function viaWizStep3() {
   c.innerHTML = `
     <div class="via-wiz-container-wide">
       ${viaWizProgress(3)}
+      ${typeof viaDirecionadorHtml === 'function' ? viaDirecionadorHtml() : ''}
       <div class="via-wiz-2col">
         <div class="card">
           <h3 style="margin-bottom:6px">Transporte</h3>
@@ -8869,6 +8870,7 @@ function viaWizStep3() {
 
   viaRenderAviaoBlock(); viaRenderOnibusBlock(); viaRenderAluguelBlock(); viaRenderProprioBlock(); viaRenderTaxiUberBlock();
   viaAplicarTravasTransporte();
+  if (typeof viaDirecionadorLigar === 'function') viaDirecionadorLigar();
 
   $('#w3-aviao').onchange = e => { w.transporte.aviao = e.target.checked; viaRenderAviaoBlock(); viaAplicarTravasTransporte(); viaAtualizarVisibilidadeUsoLocal(); };
   $('#w3-onibus').onchange = e => { w.transporte.onibus = e.target.checked; viaRenderOnibusBlock(); viaAplicarTravasTransporte(); };
