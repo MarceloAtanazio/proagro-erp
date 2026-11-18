@@ -178,7 +178,8 @@ function supTermoPDF(t) {
       doc.setFontSize(7); doc.setTextColor(...CINZA);
       doc.text(`${numero}  ·  Página ${p} de ${paginas}  ·  Emitido por ${t.emitido_por_nome || USER.name}`, W - M, H - 17.5, { align: 'right' });
     }
-    doc.save(`termo-responsabilidade-${numero}.pdf`);
+    const nomeArq = Array.from(String(c.name || 'Colaborador')).filter(ch => ch.charCodeAt(0) !== 92 && !'/:*?"<>|'.includes(ch)).join('').split(' ').filter(Boolean).join(' ') || 'Colaborador';
+    doc.save(`Termo de Responsabilidade - ${nomeArq} - Nº ${numero}.pdf`);
   } catch (e) { toast('Não foi possível gerar o PDF: ' + e.message); }
 }
 

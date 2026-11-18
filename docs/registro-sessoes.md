@@ -8595,3 +8595,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Ajuste da barra da aba Envios (2026-11-18):** (1) filtro por **colaborador** em lista suspensa com todos os colaboradores (trocar o filtro limpa a seleção do termo); (2) o botão **Gerar termo único** saiu de junto dos filtros e ficou à direita, à esquerda de "+ Registrar envio", em dourado com sombra e, quando há equipamentos marcados, um pulso discreto (desabilitado fica em dourado claro tracejado); (3) caixa no cabeçalho da coluna de seleção para marcar todos os equipamentos visíveis. Só aparência e usabilidade. Arquivos: `public/app.js`, `public/styles.css`, `scripts/2026-11-18_envios_filtro_colaborador_termo.js`. Conferido no simulador (filtro, marcar todos, botão habilitado e reset ao trocar de colaborador).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+**Nome do arquivo do termo (2026-11-18):** ao extrair, o PDF agora sai como "Termo de Responsabilidade - NOME DO COLABORADOR - Nº TR-0001.pdf" (antes: termo-responsabilidade-TR-0001.pdf). Caracteres que o Windows não aceita em nome de arquivo (barra, dois-pontos, asterisco, interrogação, aspas, menor, maior, barra vertical) são retirados do nome; acentos e espaços ficam; sem nome usa "Colaborador". Arquivos: `public/app.js`, `scripts/2026-11-18_termo_nome_arquivo.js`. Conferido no simulador.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
