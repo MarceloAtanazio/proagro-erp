@@ -8622,3 +8622,13 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Pendente:** autorização para aplicar a migração; sem ela a solicitação sai normalmente e a evidência não é anexada.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## Sessão 242 — Direcionador: sem resumo e economia no painel de gestão
+
+**O que foi feito:** saiu a caixa "Resumo para enviar à coordenação" (e o botão copiar) da tela e do que é gravado na OT. O modal 🧭 da OT mostra os números. A economia de cada OT já fica em `transporte_detalhes.direcionador`; agora `viaEconomiaDirecionador` soma por colaborador (sem canceladas, só economia positiva). Aparece como cartão na lista de Viáticos e, no Painel do período (visual Novo), como indicador e quadro por colaborador, respeitando os filtros.
+
+**Arquivos:** public/via-direcionador.js, public/tema-viaticos.js, public/app.js, scripts/2026-11-19_viaticos_direcionador_economia_painel.js.
+
+**Limite:** a economia é a indicada pelo direcionador, não confere se a pessoa escolheu a opção indicada. OTs anteriores ao v2 não têm o retrato.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

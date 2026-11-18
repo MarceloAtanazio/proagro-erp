@@ -6403,6 +6403,7 @@ async function renderViaticos() {
         <div class="value ${dash.vencidas.n ? 'neg' : ''}">${dash.vencidas.n}</div><div class="detail">${brl(dash.vencidas.v)}</div></div>
       <div class="card kpi ${dash.divergentes.n ? 'red' : ''}"><div class="label">Divergentes (estouro)</div>
         <div class="value ${dash.divergentes.n ? 'neg' : ''}">${dash.divergentes.n}</div><div class="detail">${brl(dash.divergentes.v)}</div></div>
+      ${(() => { const e = typeof viaEconomiaDirecionador === 'function' ? viaEconomiaDirecionador(sols) : null; return e && e.comRetrato ? `<div class="card kpi blue"><div class="label">Economia do Direcionador</div><div class="value">${brl(e.total)}</div><div class="detail">${e.ots} OT(s) com economia</div></div>` : ''; })()}
     </div>
     <div class="toolbar">
       <input type="search" id="q" placeholder="Buscar colaborador, destino..." value="${esc(saved.q || '')}">

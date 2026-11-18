@@ -63,7 +63,7 @@
     if (!r || !r.pronto) return null;
     return { indicada: r.indicada, sem_carro: !!r.semcarro, km: Number(r.km.toFixed(1)), dias: r.dias, diaria: num(p.diaria), proprio_total: Number(r.proprio.total.toFixed(2)),
       locado_total: r.semcarro ? null : Number(r.locado.total.toFixed(2)), economia: r.economia != null ? Number(r.economia.toFixed(2)) : null, km_equilibrio: r.kmEq != null ? Number(r.kmEq.toFixed(1)) : null,
-      evidencia: !!evidenciaNome, evidencia_nome: evidenciaNome || null, resumo: viaDirecionadorResumo(r, p), calculado_em: quando || new Date().toISOString() };
+      evidencia: !!evidenciaNome, evidencia_nome: evidenciaNome || null, calculado_em: quando || new Date().toISOString() };
   }
 
   // ---------------- tela (usa as globais de app.js) ----------------
@@ -170,9 +170,7 @@
         <div title="Quilometragem em que as duas opções custam o mesmo: abaixo dela o carro próprio compensa; acima, o locado."><span>Quilometragem de equilíbrio</span><b>${r.kmEq != null ? kmFmt(r.kmEq) + ' km' : '—'}</b></div>
         <div><span>Média de km por dia</span><b>${kmFmt(r.kmDia)} km</b></div>
       </div>
-      <div class="dm-resumo"><label for="dm-resumo-txt">Resumo para enviar à coordenação</label><textarea id="dm-resumo-txt" rows="6" readonly>${esc(viaDirecionadorResumo(r, p))}</textarea>
-        <div class="dm-acoes"><button class="btn sm" id="dm-copiar" type="button">📋 Copiar resumo</button><button class="btn sm primary" id="dm-usar" type="button">Usar a opção indicada na solicitação</button></div></div>`;
-    $('#dm-copiar').onclick = async () => { const t = viaDirecionadorResumo(r, p); try { await navigator.clipboard.writeText(t); toast('Resumo copiado.'); } catch (e) { $('#dm-resumo-txt').select(); toast('Selecione e copie o resumo (Ctrl+C).'); } };
+      <div class="dm-acoes"><button class="btn sm primary" id="dm-usar" type="button">Usar a opção indicada na solicitação</button></div>`;
     $('#dm-usar').onclick = () => {
       const marca = (id, on) => { const el = $('#' + id); if (el && el.checked !== on) el.click(); return el; };
       if (ind === 'proprio') { marca('w3-aluguel', false); const el = marca('w3-proprio', true); toast(el && !el.checked ? 'O carro próprio não pôde ser marcado: confira a documentação do colaborador (CNH, CRLV e seguro).' : 'Carro próprio marcado na solicitação.'); }
@@ -215,14 +213,29 @@
   function viaDirecionadorVer(s) {
     const d = s && s.transporte_detalhes && s.transporte_detalhes.direcionador; if (!d) return;
     openModal(`Direcionador de mobilidade — OT ${esc(s.ordem_trabalho || s.id)}`, `<p class="hint" style="margin-top:0">Cálculo feito no momento da solicitação (${d.calculado_em ? new Date(d.calculado_em).toLocaleString('pt-BR') : '—'}).</p>
-      <textarea rows="7" readonly style="width:100%;font-size:12.5px">${esc(d.resumo || '')}</textarea>
+      <div class="dm-ind" style="grid-template-columns:repeat(2,1fr)"><div><span>Indicada</span><b>${d.sem_carro ? 'Carro próprio (sem carro locado)' : d.indicada === 'locado' ? 'Carro locado' : 'Carro próprio'}</b></div><div><span>Economia</span><b>${d.economia != null ? brl(d.economia) : '—'}</b></div>
+        <div><span>Carro próprio</span><b>${brl(d.proprio_total)}</b></div><div><span>Carro locado</span><b>${d.locado_total != null ? brl(d.locado_total) : '—'}</b></div>
+        <div><span>Quilometragem</span><b>${kmFmt(d.km)} km</b></div><div><span>Diária informada</span><b>${d.diaria ? brl(d.diaria) : '—'}</b></div></div>
       <p style="font-size:13px;margin:10px 0 0">${d.evidencia ? `Evidência anexada: <b>${esc(d.evidencia_nome || '')}</b>.` : 'Nenhuma evidência foi anexada.'}</p>`,
       [{ label: 'Fechar', onClick: closeModal }, ...(d.evidencia ? [{ label: '📎 Ver evidência', cls: 'primary', onClick: () => openAttachments('viatico_cotacao', s.id, `Evidência — OT ${s.ordem_trabalho || s.id}`) }] : [])]);
+  }
+  // Soma da economia apurada pelo direcionador nas OTs (sem as canceladas), no total e por colaborador. Só conta OT que tem o retrato gravado e economia positiva.
+  function viaEconomiaDirecionador(sols) {
+    const por = new Map(); let total = 0, ots = 0, comRetrato = 0;
+    (sols || []).forEach(s => {
+      const d = s && s.transporte_detalhes && s.transporte_detalhes.direcionador; if (!d || s.status === 'cancelada') return;
+      comRetrato++;
+      const e = Number(d.economia); if (!(e > 0)) return;
+      total += e; ots++;
+      const k = s.colaborador_id != null ? s.colaborador_id : s.colaborador_name; const l = por.get(k) || { nome: s.colaborador_name || '—', ots: 0, economia: 0 };
+      l.ots++; l.economia += e; por.set(k, l);
+    });
+    return { total: Math.round(total * 100) / 100, ots, comRetrato, porColaborador: [...por.values()].sort((a, b) => b.economia - a.economia) };
   }
   if (typeof window !== 'undefined') {
     window.viaDirecionadorHtml = viaDirecionadorHtml; window.viaDirecionadorLigar = viaDirecionadorLigar; window.viaDirecionadorPreEnvio = viaDirecionadorPreEnvio;
     window.viaDirecionadorPosEnvio = viaDirecionadorPosEnvio; window.viaDirecionadorVer = viaDirecionadorVer;
-    window.viaDirecionadorCalc = viaDirecionadorCalc; window.viaDirecionadorResumo = viaDirecionadorResumo; window.viaDirecionadorSnapshot = viaDirecionadorSnapshot;
+    window.viaDirecionadorCalc = viaDirecionadorCalc; window.viaDirecionadorResumo = viaDirecionadorResumo; window.viaDirecionadorSnapshot = viaDirecionadorSnapshot; window.viaEconomiaDirecionador = viaEconomiaDirecionador;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { viaDirecionadorCalc, viaDirecionadorResumo, viaDirecionadorSnapshot };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { viaDirecionadorCalc, viaDirecionadorResumo, viaDirecionadorSnapshot, viaEconomiaDirecionador };
 })();

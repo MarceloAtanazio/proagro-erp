@@ -132,6 +132,7 @@
     const aDescontar = k.pendencia, totalCat = f.porCategoria.reduce((a, c) => a + c.total, 0);
     const raio = 38, circ = 2 * Math.PI * raio, corG = taxa >= 0.9 ? 'var(--verde-500)' : taxa >= 0.5 ? 'var(--warn)' : 'var(--danger)';
     const dica = $('#nd-via-dica'); if (dica) dica.textContent = V.rotulo;
+    const eco = typeof viaEconomiaDirecionador === 'function' ? viaEconomiaDirecionador(V.filtrados) : { total: 0, ots: 0, comRetrato: 0, porColaborador: [] };
 
     // por situação
     const maxSit = Math.max(1, ...f.porStatus.map(l => Math.max(l.liberado, l.comprovado)));
@@ -183,7 +184,10 @@
         ${tile('', 'Devolvido', brl(k.devolvido), 'sobras devolvidas')}
         ${tile(aDescontar ? 'warn' : '', 'A descontar', brl(aDescontar), aDescontar ? 'pendência na próxima OT' : 'sem pendências')}
         ${tile('', 'Ticket médio', brl(ticket), 'liberado por OT')}
+        ${eco.comRetrato ? tile('', 'Economia do Direcionador', brl(eco.total), eco.ots + ' OT(s) com carro próprio ou locado mais barato') : ''}
       </div>
+      ${eco.comRetrato ? `<article class="nd-card nd-pn-largo"><div class="nd-card-cab"><h3>Economia do Direcionador por colaborador</h3><span class="nd-chip">${brl(eco.total)}</span></div>
+        <div class="nd-pn-rolagem"><table class="nd-pn-tb"><thead><tr><th>Colaborador</th><th class="num">OTs com economia</th><th class="num">Economia</th></tr></thead><tbody>${eco.porColaborador.map(l => `<tr><td><b>${E(l.nome)}</b></td><td class="num">${l.ots}</td><td class="num">${brl(l.economia)}</td></tr>`).join('') || '<tr><td colspan="3">Nenhuma economia apurada no filtro atual.</td></tr>'}</tbody></table></div></article>` : ''}
       ${prazoSecao(V.filtrados)}
       <div class="nd-pn-linha">
         <article class="nd-card"><div class="nd-card-cab"><h3>Prestação de contas por situação</h3><span class="nd-chip">${f.porStatus.length} situação(ões)</span></div>
