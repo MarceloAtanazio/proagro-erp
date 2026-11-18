@@ -8566,3 +8566,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 
 **Publicação (2026-11-18):** o Marcelo autorizou a migração ("Pode seguir"); ela foi aplicada no banco (4 tabelas `erp_compra_*` e o tipo de anexo `rc_orcamento`, conferidos em somente leitura) e a aba foi publicada na main.
+
+**Ajuste visual (2026-11-18):** no detalhe da requisição o "Por que comprar" quebrava as linhas numa coluna estreita ao lado dos dados. Agora Solicitante, Data da solicitação e Registrada por ficam numa faixa de três colunas (cartão suave) e o motivo ganha um bloco próprio em largura total, com barra verde à esquerda e texto confortável; no celular as três colunas empilham. Só aparência. Arquivos: `public/app.js`, `public/styles.css`, `scripts/2026-11-18_rc_detalhe_cabecalho.js`. Conferido no simulador.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

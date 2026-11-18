@@ -164,7 +164,8 @@ async function supRcAbrir(id) {
   }
   openModal(`${rcNum(r.id)} · ${r.titulo}`, `
     <div class="rc-topo">${rcBadge(RC_ST, r.status)} ${rcBadge(RC_URG, r.urgencia)}</div>
-    <div class="rc-infos">${info('Solicitante', esc(r.solicitante_nome))}${info('Data da solicitação', rcDia(r.data_solicitacao))}${info('Registrada por', esc(r.created_by_nome || '—'))}${info('Por que comprar', `<span style="white-space:pre-wrap">${esc(r.justificativa)}</span>`)}</div>
+    <div class="rc-infos rc-infos-3">${info('Solicitante', esc(r.solicitante_nome))}${info('Data da solicitação', rcDia(r.data_solicitacao))}${info('Registrada por', esc(r.created_by_nome || '—'))}</div>
+    <div class="rc-motivo"><span>Por que comprar</span><p>${esc(r.justificativa)}</p></div>
     ${supSecTitle('Itens solicitados')}${itensHtml}
     ${supSecTitle(`Orçamentos (${orcs.length})`)}${orcHtml}
     ${cot && edit ? '<div style="margin-top:8px"><button type="button" class="btn sm" id="rc-add-orc">+ Adicionar orçamento</button> <small style="color:var(--muted)">Boa prática: pelo menos três orçamentos. Anexe o PDF com o 📎.</small></div>' : ''}
