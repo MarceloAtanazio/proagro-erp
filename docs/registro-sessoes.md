@@ -8585,3 +8585,5 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste de backend com banco simulado em memória (25 PASS: estado obrigatório, criação do termo e bloqueios, consulta com dados do colaborador, entregue com anexo do lote, desfazer e exclusão do último envio) e os seis testes anteriores de Suprimentos seguem passando; PDF gerado no simulador e conferido página a página (o marcador "▸" saía como lixo e foi trocado por "•"; título da seção 4 e largura das colunas ajustados); simulador da aba Envios (seleção, bloqueio de mistura, modal com estado dos envios antigos, validação e envio). Não testado: banco real (migração pendente), produção logada, impressão em papel.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+**Publicação (2026-11-18):** o Marcelo autorizou a aplicação no chat ("autorizo a aplicar"); a migração foi aplicada (tabela `erp_estoque_termos`, colunas `termo_id` e `estado_saida`, tipo de anexo `termo_lote`, conferidos em somente leitura) e o código foi publicado na main.
