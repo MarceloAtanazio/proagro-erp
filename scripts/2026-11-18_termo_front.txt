@@ -86,14 +86,23 @@ function supTermoPDF(t) {
 
     // 2. Inventário
     nova(30); secao('2.  INVENTÁRIO DE EQUIPAMENTOS ENTREGUES');
-    doc.autoTable({ startY: y, margin: { left: M, right: M, top: 14, bottom: RODAPE }, theme: 'grid',
-      head: [['Item', 'Categoria', 'Fabricante', 'Modelo', 'Nº de série (S/N)', 'Patrimônio', 'Estado', 'Acessórios', 'Observações']],
-      body: itens.map((i, k) => [String(k + 1).padStart(2, '0'), v(i.subcategoria || i.categoria), v(i.marca), v(i.item_nome), v(i.serie), v(i.patrimonio), v(i.estado_saida), v(i.condicao_saida),
-        v([i.linha_telefonica ? 'Linha ' + supFone(i.linha_telefonica) + (i.operadora ? ' (' + i.operadora + ')' : '') : '', i.notes].filter(Boolean).join(' · '))]),
-      headStyles: { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold', fontSize: 7.5, lineColor: BORDA },
-      styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.8, textColor: TXT, lineColor: BORDA, lineWidth: 0.2, valign: 'middle' },
-      columnStyles: { 0: { cellWidth: 8, halign: 'center', fontStyle: 'bold', textColor: VERDE }, 1: { cellWidth: 18 }, 2: { cellWidth: 16 }, 3: { cellWidth: 31 }, 4: { cellWidth: 27 }, 5: { cellWidth: 20 }, 6: { cellWidth: 25 }, 7: { cellWidth: 19 }, 8: { cellWidth: 18 } } });
-    doc.autoTable({ startY: doc.lastAutoTable.finalY, margin: { left: M, right: M, bottom: RODAPE }, theme: 'grid',
+    itens.forEach((i, k) => {
+      nova(38);
+      const obs = [i.linha_telefonica ? 'Linha ' + supFone(i.linha_telefonica) + (i.operadora ? ' (' + i.operadora + ')' : '') : '', i.notes].filter(Boolean).join(' · ');
+      const rot = { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold', fontSize: 7.4 };
+      doc.autoTable({ startY: y, margin: { left: M, right: M, top: 14, bottom: RODAPE }, theme: 'grid', rowPageBreak: 'avoid',
+        head: [[{ content: `ITEM ${String(k + 1).padStart(2, '0')}`, colSpan: 6, styles: { fillColor: VERDE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5, halign: 'left', cellPadding: { top: 1.6, bottom: 1.6, left: 3, right: 2 } } }],
+          ['Categoria', 'Fabricante', 'Modelo', 'Nº de série (S/N)', 'Patrimônio', 'Estado'].map(t => ({ content: t, styles: rot }))],
+        body: [[v(i.subcategoria || i.categoria), v(i.marca), v(i.item_nome), v(i.serie), v(i.patrimonio), v(i.estado_saida)],
+          [{ content: 'Acessórios', styles: rot }, { content: v(i.condicao_saida), colSpan: 5 }],
+          ...(obs ? [[{ content: 'Observações', styles: rot }, { content: obs, colSpan: 5 }]] : [])],
+        headStyles: { lineColor: BORDA, lineWidth: 0.2 },
+        styles: { font: 'helvetica', fontSize: 8.6, cellPadding: 1.9, textColor: TXT, lineColor: BORDA, lineWidth: 0.2, valign: 'middle', overflow: 'linebreak' },
+        columnStyles: { 0: { cellWidth: 24 }, 1: { cellWidth: 24 }, 2: { cellWidth: 46 }, 3: { cellWidth: 36 }, 4: { cellWidth: 22 }, 5: { cellWidth: 30 } } });
+      y = doc.lastAutoTable.finalY + 2.5;
+    });
+    y -= 2.5;
+    doc.autoTable({ startY: y, margin: { left: M, right: M, bottom: RODAPE }, theme: 'grid',
       body: [[`Total de itens entregues neste termo:\n${itens.length}`, `Observações gerais do lote:\n${t.observacoes || ''}`]],
       styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 2.2, textColor: TXT, lineColor: BORDA, lineWidth: 0.2, minCellHeight: 14 },
       columnStyles: { 0: { cellWidth: 58, fillColor: VERDE_CLARO, fontStyle: 'bold', textColor: VERDE }, 1: { cellWidth: 124 } } });

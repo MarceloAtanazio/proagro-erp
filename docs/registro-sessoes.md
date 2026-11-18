@@ -8587,3 +8587,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 
 **Publicação (2026-11-18):** o Marcelo autorizou a aplicação no chat ("autorizo a aplicar"); a migração foi aplicada (tabela `erp_estoque_termos`, colunas `termo_id` e `estado_saida`, tipo de anexo `termo_lote`, conferidos em somente leitura) e o código foi publicado na main.
+
+**Ajuste visual do PDF (2026-11-18):** a tabela de 9 colunas estreitas do inventário quebrava palavras ("Fabricant/e", "Observaçõ/es", números de série) com acessórios e observações longos. Cada equipamento agora é um **bloco**, como no modelo da TI: faixa verde "ITEM 01", uma linha com Categoria, Fabricante, Modelo, Nº de série, Patrimônio e Estado (rótulo sobre o valor) e linhas de largura total para Acessórios e Observações (esta só aparece se houver conteúdo, incluindo a linha do celular). Blocos não se partem entre páginas; a coluna Estado foi alargada para "Recondicionado" caber. Conferido no PDF gerado com cinco equipamentos e textos longos (3 páginas). Arquivos: `public/app.js`, `scripts/2026-11-18_termo_inventario_blocos.js`, `scripts/2026-11-18_termo_estado_coluna.js` (e o bloco `2026-11-18_termo_front.txt`). Só aparência.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
