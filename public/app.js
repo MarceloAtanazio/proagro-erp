@@ -4190,16 +4190,16 @@ async function supRenderEnvios(panel) {
     <div class="toolbar">
       <input type="search" id="en-q" placeholder="Buscar colaborador, item, nº de série, patrimônio, rastreio…">
       <select id="en-fstatus"><option value="">Todas as situações</option><option value="enviado">Enviado</option><option value="entregue">Entregue</option><option value="devolvido">Devolvido</option></select>
-      ${edit ? '<button class="btn" id="en-termo-lote" disabled>Gerar termo único</button>' : ''}
-      <div class="spacer"></div>${edit ? '<button class="btn primary" id="sup-new-envio">+ Registrar envio</button>' : ''}
+      <select id="en-fcolab" title="Filtrar pelo colaborador"><option value="">Todos os colaboradores</option>${colaboradores.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <div class="spacer"></div>${edit ? '<button class="btn btn-termo" id="en-termo-lote" disabled>📄 Gerar termo único</button><button class="btn primary" id="sup-new-envio">+ Registrar envio</button>' : ''}
     </div>
     <div class="table-wrap"><table id="en-tbl"></table></div>`;
   const draw = () => {
-    const fs = $('#en-fstatus').value, q = $('#en-q').value.toLowerCase().trim();
-    const rows = movs.filter(m => (!fs || m.status === fs) && (!q ||
+    const fs = $('#en-fstatus').value, fc = $('#en-fcolab').value, q = $('#en-q').value.toLowerCase().trim();
+    const rows = movs.filter(m => (!fs || m.status === fs) && (!fc || String(m.colaborador_id) === fc) && (!q ||
       [m.item_nome, m.colaborador_name, m.unidade_serie, m.unidade_patrimonio, m.codigo_rastreio, m.forma_envio].join(' ').toLowerCase().includes(q)));
     $('#en-tbl').innerHTML = `
-      <thead><tr>${edit ? '<th style="width:28px"></th>' : ''}<th>Data</th><th>Item</th><th class="num">Qtd</th><th>Colaborador</th><th>Envio</th><th>Situação</th><th>Termo</th><th class="actions">Ações</th></tr></thead>
+      <thead><tr>${edit ? '<th style="width:28px"><input type="checkbox" id="en-sel-todos" title="Marcar todos os equipamentos visíveis" aria-label="Marcar todos os equipamentos visíveis"></th>' : ''}<th>Data</th><th>Item</th><th class="num">Qtd</th><th>Colaborador</th><th>Envio</th><th>Situação</th><th>Termo</th><th class="actions">Ações</th></tr></thead>
       <tbody>${rows.map(m => {
         const equip = m.item_tipo === 'equipamento', st = ST[m.status] || ['off', m.status];
         const ident = [m.unidade_serie ? 'Série ' + esc(m.unidade_serie) : '', m.unidade_patrimonio ? 'Pat. ' + esc(m.unidade_patrimonio) : ''].filter(Boolean).join(' · ');
@@ -4226,10 +4226,16 @@ async function supRenderEnvios(panel) {
         </tr>`;
       }).join('') || `<tr><td colspan="${edit ? 9 : 8}"><div class="empty">Nenhum envio encontrado.</div></td></tr>`}</tbody>`;
     const T = $('#en-tbl'), achar = id => movs.find(m => m.id == id);
-    const atualizaSel = () => { const bt = $('#en-termo-lote'); if (!bt) return; const n = SUP_TERMO_SEL.size; bt.disabled = n === 0; bt.textContent = n ? `Gerar termo único (${n})` : 'Gerar termo único'; bt.title = n ? 'Reúne os equipamentos marcados em um só termo' : 'Marque, na primeira coluna, os equipamentos do mesmo colaborador'; };
+    const atualizaSel = () => { const bt = $('#en-termo-lote'); if (!bt) return; const n = SUP_TERMO_SEL.size; bt.disabled = n === 0; bt.textContent = n ? `📄 Gerar termo único (${n})` : '📄 Gerar termo único'; bt.classList.toggle('pronto', n > 0); bt.title = n ? 'Reúne os equipamentos marcados em um só termo' : 'Marque, na primeira coluna, os equipamentos do mesmo colaborador'; };
     T.querySelectorAll('[data-ensel]').forEach(cb => cb.onchange = () => { const id = Number(cb.dataset.ensel); if (cb.checked) SUP_TERMO_SEL.add(id); else SUP_TERMO_SEL.delete(id); atualizaSel(); });
     if ($('#en-termo-lote')) $('#en-termo-lote').onclick = () => supTermoLoteModal(movs.filter(x => SUP_TERMO_SEL.has(x.id)));
     atualizaSel();
+    const cabSel = $('#en-sel-todos');
+    if (cabSel) {
+      const vis = rows.filter(x => x.item_tipo === 'equipamento' && x.status !== 'devolvido' && !x.termo_id);
+      cabSel.disabled = !vis.length; cabSel.checked = vis.length > 0 && vis.every(x => SUP_TERMO_SEL.has(x.id));
+      cabSel.onchange = () => { vis.forEach(x => { if (cabSel.checked) SUP_TERMO_SEL.add(x.id); else SUP_TERMO_SEL.delete(x.id); }); draw(); };
+    }
     T.querySelectorAll('[data-det]').forEach(b => b.onclick = () => supDetalheEnvio(achar(b.dataset.det), colaboradores));
     T.querySelectorAll('[data-etiq]').forEach(b => b.onclick = () => supEtiquetaPDF(achar(b.dataset.etiq)));
     T.querySelectorAll('[data-termo]').forEach(b => b.onclick = () => {
@@ -4260,6 +4266,7 @@ async function supRenderEnvios(panel) {
     }
   };
   $('#en-fstatus').oninput = draw;
+  $('#en-fcolab').oninput = () => { SUP_TERMO_SEL.clear(); draw(); };
   $('#en-q').oninput = draw;
   if (edit) $('#sup-new-envio').onclick = () => supFormEnvio(itens, colaboradores);
   draw();

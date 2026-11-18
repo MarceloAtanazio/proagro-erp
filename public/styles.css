@@ -2112,3 +2112,11 @@ tr.sup-tam-det > td { padding: 0 16px 14px !important; background: color-mix(in 
 .rc-motivo > span { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
 .rc-motivo p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink); white-space: pre-wrap; }
 @media (max-width: 640px) { .rc-infos-3 { grid-template-columns: 1fr; } }
+
+/* Suprimentos > Envios: botão "Gerar termo único" em destaque (dourado), ao lado de "+ Registrar envio". */
+.btn.btn-termo { background: linear-gradient(135deg, #E3A92B, #C97A2B); color: #fff; border-color: transparent; font-weight: 700; box-shadow: 0 6px 16px -6px rgba(201, 122, 43, .7); transition: filter .15s, transform .15s, box-shadow .15s; }
+.btn.btn-termo:hover:not(:disabled) { filter: brightness(1.07); transform: translateY(-1px); }
+.btn.btn-termo:disabled { background: color-mix(in srgb, #E3A92B 13%, var(--card)); color: #9A6A17; border: 1px dashed color-mix(in srgb, #C9922A 55%, var(--line)); box-shadow: none; opacity: 1; cursor: not-allowed; }
+.btn.btn-termo.pronto { animation: termo-pulso 1.9s ease-out infinite; }
+@keyframes termo-pulso { 0% { box-shadow: 0 6px 16px -6px rgba(201, 122, 43, .7), 0 0 0 0 rgba(227, 169, 43, .55); } 100% { box-shadow: 0 6px 16px -6px rgba(201, 122, 43, .7), 0 0 0 13px rgba(227, 169, 43, 0); } }
+@media (prefers-reduced-motion: reduce) { .btn.btn-termo.pronto { animation: none; } }
