@@ -1,12 +1,15 @@
 /* ============================================================
    DIRECIONADOR DE MOBILIDADE (BETA) — Viáticos > solicitar viagem > etapa Transporte.
    Compara Carro próprio × Carro locado com os dados da própria solicitação e indica a opção mais econômica:
-   · próprio  = quilometragem × reembolso por km + combustível (km ÷ consumo próprio × preço);
-   · locado   = diárias (nº de diárias × diária, ou o valor cotado na locadora) + extras da locação + combustível (km ÷ consumo do locado × preço);
+   · próprio  = quilometragem × reembolso por km + combustível (km ÷ consumo do veículo do colaborador × preço);
+   · locado   = diárias (nº de diárias × diária informada, contando início e fim) + extras + combustível (km ÷ consumo do locado × preço);
    · km de equilíbrio = onde as duas opções custam o mesmo (abaixo dele o próprio compensa; acima, o locado);
    · "sem carro disponível para locação" força o carro próprio.
-   Só aparece para o super administrador (USER.is_super), para testes antes de liberar a todos. O cálculo (viaDirecionadorCalc e viaDirecionadorResumo) é puro e
-   testável no Node; a parte de tela usa as globais de app.js (VIA_WIZ, USER, fld, esc, brl, toast, $).
+   O que a pessoa informa: a diária (com a evidência anexada ao lado: print ou cotação) e se não há carro disponível. Todo o resto vem sozinho e NÃO aparece para ela:
+   km pela rota dos municípios da solicitação (viaCalcularRota: ida, paradas e volta ao ponto de partida), datas da solicitação, consumo do veículo do cadastro do colaborador, reembolso por
+   km e preço do combustível da configuração de Viáticos, consumo do locado e extras fixos.
+   Só aparece para o super administrador (USER.is_super), para testes antes de liberar a todos. O cálculo (viaDirecionadorCalc, viaDirecionadorResumo, viaDirecionadorSnapshot) é puro e
+   testável no Node; a parte de tela usa as globais de app.js (VIA_WIZ, USER, viaCalcularRota, viaPontoPartida, fld, esc, brl, api, toast, openModal, openAttachments, $).
    ============================================================ */
 (function () {
   const num = v => {
@@ -55,41 +58,103 @@
     return linhas.join('\n');
   }
 
+  // Retrato do que o direcionador concluiu, gravado junto da solicitação (transporte_detalhes.direcionador) para a coordenação ver depois; a evidência vai como anexo.
+  function viaDirecionadorSnapshot(r, p, evidenciaNome, quando) {
+    if (!r || !r.pronto) return null;
+    return { indicada: r.indicada, sem_carro: !!r.semcarro, km: Number(r.km.toFixed(1)), dias: r.dias, diaria: num(p.diaria), proprio_total: Number(r.proprio.total.toFixed(2)),
+      locado_total: r.semcarro ? null : Number(r.locado.total.toFixed(2)), economia: r.economia != null ? Number(r.economia.toFixed(2)) : null, km_equilibrio: r.kmEq != null ? Number(r.kmEq.toFixed(1)) : null,
+      evidencia: !!evidenciaNome, evidencia_nome: evidenciaNome || null, resumo: viaDirecionadorResumo(r, p), calculado_em: quando || new Date().toISOString() };
+  }
+
   // ---------------- tela (usa as globais de app.js) ----------------
   const beta = () => typeof USER !== 'undefined' && USER && USER.is_super === true;
-  function estadoInicial() {
-    const w = VIA_WIZ, t = w.transporte || {}, a0 = (t.alugueis || [])[0] || {}, rota = t.carro_proprio_rota || {};
-    return { ini: w.data_inicio, fim: w.data_fim, diaria: a0.valor_diaria || '', cotado: '', semcarro: false, km: rota.distancia_km || a0.distancia_km || '',
-      taxa: w.km_taxa != null ? w.km_taxa : 0.7, consProp: (w.colab && w.colab.veiculo_consumo_kml) || 10, consLoc: typeof VIA_CONSUMO_ALUGUEL_KML !== 'undefined' ? VIA_CONSUMO_ALUGUEL_KML : 10,
-      preco: w.preco_combustivel || '', extras: '', diasManual: '' };
+  const TIPOS_EVID = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'], MAX_EVID = 3 * 1024 * 1024;
+  let tokenKm = 0;
+  function parametros() {
+    const w = VIA_WIZ;
+    return { taxa: w.km_taxa != null ? num(w.km_taxa) : 0.7, preco: num(w.preco_combustivel), consProp: num(w.colab && w.colab.veiculo_consumo_kml),
+      consLoc: typeof VIA_CONSUMO_ALUGUEL_KML !== 'undefined' ? VIA_CONSUMO_ALUGUEL_KML : 10, extras: 0 };
   }
+  function faltas() {
+    const q = parametros(), f = [];
+    if (!(q.consProp > 0)) f.push('o consumo (km/L) do veículo do colaborador não está no cadastro dele');
+    if (!(q.preco > 0)) f.push('o preço do combustível ainda não foi configurado (Viáticos > Configurações)');
+    return f;
+  }
+  const chaveRota = () => { const w = VIA_WIZ, pp = typeof viaPontoPartida === 'function' ? viaPontoPartida(w) : {}; return JSON.stringify([pp.uf, pp.municipio, (w.destinos || []).map(d => [d.uf, d.municipio, d.endereco || ''])]); };
+  const entrada = () => { const w = VIA_WIZ, v = w.dm, q = parametros(); return { ini: w.data_inicio, fim: w.data_fim, diasManual: '', km: v.km, diaria: v.diaria, cotado: '', semcarro: v.semcarro, taxa: q.taxa, consProp: q.consProp, consLoc: q.consLoc, preco: q.preco, extras: q.extras }; };
+  const estadoInicial = () => ({ diaria: '', semcarro: false, km: '', kmFonte: '', kmChave: '', kmMsg: '', evidencia: null });
+
   function viaDirecionadorHtml() {
     if (!beta()) return '';
     const v = VIA_WIZ.dm || (VIA_WIZ.dm = estadoInicial());
     return `<div class="card via-dir" id="via-dir">
-      <div class="via-dir-cab"><h3>🧭 Direcionador de mobilidade</h3><span class="badge warn">BETA · só para você</span><span class="spacer"></span><button class="btn sm" id="dm-puxar" type="button" title="Preenche de novo com a data, a diária e a distância já informadas nesta solicitação">↻ Puxar dados da solicitação</button></div>
-      <p class="hint" style="margin:2px 0 12px">Carro próprio ou carro locado? Preencha os dados da viagem e veja a opção mais econômica.</p>
+      <div class="via-dir-cab"><h3>🧭 Direcionador de mobilidade</h3><span class="badge warn">BETA · só para você</span></div>
+      <p class="hint" style="margin:2px 0 12px">Carro próprio ou carro locado? A distância vem sozinha, pela rota dos municípios desta solicitação. Informe só a diária cotada e anexe a evidência.</p>
       <div class="via-dir-grid">
         <div class="via-dir-in">
-          <div class="form-row">${fld('dm-ini', 'Data inicial', 'date', v.ini)}${fld('dm-fim', 'Data final', 'date', v.fim)}</div>
-          <div class="form-row">${fld('dm-diaria', 'Custo da diária (R$)', 'text', v.diaria, 'inputmode="decimal" placeholder="0,00"')}${fld('dm-cotado', 'Valor cotado na locadora (R$)', 'text', v.cotado, 'inputmode="decimal" placeholder="Total do período, se tiver"')}</div>
-          <label class="check-chip" style="margin:2px 0 10px"><input type="checkbox" id="dm-semcarro" ${v.semcarro ? 'checked' : ''}> Sem carro disponível para locação (nenhuma categoria)</label>
-          <div class="form-row">${fld('dm-km', 'Quilometragem total (km)', 'number', v.km, 'step="0.1" min="0"')}</div>
-          <p class="hint" style="margin:-4px 0 8px">Ida, volta e deslocamentos entre propriedades.</p>
-          <details class="via-dir-par"><summary>Parâmetros (definidos pela gestão)</summary>
-            <div class="form-row">${fld('dm-taxa', 'Reembolso carro próprio (R$/km)', 'number', v.taxa, 'step="0.01" min="0"')}${fld('dm-preco', 'Preço do combustível (R$/litro)', 'number', v.preco, 'step="0.01" min="0"')}</div>
-            <div class="form-row">${fld('dm-cprop', 'Consumo do carro próprio (km/litro)', 'number', v.consProp, 'step="0.1" min="0"')}${fld('dm-cloc', 'Consumo do carro locado (km/litro)', 'number', v.consLoc, 'step="0.1" min="0"')}</div>
-            <div class="form-row">${fld('dm-extras', 'Extras da locação (R$ total)', 'text', v.extras, 'inputmode="decimal" placeholder="Proteção, taxa de devolução, lavagem…"')}${fld('dm-dias', 'Diárias (ajuste manual)', 'number', v.diasManual, 'step="1" min="0" placeholder="Vazio = conta início e fim inclusos"')}</div>
-          </details>
+          <div class="dm-info" id="dm-periodo"></div>
+          <div class="dm-kmbox" id="dm-kmbox"></div>
+          <div class="dm-diaria-row">
+            <div class="field"><label for="dm-diaria">Custo da diária do carro locado (R$)</label><input id="dm-diaria" type="text" inputmode="decimal" placeholder="0,00" value="${esc(v.diaria)}"></div>
+            <div class="field"><label for="dm-evid">Evidência (print ou cotação)</label>
+              <div class="dm-anexo"><label class="btn sm" for="dm-evid">📎 Anexar</label><input id="dm-evid" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden><span id="dm-evid-nome" class="dm-evid-nome"></span></div></div>
+          </div>
+          <label class="check-chip" style="margin:4px 0 6px"><input type="checkbox" id="dm-semcarro" ${v.semcarro ? 'checked' : ''}> Sem carro disponível para locação (nenhuma categoria)</label>
+          <div id="dm-aviso"></div>
         </div>
         <div class="via-dir-out" id="dm-res"></div>
       </div>
     </div>`;
   }
-  const CAMPOS = { 'dm-ini': 'ini', 'dm-fim': 'fim', 'dm-diaria': 'diaria', 'dm-cotado': 'cotado', 'dm-km': 'km', 'dm-taxa': 'taxa', 'dm-preco': 'preco', 'dm-cprop': 'consProp', 'dm-cloc': 'consLoc', 'dm-extras': 'extras', 'dm-dias': 'diasManual' };
+
+  function desenhaEntrada() {
+    const w = VIA_WIZ, v = w.dm, ini = dMs(w.data_inicio), fim = dMs(w.data_fim);
+    const dias = isFinite(ini) && isFinite(fim) && fim >= ini ? Math.round((fim - ini) / 86400000) + 1 : 0;
+    $('#dm-periodo').innerHTML = `📅 Período da solicitação: <b>${dia(w.data_inicio)}</b> a <b>${dia(w.data_fim)}</b> (${dias} dia${dias === 1 ? '' : 's'}, início e fim inclusos)`;
+    const box = $('#dm-kmbox');
+    const botoes = '<button type="button" class="btn sm" id="dm-recalc">↻ Recalcular rota</button> <button type="button" class="btn sm" id="dm-manual">✏️ Informar km à mão</button>';
+    if (v.kmFonte === 'calculando') box.innerHTML = '<div class="dm-km calc">⏳ Calculando a distância pela rota dos municípios…</div>';
+    else if (v.kmFonte === 'auto') box.innerHTML = `<div class="dm-km ok">📍 <b>${kmFmt(num(v.km))} km</b> pela rota dos municípios da solicitação (ida, paradas e volta ao ponto de partida).<div class="dm-km-acoes">${botoes}</div></div>`;
+    else if (v.kmFonte === 'manual') box.innerHTML = `<div class="dm-km"><div class="field"><label for="dm-km">Quilometragem total (km)</label><input id="dm-km" type="number" step="0.1" min="0" value="${esc(v.km)}"></div><div class="dm-km-acoes"><button type="button" class="btn sm" id="dm-recalc">↻ Calcular pela rota</button></div></div>`;
+    else box.innerHTML = `<div class="dm-km erro">⚠️ ${esc(v.kmMsg || 'Não foi possível calcular a distância.')}<div class="field" style="margin-top:8px"><label for="dm-km">Quilometragem total (km)</label><input id="dm-km" type="number" step="0.1" min="0" value="${esc(v.km)}"></div><div class="dm-km-acoes"><button type="button" class="btn sm" id="dm-recalc">↻ Tentar de novo</button></div></div>`;
+    const rc = $('#dm-recalc'); if (rc) rc.onclick = () => calcularKm(true);
+    const mn = $('#dm-manual'); if (mn) mn.onclick = () => { v.kmFonte = 'manual'; desenhaEntrada(); desenha(); };
+    const ki = $('#dm-km'); if (ki) ki.oninput = () => { v.km = ki.value; desenha(); };
+    const nome = $('#dm-evid-nome');
+    nome.innerHTML = v.evidencia ? `<span class="dm-chip">📄 ${esc(v.evidencia.name)}<button type="button" id="dm-evid-x" title="Remover a evidência" aria-label="Remover a evidência">✕</button></span>` : '<span class="dm-sem">nenhum arquivo</span>';
+    const x = $('#dm-evid-x'); if (x) x.onclick = () => { v.evidencia = null; $('#dm-evid').value = ''; desenhaEntrada(); desenha(); };
+    const falta = faltas(), av = $('#dm-aviso'), pedeEvid = (num(v.diaria) > 0 || v.semcarro) && !v.evidencia;
+    av.innerHTML = (falta.length ? `<div class="alert-item late">⚠️ Não dá para calcular: ${esc(falta.join('; '))}.</div>` : '')
+      + (pedeEvid ? `<div class="alert-item warn">📎 Anexe a evidência ${v.semcarro ? '(print da indisponibilidade de carro)' : '(print ou cotação da diária)'} para a coordenação conferir.</div>` : '');
+  }
+
+  // Distância pela rota dos municípios da solicitação; refaz só quando partida ou destinos mudam (ou a pessoa pede).
+  async function calcularKm(forcar) {
+    const w = VIA_WIZ, v = w.dm, chave = chaveRota();
+    if (!forcar && v.kmChave === chave && (v.kmFonte === 'auto' || v.kmFonte === 'manual')) return;
+    const meu = ++tokenKm;
+    if (!(w.destinos || []).length) { v.kmFonte = 'erro'; v.kmMsg = 'A solicitação ainda não tem destinos: volte à etapa 2 e adicione os municípios.'; v.kmChave = chave; desenhaEntrada(); desenha(); return; }
+    v.kmFonte = 'calculando'; desenhaEntrada();
+    try {
+      const r = await viaCalcularRota(viaPontoPartida(w), w.destinos);
+      if (meu !== tokenKm || !$('#dm-kmbox')) return;
+      v.km = r.total_km.toFixed(1); v.kmFonte = 'auto'; v.kmChave = chave; v.kmMsg = '';
+    } catch (e) {
+      if (meu !== tokenKm || !$('#dm-kmbox')) return;
+      v.kmFonte = 'erro'; v.kmMsg = (e && e.message ? e.message : 'Não foi possível calcular a distância') + ' Informe a quilometragem à mão.'; v.kmChave = chave;
+    }
+    desenhaEntrada(); desenha();
+  }
+
   function desenha() {
-    const v = VIA_WIZ.dm, r = viaDirecionadorCalc(v), box = $('#dm-res'); if (!box) return;
-    if (!r.pronto) { box.innerHTML = '<div class="dm-espera"><b>Aguardando dados</b><span>Preencha datas, diária (ou valor cotado) e quilometragem.</span></div>'; return; }
+    const v = VIA_WIZ.dm, box = $('#dm-res'); if (!box) return;
+    const p = entrada(), r = viaDirecionadorCalc(p);
+    const falta = faltas();
+    if (falta.length || !r.pronto) {
+      box.innerHTML = `<div class="dm-espera"><b>${falta.length ? 'Faltam dados do cadastro' : v.kmFonte === 'calculando' ? 'Calculando…' : 'Aguardando dados'}</b><span>${falta.length ? esc(falta.join('; ')) + '.' : num(v.km) > 0 ? 'Informe o custo da diária (ou marque que não há carro disponível).' : 'Aguardando a distância da rota.'}</span></div>`;
+      return;
+    }
     const ind = r.indicada, maior = Math.max(r.proprio.total, r.locado.total) || 1;
     const linha = (rot, val) => `<div><span>${rot}</span><b>${moeda(val)}</b></div>`;
     const opc = (id, titulo, linhas, total, indisponivel) => `<div class="dm-opc${ind === id ? ' ind' : ''}${indisponivel ? ' off' : ''}"><h5>${titulo}${ind === id ? ' <em>✓ indicada</em>' : ''}</h5>
@@ -98,32 +163,66 @@
       <div class="dm-banner ${ind}">${r.semcarro ? '🚙 Sem carro para locação: o <b>carro próprio</b> é a única opção.' : `${ind === 'proprio' ? '🚙' : '🚗'} Compensa mais o <b>carro ${ind === 'proprio' ? 'próprio' : 'locado'}</b>: economia de <b>${moeda(r.economia)}</b>${r.economiaPct != null ? ` (${r.economiaPct.toFixed(1).replace('.', ',')}%)` : ''}.`}</div>
       <div class="dm-comp">
         ${opc('proprio', '🚗 Carro próprio', `<div><span>Quilometragem</span><b>${kmFmt(r.km)} km</b></div>${linha(`Reembolso (${moeda(r.taxa)}/km)`, r.proprio.reembolso)}${linha('Combustível', r.proprio.combustivel)}`, r.proprio.total, false)}
-        ${opc('locado', '🔑 Carro locado', `${linha(r.locado.porCotacao ? 'Valor cotado' : `Diárias (${r.dias})`, r.locado.diarias)}${linha('Extras', r.locado.extras)}${linha('Combustível', r.locado.combustivel)}`, r.locado.total, r.semcarro)}
+        ${opc('locado', '🔑 Carro locado', `${linha(`Diárias (${r.dias})`, r.locado.diarias)}${linha('Extras', r.locado.extras)}${linha('Combustível', r.locado.combustivel)}`, r.locado.total, r.semcarro)}
       </div>
       <div class="dm-ind">
         <div><span>Economia da opção indicada</span><b>${r.economia != null ? moeda(r.economia) : '—'}</b></div>
         <div title="Quilometragem em que as duas opções custam o mesmo: abaixo dela o carro próprio compensa; acima, o locado."><span>Quilometragem de equilíbrio</span><b>${r.kmEq != null ? kmFmt(r.kmEq) + ' km' : '—'}</b></div>
         <div><span>Média de km por dia</span><b>${kmFmt(r.kmDia)} km</b></div>
       </div>
-      <div class="dm-resumo"><label for="dm-resumo-txt">Resumo para enviar à coordenação</label><textarea id="dm-resumo-txt" rows="6" readonly>${(typeof esc === 'function' ? esc : x => x)(viaDirecionadorResumo(r, v))}</textarea>
+      <div class="dm-resumo"><label for="dm-resumo-txt">Resumo para enviar à coordenação</label><textarea id="dm-resumo-txt" rows="6" readonly>${esc(viaDirecionadorResumo(r, p))}</textarea>
         <div class="dm-acoes"><button class="btn sm" id="dm-copiar" type="button">📋 Copiar resumo</button><button class="btn sm primary" id="dm-usar" type="button">Usar a opção indicada na solicitação</button></div></div>`;
-    $('#dm-copiar').onclick = async () => { const t = viaDirecionadorResumo(r, v); try { await navigator.clipboard.writeText(t); toast('Resumo copiado.'); } catch (e) { $('#dm-resumo-txt').select(); toast('Selecione e copie o resumo (Ctrl+C).'); } };
+    $('#dm-copiar').onclick = async () => { const t = viaDirecionadorResumo(r, p); try { await navigator.clipboard.writeText(t); toast('Resumo copiado.'); } catch (e) { $('#dm-resumo-txt').select(); toast('Selecione e copie o resumo (Ctrl+C).'); } };
     $('#dm-usar').onclick = () => {
       const marca = (id, on) => { const el = $('#' + id); if (el && el.checked !== on) el.click(); return el; };
-      if (ind === 'proprio') { marca('w3-aluguel', false); const el = marca('w3-proprio', true); if (el && !el.checked) toast('O carro próprio não pôde ser marcado: confira a documentação do colaborador (CNH, CRLV e seguro).'); else toast('Carro próprio marcado na solicitação.'); }
-      else { marca('w3-proprio', false); const el = marca('w3-aluguel', true); if (el && !el.checked) toast('O aluguel de carro não pôde ser marcado: confira a documentação do colaborador.'); else toast('Aluguel de carro marcado na solicitação.'); }
+      if (ind === 'proprio') { marca('w3-aluguel', false); const el = marca('w3-proprio', true); toast(el && !el.checked ? 'O carro próprio não pôde ser marcado: confira a documentação do colaborador (CNH, CRLV e seguro).' : 'Carro próprio marcado na solicitação.'); }
+      else { marca('w3-proprio', false); const el = marca('w3-aluguel', true); toast(el && !el.checked ? 'O aluguel de carro não pôde ser marcado: confira a documentação do colaborador.' : 'Aluguel de carro marcado na solicitação.'); }
     };
+  }
+
+  function lerArquivo(file) {
+    return new Promise((ok, err) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1] || ''); fr.onerror = () => err(new Error('Não foi possível ler o arquivo.')); fr.readAsDataURL(file); });
   }
   function viaDirecionadorLigar() {
     if (!beta() || !$('#via-dir')) return;
-    const le = () => { const v = VIA_WIZ.dm; Object.entries(CAMPOS).forEach(([id, k]) => { const el = $('#' + id); if (el) v[k] = el.value; }); v.semcarro = !!$('#dm-semcarro').checked; };
-    Object.keys(CAMPOS).concat(['dm-semcarro']).forEach(id => { const el = $('#' + id); if (el) el.addEventListener('input', () => { le(); desenha(); }); });
-    $('#dm-puxar').onclick = () => { const sem = VIA_WIZ.dm.semcarro; VIA_WIZ.dm = estadoInicial(); VIA_WIZ.dm.semcarro = sem; $('#via-dir').outerHTML = viaDirecionadorHtml(); viaDirecionadorLigar(); toast('Dados puxados da solicitação.'); };
-    desenha();
+    const v = VIA_WIZ.dm;
+    $('#dm-diaria').addEventListener('input', e => { v.diaria = e.target.value; desenhaEntrada(); desenha(); });
+    $('#dm-semcarro').addEventListener('change', e => { v.semcarro = e.target.checked; desenhaEntrada(); desenha(); });
+    $('#dm-evid').addEventListener('change', async e => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      if (!TIPOS_EVID.includes(f.type)) { e.target.value = ''; return toast('Formato não permitido: envie PDF, PNG, JPG ou WEBP.'); }
+      if (f.size > MAX_EVID) { e.target.value = ''; return toast('Arquivo acima de 3 MB.'); }
+      try { v.evidencia = { name: f.name, mime: f.type, size: f.size, data: await lerArquivo(f) }; } catch (err) { return toast(err.message); }
+      desenhaEntrada();
+    });
+    desenhaEntrada(); desenha(); calcularKm(false);
+  }
+
+  // Antes de enviar a solicitação: grava o retrato do cálculo em transporte_detalhes.direcionador (sem o arquivo).
+  function viaDirecionadorPreEnvio(w) {
+    if (!beta() || !w.dm) return;
+    const p = entrada(), snap = viaDirecionadorSnapshot(viaDirecionadorCalc(p), p, w.dm.evidencia && w.dm.evidencia.name);
+    if (snap) w.transporte.direcionador = snap; else delete w.transporte.direcionador;
+  }
+  // Depois de criada a solicitação: anexa a evidência a ela. Falha ao anexar não desfaz a solicitação: avisa.
+  async function viaDirecionadorPosEnvio(w, solicitacaoId) {
+    if (!beta() || !w.dm || !w.dm.evidencia || !solicitacaoId) return;
+    const e = w.dm.evidencia;
+    try { await api(`/api/attachments/viatico_cotacao/${solicitacaoId}`, { method: 'POST', body: { file_name: e.name, mime_type: e.mime, kind: 'outro', data: e.data } }); }
+    catch (err) { toast('Solicitação enviada, mas a evidência não pôde ser anexada: ' + err.message); }
+  }
+  // Na tela da OT: o que o direcionador concluiu e a evidência anexada.
+  function viaDirecionadorVer(s) {
+    const d = s && s.transporte_detalhes && s.transporte_detalhes.direcionador; if (!d) return;
+    openModal(`Direcionador de mobilidade — OT ${esc(s.ordem_trabalho || s.id)}`, `<p class="hint" style="margin-top:0">Cálculo feito no momento da solicitação (${d.calculado_em ? new Date(d.calculado_em).toLocaleString('pt-BR') : '—'}).</p>
+      <textarea rows="7" readonly style="width:100%;font-size:12.5px">${esc(d.resumo || '')}</textarea>
+      <p style="font-size:13px;margin:10px 0 0">${d.evidencia ? `Evidência anexada: <b>${esc(d.evidencia_nome || '')}</b>.` : 'Nenhuma evidência foi anexada.'}</p>`,
+      [{ label: 'Fechar', onClick: closeModal }, ...(d.evidencia ? [{ label: '📎 Ver evidência', cls: 'primary', onClick: () => openAttachments('viatico_cotacao', s.id, `Evidência — OT ${s.ordem_trabalho || s.id}`) }] : [])]);
   }
   if (typeof window !== 'undefined') {
-    window.viaDirecionadorHtml = viaDirecionadorHtml; window.viaDirecionadorLigar = viaDirecionadorLigar;
-    window.viaDirecionadorCalc = viaDirecionadorCalc; window.viaDirecionadorResumo = viaDirecionadorResumo;
+    window.viaDirecionadorHtml = viaDirecionadorHtml; window.viaDirecionadorLigar = viaDirecionadorLigar; window.viaDirecionadorPreEnvio = viaDirecionadorPreEnvio;
+    window.viaDirecionadorPosEnvio = viaDirecionadorPosEnvio; window.viaDirecionadorVer = viaDirecionadorVer;
+    window.viaDirecionadorCalc = viaDirecionadorCalc; window.viaDirecionadorResumo = viaDirecionadorResumo; window.viaDirecionadorSnapshot = viaDirecionadorSnapshot;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { viaDirecionadorCalc, viaDirecionadorResumo };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { viaDirecionadorCalc, viaDirecionadorResumo, viaDirecionadorSnapshot };
 })();

@@ -8612,3 +8612,13 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Verificação:** teste do cálculo no Node (22 PASS: dias com início e fim inclusos, valor cotado, ajuste manual, extras, sem carro disponível, equilíbrio, resumo, estados sem dados); simulador (cartão, resultado com o exemplo de 1.286 km e diária de R$ 440, botão de usar a opção, sem carro, puxar dados, e o cartão **não aparece** para quem não é super administrador). Não testado: produção logada. Pendências para liberar a todos: confirmar as premissas do cálculo (combustível incluído em ambas as opções; diária × dias contando início e fim), definir onde ficam os "parâmetros definidos pela gestão" (hoje: reembolso por km e preço do combustível vêm da configuração; consumos são o do veículo do colaborador e 10 km/L para o locado, editáveis no cartão sem persistir) e trocar a trava `is_super` por permissão/lista de usuários. O teste antigo `2026-11-12_verifica_prazo_comprovacao.js` já falha na main (banco simulado defasado), sem relação com esta mudança.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## Sessão 241 — Direcionador de mobilidade v2: km automático, consumo do cadastro, diária com evidência
+
+**O que foi feito:** o km do Direcionador agora vem sozinho, pela rota dos municípios da solicitação (`viaCalcularRota`, com ida, paradas e volta), com opções de recalcular ou informar à mão. O consumo do carro próprio vem do cadastro do colaborador. Reembolso por km, preço do combustível, consumo do locado, extras e período ficam fixos e escondidos. A pessoa informa só a diária, com o anexo da evidência ao lado, ou marca que não há carro disponível. A evidência sobe como anexo `viatico_cotacao` da solicitação logo após o envio (sem bloquear) e o resumo do cálculo fica em `transporte_detalhes.direcionador`. Na OT há o botão 🧭 Direcionador com o resumo e a evidência. Continua só para `USER.is_super`.
+
+**Arquivos:** public/via-direcionador.js, public/app.js, public/styles.css, api/index.js, supabase/migrations/2026-11-19-viaticos-evidencia-cotacao.sql (NÃO aplicada), scripts/2026-11-19_*.
+
+**Pendente:** autorização para aplicar a migração; sem ela a solicitação sai normalmente e a evidência não é anexada.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

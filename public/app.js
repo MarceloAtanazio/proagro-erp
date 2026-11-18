@@ -7262,6 +7262,7 @@ async function viewSolicitacao(id) {
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
   botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
+  if (s.transporte_detalhes && s.transporte_detalhes.direcionador && typeof viaDirecionadorVer === 'function') botoes.push({ label: '🧭 Direcionador', onClick: () => viaDirecionadorVer(s) });
   if (bloqueada && USER.role === 'admin' && !READONLY) botoes.push({ label: 'Liberar bloqueio', onClick: () => { closeModal(); viaLiberarComprovacaoModal(s, () => viewSolicitacao(id)); } });
   if (somenteLeitura) {
     // consulta pura — nenhuma ação além de fechar
@@ -9694,7 +9695,8 @@ function viaWizStep5() {
     const erro = viaWizValidarEtapa2(w) || viaWizValidarEtapa3(w.transporte, null, !!w.complementar && w.complementar.tipo === 'extensao');
     if (erro) return toast(`Não é possível enviar: ${erro.msg}`);
     try {
-      await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
+      if (typeof viaDirecionadorPreEnvio === 'function') viaDirecionadorPreEnvio(w);
+      const respSol = await api('/api/viaticos/solicitacoes/autosservico', { method: 'POST', body: {
         // categoria_local e previsao_por_categoria vão só como referência —
         // o servidor recalcula os dois a partir de destinos/período/internacional
         // e dos itens de transporte, e é o que de fato é gravado (não confia
@@ -9705,6 +9707,7 @@ function viaWizStep5() {
         previsao_por_categoria: r.cat, transporte_detalhes: w.transporte, notes: '',
         ...(w.complementar ? { solicitacao_pai_id: w.complementar.pai_id, complementar_tipo: w.complementar.tipo } : {})
       }});
+      if (typeof viaDirecionadorPosEnvio === 'function') await viaDirecionadorPosEnvio(w, respSol && respSol.id);
       toast('Solicitação enviada! Ela segue para aprovação.');
       renderViaticos();
     } catch (e) { toast(e.message); }
@@ -16221,7 +16224,7 @@ const KIND_ICON = { boleto: '🧾', nota_fiscal: '📄', comprovante: '✅', con
 const fmtSize = b => b < 1024 ? b + ' B' : b < 1048576 ? Math.round(b / 1024) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 const pageForType = t => ({ payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos', contrato: 'contratos',
-  envio_termo: 'suprimentos', rc_orcamento: 'suprimentos', termo_lote: 'suprimentos' }[t] || 'receber');
+  envio_termo: 'suprimentos', rc_orcamento: 'suprimentos', termo_lote: 'suprimentos', viatico_cotacao: 'viaticos', viatico_km: 'viaticos' }[t] || 'receber');
 
 // ---- Fila de aprovação de quilometragem ----
 //

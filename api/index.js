@@ -982,6 +982,7 @@ const ATTACH_TYPES = {
   payable: 'pagar', receivable: 'receber', viatico: 'viaticos',
   colab_cnh: 'viaticos', colab_veiculo: 'viaticos', colab_seguro: 'viaticos',
   viatico_km: 'viaticos',   // fotos do odômetro; qual é qual vai em doc_tipo
+  viatico_cotacao: 'viaticos',   // evidência da cotação do carro locado (ou da indisponibilidade), anexada à solicitação
   contrato: 'contratos',
   rh_doc: 'rh',   // dossiê do colaborador; o tipo do documento vai em doc_tipo
   rh_admissao_doc: 'rh',   // laudo da avaliação técnica/psicotécnico; o tipo vai em doc_tipo
@@ -1068,6 +1069,14 @@ async function anexoKmNoEscopo(user, kmId) {
   return r.length > 0;
 }
 
+// A evidência da cotação pertence a uma SOLICITAÇÃO de viagem: quem só tem leitura em Viáticos (o colaborador de campo) vê e anexa só as das próprias solicitações.
+async function anexoSolicitacaoNoEscopo(user, solicitacaoId) {
+  const escopo = await viaticosEscopo(user);
+  if (!escopo) return true;
+  const r = await query('SELECT 1 FROM erp_viaticos_solicitacoes WHERE id = $1 AND colaborador_id = ANY($2)', [Number(solicitacaoId), escopo]);
+  return r.length > 0;
+}
+
 // IMPORTANTE: rotas com segmento literal ("file", "count") precisam vir ANTES
 // da rota genérica "/:type/:id" — senão o Express casa "file"/"count" como se
 // fossem o próprio :type, e a rota certa nunca é alcançada.
@@ -1095,6 +1104,9 @@ app.get('/api/attachments/file/:id', requireAuth, h(async (req, res) => {
   }
   if (a.entity_type === 'viatico_km' && !(await anexoKmNoEscopo(req.user, a.entity_id))) {
     return res.status(403).json({ error: 'Esta foto pertence à viagem de outro colaborador.' });
+  }
+  if (a.entity_type === 'viatico_cotacao' && !(await anexoSolicitacaoNoEscopo(req.user, a.entity_id))) {
+    return res.status(403).json({ error: 'Esta evidência pertence à solicitação de outro colaborador.' });
   }
   res.json({ file_name: a.file_name, mime_type: a.mime_type || 'application/octet-stream', data: a.data.toString('base64') });
 }));
@@ -1140,6 +1152,9 @@ app.get('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   if (req.params.type === 'viatico' && !(await anexoViaticoNoEscopo(req.user, req.params.id))) {
     return res.status(403).json({ error: 'Esta despesa pertence à viagem de outro colaborador.' });
   }
+  if (req.params.type === 'viatico_cotacao' && !(await anexoSolicitacaoNoEscopo(req.user, req.params.id))) {
+    return res.status(403).json({ error: 'Esta solicitação pertence a outro colaborador.' });
+  }
   const rows = await query(
     `SELECT id, kind, doc_tipo, file_name, mime_type, byte_size, created_at
        FROM erp_attachments WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC`,
@@ -1177,7 +1192,8 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   // Exigir permissão de edição dele tornaria a comprovação impossível — a
   // trava aqui é ser dono da viagem, conferida logo abaixo.
   const ehFotoKmPropria = req.params.type === 'viatico_km' && await anexoKmNoEscopo(req.user, req.params.id);
-  if (req.user.role !== 'admin' && !canEdit(req.user, page) && !ehFotoKmPropria) {
+  const ehEvidenciaPropria = req.params.type === 'viatico_cotacao' && await anexoSolicitacaoNoEscopo(req.user, req.params.id);
+  if (req.user.role !== 'admin' && !canEdit(req.user, page) && !ehFotoKmPropria && !ehEvidenciaPropria) {
     return res.status(403).json({ error: 'Sem permissão para anexar nesta seção.' });
   }
 
@@ -1227,7 +1243,7 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
   const table = {
     payable: 'erp_payables', receivable: 'erp_receivables', viatico: 'erp_viaticos_despesas',
     colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
-    viatico_km: 'erp_viaticos_km',
+    viatico_km: 'erp_viaticos_km', viatico_cotacao: 'erp_viaticos_solicitacoes',
     contrato: 'erp_contratos', rh_doc: 'erp_colaboradores', rh_admissao_doc: 'erp_rh_admissoes',
     envio_termo: 'erp_estoque_movimentos', rc_orcamento: 'erp_compra_req_orcamentos', termo_lote: 'erp_estoque_termos'
   }[req.params.type];
