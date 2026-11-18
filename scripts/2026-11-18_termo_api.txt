@@ -1,0 +1,66 @@
+// ------------------------------------------------------------
+// TERMO ÚNICO de responsabilidade: vários equipamentos de um mesmo colaborador em um só termo (um PDF e um anexo assinado).
+// Cada envio aponta para o termo (erp_estoque_movimentos.termo_id); o anexo assinado fica no termo (entity_type 'termo_lote').
+// Os dados do termo (CPF, e-mail, gestor...) são pessoais: só quem edita Suprimentos lê, como a etiqueta de envio.
+// ------------------------------------------------------------
+const ESTADOS_SAIDA = ['Novo', 'Seminovo', 'Usado', 'Recondicionado'];
+const estadoSaidaValido = v => ESTADOS_SAIDA.includes(String(v || '').trim()) ? String(v).trim() : null;
+
+app.post('/api/suprimentos/termos', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body || {};
+  const ids = [...new Set((Array.isArray(b.envio_ids) ? b.envio_ids : []).map(Number).filter(Number.isInteger))];
+  if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um envio de equipamento.' });
+  if (ids.length > 30) return res.status(400).json({ error: 'Um termo aceita no máximo 30 equipamentos.' });
+  const envs = await query(`SELECT m.*, i.tipo AS item_tipo, i.nome AS item_nome FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id
+    WHERE m.id = ANY($1::int[]) AND m.origem='envio' ORDER BY m.id`, [ids]);
+  if (envs.length !== ids.length) return res.status(404).json({ error: 'Algum envio selecionado não foi encontrado.' });
+  if (envs.some(e => e.item_tipo !== 'equipamento')) return res.status(400).json({ error: 'O termo de responsabilidade é só para equipamentos.' });
+  if (envs.some(e => e.status === 'devolvido')) return res.status(400).json({ error: 'Há um envio já devolvido na seleção: ele não entra no termo.' });
+  if (new Set(envs.map(e => e.colaborador_id)).size !== 1) return res.status(400).json({ error: 'Os equipamentos do termo precisam ser do mesmo colaborador.' });
+  const ja = envs.find(e => e.termo_id);
+  if (ja) return res.status(409).json({ error: `O envio de "${ja.item_nome}" já faz parte do termo TR-${String(ja.termo_id).padStart(4, '0')}. Abra esse termo ou desfaça-o antes.` });
+  // O estado de saída é obrigatório: os envios antigos que ainda não o têm recebem o informado agora.
+  const estados = b.estados && typeof b.estados === 'object' ? b.estados : {};
+  for (const e of envs) {
+    if (estadoSaidaValido(e.estado_saida)) continue;
+    const novo = estadoSaidaValido(estados[e.id]);
+    if (!novo) return res.status(400).json({ error: `Informe o estado de saída (Novo, Seminovo, Usado ou Recondicionado) de "${e.item_nome}".` });
+    await query('UPDATE erp_estoque_movimentos SET estado_saida=$1 WHERE id=$2', [novo, e.id]);
+  }
+  const ins = await query('INSERT INTO erp_estoque_termos (colaborador_id, justificativa, observacoes, emitido_por, emitido_por_nome) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [envs[0].colaborador_id, sanitize(b.justificativa) || null, sanitize(b.observacoes) || null, req.user.id, req.user.name]);
+  await query('UPDATE erp_estoque_movimentos SET termo_id=$1 WHERE id = ANY($2::int[])', [ins[0].id, ids]);
+  res.json({ ok: true, id: ins[0].id, itens: ids.length });
+}));
+
+app.get('/api/suprimentos/termos/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const t = (await query('SELECT * FROM erp_estoque_termos WHERE id=$1', [Number(req.params.id)]))[0];
+  if (!t) return res.status(404).json({ error: 'Termo não encontrado.' });
+  const colaborador = (await query(`SELECT c.id, c.name, c.cpf, c.cargo, c.email_corporativo, c.celular, c.cidade_base_municipio, c.cidade_base_uf, c.municipio, c.uf,
+      v.matricula, v.cargo AS cargo_vinculo, v.departamento, v.unidade, g.name AS gestor
+    FROM erp_colaboradores c
+    LEFT JOIN erp_rh_vinculos v ON v.id = (SELECT x.id FROM erp_rh_vinculos x WHERE x.colaborador_id = c.id ORDER BY (x.desligamento IS NULL) DESC, x.admissao DESC NULLS LAST, x.id DESC LIMIT 1)
+    LEFT JOIN erp_colaboradores g ON g.id = v.gestor_id
+    WHERE c.id=$1`, [t.colaborador_id]))[0] || null;
+  const itens = await query(`SELECT m.id, m.data, m.quantidade, m.estado_saida, m.condicao_saida, m.notes, m.linha_telefonica, m.operadora, m.forma_envio, m.codigo_rastreio, m.status,
+      i.nome AS item_nome, i.categoria, i.subcategoria, i.marca, i.sku, i.numero_serie AS modelo_numero, i.unidade, un.numero_serie AS serie, un.patrimonio
+    FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id LEFT JOIN erp_estoque_unidades un ON un.id = m.unidade_id
+    WHERE m.termo_id=$1 ORDER BY m.id`, [t.id]);
+  res.json({ ...t, colaborador, itens });
+}));
+
+// Desfazer um termo (ex.: equipamentos agrupados por engano). Barra se já há termo assinado anexado ou se algum envio já foi entregue.
+app.post('/api/suprimentos/termos/:id/desfazer', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const t = (await query('SELECT * FROM erp_estoque_termos WHERE id=$1', [Number(req.params.id)]))[0];
+  if (!t) return res.status(404).json({ error: 'Termo não encontrado.' });
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe o motivo de desfazer o termo.' });
+  const anexos = (await query("SELECT COUNT(*)::int AS n FROM erp_attachments WHERE entity_type='termo_lote' AND entity_id=$1", [t.id]))[0].n;
+  if (anexos > 0) return res.status(409).json({ error: 'Este termo já tem documento anexado (assinado). Remova o anexo antes de desfazê-lo.' });
+  const entregues = (await query("SELECT COUNT(*)::int AS n FROM erp_estoque_movimentos WHERE termo_id=$1 AND status='entregue'", [t.id]))[0].n;
+  if (entregues > 0) return res.status(409).json({ error: 'Há envio já entregue neste termo: ele não pode ser desfeito.' });
+  await query('UPDATE erp_estoque_movimentos SET termo_id=NULL WHERE termo_id=$1', [t.id]);
+  await query('DELETE FROM erp_estoque_termos WHERE id=$1', [t.id]);
+  res.json({ ok: true });
+}));
+

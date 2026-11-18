@@ -378,6 +378,8 @@ const AUDIT_MAP = {
   'POST /api/suprimentos/requisicoes/:id/comprar': req => `Marcou como comprada a requisição de compra ID ${req.params.id}`,
   'POST /api/suprimentos/requisicoes/:id/cancelar': req => `Cancelou a requisição de compra ID ${req.params.id} — ${String(req.body && req.body.motivo || '').slice(0, 200)}`,
   'POST /api/suprimentos/requisicoes/:id/excluir': (req, body) => `Excluiu a requisição de compra ID ${req.params.id}${body && body.resumo ? ' (' + body.resumo + ')' : ''} — justificativa: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
+  'POST /api/suprimentos/termos': (req, body) => `Gerou o termo único de responsabilidade TR-${body && body.id} com ${body && body.itens} equipamento(s) (envios ${(req.body && req.body.envio_ids || []).join(', ')})`,
+  'POST /api/suprimentos/termos/:id/desfazer': req => `Desfez o termo de responsabilidade ID ${req.params.id} — motivo: "${String(req.body && req.body.motivo || '').slice(0, 200)}"`,
   'DELETE /api/suprimentos/itens/:id': req => `Excluiu o item de estoque ID ${req.params.id}`,
   'POST /api/suprimentos/compras': (req, body) => `Registrou compra de ${req.body.quantidade} un. do item ID ${req.body.item_id} a ${fmtBRL(req.body.custo_unitario)}/un` +
     (body && body.payable_id ? ` — lançada em Contas a Pagar (título ID ${body.payable_id})` : ''),
@@ -984,7 +986,8 @@ const ATTACH_TYPES = {
   rh_doc: 'rh',   // dossiê do colaborador; o tipo do documento vai em doc_tipo
   rh_admissao_doc: 'rh',   // laudo da avaliação técnica/psicotécnico; o tipo vai em doc_tipo
   envio_termo: 'suprimentos',   // termo de responsabilidade assinado do envio a colaborador
-  rc_orcamento: 'suprimentos'   // orçamento (PDF/foto) de uma requisição de compra
+  rc_orcamento: 'suprimentos',   // orçamento (PDF/foto) de uma requisição de compra
+  termo_lote: 'suprimentos'   // termo único de responsabilidade assinado (vale para todos os equipamentos do termo)
 };
 const ATTACH_TIPOS_COLAB = { colab_cnh: 'CNH', colab_veiculo: 'veículo (CRLV)', colab_seguro: 'apólice de seguro' };
 // CNH e apólice são documentos pessoais: quem tem apenas leitura em Viáticos
@@ -1226,7 +1229,7 @@ app.post('/api/attachments/:type/:id', requireAuth, h(async (req, res) => {
     colab_cnh: 'erp_colaboradores', colab_veiculo: 'erp_colaboradores', colab_seguro: 'erp_colaboradores',
     viatico_km: 'erp_viaticos_km',
     contrato: 'erp_contratos', rh_doc: 'erp_colaboradores', rh_admissao_doc: 'erp_rh_admissoes',
-    envio_termo: 'erp_estoque_movimentos', rc_orcamento: 'erp_compra_req_orcamentos'
+    envio_termo: 'erp_estoque_movimentos', rc_orcamento: 'erp_compra_req_orcamentos', termo_lote: 'erp_estoque_termos'
   }[req.params.type];
   const own = await query(`SELECT id FROM ${table} WHERE id=$1`, [Number(req.params.id)]);
   if (!own.length) return res.status(404).json({ error: (ehAnexoColaborador(req.params.type) || req.params.type === 'rh_doc') ? 'Colaborador não encontrado.' : req.params.type === 'contrato' ? 'Contrato não encontrado.' : req.params.type === 'rh_admissao_doc' ? 'Processo de admissão não encontrado.' : 'Título não encontrado.' });
@@ -8362,7 +8365,7 @@ app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res)
       s.name AS supplier_name, c.name AS colaborador_name, c.cargo AS colaborador_cargo, u.name AS created_by_name,
       un.numero_serie AS unidade_serie, un.patrimonio AS unidade_patrimonio,
       i.marca AS item_marca, i.sku AS item_sku, i.subcategoria AS item_subcategoria, i.grade_tamanhos AS item_grade,
-      (SELECT COUNT(*)::int FROM erp_attachments a WHERE a.entity_type='envio_termo' AND a.entity_id = m.id) AS termos
+      (SELECT COUNT(*)::int FROM erp_attachments a WHERE (a.entity_type='envio_termo' AND a.entity_id = m.id) OR (a.entity_type='termo_lote' AND a.entity_id = m.termo_id)) AS termos
     FROM erp_estoque_movimentos m
     JOIN erp_estoque_itens i ON i.id = m.item_id
     LEFT JOIN erp_estoque_unidades un ON un.id = m.unidade_id
@@ -8440,6 +8443,8 @@ app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) =>
   let qtd = Number(b.quantidade);
   // Equipamento sai por UNIDADE FÍSICA: é o número de série que permite
   // rastrear quem está com qual aparelho. Material de consumo só dá baixa.
+  const estadoSaida = item.tipo === 'equipamento' ? estadoSaidaValido(b.estado_saida) : null;
+  if (item.tipo === 'equipamento' && !estadoSaida) return res.status(400).json({ error: 'Informe o estado do equipamento na saída (Novo, Seminovo, Usado ou Recondicionado).' });
   let unidade = null;
   if (item.tipo === 'equipamento') {
     const r = await unidadePorSerie(item, b.numero_serie, b.patrimonio, req.user.id);
@@ -8455,11 +8460,11 @@ app.post('/api/suprimentos/envios', requireAuth, SUP_EDIT, h(async (req, res) =>
   const data = isDate(b.data) ? b.data : hojeISO();
   const mov = await query(`INSERT INTO erp_estoque_movimentos
     (item_id, tipo, origem, quantidade, colaborador_id, status, data, notes, created_by,
-     unidade_id, forma_envio, codigo_rastreio, condicao_saida, linha_telefonica, operadora, tamanho)
-    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+     unidade_id, forma_envio, codigo_rastreio, condicao_saida, linha_telefonica, operadora, estado_saida, tamanho)
+    VALUES ($1,'saida','envio',$2,$3,'enviado',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
     [item.id, qtd, b.colaborador_id, data, sanitize(b.notes), req.user.id,
      unidade ? unidade.id : null, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida),
-     sanitize(b.linha_telefonica), sanitize(b.operadora), tm.tamanho]);
+     sanitize(b.linha_telefonica), sanitize(b.operadora), estadoSaida, tm.tamanho]);
   if (unidade) await query(`UPDATE erp_estoque_unidades SET estado='em_custodia' WHERE id=$1`, [unidade.id]);
   res.json({ ok: true, id: mov[0].id });
 }));
@@ -8528,6 +8533,11 @@ app.put('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res)
     }
   }
 
+  let estadoNovo = null;
+  if (equip && b.estado_saida !== undefined) {
+    estadoNovo = estadoSaidaValido(b.estado_saida);
+    if (!estadoNovo) return res.status(400).json({ error: 'Informe o estado do equipamento (Novo, Seminovo, Usado ou Recondicionado).' });
+  }
   await query(`UPDATE erp_estoque_movimentos SET colaborador_id=$1, data=$2, quantidade=$3, unidade_id=$4, forma_envio=$5,
       codigo_rastreio=$6, condicao_saida=$7, condicao_devolucao=$8, linha_telefonica=$9, operadora=$10, notes=$11, tamanho=$12 WHERE id=$13`,
     [colabId, data, qtd, unidadeId, sanitize(b.forma_envio), sanitize(b.codigo_rastreio), sanitize(b.condicao_saida),
@@ -8535,6 +8545,7 @@ app.put('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, res)
      sanitize(b.linha_telefonica), sanitize(b.operadora), sanitize(b.notes), tamanhoEnv, env.id]);
   if (tamanhoEnv !== (env.tamanho == null ? null : env.tamanho)) await query('UPDATE erp_estoque_movimentos SET tamanho=$1 WHERE devolucao_de=$2', [tamanhoEnv, env.id]);
   if (colabId !== env.colaborador_id) await query('UPDATE erp_estoque_movimentos SET colaborador_id=$1 WHERE devolucao_de=$2', [colabId, env.id]);
+  if (estadoNovo) await query('UPDATE erp_estoque_movimentos SET estado_saida=$1 WHERE id=$2', [estadoNovo, env.id]);
   res.json({ ok: true });
 }));
 
@@ -8549,6 +8560,79 @@ app.delete('/api/suprimentos/envios/:id', requireAuth, SUP_EDIT, h(async (req, r
   if (env.unidade_id && env.status !== 'devolvido') {
     await query(`UPDATE erp_estoque_unidades SET estado='em_estoque' WHERE id=$1 AND estado='em_custodia'`, [env.unidade_id]);
   }
+  if (env.termo_id) {
+    const resta = (await query('SELECT COUNT(*)::int AS n FROM erp_estoque_movimentos WHERE termo_id=$1', [env.termo_id]))[0].n;
+    if (!resta) {
+      await query("DELETE FROM erp_attachments WHERE entity_type='termo_lote' AND entity_id=$1", [env.termo_id]);
+      await query('DELETE FROM erp_estoque_termos WHERE id=$1', [env.termo_id]);
+    }
+  }
+  res.json({ ok: true });
+}));
+
+// ------------------------------------------------------------
+// TERMO ÚNICO de responsabilidade: vários equipamentos de um mesmo colaborador em um só termo (um PDF e um anexo assinado).
+// Cada envio aponta para o termo (erp_estoque_movimentos.termo_id); o anexo assinado fica no termo (entity_type 'termo_lote').
+// Os dados do termo (CPF, e-mail, gestor...) são pessoais: só quem edita Suprimentos lê, como a etiqueta de envio.
+// ------------------------------------------------------------
+const ESTADOS_SAIDA = ['Novo', 'Seminovo', 'Usado', 'Recondicionado'];
+const estadoSaidaValido = v => ESTADOS_SAIDA.includes(String(v || '').trim()) ? String(v).trim() : null;
+
+app.post('/api/suprimentos/termos', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const b = req.body || {};
+  const ids = [...new Set((Array.isArray(b.envio_ids) ? b.envio_ids : []).map(Number).filter(Number.isInteger))];
+  if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um envio de equipamento.' });
+  if (ids.length > 30) return res.status(400).json({ error: 'Um termo aceita no máximo 30 equipamentos.' });
+  const envs = await query(`SELECT m.*, i.tipo AS item_tipo, i.nome AS item_nome FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id
+    WHERE m.id = ANY($1::int[]) AND m.origem='envio' ORDER BY m.id`, [ids]);
+  if (envs.length !== ids.length) return res.status(404).json({ error: 'Algum envio selecionado não foi encontrado.' });
+  if (envs.some(e => e.item_tipo !== 'equipamento')) return res.status(400).json({ error: 'O termo de responsabilidade é só para equipamentos.' });
+  if (envs.some(e => e.status === 'devolvido')) return res.status(400).json({ error: 'Há um envio já devolvido na seleção: ele não entra no termo.' });
+  if (new Set(envs.map(e => e.colaborador_id)).size !== 1) return res.status(400).json({ error: 'Os equipamentos do termo precisam ser do mesmo colaborador.' });
+  const ja = envs.find(e => e.termo_id);
+  if (ja) return res.status(409).json({ error: `O envio de "${ja.item_nome}" já faz parte do termo TR-${String(ja.termo_id).padStart(4, '0')}. Abra esse termo ou desfaça-o antes.` });
+  // O estado de saída é obrigatório: os envios antigos que ainda não o têm recebem o informado agora.
+  const estados = b.estados && typeof b.estados === 'object' ? b.estados : {};
+  for (const e of envs) {
+    if (estadoSaidaValido(e.estado_saida)) continue;
+    const novo = estadoSaidaValido(estados[e.id]);
+    if (!novo) return res.status(400).json({ error: `Informe o estado de saída (Novo, Seminovo, Usado ou Recondicionado) de "${e.item_nome}".` });
+    await query('UPDATE erp_estoque_movimentos SET estado_saida=$1 WHERE id=$2', [novo, e.id]);
+  }
+  const ins = await query('INSERT INTO erp_estoque_termos (colaborador_id, justificativa, observacoes, emitido_por, emitido_por_nome) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [envs[0].colaborador_id, sanitize(b.justificativa) || null, sanitize(b.observacoes) || null, req.user.id, req.user.name]);
+  await query('UPDATE erp_estoque_movimentos SET termo_id=$1 WHERE id = ANY($2::int[])', [ins[0].id, ids]);
+  res.json({ ok: true, id: ins[0].id, itens: ids.length });
+}));
+
+app.get('/api/suprimentos/termos/:id', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const t = (await query('SELECT * FROM erp_estoque_termos WHERE id=$1', [Number(req.params.id)]))[0];
+  if (!t) return res.status(404).json({ error: 'Termo não encontrado.' });
+  const colaborador = (await query(`SELECT c.id, c.name, c.cpf, c.cargo, c.email_corporativo, c.celular, c.cidade_base_municipio, c.cidade_base_uf, c.municipio, c.uf,
+      v.matricula, v.cargo AS cargo_vinculo, v.departamento, v.unidade, g.name AS gestor
+    FROM erp_colaboradores c
+    LEFT JOIN erp_rh_vinculos v ON v.id = (SELECT x.id FROM erp_rh_vinculos x WHERE x.colaborador_id = c.id ORDER BY (x.desligamento IS NULL) DESC, x.admissao DESC NULLS LAST, x.id DESC LIMIT 1)
+    LEFT JOIN erp_colaboradores g ON g.id = v.gestor_id
+    WHERE c.id=$1`, [t.colaborador_id]))[0] || null;
+  const itens = await query(`SELECT m.id, m.data, m.quantidade, m.estado_saida, m.condicao_saida, m.notes, m.linha_telefonica, m.operadora, m.forma_envio, m.codigo_rastreio, m.status,
+      i.nome AS item_nome, i.categoria, i.subcategoria, i.marca, i.sku, i.numero_serie AS modelo_numero, i.unidade, un.numero_serie AS serie, un.patrimonio
+    FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id LEFT JOIN erp_estoque_unidades un ON un.id = m.unidade_id
+    WHERE m.termo_id=$1 ORDER BY m.id`, [t.id]);
+  res.json({ ...t, colaborador, itens });
+}));
+
+// Desfazer um termo (ex.: equipamentos agrupados por engano). Barra se já há termo assinado anexado ou se algum envio já foi entregue.
+app.post('/api/suprimentos/termos/:id/desfazer', requireAuth, SUP_EDIT, h(async (req, res) => {
+  const t = (await query('SELECT * FROM erp_estoque_termos WHERE id=$1', [Number(req.params.id)]))[0];
+  if (!t) return res.status(404).json({ error: 'Termo não encontrado.' });
+  const motivo = String(sanitize(req.body && req.body.motivo) || '').trim();
+  if (motivo.length < 5) return res.status(400).json({ error: 'Informe o motivo de desfazer o termo.' });
+  const anexos = (await query("SELECT COUNT(*)::int AS n FROM erp_attachments WHERE entity_type='termo_lote' AND entity_id=$1", [t.id]))[0].n;
+  if (anexos > 0) return res.status(409).json({ error: 'Este termo já tem documento anexado (assinado). Remova o anexo antes de desfazê-lo.' });
+  const entregues = (await query("SELECT COUNT(*)::int AS n FROM erp_estoque_movimentos WHERE termo_id=$1 AND status='entregue'", [t.id]))[0].n;
+  if (entregues > 0) return res.status(409).json({ error: 'Há envio já entregue neste termo: ele não pode ser desfeito.' });
+  await query('UPDATE erp_estoque_movimentos SET termo_id=NULL WHERE termo_id=$1', [t.id]);
+  await query('DELETE FROM erp_estoque_termos WHERE id=$1', [t.id]);
   res.json({ ok: true });
 }));
 
@@ -8658,7 +8742,7 @@ app.post('/api/suprimentos/envios/:id/status', requireAuth, SUP_EDIT, h(async (r
     // comprova que o colaborador recebeu e assumiu a responsabilidade.
     const item = (await query('SELECT tipo FROM erp_estoque_itens WHERE id=$1', [env.item_id]))[0];
     if (item && item.tipo === 'equipamento') {
-      const termos = (await query(`SELECT COUNT(*)::int AS n FROM erp_attachments WHERE entity_type='envio_termo' AND entity_id=$1`, [env.id]))[0].n;
+      const termos = (await query(`SELECT COUNT(*)::int AS n FROM erp_attachments WHERE (entity_type='envio_termo' AND entity_id=$1) OR (entity_type='termo_lote' AND entity_id=$2)`, [env.id, env.termo_id]))[0].n;
       if (!termos) return res.status(400).json({ error: 'Anexe o termo de responsabilidade assinado antes de marcar como entregue.' });
     }
     const dataEntrega = isDate(req.body.data) ? req.body.data : hojeISO();
