@@ -59,9 +59,9 @@
   }
 
   // Retrato do que o direcionador concluiu, gravado junto da solicitação (transporte_detalhes.direcionador) para a coordenação ver depois; a evidência vai como anexo.
-  function viaDirecionadorSnapshot(r, p, evidenciaNome, quando) {
+  function viaDirecionadorSnapshot(r, p, evidenciaNome, quando, kmFonte) {
     if (!r || !r.pronto) return null;
-    return { indicada: r.indicada, sem_carro: !!r.semcarro, km: Number(r.km.toFixed(1)), dias: r.dias, diaria: num(p.diaria), proprio_total: Number(r.proprio.total.toFixed(2)),
+    return { indicada: r.indicada, sem_carro: !!r.semcarro, km: Number(r.km.toFixed(1)), km_fonte: kmFonte === 'manual' ? 'manual' : 'auto', dias: r.dias, diaria: num(p.diaria), proprio_total: Number(r.proprio.total.toFixed(2)),
       locado_total: r.semcarro ? null : Number(r.locado.total.toFixed(2)), economia: r.economia != null ? Number(r.economia.toFixed(2)) : null, km_equilibrio: r.kmEq != null ? Number(r.kmEq.toFixed(1)) : null,
       evidencia: !!evidenciaNome, evidencia_nome: evidenciaNome || null, calculado_em: quando || new Date().toISOString() };
   }
@@ -113,13 +113,11 @@
     const dias = isFinite(ini) && isFinite(fim) && fim >= ini ? Math.round((fim - ini) / 86400000) + 1 : 0;
     $('#dm-periodo').innerHTML = `📅 Período da solicitação: <b>${dia(w.data_inicio)}</b> a <b>${dia(w.data_fim)}</b> (${dias} dia${dias === 1 ? '' : 's'}, início e fim inclusos)`;
     const box = $('#dm-kmbox');
-    const botoes = '<button type="button" class="btn sm" id="dm-recalc">↻ Recalcular rota</button> <button type="button" class="btn sm" id="dm-manual">✏️ Informar km à mão</button>';
+    const botoes = '<button type="button" class="btn sm" id="dm-recalc">↻ Recalcular rota</button>';
     if (v.kmFonte === 'calculando') box.innerHTML = '<div class="dm-km calc">⏳ Calculando a distância pela rota dos municípios…</div>';
     else if (v.kmFonte === 'auto') box.innerHTML = `<div class="dm-km ok">📍 <b>${kmFmt(num(v.km))} km</b> pela rota dos municípios da solicitação (ida, paradas e volta ao ponto de partida).<div class="dm-km-acoes">${botoes}</div></div>`;
-    else if (v.kmFonte === 'manual') box.innerHTML = `<div class="dm-km"><div class="field"><label for="dm-km">Quilometragem total (km)</label><input id="dm-km" type="number" step="0.1" min="0" value="${esc(v.km)}"></div><div class="dm-km-acoes"><button type="button" class="btn sm" id="dm-recalc">↻ Calcular pela rota</button></div></div>`;
     else box.innerHTML = `<div class="dm-km erro">⚠️ ${esc(v.kmMsg || 'Não foi possível calcular a distância.')}<div class="field" style="margin-top:8px"><label for="dm-km">Quilometragem total (km)</label><input id="dm-km" type="number" step="0.1" min="0" value="${esc(v.km)}"></div><div class="dm-km-acoes"><button type="button" class="btn sm" id="dm-recalc">↻ Tentar de novo</button></div></div>`;
     const rc = $('#dm-recalc'); if (rc) rc.onclick = () => calcularKm(true);
-    const mn = $('#dm-manual'); if (mn) mn.onclick = () => { v.kmFonte = 'manual'; desenhaEntrada(); desenha(); };
     const ki = $('#dm-km'); if (ki) ki.oninput = () => { v.km = ki.value; desenha(); };
     const nome = $('#dm-evid-nome');
     nome.innerHTML = v.evidencia ? `<span class="dm-chip">📄 ${esc(v.evidencia.name)}<button type="button" id="dm-evid-x" title="Remover a evidência" aria-label="Remover a evidência">✕</button></span>` : '<span class="dm-sem">nenhum arquivo</span>';
@@ -132,7 +130,7 @@
   // Distância pela rota dos municípios da solicitação; refaz só quando partida ou destinos mudam (ou a pessoa pede).
   async function calcularKm(forcar) {
     const w = VIA_WIZ, v = w.dm, chave = chaveRota();
-    if (!forcar && v.kmChave === chave && (v.kmFonte === 'auto' || v.kmFonte === 'manual')) return;
+    if (!forcar && v.kmChave === chave && v.kmFonte === 'auto') return;
     const meu = ++tokenKm;
     if (!(w.destinos || []).length) { v.kmFonte = 'erro'; v.kmMsg = 'A solicitação ainda não tem destinos: volte à etapa 2 e adicione os municípios.'; v.kmChave = chave; desenhaEntrada(); desenha(); return; }
     v.kmFonte = 'calculando'; desenhaEntrada();
@@ -199,7 +197,7 @@
   // Antes de enviar a solicitação: grava o retrato do cálculo em transporte_detalhes.direcionador (sem o arquivo).
   function viaDirecionadorPreEnvio(w) {
     if (!beta() || !w.dm) return;
-    const p = entrada(), snap = viaDirecionadorSnapshot(viaDirecionadorCalc(p), p, w.dm.evidencia && w.dm.evidencia.name);
+    const p = entrada(), snap = viaDirecionadorSnapshot(viaDirecionadorCalc(p), p, w.dm.evidencia && w.dm.evidencia.name, undefined, w.dm.kmFonte === 'auto' ? 'auto' : 'manual');
     if (snap) w.transporte.direcionador = snap; else delete w.transporte.direcionador;
   }
   // Depois de criada a solicitação: anexa a evidência a ela. Falha ao anexar não desfaz a solicitação: avisa.
@@ -215,9 +213,54 @@
     openModal(`Direcionador de mobilidade — OT ${esc(s.ordem_trabalho || s.id)}`, `<p class="hint" style="margin-top:0">Cálculo feito no momento da solicitação (${d.calculado_em ? new Date(d.calculado_em).toLocaleString('pt-BR') : '—'}).</p>
       <div class="dm-ind" style="grid-template-columns:repeat(2,1fr)"><div><span>Indicada</span><b>${d.sem_carro ? 'Carro próprio (sem carro locado)' : d.indicada === 'locado' ? 'Carro locado' : 'Carro próprio'}</b></div><div><span>Economia</span><b>${d.economia != null ? brl(d.economia) : '—'}</b></div>
         <div><span>Carro próprio</span><b>${brl(d.proprio_total)}</b></div><div><span>Carro locado</span><b>${d.locado_total != null ? brl(d.locado_total) : '—'}</b></div>
-        <div><span>Quilometragem</span><b>${kmFmt(d.km)} km</b></div><div><span>Diária informada</span><b>${d.diaria ? brl(d.diaria) : '—'}</b></div></div>
+        <div><span>Quilometragem</span><b>${kmFmt(d.km)} km${d.km_fonte === 'manual' ? ' (informada à mão)' : ''}</b></div><div><span>Diária informada</span><b>${d.diaria ? brl(d.diaria) : '—'}</b></div></div>
       <p style="font-size:13px;margin:10px 0 0">${d.evidencia ? `Evidência anexada: <b>${esc(d.evidencia_nome || '')}</b>.` : 'Nenhuma evidência foi anexada.'}</p>`,
       [{ label: 'Fechar', onClick: closeModal }, ...(d.evidencia ? [{ label: '📎 Ver evidência', cls: 'primary', onClick: () => openAttachments('viatico_cotacao', s.id, `Evidência — OT ${s.ordem_trabalho || s.id}`) }] : [])]);
+  }
+  // Imagem da evidência: dimensões naturais para caber no PDF sem distorcer.
+  function medeImagem(url) { return new Promise(ok => { const im = new Image(); im.onload = () => ok({ w: im.naturalWidth, h: im.naturalHeight }); im.onerror = () => ok(null); im.src = url; }); }
+  // Evidência já salva na OT (anexo viatico_cotacao), para regerar o PDF depois do envio. Devolve { name, mime, data } ou null.
+  async function viaDirecionadorEvidenciaSalva(s) {
+    try {
+      const lista = await api('/api/attachments/viatico_cotacao/' + s.id); if (!lista || !lista.length) return null;
+      const r = await api('/api/attachments/file/' + lista[0].id); return { name: r.file_name || lista[0].file_name, mime: r.mime_type, data: r.data };
+    } catch (e) { return null; }
+  }
+  // Bloco do PDF da solicitação: comparativo + evidência. Devolve o novo y. Sem retrato do direcionador na OT (ou fora do beta na prévia), não desenha nada.
+  async function viaDirecionadorPdf(doc, y, MARGIN, w, evid) {
+    let d = w.transporte && w.transporte.direcionador;
+    if (!d && beta() && w.dm) { const p = entrada(); d = viaDirecionadorSnapshot(viaDirecionadorCalc(p), p, w.dm.evidencia && w.dm.evidencia.name, undefined, w.dm.kmFonte === 'auto' ? 'auto' : 'manual'); }
+    if (!d) return y;
+    if (!evid && w.dm && w.dm.evidencia) evid = w.dm.evidencia;
+    const VERDE = [0, 120, 63], VERDE_CLARO = [234, 245, 236], CINZA = [110, 120, 114], VERM = [180, 30, 30];
+    const pageW = doc.internal.pageSize.getWidth(), util = pageW - MARGIN * 2;
+    if (y > 200) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE); doc.text('Direcionador de mobilidade', MARGIN, y); y += 5;
+    const ind = d.sem_carro ? 'Carro próprio (sem carro locado disponível)' : d.indicada === 'locado' ? 'Carro locado' : 'Carro próprio';
+    const linhas = [
+      ['Opção indicada', ind],
+      ['Economia da opção indicada', d.economia != null ? brl(d.economia) : '—'],
+      ['Carro próprio', brl(d.proprio_total)],
+      ['Carro locado', d.locado_total != null ? brl(d.locado_total) + (d.diaria ? ' (diária informada: ' + brl(d.diaria) + ' x ' + d.dias + ' dia(s))' : '') : 'sem carro disponível para locação'],
+      ['Quilometragem', kmFmt(d.km) + ' km' + (d.km_fonte === 'manual' ? ' — INFORMADA À MÃO (o cálculo automático da rota falhou)' : ' — calculada pela rota dos municípios')]
+    ];
+    doc.autoTable({ startY: y, margin: { left: MARGIN, right: MARGIN }, body: linhas, theme: 'grid', styles: { font: 'helvetica', fontSize: 9, cellPadding: 2.5, textColor: [40, 46, 42] }, columnStyles: { 0: { fontStyle: 'bold', fillColor: VERDE_CLARO, cellWidth: 52 } } });
+    y = doc.lastAutoTable.finalY + 6;
+    const titulo = d.sem_carro ? 'Evidência da indisponibilidade de carro para locação' : 'Evidência da diária do carro locado (cotação)';
+    if (y > 240) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...VERDE); doc.text(titulo, MARGIN, y); y += 5;
+    const aviso = t => { doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...VERM); doc.text(t, MARGIN, y); y += 8; };
+    if (!evid || !evid.data) { aviso(d.evidencia ? 'Evidência anexada à OT, mas não pôde ser carregada para este PDF (' + (d.evidencia_nome || '') + ').' : 'SEM EVIDÊNCIA ANEXADA: o colaborador não anexou o print ou a cotação.'); return y + 4; }
+    const mime = String(evid.mime || ''), fmt = /png/i.test(mime) ? 'PNG' : /jpe?g/i.test(mime) ? 'JPEG' : null;
+    if (!fmt) { doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 46, 42); doc.text('Arquivo anexado (' + (evid.name || 'evidência') + ') não é imagem; abra o anexo na OT (botão Direcionador > Ver evidência).', MARGIN, y); return y + 10; }
+    const url = 'data:' + mime + ';base64,' + evid.data, dim = await medeImagem(url);
+    try {
+      const maxW = util, maxH = 140; let iw = maxW, ih = dim ? maxW * dim.h / dim.w : 90; if (ih > maxH) { ih = maxH; iw = dim ? maxH * dim.w / dim.h : maxW; }
+      if (y + ih > 285) { doc.addPage(); y = 20; }
+      doc.setDrawColor(210, 218, 213); doc.rect(MARGIN, y, iw, ih); doc.addImage(url, fmt, MARGIN, y, iw, ih);
+      doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...CINZA); doc.text('Arquivo: ' + (evid.name || ''), MARGIN, y + ih + 4);
+      return y + ih + 10;
+    } catch (e) { aviso('Não foi possível inserir a imagem da evidência no PDF (' + (evid.name || '') + ').'); return y + 4; }
   }
   // Soma da economia apurada pelo direcionador nas OTs (sem as canceladas), no total e por colaborador. Só conta OT que tem o retrato gravado e economia positiva.
   function viaEconomiaDirecionador(sols) {
@@ -235,7 +278,7 @@
   if (typeof window !== 'undefined') {
     window.viaDirecionadorHtml = viaDirecionadorHtml; window.viaDirecionadorLigar = viaDirecionadorLigar; window.viaDirecionadorPreEnvio = viaDirecionadorPreEnvio;
     window.viaDirecionadorPosEnvio = viaDirecionadorPosEnvio; window.viaDirecionadorVer = viaDirecionadorVer;
-    window.viaDirecionadorCalc = viaDirecionadorCalc; window.viaDirecionadorResumo = viaDirecionadorResumo; window.viaDirecionadorSnapshot = viaDirecionadorSnapshot; window.viaEconomiaDirecionador = viaEconomiaDirecionador;
+    window.viaDirecionadorCalc = viaDirecionadorCalc; window.viaDirecionadorResumo = viaDirecionadorResumo; window.viaDirecionadorSnapshot = viaDirecionadorSnapshot; window.viaEconomiaDirecionador = viaEconomiaDirecionador; window.viaDirecionadorPdf = viaDirecionadorPdf; window.viaDirecionadorEvidenciaSalva = viaDirecionadorEvidenciaSalva;
   }
   if (typeof module !== 'undefined' && module.exports) module.exports = { viaDirecionadorCalc, viaDirecionadorResumo, viaDirecionadorSnapshot, viaEconomiaDirecionador };
 })();

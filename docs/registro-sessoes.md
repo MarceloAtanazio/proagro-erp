@@ -8632,3 +8632,13 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Limite:** a economia é a indicada pelo direcionador, não confere se a pessoa escolheu a opção indicada. OTs anteriores ao v2 não têm o retrato.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## Sessão 243 — Direcionador: km à mão só se a rota falhar e evidência no PDF
+
+**O que foi feito:** o botão "Informar km à mão" saiu. O campo de km só aparece quando o cálculo automático da rota falha, e a OT registra a origem do km (`km_fonte` auto ou manual, mostrada no modal 🧭 e no PDF). O PDF da solicitação ganhou o bloco "Direcionador de mobilidade" depois do detalhamento: comparativo próprio x locado, economia, origem do km e a evidência (imagem PNG/JPEG dentro do PDF; outro formato mostra o nome do arquivo; sem evidência, aviso em vermelho). A prévia usa a evidência do assistente e o PDF baixado depois busca o anexo da OT.
+
+**Arquivos:** public/via-direcionador.js, public/app.js, scripts/2026-11-19_viaticos_direcionador_km_travado_pdf.js.
+
+**Limite:** evidência em PDF ou WebP não vira imagem no PDF final (fica o nome do arquivo). Quem bloquear o serviço de rotas consegue digitar o km, mas fica marcado como manual.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

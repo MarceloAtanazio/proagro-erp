@@ -9761,7 +9761,8 @@ async function viaBaixarPdfSolicitacao(s) {
     transporte: (s.transporte_detalhes && typeof s.transporte_detalhes === 'object') ? s.transporte_detalhes : {}
   };
   toast('Gerando PDF…');
-  await viaGerarPDF(w, { cat, total, dias, memoria: viaMemoriaCategorias(w, cat) }, { dataEmissao: s.created_at });
+  const evidDir = (w.transporte.direcionador && w.transporte.direcionador.evidencia && typeof viaDirecionadorEvidenciaSalva === 'function') ? await viaDirecionadorEvidenciaSalva(s) : null;
+  await viaGerarPDF(w, { cat, total, dias, memoria: viaMemoriaCategorias(w, cat) }, { dataEmissao: s.created_at, direcionadorEvidencia: evidDir });
 }
 
 // Categoria da despesa de cada tipo de custo extra (espelha CUSTO_EXTRA_TIPOS em api/index.js).
@@ -9959,6 +9960,8 @@ async function viaGerarPDF(w, r, opts = {}) {
       columnStyles: { 0: { cellWidth: 46 }, 1: { fontSize: 8, textColor: CINZA }, 2: { halign: 'right', cellWidth: 32 } }
     });
     y = doc.lastAutoTable.finalY + 12;
+
+    if (typeof viaDirecionadorPdf === 'function') y = await viaDirecionadorPdf(doc, y, MARGIN, w, opts.direcionadorEvidencia);
 
     if (y > 255) { doc.addPage(); y = 20; }
     doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(...CINZA);
