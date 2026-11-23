@@ -873,7 +873,7 @@ async function renderPagar() {
         op('csv', 'CSV', 'Arquivo de texto separado por ponto e vírgula.') +
       '</div>',
       [{ label: 'Cancelar', onClick: closeModal }], { wide: true });
-    const acao = { zip: () => pagarGerarPacote(lastFiltered), lote: () => pagarLoteSantander(lastFiltered), pdf: exportarPagarPDF, excel: exportarPagarExcel, csv: exportarPagarCSV };
+    const acao = { zip: () => pagarPacoteComData(lastFiltered), lote: () => pagarLoteSantander(lastFiltered), pdf: exportarPagarPDF, excel: exportarPagarExcel, csv: exportarPagarCSV };
     document.querySelectorAll('.exp-op').forEach(b => { b.onclick = () => { closeModal(); acao[b.dataset.exp](); }; });
   };
 
@@ -1070,7 +1070,22 @@ async function pagarLoteSantander(rows) {
   desenhar();
 }
 
-async function pagarGerarPacote(rows) {
+// Antes do pacote: pergunta a data de pagamento que vai nas planilhas do lote Santander (vazio = vencimento de cada título).
+function pagarPacoteComData(rows) {
+  if (!rows.length) return toast('Nenhum título nos filtros atuais para exportar.');
+  openModal('Data de pagamento do lote', `
+    <p style="font-size:13.5px;color:var(--ink-2)">Os ${rows.length} título(s) da tela entram no pacote. Informe a data em que a tesouraria deve pagar; ela vai nas planilhas de PIX e de boleto do Santander.</p>
+    <div class="field" style="margin-top:12px"><label for="pk-data">Data de pagamento</label><input type="date" id="pk-data" value="${todayISO()}" min="${todayISO()}"></div>
+    <p class="hint" style="margin-top:8px">Deixe em branco para usar o vencimento de cada título.</p>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Gerar pacote', cls: 'primary', onClick: () => {
+        const d = $('#pk-data').value;
+        if (d && d < todayISO()) return modalError('A data de pagamento não pode ser anterior a hoje.');
+        closeModal(); pagarGerarPacote(rows, d || null);
+     } }]);
+}
+
+async function pagarGerarPacote(rows, dataPg) {
   if (!rows.length) return toast('Nenhum título nos filtros atuais para exportar.');
   if (!window.JSZip || !window.XLSX || !window.jspdf) return toast('As bibliotecas de exportação ainda estão carregando. Tente novamente em instantes.');
   let cancelado = false;
@@ -1163,7 +1178,7 @@ async function pagarGerarPacote(rows) {
     // reenviar: o pacote é regenerável; títulos já enviados entram de novo em vez de sumirem do lote.
     status('Gerando o lote do Santander…'); prog(88);
     let lote = null, loteErro = '';
-    try { lote = await api('/api/payables/lote-santander', { method: 'POST', body: { ids: rows.map(r => r.id), simular: false, reenviar: true } }); }
+    try { lote = await api('/api/payables/lote-santander', { method: 'POST', body: { ids: rows.map(r => r.id), simular: false, reenviar: true, data_pagamento: dataPg || null } }); }
     catch (e) { loteErro = e.message; }
     if (lote) {
       if (lote.pix.qtd) zip.file('Lote_Santander/planilhaPix.csv', lote.pix.csv);
