@@ -863,7 +863,7 @@ async function renderPagar() {
 
   $('#btn-export').onclick = () => openModal('Exportar Contas a Pagar',
     '<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>' +
-    '<p style="font-size:12.5px; color:var(--muted); margin-top:8px">O <strong>pacote ZIP da tesouraria</strong> reúne, dos títulos filtrados, o PDF, o Excel, os boletos e as aprovações (cada aprovação uma vez só), mais um LEIAME.txt em espanhol.</p>',
+    '<p style="font-size:12.5px; color:var(--muted); margin-top:8px">O <strong>pacote ZIP da tesouraria</strong> reúne, dos títulos filtrados, o PDF, o Excel, os boletos e as aprovações (cada aprovação uma vez só), mais um LEIAME.txt em espanhol e as planilhas do <strong>lote Santander</strong> (PIX e boleto), marcando os títulos como enviados à tesouraria.</p>',
     [
       { label: 'Cancelar', onClick: closeModal },
       { label: 'CSV', onClick: () => { closeModal(); exportarPagarCSV(); } },
@@ -1155,6 +1155,17 @@ async function pagarGerarPacote(rows) {
       const base = pagarNomeArquivo(String(arch.file_name).replace(/\.[A-Za-z0-9]{1,5}$/, ''), 80);
       zip.file(unico('Aprovacoes/', `${numero.get(attId)} - ${base}${pagarExtensao(arch.file_name)}`), dados.get(attId), { base64: true }); aprovIncluidas++;
     });
+    // Lote Santander (planilhas de PIX e de boleto no layout do banco). Ao gerar, os títulos incluídos ficam "Enviados à tesouraria".
+    // reenviar: o pacote é regenerável; títulos já enviados entram de novo em vez de sumirem do lote.
+    status('Gerando o lote do Santander…'); prog(88);
+    let lote = null, loteErro = '';
+    try { lote = await api('/api/payables/lote-santander', { method: 'POST', body: { ids: rows.map(r => r.id), simular: false, reenviar: true } }); }
+    catch (e) { loteErro = e.message; }
+    if (lote) {
+      if (lote.pix.qtd) zip.file('Lote_Santander/planilhaPix.csv', lote.pix.csv);
+      if (lote.boleto.qtd) zip.file('Lote_Santander/planilhaBarra.csv', lote.boleto.csv);
+      if (lote.problemas.length) zip.file('Lote_Santander/PENDENCIAS.txt', 'Títulos que ficaram de fora do lote do Santander:\r\n\r\n' + lote.problemas.map(p => `${p.id} | ${p.fornecedor || 'sem fornecedor'} | ${p.forma} | ${p.motivo}`).join('\r\n') + '\r\n');
+    }
     const empresa = COMPANY_INFO.trade_name || COMPANY_INFO.legal_name || COMPANY_LEGAL_NAME;
     const ahora = new Date();
     zip.file('LEIAME.txt', pagarLeiameES({
@@ -1177,13 +1188,17 @@ async function pagarGerarPacote(rows) {
         <li><strong>${rows.length}</strong> título(s) · ${brl(rows.reduce((s, r) => s + Number(r.amount || 0), 0))}</li>
         <li><strong>${boletosIncluidos}</strong> boleto(s) · <strong>${aprovIncluidas}</strong> aprovação(ões) distinta(s)</li>
         <li>PDF, Excel e <strong>LEIAME.txt</strong> (em espanhol)</li>
+        ${lote ? `<li>Lote Santander: <strong>${lote.pix.qtd}</strong> PIX (${brl(lote.pix.total)}) e <strong>${lote.boleto.qtd}</strong> boleto(s) (${brl(lote.boleto.total)}), na pasta <strong>Lote_Santander</strong>${lote.pix.qtd + lote.boleto.qtd ? '. Esses títulos ficaram como enviados à tesouraria' : ''}</li>` : ''}
       </ul>
+      ${loteErro ? `<div class="alert-item late" style="margin-top:10px">Não foi possível gerar o lote do Santander: ${esc(loteErro)}. O restante do pacote foi gerado.</div>` : ''}
+      ${lote && lote.problemas.length ? `<div class="alert-item warn" style="margin-top:10px">⚠️ <strong>${lote.problemas.length} título(s) ficaram de fora do lote do Santander</strong> até corrigir (lista também em PENDENCIAS.txt no ZIP):<div style="max-height:240px;overflow:auto;margin-top:6px"><table class="tbl-lote"><thead><tr><th>ID</th><th>Fornecedor</th><th>Forma</th><th>Pendência</th></tr></thead><tbody>${lote.problemas.map(p => `<tr><td>${p.id}</td><td>${esc(p.fornecedor || '—')}</td><td>${esc(p.forma)}</td><td>${esc(p.motivo)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
       ${mb > 20 ? `<div class="alert-item warn" style="margin-top:10px">⚠️ O ZIP tem ${mb.toFixed(1).replace('.', ',')} MB e pode passar do limite de anexo do seu e-mail (em geral 20–25 MB). Filtre menos títulos e gere de novo, se precisar.</div>` : ''}
       ${sinAprob.length ? `<div class="alert-item warn" style="margin-top:10px">⚠️ <strong>${sinAprob.length} título(s) sem aprovação</strong> (✘ na coluna Aprov.):<ul class="pk-resumo">${lista(sinAprob, r => `<li>${r.id} · ${esc(r.description)}</li>`)}</ul></div>` : ''}
       ${sinBoleto.length ? `<div class="alert-item warn" style="margin-top:10px">⚠️ <strong>${sinBoleto.length} título(s) de boleto sem o arquivo do boleto</strong>:<ul class="pk-resumo">${lista(sinBoleto, r => `<li>${r.id} · ${esc(r.description)}</li>`)}</ul></div>` : ''}
       ${fallas.length ? `<div class="alert-item late" style="margin-top:10px">Não foi possível baixar ${fallas.length} arquivo(s); eles ficaram de fora e estão listados no LEIAME.txt.</div>` : ''}
       <p class="hint" style="margin-top:10px">O aviso de títulos sem aprovação também está no LEIAME.txt, para a tesouraria ver.</p>`,
-      [{ label: 'Fechar', cls: 'primary', onClick: closeModal }]);
+      [{ label: 'Fechar', cls: 'primary', onClick: closeModal }], { wide: true, xwide: true });
+    if (lote && lote.pix.qtd + lote.boleto.qtd) renderPagar();
   } catch (e) {
     console.error(e);
     if (!cancelado) { closeModal(); toast('Não foi possível gerar o pacote: ' + e.message); }
