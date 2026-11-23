@@ -1036,9 +1036,9 @@ async function pagarLoteSantander(rows) {
       const lin = (nome, x) => `<tr><td>${nome}</td><td class="num">${x.qtd}</td><td class="num">${brl(x.total)}</td></tr>`;
       const prob = r.problemas.length
         ? `<p style="margin:10px 0 4px;color:var(--danger);font-weight:600">${r.problemas.length} título(s) com pendência, ficam de fora até corrigir:</p>
-          <div style="max-height:220px;overflow:auto"><table class="tbl-fin"><thead><tr><th>ID</th><th>Fornecedor</th><th>Forma</th><th>Pendência</th></tr></thead><tbody>${r.problemas.slice(0, 60).map(p => `<tr><td>${p.id}</td><td>${esc(p.fornecedor || '—')}</td><td>${esc(p.forma)}</td><td>${esc(p.motivo)}</td></tr>`).join('')}</tbody></table></div>${r.problemas.length > 60 ? '<p class="hint">Mostrando as 60 primeiras.</p>' : ''}`
+          <div style="max-height:220px;overflow:auto"><table class="tbl-lote"><thead><tr><th>ID</th><th>Fornecedor</th><th>Forma</th><th>Pendência</th></tr></thead><tbody>${r.problemas.slice(0, 60).map(p => `<tr><td>${p.id}</td><td>${esc(p.fornecedor || '—')}</td><td>${esc(p.forma)}</td><td>${esc(p.motivo)}</td></tr>`).join('')}</tbody></table></div>${r.problemas.length > 60 ? '<p class="hint">Mostrando as 60 primeiras.</p>' : ''}`
         : '<p style="color:var(--verde-700)">Todos os títulos estão completos.</p>';
-      el.innerHTML = `<table class="tbl-fin" style="margin-bottom:10px"><thead><tr><th>Arquivo</th><th class="num">Títulos</th><th class="num">Total</th></tr></thead><tbody>${lin('PIX (planilhaPix)', r.pix)}${lin('Boleto (planilhaBarra)', r.boleto)}</tbody></table>
+      el.innerHTML = `<table class="tbl-lote" style="margin-bottom:10px"><thead><tr><th>Arquivo</th><th class="num">Títulos</th><th class="num">Total</th></tr></thead><tbody>${lin('PIX (planilhaPix)', r.pix)}${lin('Boleto (planilhaBarra)', r.boleto)}</tbody></table>
         ${r.ignorados ? `<p class="hint">${r.ignorados} título(s) fora do lote: forma de pagamento diferente de PIX/boleto, ou já pagos.</p>` : ''}${prob}`;
     } catch (e) { el.innerHTML = '<p style="color:var(--danger)">' + esc(e.message) + '</p>'; }
   };
@@ -1047,7 +1047,7 @@ async function pagarLoteSantander(rows) {
     <p style="font-size:13.5px;color:var(--ink-2)">Gera os arquivos de importação do banco com os ${rows.length} título(s) da tela. Contas PIX vão para a planilha de PIX e boletos para a planilha de código de barras. Ao gerar, os títulos incluídos passam a <strong>Enviados à tesouraria</strong>.</p>
     <div class="form-row" style="margin:12px 0">
       <div class="field"><label for="lt-data">Data de pagamento (vazio = vencimento de cada título)</label><input type="date" id="lt-data"></div>
-      <div class="field"><label><input type="checkbox" id="lt-reenviar"> Incluir títulos já enviados</label></div>
+      <div class="field" style="justify-content:flex-end"><label style="display:flex;align-items:center;gap:8px;white-space:nowrap"><input type="checkbox" id="lt-reenviar" style="width:auto;margin:0"> Incluir títulos já enviados</label></div>
     </div>
     <div id="lt-corpo"></div>`,
     [{ label: 'Cancelar', onClick: closeModal },
@@ -1060,7 +1060,7 @@ async function pagarLoteSantander(rows) {
           if (r.boleto.qtd) setTimeout(() => baixar(`planilhaBarra_${d}.csv`, r.boleto.csv), 400);
           closeModal(); toast(`Lote gerado: ${r.pix.qtd} PIX e ${r.boleto.qtd} boleto(s). Títulos marcados como enviados à tesouraria.`); renderPagar();
         } catch (e) { modalError(e.message); }
-     } }], { wide: true });
+     } }], { wide: true, xwide: true });
   $('#lt-data').onchange = () => { dataPg = $('#lt-data').value; desenhar(); };
   $('#lt-reenviar').onchange = () => { reenviar = $('#lt-reenviar').checked; desenhar(); };
   desenhar();
