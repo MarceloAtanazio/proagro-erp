@@ -8650,3 +8650,13 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Arquivos:** public/app.js, public/styles.css, scripts/2026-11-23_fila_km_modal_largo.js.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## Sessão 245 — Comprovação de viáticos: anexar comprovantes da pasta
+
+**O que foi feito:** na comprovação da OT (aberta e para quem edita) há o botão "📁 Anexar comprovantes da pasta". A pessoa escolhe a pasta; o navegador lê cada PDF (texto do PDF, ou OCR se for escaneado) e cada imagem (OCR em português, tesseract.js), tudo no computador dela, sem enviar a serviço externo. Os valores e datas lidos são comparados com as despesas da OT (valor 60 pts, data 25, categoria 15, descrição 10); cada arquivo vai para a despesa de maior pontuação, sem repetir despesa enquanto houver outra, o que separa pedágios iguais pela data. Abre UMA tela de conferência com o que foi lido, a despesa sugerida e a confiança (alta, conferir, sem correspondência), com lista para corrigir ou não anexar, e a lista de despesas que ficaram sem comprovante. Só depois de "Anexar" os arquivos sobem como anexo da despesa (tipo comprovante). Imagens acima de 3 MB são reduzidas; PDF acima de 3 MB não sobe e é avisado. pdf.js e tesseract.js carregam do jsDelivr na primeira vez (a primeira leitura demora mais).
+
+**Arquivos:** public/via-comprovantes-pasta.js, public/index.html, public/app.js, public/styles.css, scripts/2026-11-23_viaticos_comprovantes_pasta.js, scripts/2026-11-23_verifica_comprovantes_pasta.js.
+
+**Limites:** OCR erra em foto ruim ou torta (por isso a tela de conferência); não cria despesa nova, só anexa às existentes; não lê HEIC. Testado com imagens e PDFs gerados; falta testar com comprovantes reais da Flash.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

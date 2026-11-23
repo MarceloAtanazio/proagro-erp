@@ -7249,6 +7249,7 @@ async function viewSolicitacao(id) {
     </div>
     <div class="field">${fld('de-desc', 'Descrição (opcional)', 'text', '')}</div>` : ''}
 
+    ${!finalizada && !somenteLeitura && despesas.length && typeof viaComprovantesPasta === 'function' ? '<div style="margin-top:10px"><button class="btn sm" id="via-pasta-btn" type="button" title="Escolha a pasta com os comprovantes: o sistema lê cada um, sugere a despesa de cada e abre uma tela para conferir">📁 Anexar comprovantes da pasta</button></div>' : ''}
     <div class="table-wrap" style="margin-top:10px"><table>
       <thead><tr><th>Data</th><th>Categoria</th><th>Descrição</th><th class="num">Valor</th><th class="actions">Ações</th></tr></thead>
       <tbody>${despesas.map(d => `<tr>
@@ -7483,6 +7484,7 @@ async function viewSolicitacao(id) {
   }
   document.querySelectorAll('[data-deldesp]').forEach(b => b.onclick = () => confirmDelete('esta despesa', `/api/viaticos/despesas/${b.dataset.deldesp}`, () => viewSolicitacao(id)));
   document.querySelectorAll('[data-att]').forEach(b => b.onclick = () => openAttachments('viatico', b.dataset.att, DESP_CAT_LABEL[despesas.find(d => d.id == b.dataset.att)?.categoria] || 'Comprovante'));
+  const btnPasta = $('#via-pasta-btn'); if (btnPasta) btnPasta.onclick = () => viaComprovantesPasta(s, despesas, () => viewSolicitacao(id));
   document.querySelectorAll('[data-aprovar]').forEach(b => b.onclick = async () => {
     try { await api(`/api/viaticos/solicitacoes/${id}/excesso-status`, { method: 'POST', body: { chave: b.dataset.aprovar, status: 'aprovado' } }); toast('Excesso aprovado.'); viewSolicitacao(id); }
     catch (e) { toast(e.message); }

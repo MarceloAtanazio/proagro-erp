@@ -2149,3 +2149,13 @@ tr.sup-tam-det > td { padding: 0 16px 14px !important; background: color-mix(in 
 .dm-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 6px 4px 10px; border-radius: 999px; font-size: 12px; background: color-mix(in srgb, var(--verde-500) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--verde-500) 40%, var(--line)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-chip button { border: 0; background: transparent; cursor: pointer; color: var(--muted); font-size: 12px; padding: 0 4px; } .dm-chip button:hover { color: var(--danger); }
 @media (max-width: 560px) { .dm-diaria-row { grid-template-columns: 1fr; } }
+/* Viáticos > comprovação: anexar comprovantes da pasta (leitura + conferência) */
+.cmp-barra { height: 8px; border-radius: 99px; background: color-mix(in srgb, var(--muted) 16%, transparent); overflow: hidden; margin: 10px 0; } .cmp-barra i { display: block; height: 100%; background: var(--verde-500); border-radius: 99px; transition: width .25s; }
+.cmp-tbl { width: 100%; } .cmp-tbl td { vertical-align: top; }
+.cmp-arq { display: flex; gap: 10px; align-items: center; min-width: 230px; } .cmp-arq img { width: 54px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
+.cmp-pdf { width: 54px; height: 54px; border-radius: 8px; border: 1px solid var(--line); display: grid; place-items: center; font-weight: 700; font-size: 12px; color: var(--danger); background: var(--card); flex: none; }
+.cmp-arq b { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; } .cmp-arq small, .cmp-lido small { display: block; color: var(--muted); font-size: 11px; }
+.cmp-lido { font-size: 12.5px; min-width: 170px; } .cmp-lido div + div { margin-top: 4px; }
+.cmp-sel { width: 100%; min-width: 290px; font-size: 12.5px; }
+.cmp-nv { display: inline-block; margin-top: 5px; padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--muted) 14%, var(--card)); color: var(--ink-2); }
+.cmp-nv.alta { background: color-mix(in srgb, var(--verde-500) 18%, var(--card)); color: var(--verde-700); } .cmp-nv.media, .cmp-nv.baixa { background: color-mix(in srgb, var(--warn) 22%, var(--card)); } .cmp-nv.nenhuma { background: var(--danger-050); color: var(--danger); }
