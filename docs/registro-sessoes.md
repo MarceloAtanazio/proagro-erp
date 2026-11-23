@@ -8642,3 +8642,11 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Limite:** evidência em PDF ou WebP não vira imagem no PDF final (fica o nome do arquivo). Quem bloquear o serviço de rotas consegue digitar o km, mas fica marcado como manual.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## Sessão 244 — Fila de reembolso de km mais larga
+
+**O que foi feito:** o modal "Reembolsos de quilometragem a aprovar" passou de 900 para 1100px (`xwide`) e a tabela perdeu a rolagem horizontal (min-width 930 para 880px), para a coluna "A ressarcir" e as ações aparecerem inteiras.
+
+**Arquivos:** public/app.js, public/styles.css, scripts/2026-11-23_fila_km_modal_largo.js.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

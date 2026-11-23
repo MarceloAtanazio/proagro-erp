@@ -16293,7 +16293,7 @@ async function viaFilaKm() {
         </tr>`;
       }).join('')}</tbody>
     </table></div>`,
-    [{ label: 'Fechar', onClick: closeModal }], { wide: true });
+    [{ label: 'Fechar', onClick: closeModal }], { xwide: true });
 
   document.querySelectorAll('[data-filaabrir]').forEach(b => b.onclick = () => viewSolicitacao(Number(b.dataset.filaabrir)));
 }

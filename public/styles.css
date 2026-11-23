@@ -1597,7 +1597,7 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
    duas delas -- "Rodado" e "A ressarcir" -- nao existem naquele gabarito. Sem
    largura propria, dividiam sozinhas a sobra de uma minima pensada para oito
    colunas, e ficavam absurdas. */
-.tbl-rh-km { min-width: 930px; }
+.tbl-rh-km { min-width: 880px; }
 .tbl-rh-km col.c-etapa { width: 160px; }
 .tbl-rh-km col.c-data  { width: 140px; }
 
