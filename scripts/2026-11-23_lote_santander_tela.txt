@@ -1,0 +1,45 @@
+const PIX_TIPOS = [{ v: '', t: '— deduzir pelo formato —' }, { v: 'cpf', t: 'CPF' }, { v: 'cnpj', t: 'CNPJ' }, { v: 'telefone', t: 'Telefone' }, { v: 'email', t: 'E-mail' }, { v: 'aleatoria', t: 'Chave aleatória' }];
+
+// Lote de pagamento Santander: PIX e boleto dos títulos filtrados/selecionados, nos dois arquivos de importação do banco.
+// A conferência (o que entra e o que falta) vem do servidor; ao gerar, os títulos incluídos ficam "Enviados à tesouraria".
+async function pagarLoteSantander(rows) {
+  if (!rows.length) return toast('Nenhum título nos filtros atuais para exportar.');
+  let dataPg = '', reenviar = false, ultimo = null;
+  const corpo = sim => ({ ids: rows.map(r => r.id), simular: sim, data_pagamento: dataPg || null, reenviar });
+  const desenhar = async () => {
+    const el = document.getElementById('lt-corpo'); if (!el) return;
+    el.innerHTML = '<p class="hint">Conferindo os títulos…</p>';
+    try {
+      const r = await api('/api/payables/lote-santander', { method: 'POST', body: corpo(true) }); ultimo = r;
+      const lin = (nome, x) => `<tr><td>${nome}</td><td class="num">${x.qtd}</td><td class="num">${brl(x.total)}</td></tr>`;
+      const prob = r.problemas.length
+        ? `<p style="margin:10px 0 4px;color:var(--danger);font-weight:600">${r.problemas.length} título(s) com pendência, ficam de fora até corrigir:</p>
+          <div style="max-height:220px;overflow:auto"><table class="tbl-fin"><thead><tr><th>ID</th><th>Fornecedor</th><th>Forma</th><th>Pendência</th></tr></thead><tbody>${r.problemas.slice(0, 60).map(p => `<tr><td>${p.id}</td><td>${esc(p.fornecedor || '—')}</td><td>${esc(p.forma)}</td><td>${esc(p.motivo)}</td></tr>`).join('')}</tbody></table></div>${r.problemas.length > 60 ? '<p class="hint">Mostrando as 60 primeiras.</p>' : ''}`
+        : '<p style="color:var(--verde-700)">Todos os títulos estão completos.</p>';
+      el.innerHTML = `<table class="tbl-fin" style="margin-bottom:10px"><thead><tr><th>Arquivo</th><th class="num">Títulos</th><th class="num">Total</th></tr></thead><tbody>${lin('PIX (planilhaPix)', r.pix)}${lin('Boleto (planilhaBarra)', r.boleto)}</tbody></table>
+        ${r.ignorados ? `<p class="hint">${r.ignorados} título(s) fora do lote: forma de pagamento diferente de PIX/boleto, ou já pagos.</p>` : ''}${prob}`;
+    } catch (e) { el.innerHTML = '<p style="color:var(--danger)">' + esc(e.message) + '</p>'; }
+  };
+  const baixar = (nome, texto) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([texto], { type: 'text/csv;charset=utf-8' })); a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
+  openModal('Lote Santander (PIX e boleto)', `
+    <p style="font-size:13.5px;color:var(--ink-2)">Gera os arquivos de importação do banco com os ${rows.length} título(s) da tela. Contas PIX vão para a planilha de PIX e boletos para a planilha de código de barras. Ao gerar, os títulos incluídos passam a <strong>Enviados à tesouraria</strong>.</p>
+    <div class="form-row" style="margin:12px 0">
+      <div class="field"><label for="lt-data">Data de pagamento (vazio = vencimento de cada título)</label><input type="date" id="lt-data"></div>
+      <div class="field"><label><input type="checkbox" id="lt-reenviar"> Incluir títulos já enviados</label></div>
+    </div>
+    <div id="lt-corpo"></div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Gerar arquivos', cls: 'primary', onClick: async () => {
+        if (!ultimo || !(ultimo.pix.qtd + ultimo.boleto.qtd)) return modalError('Nenhum título completo para gerar. Corrija as pendências ou ajuste a data.');
+        try {
+          const r = await api('/api/payables/lote-santander', { method: 'POST', body: corpo(false) });
+          const d = todayISO();
+          if (r.pix.qtd) baixar(`planilhaPix_${d}.csv`, r.pix.csv);
+          if (r.boleto.qtd) setTimeout(() => baixar(`planilhaBarra_${d}.csv`, r.boleto.csv), 400);
+          closeModal(); toast(`Lote gerado: ${r.pix.qtd} PIX e ${r.boleto.qtd} boleto(s). Títulos marcados como enviados à tesouraria.`); renderPagar();
+        } catch (e) { modalError(e.message); }
+     } }], { wide: true });
+  $('#lt-data').onchange = () => { dataPg = $('#lt-data').value; desenhar(); };
+  $('#lt-reenviar').onchange = () => { reenviar = $('#lt-reenviar').checked; desenhar(); };
+  desenhar();
+}

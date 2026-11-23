@@ -8660,3 +8660,13 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 **Limites:** OCR erra em foto ruim ou torta (por isso a tela de conferência); não cria despesa nova, só anexa às existentes; não lê HEIC. Testado com imagens e PDFs gerados; falta testar com comprovantes reais da Flash.
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+## Sessão 246 — Contas a Pagar: lote de pagamento Santander (PIX e boleto)
+
+**O que foi feito:** botão "Lote Santander (PIX e boleto)" na exportação de Contas a Pagar e na barra de seleção do visual Novo. Lê a forma de pagamento de cada título: PIX vai para a planilhaPix.csv e boleto para a planilhaBarra.csv, no layout dos modelos do banco (UTF-8 com BOM, ponto e vírgula, CRLF, valor 9.498,50, data dd/mm/aaaa). "Número do pagamento" é o ID do título. A tela confere antes (quantos entram, total, pendências por título: sem documento, sem chave, tipo da chave não informado, sem linha digitável, já enviado, data passada) e deixa de fora o que está incompleto. Ao gerar, os títulos incluídos ficam "Enviados à tesouraria" (marca em enviado_tesouraria_em, o status segue pendente para não mexer nos totais); a baixa continua manual. Filtros "A enviar" e "Enviados" e botão para desfazer o envio. Novo campo "Tipo da chave PIX" no fornecedor e no título (CPF, CNPJ, telefone, e-mail, aleatória); vazio = deduz pelo formato, e o que for ambíguo (11 dígitos sem pontuação) exige informar. O reembolso de km nasce como PIX com a chave do cadastro do colaborador.
+
+**Arquivos:** src/lote-santander.js, api/index.js, public/app.js, public/tema-listas.js, public/styles.css, supabase/migrations/2026-11-23-lote-bancario-santander.sql, scripts/2026-11-23_lote_santander_aplicar.js, scripts/2026-11-23_lote_santander_tela.txt, scripts/2026-11-23_verifica_lote_santander.js.
+
+**Premissas a confirmar com o banco:** rótulos da "Forma de iniciação" para CNPJ, e-mail e chave aleatória (o modelo só mostra CPF e Telefone; usei CNPJ, E-mail, Chave aleatória). Dados de hoje: 4 colaboradores PF sem CPF no cadastro de fornecedor e boletos sem linha digitável bloqueiam a geração até serem corrigidos.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>

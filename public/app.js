@@ -750,6 +750,8 @@ async function renderPagar() {
       <input type="search" id="q" placeholder="Buscar descrição, fornecedor…" value="${esc(saved.q || '')}">
       <select id="f-status"><option value="">Todos os status</option>
         <option value="pendente" ${saved.status === 'pendente' ? 'selected' : ''}>Pendentes</option>
+        <option value="aenviar" ${saved.status === 'aenviar' ? 'selected' : ''}>A enviar à tesouraria</option>
+        <option value="enviado" ${saved.status === 'enviado' ? 'selected' : ''}>Enviados à tesouraria</option>
         <option value="vencido" ${saved.status === 'vencido' ? 'selected' : ''}>Vencidos</option>
         <option value="pago" ${saved.status === 'pago' ? 'selected' : ''}>Pagos</option></select>
       <select id="f-cat"><option value="">Todas as categorias</option>${CAT_DESPESA.map(x => `<option ${saved.cat === x ? 'selected' : ''}>${x}</option>`).join('')}</select>
@@ -778,6 +780,8 @@ async function renderPagar() {
       const late = r.status === 'pendente' && r.due_date < today;
       if (fs === 'pendente' && r.status !== 'pendente') return false;
       if (fs === 'pago' && r.status !== 'pago') return false;
+      if (fs === 'enviado' && !(r.status === 'pendente' && r.enviado_tesouraria_em)) return false;
+      if (fs === 'aenviar' && !(r.status === 'pendente' && !r.enviado_tesouraria_em)) return false;
       if (fs === 'vencido' && !late) return false;
       if (fc && r.category !== fc) return false;
       if (fcc && (r.cost_center || '') !== fcc) return false;
@@ -806,6 +810,7 @@ async function renderPagar() {
           <td class="num">${brl(r.amount)}</td>
           <td>${r.status === 'pago'
             ? `<span class="badge ok">Pago ${brDate(r.payment_date)}</span>`
+            : r.enviado_tesouraria_em ? `<span class="badge env" title="Enviado à tesouraria em ${brDate(String(r.enviado_tesouraria_em).slice(0, 10))}${late ? ' (vencido)' : ''}">Enviado à tesouraria</span>`
             : late ? '<span class="badge late">Vencido</span>' : '<span class="badge pend">Pendente</span>'}</td>
           <td class="c-aprov-cell">${(() => { const i = pagarAprovInfo(r.aprovacao_count > 0, r.due_date);
             return `<button type="button" class="aprov-btn ${i.cls}" data-aprov="${r.id}" data-venc="${esc(r.due_date)}" title="${esc(i.titulo)}" aria-label="Aprovação">${i.glifo}</button>`; })()}</td>
@@ -816,7 +821,7 @@ async function renderPagar() {
               : '<span class="conc-nao" title="Baixado, mas sem movimentação bancária conciliada">✘</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente'
-              ? `<button class="btn-ic ok" data-pay="${r.id}" title="Dar baixa neste título" aria-label="Dar baixa">✓</button>`
+              ? `<button class="btn-ic ok" data-pay="${r.id}" title="Dar baixa neste título" aria-label="Dar baixa">✓</button>${r.enviado_tesouraria_em ? `<button class="btn-ic" data-desenviar="${r.id}" title="Desfazer o envio à tesouraria" aria-label="Desfazer envio">⎌</button>` : ''}`
               : `<button class="btn-ic" data-unpay="${r.id}" title="Estornar a baixa" aria-label="Estornar a baixa">↺</button>`}
             <button class="btn-ic" data-att="payable:${r.id}" title="Anexos deste título" aria-label="Anexos">📎${r.attachment_count ? `<span class="ic-cont">${r.attachment_count}</span>` : ''}</button>
             <button class="btn-ic" data-edit="${r.id}" title="Editar" aria-label="Editar">✎</button>
@@ -829,6 +834,7 @@ async function renderPagar() {
 
     $('#tbl').querySelectorAll('[data-pay]').forEach(b => b.onclick = () => baixaPagar(rows.find(r => r.id == b.dataset.pay)));
     $('#tbl').querySelectorAll('[data-unpay]').forEach(b => b.onclick = async () => { await api(`/api/payables/${b.dataset.unpay}/unpay`, { method: 'POST' }); toast('Baixa estornada.'); renderPagar(); });
+    $('#tbl').querySelectorAll('[data-desenviar]').forEach(b => b.onclick = async () => { await api(`/api/payables/${b.dataset.desenviar}/desenviar`, { method: 'POST' }); toast('Envio à tesouraria desfeito.'); renderPagar(); });
     $('#tbl').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => formPagar(rows.find(r => r.id == b.dataset.edit), sups));
     $('#tbl').querySelectorAll('[data-aprov]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.aprov); openAttachments('payable', r.id, r.description); });
     $('#tbl').querySelectorAll('[data-att]').forEach(b => b.onclick = () => { const r = rows.find(x => x.id == b.dataset.att.split(':')[1]); openAttachments('payable', r.id, r.description); });
@@ -863,6 +869,7 @@ async function renderPagar() {
       { label: 'CSV', onClick: () => { closeModal(); exportarPagarCSV(); } },
       { label: 'Excel', onClick: () => { closeModal(); exportarPagarExcel(); } },
       { label: 'PDF', onClick: () => { closeModal(); exportarPagarPDF(); } },
+      { label: 'Lote Santander (PIX e boleto)', onClick: () => { closeModal(); pagarLoteSantander(lastFiltered); } },
       { label: 'Pacote ZIP (tesouraria)', cls: 'primary', onClick: () => { closeModal(); pagarGerarPacote(lastFiltered); } }
     ]);
 
@@ -1013,6 +1020,52 @@ function pagarLeiameES(d) {
 
 // Gera o pacote ZIP da tesouraria com tudo o que está filtrado na tela:
 // PDF + Excel + boletos (um por título) + aprovações (cada uma uma vez só) + LEIAME.txt em espanhol (México).
+const PIX_TIPOS = [{ v: '', t: '— deduzir pelo formato —' }, { v: 'cpf', t: 'CPF' }, { v: 'cnpj', t: 'CNPJ' }, { v: 'telefone', t: 'Telefone' }, { v: 'email', t: 'E-mail' }, { v: 'aleatoria', t: 'Chave aleatória' }];
+
+// Lote de pagamento Santander: PIX e boleto dos títulos filtrados/selecionados, nos dois arquivos de importação do banco.
+// A conferência (o que entra e o que falta) vem do servidor; ao gerar, os títulos incluídos ficam "Enviados à tesouraria".
+async function pagarLoteSantander(rows) {
+  if (!rows.length) return toast('Nenhum título nos filtros atuais para exportar.');
+  let dataPg = '', reenviar = false, ultimo = null;
+  const corpo = sim => ({ ids: rows.map(r => r.id), simular: sim, data_pagamento: dataPg || null, reenviar });
+  const desenhar = async () => {
+    const el = document.getElementById('lt-corpo'); if (!el) return;
+    el.innerHTML = '<p class="hint">Conferindo os títulos…</p>';
+    try {
+      const r = await api('/api/payables/lote-santander', { method: 'POST', body: corpo(true) }); ultimo = r;
+      const lin = (nome, x) => `<tr><td>${nome}</td><td class="num">${x.qtd}</td><td class="num">${brl(x.total)}</td></tr>`;
+      const prob = r.problemas.length
+        ? `<p style="margin:10px 0 4px;color:var(--danger);font-weight:600">${r.problemas.length} título(s) com pendência, ficam de fora até corrigir:</p>
+          <div style="max-height:220px;overflow:auto"><table class="tbl-fin"><thead><tr><th>ID</th><th>Fornecedor</th><th>Forma</th><th>Pendência</th></tr></thead><tbody>${r.problemas.slice(0, 60).map(p => `<tr><td>${p.id}</td><td>${esc(p.fornecedor || '—')}</td><td>${esc(p.forma)}</td><td>${esc(p.motivo)}</td></tr>`).join('')}</tbody></table></div>${r.problemas.length > 60 ? '<p class="hint">Mostrando as 60 primeiras.</p>' : ''}`
+        : '<p style="color:var(--verde-700)">Todos os títulos estão completos.</p>';
+      el.innerHTML = `<table class="tbl-fin" style="margin-bottom:10px"><thead><tr><th>Arquivo</th><th class="num">Títulos</th><th class="num">Total</th></tr></thead><tbody>${lin('PIX (planilhaPix)', r.pix)}${lin('Boleto (planilhaBarra)', r.boleto)}</tbody></table>
+        ${r.ignorados ? `<p class="hint">${r.ignorados} título(s) fora do lote: forma de pagamento diferente de PIX/boleto, ou já pagos.</p>` : ''}${prob}`;
+    } catch (e) { el.innerHTML = '<p style="color:var(--danger)">' + esc(e.message) + '</p>'; }
+  };
+  const baixar = (nome, texto) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([texto], { type: 'text/csv;charset=utf-8' })); a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
+  openModal('Lote Santander (PIX e boleto)', `
+    <p style="font-size:13.5px;color:var(--ink-2)">Gera os arquivos de importação do banco com os ${rows.length} título(s) da tela. Contas PIX vão para a planilha de PIX e boletos para a planilha de código de barras. Ao gerar, os títulos incluídos passam a <strong>Enviados à tesouraria</strong>.</p>
+    <div class="form-row" style="margin:12px 0">
+      <div class="field"><label for="lt-data">Data de pagamento (vazio = vencimento de cada título)</label><input type="date" id="lt-data"></div>
+      <div class="field"><label><input type="checkbox" id="lt-reenviar"> Incluir títulos já enviados</label></div>
+    </div>
+    <div id="lt-corpo"></div>`,
+    [{ label: 'Cancelar', onClick: closeModal },
+     { label: 'Gerar arquivos', cls: 'primary', onClick: async () => {
+        if (!ultimo || !(ultimo.pix.qtd + ultimo.boleto.qtd)) return modalError('Nenhum título completo para gerar. Corrija as pendências ou ajuste a data.');
+        try {
+          const r = await api('/api/payables/lote-santander', { method: 'POST', body: corpo(false) });
+          const d = todayISO();
+          if (r.pix.qtd) baixar(`planilhaPix_${d}.csv`, r.pix.csv);
+          if (r.boleto.qtd) setTimeout(() => baixar(`planilhaBarra_${d}.csv`, r.boleto.csv), 400);
+          closeModal(); toast(`Lote gerado: ${r.pix.qtd} PIX e ${r.boleto.qtd} boleto(s). Títulos marcados como enviados à tesouraria.`); renderPagar();
+        } catch (e) { modalError(e.message); }
+     } }], { wide: true });
+  $('#lt-data').onchange = () => { dataPg = $('#lt-data').value; desenhar(); };
+  $('#lt-reenviar').onchange = () => { reenviar = $('#lt-reenviar').checked; desenhar(); };
+  desenhar();
+}
+
 async function pagarGerarPacote(rows) {
   if (!rows.length) return toast('Nenhum título nos filtros atuais para exportar.');
   if (!window.JSZip || !window.XLSX || !window.jspdf) return toast('As bibliotecas de exportação ainda estão carregando. Tente novamente em instantes.');
@@ -1186,6 +1239,7 @@ function formPagar(r, sups) {
       ${fldSel('p-pm', 'Forma de pagamento', [{ v: '', t: '—' }, ...Object.entries(PM_LABELS).map(([v, t]) => ({ v, t }))], r.payment_method || '')}
       <div id="p-pix-wrap" style="display:${r.payment_method === 'pix' ? 'block' : 'none'}">
         ${fld('p-pix', 'Chave PIX *', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
+        ${fldSel('p-pixtipo', 'Tipo da chave PIX', PIX_TIPOS, r.pix_key_tipo || '')}
         <small style="color:var(--muted); display:block; margin-top:-8px">Preenchida automaticamente com a chave cadastrada no fornecedor — pode editar se for diferente.</small>
       </div>
     </div>
@@ -1199,7 +1253,7 @@ function formPagar(r, sups) {
         const body = {
           description: $('#p-desc').value, supplier_id: $('#p-sup').value || null, category: $('#p-cat').value,
           cost_center: $('#p-cc').value, document: $('#p-doc').value, amount: $('#p-val').value,
-          due_date: $('#p-due').value, payment_method: $('#p-pm').value, pix_key: $('#p-pix').value, boleto_line: $('#p-boleto').value, notes: $('#p-notes').value
+          due_date: $('#p-due').value, payment_method: $('#p-pm').value, pix_key: $('#p-pix').value, pix_key_tipo: $('#p-pixtipo').value, boleto_line: $('#p-boleto').value, notes: $('#p-notes').value
         };
         try {
           if (isEdit) await api('/api/payables/' + r.id, { method: 'PUT', body });
@@ -1213,13 +1267,13 @@ function formPagar(r, sups) {
     $('#p-boleto-wrap').style.display = $('#p-pm').value === 'boleto' ? 'block' : 'none';
     if ($('#p-pm').value === 'pix') {
       const sup = sups.find(s => String(s.id) === $('#p-sup').value);
-      if (sup && sup.pix_key) $('#p-pix').value = sup.pix_key;
+      if (sup && sup.pix_key) { $('#p-pix').value = sup.pix_key; $('#p-pixtipo').value = sup.pix_key_tipo || ''; }
     }
   };
   $('#p-sup').onchange = () => {
     if ($('#p-pm').value === 'pix') {
       const sup = sups.find(s => String(s.id) === $('#p-sup').value);
-      $('#p-pix').value = (sup && sup.pix_key) || '';
+      $('#p-pix').value = (sup && sup.pix_key) || ''; $('#p-pixtipo').value = (sup && sup.pix_key_tipo) || '';
     }
   };
 }
@@ -3132,7 +3186,10 @@ async function formFornecedor(r) {
       ${fld('s-email', 'E-mail', 'email', r.email || '')}
       ${fld('s-terms', 'Condição de pagamento', 'text', r.payment_terms || '', 'placeholder="30 dias"')}
     </div>
-    ${fld('s-pix', 'Chave PIX', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
+    <div class="form-row">
+      ${fld('s-pix', 'Chave PIX', 'text', r.pix_key || '', 'placeholder="CPF/CNPJ, e-mail, telefone ou chave aleatória"')}
+      ${fldSel('s-pixtipo', 'Tipo da chave PIX', PIX_TIPOS, r.pix_key_tipo || '')}
+    </div>
     ${fldSel('s-status', 'Status', [{ v: 'ativo', t: 'Ativo' }, { v: 'inativo', t: 'Inativo' }], r.status || 'ativo')}
     ${fld('s-notes', 'Observações', 'text', r.notes || '')}
     ${/* A ligação com o colaborador é o que faz a aba Financeiro da ficha achar
@@ -3153,7 +3210,7 @@ async function formFornecedor(r) {
         const body = {
           name: $('#s-name').value, cnpj: $('#s-cnpj').value, category: $('#s-cat').value,
           contact_name: $('#s-contact').value, phone: $('#s-phone').value, email: $('#s-email').value,
-          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, status: $('#s-status').value, notes: $('#s-notes').value,
+          payment_terms: $('#s-terms').value, pix_key: $('#s-pix').value, pix_key_tipo: $('#s-pixtipo').value, status: $('#s-status').value, notes: $('#s-notes').value,
           colaborador_id: $('#s-colaborador').value || null
         };
         try {

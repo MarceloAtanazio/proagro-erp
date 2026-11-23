@@ -18,6 +18,7 @@ const bcrypt = require('bcryptjs');
 const path = require('path');
 const XLSX = require('xlsx');
 const { query, n } = require('../src/db');
+const lote = require('../src/lote-santander');
 
 const app = express();
 
@@ -542,6 +543,9 @@ app.get('/api/suppliers/colaboradores', requireAuth, requireViewAny(['fornecedor
       ORDER BY c.name`));
 }));
 
+// Tipo da chave PIX: só os cinco que o banco reconhece; vazio = deduzir pelo formato na hora de gerar o lote.
+const pixTipoValido = v => (lote.TIPOS_CHAVE.includes(String(v || '')) ? String(v) : null);
+
 app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (req, res) => {
   const b = req.body;
   if (!sanitize(b.name)) return res.status(400).json({ error: 'Razão social é obrigatória.' });
@@ -559,11 +563,11 @@ app.post('/api/suppliers', requireAuth, requireEdit('fornecedores'), h(async (re
   // mas nenhum endpoint a escrevia: a única ligação possível era a semeadura por
   // nome daquela migração, e quem foi cadastrado depois ficava fora para sempre.
   // Sem essa ligação, a aba Financeiro da ficha não acha título nenhum.
-  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes, colaborador_id)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+  const rows = await query(`INSERT INTO erp_suppliers (name, cnpj, category, contact_name, email, phone, payment_terms, pix_key, status, notes, colaborador_id, pix_key_tipo)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
     [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
      sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes),
-     Number(b.colaborador_id) > 0 ? Number(b.colaborador_id) : null]);
+     Number(b.colaborador_id) > 0 ? Number(b.colaborador_id) : null, pixTipoValido(b.pix_key_tipo)]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
@@ -581,9 +585,9 @@ app.put('/api/suppliers/:id', requireAuth, requireEdit('fornecedores'), h(async 
                'Desfaça a ligação lá antes de criar outra — dois fornecedores para a mesma pessoa partem o histórico dela em dois.' });
     }
   }
-  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10, colaborador_id=$11 WHERE id=$12`,
+  await query(`UPDATE erp_suppliers SET name=$1, cnpj=$2, category=$3, contact_name=$4, email=$5, phone=$6, payment_terms=$7, pix_key=$8, status=$9, notes=$10, colaborador_id=$11, pix_key_tipo=$13 WHERE id=$12`,
     [sanitize(b.name), rhFormatarDocumento(sanitize(b.cnpj)), sanitize(b.category), sanitize(b.contact_name),
-     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), dono, req.params.id]);
+     sanitize(b.email), rhFormatarTelefone(sanitize(b.phone)), sanitize(b.payment_terms), sanitize(b.pix_key), b.status === 'inativo' ? 'inativo' : 'ativo', sanitize(b.notes), dono, req.params.id, pixTipoValido(b.pix_key_tipo)]);
   res.json({ ok: true });
 }));
 
@@ -781,10 +785,10 @@ app.post('/api/payables', requireAuth, requireEdit('pagar'), h(async (req, res) 
   const b = req.body, err = validateTitle(b);
   if (err) return res.status(400).json({ error: err });
   const pm = b.payment_method || null;
-  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, payment_method, pix_key, boleto_line, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+  const rows = await query(`INSERT INTO erp_payables (supplier_id, description, category, cost_center, document, amount, due_date, payment_method, pix_key, boleto_line, notes, created_by, pix_key_tipo)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, boletoLinhaDigitos(b, pm), sanitize(b.notes), req.user.id]);
+     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, boletoLinhaDigitos(b, pm), sanitize(b.notes), req.user.id, pm === 'pix' ? pixTipoValido(b.pix_key_tipo) : null]);
   res.json({ ok: true, id: rows[0].id });
 }));
 
@@ -811,9 +815,9 @@ app.put('/api/payables/:id', requireAuth, requireEdit('pagar'), h(async (req, re
       : `Editou o título a pagar "${old.description}" (ID ${req.params.id}) sem alterações de campo`;
   }
 
-  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, payment_method=$8, pix_key=$9, boleto_line=$10, notes=$11 WHERE id=$12`,
+  await query(`UPDATE erp_payables SET supplier_id=$1, description=$2, category=$3, cost_center=$4, document=$5, amount=$6, due_date=$7, payment_method=$8, pix_key=$9, boleto_line=$10, notes=$11, pix_key_tipo=$13 WHERE id=$12`,
     [b.supplier_id || null, sanitize(b.description), sanitize(b.category), sanitize(b.cost_center),
-     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, boletoLinhaDigitos(b, pm), sanitize(b.notes), req.params.id]);
+     sanitize(b.document), Number(b.amount), b.due_date, pm, pm === 'pix' ? sanitize(b.pix_key) : null, boletoLinhaDigitos(b, pm), sanitize(b.notes), req.params.id, pm === 'pix' ? pixTipoValido(b.pix_key_tipo) : null]);
   res.json({ ok: true });
 }));
 
@@ -833,6 +837,35 @@ app.post('/api/payables/:id/pay', requireAuth, requireEdit('pagar'), h(async (re
 app.post('/api/payables/:id/unpay', requireAuth, requireEdit('pagar'), h(async (req, res) => {
   await query(`DELETE FROM erp_bank_transactions WHERE matched_type='payable' AND matched_id=$1 AND auto_generated=true`, [req.params.id]);
   await query(`UPDATE erp_payables SET status='pendente', payment_date=NULL WHERE id=$1`, [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// ---- Lote de pagamento Santander: gera os arquivos de PIX e de boleto dos títulos informados ----
+// simular=true só confere e devolve contagens e problemas (sem CSV e sem marcar nada). Sem simular, gera os CSV e marca os títulos
+// incluídos como "enviados à tesouraria"; quem não está completo fica de fora e volta na lista de problemas.
+app.post('/api/payables/lote-santander', requireAuth, requireEdit('pagar'), h(async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger))];
+  if (!ids.length) return res.status(400).json({ error: 'Nenhum título informado.' });
+  if (ids.length > 1000) return res.status(400).json({ error: 'Selecione no máximo 1000 títulos por lote.' });
+  const dp = req.body.data_pagamento ? String(req.body.data_pagamento).slice(0, 10) : '';
+  if (dp && !isDate(dp)) return res.status(400).json({ error: 'Data de pagamento inválida.' });
+  const rows = await query(`SELECT p.id, p.amount, p.due_date, p.status, p.description, p.payment_method, p.pix_key, p.pix_key_tipo, p.boleto_line, p.enviado_tesouraria_em,
+      s.name AS supplier_name, s.cnpj AS supplier_doc, s.pix_key AS supplier_pix_key, s.pix_key_tipo AS supplier_pix_key_tipo
+    FROM erp_payables p LEFT JOIN erp_suppliers s ON s.id = p.supplier_id WHERE p.id = ANY($1::int[])`, [ids]);
+  rows.forEach(r => { r.due_date = r.due_date instanceof Date ? r.due_date.toLocaleDateString('en-CA', { timeZone: TZ_BR }) : r.due_date; r.amount = n(r.amount); });
+  const out = lote.montarLote(rows, { dataPagamento: dp || null, hoje: hojeISO(), reenviar: !!req.body.reenviar });
+  const resumo = x => ({ qtd: x.qtd, total: x.total });
+  if (req.body.simular) return res.json({ simular: true, pix: resumo(out.pix), boleto: resumo(out.boleto), problemas: out.problemas, ignorados: out.ignorados });
+  const incluidos = out.pix.ids.concat(out.boleto.ids);
+  if (!incluidos.length) return res.status(400).json({ error: 'Nenhum título está completo para entrar no lote. Confira a lista de pendências.' });
+  await query(`UPDATE erp_payables SET enviado_tesouraria_em = now(), enviado_tesouraria_por = $1 WHERE id = ANY($2::int[]) AND status = 'pendente'`, [req.user.id, incluidos]);
+  req.auditAction = `Gerou o lote Santander: ${out.pix.qtd} PIX e ${out.boleto.qtd} boleto(s) (títulos ${incluidos.join(', ')}), marcados como enviados à tesouraria`;
+  res.json({ ok: true, pix: { ...resumo(out.pix), csv: out.pix.csv }, boleto: { ...resumo(out.boleto), csv: out.boleto.csv }, problemas: out.problemas, ignorados: out.ignorados });
+}));
+
+// Desfaz a marca de enviado (ex.: o lote não foi para o banco).
+app.post('/api/payables/:id/desenviar', requireAuth, requireEdit('pagar'), h(async (req, res) => {
+  await query('UPDATE erp_payables SET enviado_tesouraria_em = NULL, enviado_tesouraria_por = NULL WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 }));
 
@@ -7975,23 +8008,25 @@ app.post('/api/viaticos/km/:id/decidir', requireAuth, requireEdit('viaticos'), h
   let payableId = null, vencimentoPag = null;
   const valor = n(dados.km.valor_reembolso);
   if (dados.km.modelo === 'proprio' && valor > 0) {
-    const colab = (await query('SELECT name FROM erp_colaboradores WHERE id=$1', [dados.sol.colaborador_id]))[0];
+    const colab = (await query('SELECT name, pix_chave FROM erp_colaboradores WHERE id=$1', [dados.sol.colaborador_id]))[0];
     const nome = (colab && colab.name) || 'Colaborador';
     // O reembolso é pago À PESSOA, então o fornecedor é ela. Os reembolsos que
     // já existem em Contas a Pagar seguem esse mesmo padrão.
-    let forn = (await query('SELECT id FROM erp_suppliers WHERE lower(name)=lower($1) LIMIT 1', [nome]))[0];
+    let forn = (await query('SELECT id, cnpj, pix_key FROM erp_suppliers WHERE lower(name)=lower($1) LIMIT 1', [nome]))[0];
     if (!forn) {
       forn = (await query(
-        `INSERT INTO erp_suppliers (name, category, status) VALUES ($1,'Viáticos','ativo') RETURNING id`, [nome]))[0];
+        `INSERT INTO erp_suppliers (name, category, status) VALUES ($1,'Viáticos','ativo') RETURNING id, cnpj, pix_key`, [nome]))[0];
     }
     const ot = dados.sol.ordem_trabalho ? ` - OT ${dados.sol.ordem_trabalho}` : '';
+    // A chave PIX é a do cadastro do colaborador; na falta dela, a do fornecedor. Sem nenhuma, o título nasce sem forma e a revisão completa.
+    const chavePix = (colab && String(colab.pix_chave || '').trim()) || String(forn.pix_key || '').trim();
     const vencimento = kmVencimentoReembolso(hojeISO());
     const p = await query(
-      `INSERT INTO erp_payables (supplier_id, description, category, amount, due_date, status, notes, created_by)
-       VALUES ($1,$2,'Viáticos',$3,$4,'pendente',$5,$6) RETURNING id`,
+      `INSERT INTO erp_payables (supplier_id, description, category, amount, due_date, status, notes, created_by, payment_method, pix_key, pix_key_tipo)
+       VALUES ($1,$2,'Viáticos',$3,$4,'pendente',$5,$6,$7,$8,$9) RETURNING id`,
       [forn.id, `Reembolso km - ${nome}${ot}`, valor, vencimento,
        `${n(dados.km.km_rodado)} km x R$ ${n(dados.km.taxa_km).toFixed(2)}/km — viagem ${dados.km.solicitacao_id}`,
-       req.user.id]);
+       req.user.id, chavePix ? 'pix' : null, chavePix || null, chavePix ? lote.pixTipoDeduzir(chavePix, String(forn.cnpj || '').replace(/\D/g, '')) : null]);
     payableId = p[0].id;
     vencimentoPag = vencimento;
   }

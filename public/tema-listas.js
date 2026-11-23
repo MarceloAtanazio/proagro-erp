@@ -88,6 +88,7 @@
       try {
         if (pagar) {
           if (formato === 'excel') { if (!window.XLSX) return toast('Biblioteca de Excel ainda carregando.'); XLSX.writeFile(pagarMontarExcel(sel), `contas_a_pagar_selecao_${hoje}.xlsx`); toast('Excel exportado.'); }
+          else if (formato === 'lote') pagarLoteSantander(sel);
           else exportPagarPDF(sel, 'Seleção manual (' + sel.length + ' título(s))');
         } else {
           exportCSV('contas_a_receber_selecao', ['Vencimento', 'Cliente', 'Descricao', 'Categoria', 'Documento', 'Valor', 'Status', 'Recebimento'],
@@ -101,7 +102,7 @@
       dock.classList.toggle('nd-dock-sel', sel.length > 0);
       dock.innerHTML = sel.length
         ? `<div class="nd-dock-info"><strong>${tb(sel.length, 'selecionado', 'selecionados')}</strong><span>${brl(totSel)}</span></div>
-           <div class="nd-dock-acoes">${pagar ? '<button data-exp="excel">Excel</button><button data-exp="pdf">PDF</button>' : '<button data-exp="csv">CSV</button>'}<button data-limpar class="nd-dock-sec">Limpar</button></div>`
+           <div class="nd-dock-acoes">${pagar ? '<button data-exp="excel">Excel</button><button data-exp="pdf">PDF</button><button data-exp="lote">Lote Santander</button>' : '<button data-exp="csv">CSV</button>'}<button data-limpar class="nd-dock-sec">Limpar</button></div>`
         : `<div class="nd-dock-info"><strong>${tb(vis.length, 'título', 'títulos')}</strong><span>${brl(tot)}</span></div><div class="nd-dock-dica">marque as linhas para somar e exportar só a seleção</div>`;
       dock.querySelectorAll('[data-exp]').forEach(b => b.onclick = () => exportarSelecao(b.dataset.exp));
       const l = dock.querySelector('[data-limpar]'); if (l) l.onclick = () => { selecionados.clear(); tbl.querySelectorAll('.nd-sel').forEach(i => { i.checked = false; i.closest('tr').classList.remove('nd-marcada'); }); const a = $('#nd-sel-all'); if (a) a.checked = false; desenharDock(); };
