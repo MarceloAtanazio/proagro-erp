@@ -861,17 +861,21 @@ async function renderPagar() {
 
   const exportarPagarPDF = () => exportPagarPDF(lastFiltered, pagarFiltrosTexto('pt'));
 
-  $('#btn-export').onclick = () => openModal('Exportar Contas a Pagar',
-    '<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>' +
-    '<p style="font-size:12.5px; color:var(--muted); margin-top:8px">O <strong>pacote ZIP da tesouraria</strong> reúne, dos títulos filtrados, o PDF, o Excel, os boletos e as aprovações (cada aprovação uma vez só), mais um LEIAME.txt em espanhol e as planilhas do <strong>lote Santander</strong> (PIX e boleto), marcando os títulos como enviados à tesouraria.</p>',
-    [
-      { label: 'Cancelar', onClick: closeModal },
-      { label: 'CSV', onClick: () => { closeModal(); exportarPagarCSV(); } },
-      { label: 'Excel', onClick: () => { closeModal(); exportarPagarExcel(); } },
-      { label: 'PDF', onClick: () => { closeModal(); exportarPagarPDF(); } },
-      { label: 'Lote Santander (PIX e boleto)', onClick: () => { closeModal(); pagarLoteSantander(lastFiltered); } },
-      { label: 'Pacote ZIP (tesouraria)', cls: 'primary', onClick: () => { closeModal(); pagarGerarPacote(lastFiltered); } }
-    ]);
+  $('#btn-export').onclick = () => {
+    const op = (k, t, d, cls) => '<button type="button" class="exp-op ' + (cls || '') + '" data-exp="' + k + '"><strong>' + t + '</strong><span>' + d + '</span></button>';
+    openModal('Exportar Contas a Pagar',
+      '<p style="font-size:13.5px; color:var(--ink-2)">Em qual formato você quer exportar (respeitando os filtros aplicados na tela)?</p>' +
+      '<div class="exp-grade">' +
+        op('zip', 'Pacote ZIP (tesouraria)', 'PDF, Excel, boletos e aprovações (cada aprovação uma vez só), LEIAME.txt em espanhol e as planilhas do lote Santander. Marca os títulos como enviados à tesouraria.', 'exp-main') +
+        op('lote', 'Lote Santander', 'Só as planilhas de PIX e de boleto no layout do banco.') +
+        op('pdf', 'PDF', 'Relatório da tela.') +
+        op('excel', 'Excel', 'Planilha .xlsx.') +
+        op('csv', 'CSV', 'Arquivo de texto separado por ponto e vírgula.') +
+      '</div>',
+      [{ label: 'Cancelar', onClick: closeModal }], { wide: true });
+    const acao = { zip: () => pagarGerarPacote(lastFiltered), lote: () => pagarLoteSantander(lastFiltered), pdf: exportarPagarPDF, excel: exportarPagarExcel, csv: exportarPagarCSV };
+    document.querySelectorAll('.exp-op').forEach(b => { b.onclick = () => { closeModal(); acao[b.dataset.exp](); }; });
+  };
 
   draw();
 }

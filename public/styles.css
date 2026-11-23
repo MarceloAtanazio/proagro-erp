@@ -2167,3 +2167,14 @@ tr.sup-tam-det > td { padding: 0 16px 14px !important; background: color-mix(in 
 .tbl-lote th.num, .tbl-lote td.num { text-align: right; white-space: nowrap; }
 .tbl-lote thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .tbl-lote tbody td { border-top: 1px solid var(--line, #e6e9e7); }
+
+/* Modal Exportar Contas a Pagar: opções em grade, todas do mesmo tamanho */
+.exp-grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.exp-op { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px 14px; border: 1px solid var(--line, #dfe4e1); border-radius: 12px; background: var(--surface, #fff); color: var(--ink, inherit); cursor: pointer; font: inherit; transition: border-color .15s, box-shadow .15s; }
+.exp-op strong { font-size: 14px; }
+.exp-op span { font-size: 12px; line-height: 1.4; color: var(--muted); }
+.exp-op:hover, .exp-op:focus-visible { border-color: var(--verde-600, #0f8a4f); box-shadow: 0 0 0 3px rgba(15,138,79,.12); outline: none; }
+.exp-op.exp-main { grid-column: 1 / -1; background: linear-gradient(135deg, #0f8a4f, #0b6b3d); border-color: transparent; }
+.exp-op.exp-main strong, .exp-op.exp-main span { color: #fff; }
+.exp-op.exp-main span { opacity: .9; }
+@media (max-width: 560px) { .exp-grade { grid-template-columns: 1fr; } }
