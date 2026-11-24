@@ -3679,6 +3679,7 @@ function supFormItem(i) {
       ${fld('it-sku', 'SKU (código estruturado)', 'text', i.sku || '', 'placeholder="Ex.: EPI-LUV-P-001"')}
       ${fldSel('it-tipo', 'Tipo', [{ v: 'material', t: 'Material (consumo)' }, { v: 'equipamento', t: 'Equipamento (durável)' }], i.tipo || 'material')}
     </div>
+    <label style="display:flex;align-items:center;gap:8px;margin:2px 0 10px"><input type="checkbox" id="it-exige-termo" style="width:auto;margin:0" ${i.exige_termo ? 'checked' : ''}> Exige termo de responsabilidade na entrega (EPI, uniformes). Equipamentos sempre exigem.</label>
     ${fldArea('it-descricao', 'Descrição longa / técnica', i.descricao || '', 'placeholder="Especificações, ficha técnica, observações"')}
 
     ${supSecTitle('2 · Classificação e organização')}
@@ -3745,7 +3746,7 @@ function supFormItem(i) {
     [{ label: 'Cancelar', onClick: closeModal },
      { label: isEdit ? 'Salvar' : 'Cadastrar', cls: 'primary', onClick: async () => {
         const body = {
-          nome: $('#it-nome').value, sku: $('#it-sku').value, tipo: $('#it-tipo').value, descricao: $('#it-descricao').value,
+          nome: $('#it-nome').value, sku: $('#it-sku').value, tipo: $('#it-tipo').value, exige_termo: $('#it-exige-termo').checked, descricao: $('#it-descricao').value,
           categoria: supValorClass('it-cat', 'it-cat-outra'), subcategoria: supValorClass('it-subcat', 'it-subcat-outra'), marca: $('#it-marca').value, unidade: $('#it-un').value,
           estoque_minimo: $('#it-min').value, estoque_maximo: $('#it-max').value,
           peso_liquido: $('#it-pliq').value, peso_bruto: $('#it-pbru').value,
@@ -4292,15 +4293,15 @@ async function supRenderEnvios(panel) {
     $('#en-tbl').innerHTML = `
       <thead><tr>${edit ? '<th style="width:28px"><input type="checkbox" id="en-sel-todos" title="Marcar todos os equipamentos visíveis" aria-label="Marcar todos os equipamentos visíveis"></th>' : ''}<th>Data</th><th>Item</th><th class="num">Qtd</th><th>Colaborador</th><th>Envio</th><th>Situação</th><th>Termo</th><th class="actions">Ações</th></tr></thead>
       <tbody>${rows.map(m => {
-        const equip = m.item_tipo === 'equipamento', st = ST[m.status] || ['off', m.status];
+        const equip = m.item_tipo === 'equipamento', comTermo = equip || !!m.item_exige_termo, st = ST[m.status] || ['off', m.status];
         const ident = [m.unidade_serie ? 'Série ' + esc(m.unidade_serie) : '', m.unidade_patrimonio ? 'Pat. ' + esc(m.unidade_patrimonio) : ''].filter(Boolean).join(' · ');
         const semUnidade = equip && !m.unidade_id;
         const envio = [m.forma_envio ? esc(m.forma_envio) : '', m.codigo_rastreio ? '<span class="mono">' + esc(m.codigo_rastreio) + '</span>' : ''].filter(Boolean).join('<br>');
-        const termo = !equip ? '<small style="color:var(--muted)">—</small>'
+        const termo = !comTermo ? '<small style="color:var(--muted)">—</small>'
           : m.termos ? `<button class="btn-ic" data-termo="${m.id}" data-att="${m.termo_id ? 'termo_lote:' + m.termo_id : 'envio_termo:' + m.id}" title="Termo assinado e anexos (${m.termos})" aria-label="Termo assinado e anexos">📎<span class="ic-cont">${m.termos}</span></button>`
           : m.status === 'devolvido' ? '<small style="color:var(--muted)">—</small>'
           : `<button class="btn-ic" data-termo="${m.id}" data-att="${m.termo_id ? 'termo_lote:' + m.termo_id : 'envio_termo:' + m.id}" title="Ainda sem termo assinado: anexar" aria-label="Anexar o termo assinado">📎</button> <span class="badge warn">Pendente</span>`;
-        const selecionavel = equip && m.status !== 'devolvido' && !m.termo_id, attT = m.termo_id ? 'termo_lote:' + m.termo_id : 'envio_termo:' + m.id;
+        const selecionavel = comTermo && m.status !== 'devolvido' && !m.termo_id, attT = m.termo_id ? 'termo_lote:' + m.termo_id : 'envio_termo:' + m.id;
         return `<tr>
           ${edit ? `<td>${selecionavel ? `<input type="checkbox" data-ensel="${m.id}" ${SUP_TERMO_SEL.has(m.id) ? 'checked' : ''} title="Marcar para o termo único" aria-label="Marcar para o termo único">` : ''}</td>` : ''}
           <td>${brDate(m.data)}</td>
@@ -4317,13 +4318,13 @@ async function supRenderEnvios(panel) {
         </tr>`;
       }).join('') || `<tr><td colspan="${edit ? 9 : 8}"><div class="empty">Nenhum envio encontrado.</div></td></tr>`}</tbody>`;
     const T = $('#en-tbl'), achar = id => movs.find(m => m.id == id);
-    const atualizaSel = () => { const bt = $('#en-termo-lote'); if (!bt) return; const n = SUP_TERMO_SEL.size; bt.disabled = n === 0; bt.textContent = n ? `📄 Gerar termo único (${n})` : '📄 Gerar termo único'; bt.classList.toggle('pronto', n > 0); bt.title = n ? 'Reúne os equipamentos marcados em um só termo' : 'Marque, na primeira coluna, os equipamentos do mesmo colaborador'; };
+    const atualizaSel = () => { const bt = $('#en-termo-lote'); if (!bt) return; const n = SUP_TERMO_SEL.size; bt.disabled = n === 0; bt.textContent = n ? `📄 Gerar termo único (${n})` : '📄 Gerar termo único'; bt.classList.toggle('pronto', n > 0); bt.title = n ? 'Reúne os itens marcados em um só termo' : 'Marque, na primeira coluna, os itens do mesmo colaborador (equipamentos, EPI e uniformes)'; };
     T.querySelectorAll('[data-ensel]').forEach(cb => cb.onchange = () => { const id = Number(cb.dataset.ensel); if (cb.checked) SUP_TERMO_SEL.add(id); else SUP_TERMO_SEL.delete(id); atualizaSel(); });
     if ($('#en-termo-lote')) $('#en-termo-lote').onclick = () => supTermoLoteModal(movs.filter(x => SUP_TERMO_SEL.has(x.id)));
     atualizaSel();
     const cabSel = $('#en-sel-todos');
     if (cabSel) {
-      const vis = rows.filter(x => x.item_tipo === 'equipamento' && x.status !== 'devolvido' && !x.termo_id);
+      const vis = rows.filter(x => (x.item_tipo === 'equipamento' || x.item_exige_termo) && x.status !== 'devolvido' && !x.termo_id);
       cabSel.disabled = !vis.length; cabSel.checked = vis.length > 0 && vis.every(x => SUP_TERMO_SEL.has(x.id));
       cabSel.onchange = () => { vis.forEach(x => { if (cabSel.checked) SUP_TERMO_SEL.add(x.id); else SUP_TERMO_SEL.delete(x.id); }); draw(); };
     }
@@ -4448,12 +4449,12 @@ function supFormDevolucao(id) {
 
 // Ficha completa de um envio: tudo que foi registrado, mais o termo (PDF e anexo).
 function supDetalheEnvio(m, colaboradores) {
-  const edit = !READONLY, equip = m.item_tipo === 'equipamento';
+  const edit = !READONLY, equip = m.item_tipo === 'equipamento', comTermo = equip || !!m.item_exige_termo;
   const linha = (rot, val) => `<tr><td style="color:var(--muted);width:38%">${rot}</td><td><strong>${val}</strong></td></tr>`;
   const txt = v => (v == null || v === '') ? '—' : esc(v);
   const ST = { enviado: 'Enviado', entregue: 'Entregue', devolvido: 'Devolvido' };
   const btns = [{ label: 'Fechar', onClick: closeModal }, { label: 'Etiqueta (PDF)', onClick: () => supEtiquetaPDF(m) }];
-  if (equip) {
+  if (comTermo) {
     btns.push({ label: m.termo_id ? `Termo ${supTermoNum(m.termo_id)} (PDF)` : 'Gerar termo (PDF)', onClick: () => supTermoDoEnvio(m) });
     btns.push({ label: 'Termo assinado / anexos', onClick: () => (m.termo_id ? openAttachments('termo_lote', m.termo_id, `Termo ${supTermoNum(m.termo_id)} — ${m.colaborador_name}`) : openAttachments('envio_termo', m.id, `Termo do envio #${m.id} — ${m.item_nome}`)) });
     if (edit && m.termo_id) btns.push({ label: 'Desfazer termo', cls: 'danger-ghost', onClick: () => supTermoDesfazer(m) });
@@ -4483,7 +4484,7 @@ function supDetalheEnvio(m, colaboradores) {
       ${linha('Entregue em', m.data_entrega ? brDate(m.data_entrega) : '—')}
       ${linha('Devolvido em', m.data_devolucao ? brDate(m.data_devolucao) : '—')}
       ${linha('Condição na devolução', txt(m.condicao_devolucao))}
-      ${equip ? linha('Termo assinado anexado', m.termos ? m.termos + ' arquivo(s)' : '<span style="color:#B23A2F">Pendente</span>') : ''}
+      ${comTermo ? linha('Termo assinado anexado', m.termos ? m.termos + ' arquivo(s)' : '<span style="color:#B23A2F">Pendente</span>') : ''}
       ${linha('Observações', txt(m.notes))}
     </tbody></table>`, btns, { wide: true });
 }
@@ -4668,24 +4669,24 @@ const SUP_ESTADOS = [{ v: '', t: '— escolha —' }, { v: 'Novo', t: 'Novo' }, 
 const supTermoNum = id => 'TR-' + String(id).padStart(4, '0');
 
 function supTermoLoteModal(envs) {
-  if (!envs.length) return toast('Marque os equipamentos que vão no termo.');
-  if (new Set(envs.map(m => m.colaborador_id)).size > 1) return toast('Os equipamentos do termo precisam ser do mesmo colaborador. Desmarque os de outras pessoas.');
+  if (!envs.length) return toast('Marque os itens que vão no termo.');
+  if (new Set(envs.map(m => m.colaborador_id)).size > 1) return toast('Os itens do termo precisam ser do mesmo colaborador. Desmarque os de outras pessoas.');
   const faltam = envs.filter(m => !m.estado_saida);
   openModal(`Termo de responsabilidade — ${esc(envs[0].colaborador_name || '')}`, `
-    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px"><strong>${envs.length} equipamento${envs.length > 1 ? 's' : ''}</strong> em um só termo. Depois de gerar, imprima, colha as assinaturas e anexe o termo assinado com o 📎: ele vale para todos os equipamentos do termo.</p>
-    <table class="via-resumo-tbl"><thead><tr><th>Equipamento</th><th>Nº de série</th><th>Estado na saída</th></tr></thead><tbody>${envs.map(m => `<tr><td>${esc(m.item_nome)}</td><td>${esc(m.unidade_serie || '—')}</td><td>${m.estado_saida ? esc(m.estado_saida) : `<select class="tl-est" data-id="${m.id}">${SUP_ESTADOS.map(o => `<option value="${o.v}">${o.t}</option>`).join('')}</select>`}</td></tr>`).join('')}</tbody></table>
+    <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px"><strong>${envs.length} ${envs.length > 1 ? 'itens' : 'item'}</strong> em um só termo. Depois de gerar, imprima, colha as assinaturas e anexe o termo assinado com o 📎: ele vale para todos os itens do termo.</p>
+    <table class="via-resumo-tbl"><thead><tr><th>Item</th><th>Nº de série / tamanho</th><th>Estado na saída</th></tr></thead><tbody>${envs.map(m => `<tr><td>${esc(m.item_nome)}</td><td>${esc(m.unidade_serie || (m.tamanho ? 'Tam. ' + m.tamanho : '—'))}</td><td>${m.estado_saida ? esc(m.estado_saida) : `<select class="tl-est" data-id="${m.id}">${SUP_ESTADOS.map(o => `<option value="${o.v}"${o.v === 'Novo' && m.item_tipo !== 'equipamento' ? ' selected' : ''}>${o.t}</option>`).join('')}</select>`}</td></tr>`).join('')}</tbody></table>
     ${faltam.length ? '<p class="hint">Estes envios foram registrados antes de o estado ser obrigatório: escolha o estado de cada um.</p>' : ''}
     ${fldArea('tl-just', 'Justificativa da entrega / finalidade de uso', '', 'placeholder="Ex.: equipamentos para o trabalho de campo na região de Francisco Beltrão"')}
     ${fld('tl-obs', 'Observações gerais do lote', 'text', '')}`,
     [{ label: 'Cancelar', onClick: closeModal },
      { label: 'Gerar termo', cls: 'primary', onClick: async (ev) => {
         const estados = {}; document.querySelectorAll('.tl-est').forEach(s => { if (s.value) estados[s.dataset.id] = s.value; });
-        if (faltam.some(m => !estados[m.id])) return modalError('Escolha o estado de saída de todos os equipamentos.');
+        if (faltam.some(m => !estados[m.id])) return modalError('Escolha o estado de saída de todos os itens.');
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
         try {
           const r = await api('/api/suprimentos/termos', { method: 'POST', body: { envio_ids: envs.map(m => m.id), estados, justificativa: $('#tl-just').value, observacoes: $('#tl-obs').value } });
           const t = await api('/api/suprimentos/termos/' + r.id);
-          SUP_TERMO_SEL.clear(); closeModal(); supTermoPDF(t); toast(`Termo ${supTermoNum(r.id)} gerado com ${r.itens} equipamento(s).`); renderSuprimentos();
+          SUP_TERMO_SEL.clear(); closeModal(); supTermoPDF(t); toast(`Termo ${supTermoNum(r.id)} gerado com ${r.itens} item(ns).`); renderSuprimentos();
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Gerar termo'; } }
      } }], { wide: true });
 }
@@ -4709,6 +4710,7 @@ function supTermoPDF(t) {
     const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 14, CW = W - M * 2, RODAPE = 22;
     const VERDE = [0, 120, 63], VERDE_CLARO = [232, 243, 236], BORDA = [190, 210, 197], TXT = [34, 42, 37], CINZA = [110, 120, 114];
     const c = t.colaborador || {}, itens = t.itens || [], numero = supTermoNum(t.id);
+    const epi = itens.length > 0 && itens.every(i => i.item_tipo !== 'equipamento');   // termo só de EPI/uniforme: texto e inventário próprios
     const v = x => (x == null || String(x).trim() === '') ? '—' : String(x).trim();
     let y = 12;
     const nova = h => { if (y + h > H - RODAPE) { doc.addPage(); y = 14; } };
@@ -4727,9 +4729,9 @@ function supTermoPDF(t) {
     doc.text('Versão: 1.0', bx + 27, y + 32, { align: 'center' });
     doc.addImage(LOGO_PROAGRO_PNG, 'PNG', M + 4, y + 4, 44, 44 * 139 / 600);
     doc.setFont('helvetica', 'bold'); doc.setFontSize(12.5); doc.setTextColor(...VERDE);
-    doc.text('TERMO DE RESPONSABILIDADE E ENTREGA DE', M + 4, y + 22); doc.text('EQUIPAMENTO', M + 4, y + 28.5);
+    doc.text('TERMO DE RESPONSABILIDADE E ENTREGA DE', M + 4, y + 22); doc.text(epi ? 'EPI E UNIFORME' : 'EQUIPAMENTO', M + 4, y + 28.5);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...CINZA);
-    doc.text('Administração de Equipamentos', M + 4, y + 33); doc.text('Área: Suprimentos', M + 4, y + 36.5);
+    doc.text(epi ? 'Administração de Suprimentos' : 'Administração de Equipamentos', M + 4, y + 33); doc.text('Área: Suprimentos', M + 4, y + 36.5);
     y += 45;
 
     // 1. Identificação do colaborador
@@ -4748,16 +4750,16 @@ function supTermoPDF(t) {
     y = doc.lastAutoTable.finalY + 6;
 
     // 2. Inventário
-    nova(30); secao('2.  INVENTÁRIO DE EQUIPAMENTOS ENTREGUES');
+    nova(30); secao(epi ? '2.  INVENTÁRIO DE ITENS ENTREGUES' : '2.  INVENTÁRIO DE EQUIPAMENTOS ENTREGUES');
     itens.forEach((i, k) => {
       nova(38);
       const obs = [i.linha_telefonica ? 'Linha ' + supFone(i.linha_telefonica) + (i.operadora ? ' (' + i.operadora + ')' : '') : '', i.notes].filter(Boolean).join(' · ');
       const rot = { fillColor: VERDE_CLARO, textColor: VERDE, fontStyle: 'bold', fontSize: 7.4 };
       doc.autoTable({ startY: y, margin: { left: M, right: M, top: 14, bottom: RODAPE }, theme: 'grid', rowPageBreak: 'avoid',
         head: [[{ content: `ITEM ${String(k + 1).padStart(2, '0')}`, colSpan: 6, styles: { fillColor: VERDE, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5, halign: 'left', cellPadding: { top: 1.6, bottom: 1.6, left: 3, right: 2 } } }],
-          ['Categoria', 'Fabricante', 'Modelo', 'Nº de série (S/N)', 'Patrimônio', 'Estado'].map(t => ({ content: t, styles: rot }))],
-        body: [[v(i.subcategoria || i.categoria), v(i.marca), v(i.item_nome), v(i.serie), v(i.patrimonio), v(i.estado_saida)],
-          [{ content: 'Acessórios', styles: rot }, { content: v(i.condicao_saida), colSpan: 5 }],
+          (epi ? ['Categoria', 'Fabricante', 'Item', 'Tamanho', 'Quantidade', 'Estado'] : ['Categoria', 'Fabricante', 'Modelo', 'Nº de série (S/N)', 'Patrimônio', 'Estado']).map(t => ({ content: t, styles: rot }))],
+        body: [[v(i.subcategoria || i.categoria), v(i.marca), v(i.item_nome), epi ? v(i.tamanho) : v(i.serie), epi ? v(supNum(i.quantidade) + ' ' + (i.unidade || '')) : v(i.patrimonio), v(i.estado_saida)],
+          [{ content: epi ? 'Condição' : 'Acessórios', styles: rot }, { content: v(i.condicao_saida), colSpan: 5 }],
           ...(obs ? [[{ content: 'Observações', styles: rot }, { content: obs, colSpan: 5 }]] : [])],
         headStyles: { lineColor: BORDA, lineWidth: 0.2 },
         styles: { font: 'helvetica', fontSize: 8.6, cellPadding: 1.9, textColor: TXT, lineColor: BORDA, lineWidth: 0.2, valign: 'middle', overflow: 'linebreak' },
@@ -4772,7 +4774,9 @@ function supTermoPDF(t) {
     y = doc.lastAutoTable.finalY + 7;
 
     // 3. Informações importantes
-    const avisos = ['O equipamento poderá ser retirado das dependências da empresa conforme as necessidades de trabalho, mediante autorização prévia do gestor responsável.',
+    const avisos = epi ? ['O EPI e o uniforme devem ser utilizados durante a jornada de trabalho, conforme a atividade desempenhada e as orientações da empresa.',
+      'Qualquer dano, desgaste ou perda que comprometa a proteção ou o uso deve ser comunicado imediatamente ao gestor ou à área de Suprimentos.',
+      'A substituição é feita mediante solicitação à área de Suprimentos, com a devolução do item danificado ou desgastado, quando aplicável.'] : ['O equipamento poderá ser retirado das dependências da empresa conforme as necessidades de trabalho, mediante autorização prévia do gestor responsável.',
       'Qualquer falha, dano ou mau funcionamento deve ser comunicado imediatamente à área de Suporte Técnico e/ou Infraestrutura de TI. É vedada qualquer tentativa de reparo não autorizado.',
       'Em caso de perda ou roubo, notifique imediatamente o Suporte Técnico/Infraestrutura e siga o Processo de Perdas descrito no Manual de Seguro e Tratamento de Sinistros de Ativos Institucionais (disponível na intranet corporativa).',
       'A organização se reserva o direito de realizar auditorias e monitoramentos nos dispositivos corporativos a qualquer momento, sem aviso prévio, inclusive fora do horário de trabalho.'];
@@ -4785,8 +4789,12 @@ function supTermoPDF(t) {
     y += hAv + 6;
 
     // 4. Políticas de uso aceitável (com a declaração de recebimento)
-    const decl = 'Declaro ter recebido os equipamentos descritos no inventário acima, nas condições indicadas, e estou ciente de que são de propriedade da empresa, cedidos apenas para o exercício das minhas atividades profissionais.';
-    const politicas = ['O equipamento é de uso exclusivo para atividades profissionais vinculadas à organização, sendo vedada sua utilização para fins pessoais, recreativos ou por terceiros.',
+    const decl = epi ? 'Declaro ter recebido os itens descritos no inventário acima, nas condições indicadas, e estou ciente de que são fornecidos pela empresa para o exercício das minhas atividades profissionais.' : 'Declaro ter recebido os equipamentos descritos no inventário acima, nas condições indicadas, e estou ciente de que são de propriedade da empresa, cedidos apenas para o exercício das minhas atividades profissionais.';
+    const politicas = epi ? ['O EPI e o uniforme são de uso exclusivo nas atividades profissionais, sendo vedado cedê-los a terceiros ou alterá-los.',
+      'O colaborador compromete-se a usar, guardar e conservar o item conforme a orientação do fabricante e da empresa, e a comunicar qualquer alteração que o torne impróprio para uso (NR-6, no caso de EPI).',
+      'O colaborador deve solicitar a substituição quando o item estiver danificado, desgastado ou em tamanho inadequado.',
+      'O item deverá ser devolvido em caso de encerramento do vínculo empregatício, troca por novo item ou solicitação formal da organização, quando aplicável.',
+      'Danos por uso indevido ou extravio sem justificativa sujeitam o colaborador às medidas previstas no Regimento Interno e na legislação trabalhista vigente.'] : ['O equipamento é de uso exclusivo para atividades profissionais vinculadas à organização, sendo vedada sua utilização para fins pessoais, recreativos ou por terceiros.',
       'O colaborador compromete-se a manter o equipamento em perfeito estado de conservação, sendo responsável por danos decorrentes de negligência ou mau uso, exceto pelo desgaste natural de utilização.',
       'Somente softwares devidamente licenciados e autorizados pela área de TI poderão ser instalados. Para novos programas, solicite autorização formal à área de Suporte antes da instalação.',
       'O colaborador deve manter controles de segurança ativos (senha de acesso, criptografia, bloqueio automático de tela, etc.) para proteger informações corporativas em caso de roubo, furto ou perda.',
@@ -4808,7 +4816,7 @@ function supTermoPDF(t) {
     const lJus = t.justificativa ? quebra(t.justificativa, CW - 8, 9) : [], hJus = Math.max(20, 9 + lJus.length * 4.2);
     nova(hJus + 8); secao('5.  JUSTIFICATIVA DA ENTREGA / FINALIDADE DE USO');
     doc.setDrawColor(...BORDA); doc.setFillColor(255, 255, 255); doc.rect(M, y, CW, hJus, 'FD');
-    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(...CINZA); doc.text('Descreva a finalidade e o motivo da entrega dos equipamentos ao colaborador:', M + 4, y + 4.5);
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(...CINZA); doc.text(epi ? 'Descreva a finalidade e o motivo da entrega dos itens ao colaborador:' : 'Descreva a finalidade e o motivo da entrega dos equipamentos ao colaborador:', M + 4, y + 4.5);
     if (lJus.length) { doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...TXT); doc.text(lJus, M + 4, y + 10); }
     y += hJus + 8;
 

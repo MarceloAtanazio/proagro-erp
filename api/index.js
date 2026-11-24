@@ -8225,6 +8225,7 @@ function itemValues(b) {
     nome: sanitize(b.nome), sku: sanitize(b.sku), categoria: sanitize(b.categoria),
     subcategoria: sanitize(b.subcategoria), marca: sanitize(b.marca),
     tipo: b.tipo === 'equipamento' ? 'equipamento' : 'material',
+    exige_termo: b.tipo === 'equipamento' ? false : !!b.exige_termo,
     unidade: sanitize(b.unidade) || 'un', descricao: sanitize(b.descricao),
     estoque_minimo: gr.grade.length ? Object.values(gr.minimos).reduce((a, x) => a + x, 0) : (Number(b.estoque_minimo) || 0), estoque_maximo: num(b.estoque_maximo),
     grade_tamanhos: gr.grade.length ? JSON.stringify(gr.grade) : null, minimos_tamanho: gr.grade.length ? JSON.stringify(gr.minimos) : null,
@@ -8412,7 +8413,7 @@ app.get('/api/suprimentos/movimentos', requireAuth, SUP_VIEW, h(async (req, res)
   if (req.query.origem) { params.push(req.query.origem); cond.push(`m.origem=$${params.length}`); }
   const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
   res.json(await query(`
-    SELECT m.*, i.nome AS item_nome, i.unidade, i.tipo AS item_tipo,
+    SELECT m.*, i.nome AS item_nome, i.unidade, i.tipo AS item_tipo, i.exige_termo AS item_exige_termo,
       s.name AS supplier_name, c.name AS colaborador_name, c.cargo AS colaborador_cargo, u.name AS created_by_name,
       un.numero_serie AS unidade_serie, un.patrimonio AS unidade_patrimonio,
       i.marca AS item_marca, i.sku AS item_sku, i.subcategoria AS item_subcategoria, i.grade_tamanhos AS item_grade,
@@ -8634,10 +8635,10 @@ app.post('/api/suprimentos/termos', requireAuth, SUP_EDIT, h(async (req, res) =>
   const ids = [...new Set((Array.isArray(b.envio_ids) ? b.envio_ids : []).map(Number).filter(Number.isInteger))];
   if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um envio de equipamento.' });
   if (ids.length > 30) return res.status(400).json({ error: 'Um termo aceita no máximo 30 equipamentos.' });
-  const envs = await query(`SELECT m.*, i.tipo AS item_tipo, i.nome AS item_nome FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id
+  const envs = await query(`SELECT m.*, i.tipo AS item_tipo, i.exige_termo AS item_exige_termo, i.nome AS item_nome FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id
     WHERE m.id = ANY($1::int[]) AND m.origem='envio' ORDER BY m.id`, [ids]);
   if (envs.length !== ids.length) return res.status(404).json({ error: 'Algum envio selecionado não foi encontrado.' });
-  if (envs.some(e => e.item_tipo !== 'equipamento')) return res.status(400).json({ error: 'O termo de responsabilidade é só para equipamentos.' });
+  if (envs.some(e => e.item_tipo !== 'equipamento' && !e.item_exige_termo)) return res.status(400).json({ error: 'O termo de responsabilidade é só para equipamentos e itens marcados como "exige termo" (EPI, uniformes).' });
   if (envs.some(e => e.status === 'devolvido')) return res.status(400).json({ error: 'Há um envio já devolvido na seleção: ele não entra no termo.' });
   if (new Set(envs.map(e => e.colaborador_id)).size !== 1) return res.status(400).json({ error: 'Os equipamentos do termo precisam ser do mesmo colaborador.' });
   const ja = envs.find(e => e.termo_id);
@@ -8665,7 +8666,7 @@ app.get('/api/suprimentos/termos/:id', requireAuth, SUP_EDIT, h(async (req, res)
     LEFT JOIN erp_rh_vinculos v ON v.id = (SELECT x.id FROM erp_rh_vinculos x WHERE x.colaborador_id = c.id ORDER BY (x.desligamento IS NULL) DESC, x.admissao DESC NULLS LAST, x.id DESC LIMIT 1)
     LEFT JOIN erp_colaboradores g ON g.id = v.gestor_id
     WHERE c.id=$1`, [t.colaborador_id]))[0] || null;
-  const itens = await query(`SELECT m.id, m.data, m.quantidade, m.estado_saida, m.condicao_saida, m.notes, m.linha_telefonica, m.operadora, m.forma_envio, m.codigo_rastreio, m.status,
+  const itens = await query(`SELECT m.id, m.data, m.quantidade, m.tamanho, i.tipo AS item_tipo, m.estado_saida, m.condicao_saida, m.notes, m.linha_telefonica, m.operadora, m.forma_envio, m.codigo_rastreio, m.status,
       i.nome AS item_nome, i.categoria, i.subcategoria, i.marca, i.sku, i.numero_serie AS modelo_numero, i.unidade, un.numero_serie AS serie, un.patrimonio
     FROM erp_estoque_movimentos m JOIN erp_estoque_itens i ON i.id = m.item_id LEFT JOIN erp_estoque_unidades un ON un.id = m.unidade_id
     WHERE m.termo_id=$1 ORDER BY m.id`, [t.id]);
