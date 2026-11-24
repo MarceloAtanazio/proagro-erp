@@ -707,7 +707,7 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
    variacao sao Descricao e Fornecedor/Cliente, que sao texto e podem quebrar.
    A largura minima cobre as colunas fixas mais um minimo para as duas de
    texto; abaixo disso o .table-wrap rola, como nas demais tabelas do sistema. */
-.tbl-fin { table-layout: fixed; min-width: 1264px; }
+.tbl-fin { table-layout: fixed; min-width: 1274px; }
 .tbl-fin col.c-id     { width: 52px; }
 .tbl-fin col.c-venc   { width: 100px; }
 .tbl-fin col.c-desc   { width: auto; }
@@ -723,7 +723,7 @@ button.badge-toggle:disabled { cursor: default; opacity: .6; }
    140 o badge de Contas a Receber saia recortado em todas as linhas baixadas. */
 .tbl-fin col.c-status { width: 156px; }
 .tbl-fin col.c-conc   { width: 66px; }
-.tbl-fin col.c-acoes  { width: 200px; }
+.tbl-fin col.c-acoes  { width: 210px; }
 .tbl-fin td { white-space: normal; overflow-wrap: break-word; vertical-align: top; }
 .tbl-fin td.num { white-space: nowrap; }
 .tbl-fin td.actions { white-space: normal; }
