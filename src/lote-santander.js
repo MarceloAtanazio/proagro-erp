@@ -14,6 +14,8 @@ const soDigitos = v => String(v == null ? '' : v).replace(/\D/g, '');
 function fmtCpf(d) { return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4'); }
 function fmtCnpj(d) { return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5'); }
 function fmtMoeda(v) { return Number(v).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+// PIX em lote: o banco pede o valor só com dígitos e o separador dos centavos (ponto ou vírgula), até 15 caracteres, ex.: 10000.00. Sem separador de milhar.
+function fmtValorPix(v) { return Number(v).toFixed(2); }
 function fmtDataBR(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; }
 
 // Tipo da chave a partir do formato. Devolve null quando é ambíguo (11 dígitos sem pontuação pode ser CPF ou telefone):
@@ -91,7 +93,7 @@ function montarLote(rows, opts) {
       if (!tipo) { prob('tipo da chave PIX não informado (cadastre no fornecedor ou no título)'); continue; }
       const k = pixChaveFormatar(r.pix_key, tipo);
       if (k.erro) { prob(k.erro); continue; }
-      pix.push({ id: r.id, valor, linha: linhaCsv([ROTULO_INICIACAO[tipo], r.id, k.v, '', '', '', '', '', r.supplier_name, tipoDoc, docFmt, fmtMoeda(valor), fmtDataBR(data), '', r.description]) });
+      pix.push({ id: r.id, valor, linha: linhaCsv([ROTULO_INICIACAO[tipo], r.id, k.v, '', '', '', '', '', r.supplier_name, tipoDoc, docFmt, fmtValorPix(valor), fmtDataBR(data), '', r.description]) });
     } else {
       const d = soDigitos(r.boleto_line);
       if (!d) { prob('sem linha digitável do boleto'); continue; }
@@ -107,4 +109,4 @@ function montarLote(rows, opts) {
   };
 }
 
-module.exports = { TIPOS_CHAVE, pixTipoDeduzir, pixChaveFormatar, boletoLinhaFormatar, montarLote, fmtMoeda, fmtDataBR };
+module.exports = { TIPOS_CHAVE, pixTipoDeduzir, pixChaveFormatar, boletoLinhaFormatar, montarLote, fmtMoeda, fmtValorPix, fmtDataBR };

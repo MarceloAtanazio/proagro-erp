@@ -8,12 +8,13 @@ const r = (o) => Object.assign({}, base, o);
 const q = res => res.pix.csv.split('\r\n');
 t('PIX CPF igual ao modelo', () => {
   const x = L.montarLote([r({ id: 'ReembKM', amount: 287.7, payment_method: 'pix', pix_key: '10303558946', pix_key_tipo: 'cpf', supplier_name: 'Gustavo Fonseca', supplier_doc: '103.035.589-46', description: 'Reembolso km - OT 157' })], { hoje: '2026-10-01' });
-  assert.strictEqual(q(x)[1], '3;ReembKM;103.035.589-46;;;;;;Gustavo Fonseca;PF;103.035.589-46;287,70;05/10/2026;;Reembolso km - OT 157');
+  assert.strictEqual(q(x)[1], '3;ReembKM;103.035.589-46;;;;;;Gustavo Fonseca;PF;103.035.589-46;287.70;05/10/2026;;Reembolso km - OT 157');
 });
 t('PIX telefone com documento CPF separado', () => {
   const x = L.montarLote([r({ id: 9, amount: 177.8, payment_method: 'pix', pix_key: '(14) 99651-6296', pix_key_tipo: 'telefone', supplier_name: 'Luiz Henrique Santos Suzuki', supplier_doc: '33570455831', description: 'Reembolso km - OT 157' })], { hoje: '2026-10-01' });
-  assert.strictEqual(q(x)[1], '1;9;14996516296;;;;;;Luiz Henrique Santos Suzuki;PF;335.704.558-31;177,80;05/10/2026;;Reembolso km - OT 157');
+  assert.strictEqual(q(x)[1], '1;9;14996516296;;;;;;Luiz Henrique Santos Suzuki;PF;335.704.558-31;177.80;05/10/2026;;Reembolso km - OT 157');
 });
+t('PIX: valor com ponto e sem milhar', () => { assert.strictEqual(L.fmtValorPix(10000), '10000.00'); assert.strictEqual(L.fmtValorPix(9498.5), '9498.50'); assert.strictEqual(L.fmtValorPix(0.7), '0.70'); });
 t('milhar com ponto', () => { assert.strictEqual(L.fmtMoeda(4254.49), '4.254,49'); assert.strictEqual(L.fmtMoeda(9498.5), '9.498,50'); assert.strictEqual(L.fmtMoeda(720.24), '720,24'); });
 t('boleto igual ao modelo (PJ)', () => {
   const x = L.montarLote([r({ id: 'Pagamento2', amount: 9498.5, payment_method: 'boleto', boleto_line: '46191110000000000004293930193011515900000949850', supplier_name: 'CASA DA MALHA E RETALHO IND E COM LTDA', supplier_doc: '82129552000169' })], { hoje: '2026-10-01' });
