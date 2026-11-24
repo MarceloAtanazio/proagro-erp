@@ -7292,7 +7292,8 @@ async function viewSolicitacao(id) {
           const pv = (m.previsao_por_categoria && typeof m.previsao_por_categoria === 'object') ? Object.entries(m.previsao_por_categoria).filter(([, v]) => Number(v) > 0) : [];
           const canc = m.status === 'cancelada';
           return `<tr class="via-fam-cab"><td><strong>OT ${esc(m.ordem_trabalho || m.id)}</strong> <small style="color:var(--muted)">${esc(rotuloMembro(m))}</small>
-              <span class="badge ${VIA_STATUS_BADGE[m.status]}">${VIA_STATUS_LABEL[m.status]}</span></td>
+              <span class="badge ${VIA_STATUS_BADGE[m.status]}">${VIA_STATUS_LABEL[m.status]}</span>
+              ${viaTemPdfSolicitacao(m) ? `<button type="button" class="btn sm" data-fampdf="${m.id}" title="Baixar o PDF só desta OT" style="margin-left:6px">⬇ PDF</button>` : ''}</td>
             <td class="num">${canc ? '<small style="color:var(--muted)">não entra nos totais</small>' : `<strong>${brl(viaTotalSolicitado(m))}</strong><br><small style="color:var(--muted)">liberado ${brl(m.valor_liberado)}</small>`}</td></tr>`
             + (canc ? '' : pv.map(([k, v]) => `<tr class="via-fam-linha"><td>${DESP_CAT_LABEL[k] || esc(k)}</td><td class="num">${brl(Number(v))}</td></tr>`).join(''));
         }).join('')}
@@ -7362,7 +7363,7 @@ async function viewSolicitacao(id) {
 
   const botoes = [{ label: 'Fechar', onClick: closeModal }];
   // Baixar o PDF da solicitação — disponível para todos (inclusive só-leitura).
-  botoes.push({ label: 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
+  botoes.push({ label: familia.length > 1 ? 'Baixar PDF (OT de origem)' : 'Baixar PDF', onClick: () => viaBaixarPdfSolicitacao(s) });
   if (s.transporte_detalhes && s.transporte_detalhes.direcionador && typeof viaDirecionadorVer === 'function') botoes.push({ label: '🧭 Direcionador', onClick: () => viaDirecionadorVer(s) });
   if (bloqueada && USER.role === 'admin' && !READONLY) botoes.push({ label: 'Liberar bloqueio', onClick: () => { closeModal(); viaLiberarComprovacaoModal(s, () => viewSolicitacao(id)); } });
   if (somenteLeitura) {
@@ -7582,6 +7583,7 @@ async function viewSolicitacao(id) {
     });
   }
   document.querySelectorAll('[data-deldesp]').forEach(b => b.onclick = () => confirmDelete('esta despesa', `/api/viaticos/despesas/${b.dataset.deldesp}`, () => viewSolicitacao(id)));
+  document.querySelectorAll('[data-fampdf]').forEach(b => b.onclick = () => { const m = familia.find(x => x.id == b.dataset.fampdf); if (m) viaBaixarPdfSolicitacao(m); });
   document.querySelectorAll('[data-att]').forEach(b => b.onclick = () => openAttachments('viatico', b.dataset.att, DESP_CAT_LABEL[despesas.find(d => d.id == b.dataset.att)?.categoria] || 'Comprovante'));
   const btnPasta = $('#via-pasta-btn'); if (btnPasta) btnPasta.onclick = () => viaComprovantesPasta(s, despesas, () => viewSolicitacao(id));
   document.querySelectorAll('[data-aprovar]').forEach(b => b.onclick = async () => {
