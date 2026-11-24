@@ -821,8 +821,8 @@ async function renderPagar() {
               : '<span class="conc-nao" title="Baixado, mas sem movimentação bancária conciliada">✘</span>'}</td>
           <td class="actions">
             ${r.status === 'pendente'
-              ? `<button class="btn-ic ok" data-pay="${r.id}" title="Dar baixa neste título" aria-label="Dar baixa">✓</button>${r.enviado_tesouraria_em ? `<button class="btn-ic" data-desenviar="${r.id}" title="Desfazer o envio à tesouraria" aria-label="Desfazer envio">⎌</button>` : ''}`
-              : `<button class="btn-ic" data-unpay="${r.id}" title="Estornar a baixa" aria-label="Estornar a baixa">↺</button>`}
+              ? `<button class="btn-ic ok" data-pay="${r.id}" title="Dar baixa neste título" aria-label="Dar baixa">✓</button>${r.enviado_tesouraria_em ? `<button class="btn-ic" data-desenviar="${r.id}" title="Desfazer o envio à tesouraria" aria-label="Desfazer envio">⎌</button>` : '<span class="btn-ic-vazio" aria-hidden="true"></span>'}`
+              : `<button class="btn-ic" data-unpay="${r.id}" title="Estornar a baixa" aria-label="Estornar a baixa">↺</button><span class="btn-ic-vazio" aria-hidden="true"></span>`}
             <button class="btn-ic" data-att="payable:${r.id}" title="Anexos deste título" aria-label="Anexos">📎${r.attachment_count ? `<span class="ic-cont">${r.attachment_count}</span>` : ''}</button>
             <button class="btn-ic" data-edit="${r.id}" title="Editar" aria-label="Editar">✎</button>
             <button class="btn-ic perigo" data-del="${r.id}" title="Excluir" aria-label="Excluir">🗑</button>
