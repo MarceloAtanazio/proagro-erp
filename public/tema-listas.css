@@ -101,7 +101,8 @@ html[data-ui="novo"] .nd-fin .tbl-fin td { vertical-align: middle; }
 html[data-ui="novo"] .nd-fin .tbl-fin td.id-cell { text-align: left; padding-left: 20px; }
 html[data-ui="novo"] .nd-fin .tbl-fin td.actions { white-space: nowrap; text-align: right; }
 html[data-ui="novo"] .nd-fin .tbl-fin td.actions .btn-ic { margin-left: 2px; }
-html[data-ui="novo"] .nd-fin .tbl-fin col.c-acoes { width: 200px; }
+html[data-ui="novo"] .nd-fin .tbl-fin col.c-acoes { width: 236px; }
+html[data-ui="novo"] .nd-fin .tbl-fin td.actions { padding-left: 10px; padding-right: 14px; text-align: left; }
 html[data-ui="novo"] .nd-fin .tbl-fin { min-width: 1160px; }
 .nd-sel-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; cursor: pointer; }
 .nd-sel-wrap small { font-size: 10.5px; color: var(--muted); }
