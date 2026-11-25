@@ -7283,7 +7283,7 @@ async function viewSolicitacao(id) {
     : esc(s.destino || '—');
   const infoOT = `
     <div class="card" style="margin-bottom:14px; padding:14px 16px; background:var(--verde-050,#EAF5EC); border-color:#CDE5D6">
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px 20px; font-size:13px">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px 20px; font-size:13px">
         <div><small style="color:var(--muted)">Ordem de Trabalho</small><br><strong>${s.ordem_trabalho ? 'OT ' + esc(s.ordem_trabalho) : '—'}</strong></div>
         <div><small style="color:var(--muted)">Local / Tier</small><br><strong>${LOCAL_LABEL[s.categoria_local] || '—'} · Tier ${esc(s.tier || '—')}</strong></div>
         <div><small style="color:var(--muted)">Período${familia.length > 1 ? ' (todas as OTs)' : ''}</small><br><strong>${brDate(totaisFam.inicio || s.data_inicio)} – ${brDate(totaisFam.fim || s.data_fim)}</strong></div>
