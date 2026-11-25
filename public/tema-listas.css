@@ -156,3 +156,13 @@ html[data-tema="escuro"] .nd-dock { background: color-mix(in srgb, #1B2A22 94%, 
   html[data-ui="novo"] .app.visible .sidebar:focus-within .nd-rail-busca span,
   html[data-ui="novo"] .app.visible.nd-pin .sidebar .nd-rail-busca span { position: static; margin: 0; pointer-events: auto; }
 }
+
+/* ---------- Viáticos: OT em aberto x já fechada (mesmas regras de styles.css, com a força do tema novo) ---------- */
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-aberta td:first-child { box-shadow: inset 4px 0 0 var(--azul-700, #2B5C9A); }
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-fechada td,
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-cancelada td { background: color-mix(in srgb, var(--muted) 9%, var(--card)); border-color: color-mix(in srgb, var(--muted) 16%, var(--line)); color: color-mix(in srgb, var(--ink-2) 78%, var(--card)); }
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-fechada td:first-child,
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-cancelada td:first-child { box-shadow: inset 4px 0 0 color-mix(in srgb, var(--muted) 45%, var(--card)); }
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-diverg td:first-child { box-shadow: inset 4px 0 0 #D9A62B; }
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-fechada:hover td,
+html[data-ui="novo"] .content > .table-wrap tbody tr.via-cancelada:hover td { background: color-mix(in srgb, var(--muted) 14%, var(--card)); }

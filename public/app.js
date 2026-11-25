@@ -6603,7 +6603,7 @@ async function renderViaticos() {
       const cor = 'style="color:var(--muted)"';
       if (o.filho) {
         const fechadaRaiz = raizObj ? viaSolFechada(raizObj) : viaSolFechada(s);
-        return `<tr class="via-fam-filho">
+        return `<tr class="via-fam-filho ${viaClasseLinha(s)}">
           <td><span class="via-fam-seta-filho" aria-hidden="true">↪</span> <strong>OT ${esc(s.ordem_trabalho || s.id)}</strong><br><small ${cor}>${esc(rotuloCompl(s))}</small></td>
           <td></td>
           <td><small ${cor} ${destinosAttr}>${destinosTxt}</small></td>
@@ -6617,7 +6617,7 @@ async function renderViaticos() {
       }
       const chip = filhos.length
         ? `<br><button type="button" class="via-fam-chip" data-fam="${s.id}" aria-expanded="${aberta}" title="${aberta ? 'Recolher' : 'Ver'} as complementares desta OT">↪ ${filhos.length} complementar${filhos.length > 1 ? 'es' : ''} <span aria-hidden="true">${aberta ? '▴' : '▾'}</span></button>` : '';
-      return `<tr${filhos.length ? ' class="via-fam-raiz"' : ''}>
+      return `<tr class="${filhos.length ? 'via-fam-raiz ' : ''}${viaClasseLinha(s)}">
           <td><strong>${esc(s.colaborador_name)}</strong>${s.colaborador_cargo ? `<br><small ${cor}>${esc(s.colaborador_cargo)}</small>` : ''}</td>
           <td>${s.tier}</td>
           <td>${LOCAL_LABEL[s.categoria_local]}${s.ordem_trabalho ? `<br><small ${cor}>OT ${esc(s.ordem_trabalho)}</small>` : ''}
@@ -7022,6 +7022,12 @@ const VIA_ORIGEM_PEND = { estouro: 'gasto acima do liberado', excesso: 'excesso 
   cancelamento: 'OT cancelada com valor já transferido', 'excesso+flash': 'excesso e despesa reprovada no Flash', 'estouro+flash': 'gasto acima do liberado e despesa reprovada no Flash' };
 
 // Cancelável = antes de a viagem começar. Em Approvals vale sempre; Transferência Agendada e Liberado só antes da data de saída (igual ao servidor).
+// Classe da linha na lista de Viáticos: separa o que já fechou do que está em aberto (estilo em styles.css e tema-listas.css).
+function viaClasseLinha(s) {
+  if (s.status === 'cancelada') return 'via-cancelada';
+  if (s.status === 'divergente') return 'via-fechada via-diverg';
+  return ['comprovado', 'devolvido', 'arquivado'].includes(s.status) ? 'via-fechada' : 'via-aberta';
+}
 function viaSolFechada(s) { return ['comprovado', 'devolvido', 'divergente', 'arquivado', 'cancelada'].includes(s.status); }
 // Excluir pede confirmação DUAS vezes: é permanente (leva junto as despesas lançadas) e fica ao lado de botões de uso diário.
 function viaConfirmarExclusao(s) {

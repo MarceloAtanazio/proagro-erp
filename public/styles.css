@@ -1928,6 +1928,14 @@ td.via-acoes .btn-ic.exc:hover { background: var(--danger-050); }
 /* Viáticos: OT de origem com as complementares dentro (comprovação única). A etiqueta abre o histórico; as sub-linhas são mais leves e recuadas. */
 .via-fam-chip { margin-top: 4px; padding: 2px 9px; font-size: 11.5px; font-weight: 600; color: var(--verde-700); background: var(--verde-050, #EAF5EC); border: 1px solid #CDE5D6; border-radius: 999px; cursor: pointer; white-space: nowrap; }
 .via-fam-chip:hover { background: #DDEFE2; }
+/* Viáticos: OT em aberto x já fechada. Aberta ganha faixa azul à esquerda; fechada fica "apagada" (fundo acinzentado, texto mais suave, faixa
+   cinza); divergente (fechada com pendência) leva faixa âmbar; cancelada fica ainda mais discreta. */
+tr.via-aberta td:first-child { box-shadow: inset 4px 0 0 var(--azul-700, #2B5C9A); }
+tr.via-fechada td, tr.via-cancelada td { background: color-mix(in srgb, var(--muted) 9%, var(--card)); color: color-mix(in srgb, var(--ink-2) 78%, var(--card)); }
+tr.via-fechada td:first-child, tr.via-cancelada td:first-child { box-shadow: inset 4px 0 0 color-mix(in srgb, var(--muted) 45%, var(--card)); }
+tr.via-diverg td:first-child { box-shadow: inset 4px 0 0 #D9A62B; }
+tr.via-cancelada td { opacity: .7; }
+tr.via-fechada td .badge, tr.via-cancelada td .badge { filter: saturate(.75); }
 tr.via-fam-filho td { background: #F7FAF8; font-size: 12.5px; border-top: 1px dashed var(--line); }
 tr.via-fam-filho td:first-child { padding-left: 26px; }
 .via-fam-seta-filho { color: var(--muted); }
