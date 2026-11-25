@@ -7283,14 +7283,15 @@ async function viewSolicitacao(id) {
     : esc(s.destino || '—');
   const infoOT = `
     <div class="card" style="margin-bottom:14px; padding:14px 16px; background:var(--verde-050,#EAF5EC); border-color:#CDE5D6">
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px 16px; font-size:13px">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px 20px; font-size:13px">
         <div><small style="color:var(--muted)">Ordem de Trabalho</small><br><strong>${s.ordem_trabalho ? 'OT ' + esc(s.ordem_trabalho) : '—'}</strong></div>
-        <div><small style="color:var(--muted)">Destinos</small><br><strong>${destinosTxt}</strong></div>
         <div><small style="color:var(--muted)">Local / Tier</small><br><strong>${LOCAL_LABEL[s.categoria_local] || '—'} · Tier ${esc(s.tier || '—')}</strong></div>
         <div><small style="color:var(--muted)">Período${familia.length > 1 ? ' (todas as OTs)' : ''}</small><br><strong>${brDate(totaisFam.inicio || s.data_inicio)} – ${brDate(totaisFam.fim || s.data_fim)}</strong></div>
         <div><small style="color:var(--muted)">Flash expira em</small><br><strong>${s.data_expiracao_flash ? brDate(s.data_expiracao_flash) : '—'}</strong></div>
         <div><small style="color:var(--muted)">Status</small><br><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></div>
+        <div style="grid-column:1 / -1"><small style="color:var(--muted)">Destinos</small><br><strong>${destinosTxt}</strong></div>
       </div>
+      ${s.status === 'cancelada' && s.cancelamento_motivo ? `<div class="alert-item warn" style="margin-top:12px"><strong>Motivo do cancelamento</strong>${s.cancelada_em ? ` <small style="color:var(--muted)">· em ${brDate(String(s.cancelada_em).slice(0, 10))}</small>` : ''}<br>${esc(s.cancelamento_motivo)}</div>` : ''}
       ${s.motivo || s.objetivo ? `<p style="margin:10px 0 0; font-size:13px; color:var(--ink-2)">${s.motivo ? `<strong>${esc(s.motivo)}</strong>` : ''}${s.motivo && s.objetivo ? ' — ' : ''}${s.objetivo ? esc(s.objetivo) : ''}</p>` : ''}
     </div>`;
   // Memória de cálculo da solicitação: mostra de onde vem o valor pedido. Ficava
@@ -7405,7 +7406,7 @@ async function viewSolicitacao(id) {
   }
 
   openModal(`${somenteLeitura ? 'Detalhes da viagem' : finalizada ? 'Comprovação' : 'Comprovar viagem'} — ${esc(s.colaborador_name)} (${brDate(totaisFam.inicio || s.data_inicio)}–${brDate(totaisFam.fim || s.data_fim)})${familia.length > 1 ? ` · ${familia.length} OTs` : ''}`,
-    body, botoes, { wide: true });
+    body, botoes, { wide: true, xwide: true });
 
   document.querySelectorAll('[data-conf]').forEach(b => b.onclick = async () => {
     const cobrar = b.dataset.conf === 'cobrar';
