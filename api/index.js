@@ -7085,12 +7085,19 @@ app.post('/api/viaticos/solicitacoes/:id/cancelar', requireAuth, h(async (req, r
   if (!(s.usuario_id === req.user.id || req.user.role === 'admin' || canEdit(req.user, 'viaticos'))) {
     return res.status(403).json({ error: 'Só o solicitante ou quem edita Viáticos pode cancelar esta OT.' });
   }
-  if (!['em_approvals', 'transferencia_agendada', 'liberado'].includes(s.status)) {
-    return res.status(400).json({ error: s.status === 'cancelada' ? 'Esta OT já está cancelada.' : 'Só dá para cancelar antes da viagem começar. Para esta OT, fale com o administrador.' });
+  const admin = req.user.role === 'admin';
+  // O administrador também cancela com a viagem em curso (ex.: colaborador afastado por atestado); os demais, só antes da saída.
+  const cancelaveis = admin ? ['em_approvals', 'transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'] : ['em_approvals', 'transferencia_agendada', 'liberado'];
+  if (!cancelaveis.includes(s.status)) {
+    return res.status(400).json({ error: s.status === 'cancelada' ? 'Esta OT já está cancelada.' : (admin ? 'Esta OT já foi comprovada ou fechada e não pode mais ser cancelada.' : 'Só dá para cancelar antes da viagem começar. Para esta OT, fale com o administrador.') });
   }
   const iso = v => (v == null ? '' : typeof v === 'string' ? v.slice(0, 10) : new Date(v).toISOString().slice(0, 10));
-  if (s.status !== 'em_approvals' && hojeISO() >= iso(s.data_inicio)) {
+  if (!admin && s.status !== 'em_approvals' && hojeISO() >= iso(s.data_inicio)) {
     return res.status(400).json({ error: 'A viagem já começou: só dá para cancelar antes da data de saída. Fale com o administrador.' });
+  }
+  if (admin && !['em_approvals', 'transferencia_agendada', 'liberado'].includes(s.status)) {
+    const dsp = n((await query('SELECT COUNT(*) AS c FROM erp_viaticos_despesas WHERE solicitacao_id = ANY($1::int[])', [await idsFamilia(s.id)]))[0].c);
+    if (dsp > 0) return res.status(400).json({ error: `Esta OT já tem ${dsp} despesa(s) lançada(s). Resolva a comprovação (exclua as despesas ou feche a OT) antes de cancelar.` });
   }
   const lib = n(s.valor_liberado);
   await query(`UPDATE erp_viaticos_solicitacoes SET status='cancelada', status_manual=true, cancelada_em=now(), cancelada_por=$2, cancelamento_motivo=$3,

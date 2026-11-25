@@ -7095,16 +7095,20 @@ function viaTrocarCarroProprioModal(s, depois, alugRegs, taxa) {
 }
 function viaPodeCancelar(s) {
   if (s.status === 'em_approvals') return true;
+  // administrador: também com a viagem em curso (ex.: colaborador afastado), com justificativa
+  if (typeof USER !== 'undefined' && USER.role === 'admin' && !READONLY && ['transferencia_agendada', 'liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status)) return true;
   return ['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() < String(s.data_inicio).slice(0, 10);
 }
 function viaCancelarModal(s) {
   const lib = Number(s.valor_liberado) || 0;
+  const iniciada = ['em_viagem', 'aguardando_comprovacao'].includes(s.status) || (['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() >= String(s.data_inicio).slice(0, 10));
   openModal(`Cancelar OT ${esc(s.ordem_trabalho || s.id)}`, `
+    ${iniciada ? `<div class="alert-item warn" style="margin-bottom:10px">⚠️ A viagem já começou (saída em ${brDate(s.data_inicio)}). Só o administrador cancela nesta situação — use, por exemplo, quando o colaborador foi afastado e não viajou. Se já houver despesas lançadas, o sistema pede para resolvê-las antes.</div>` : ''}
     <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">Use quando a solicitação foi feita por engano ou a viagem não vai mais acontecer.
       A OT não é apagada: fica no histórico como <strong>Cancelada</strong>, com o motivo.</p>
     ${lib > 0 ? `<div class="alert-item warn" style="margin-bottom:10px">⚠️ Já foram transferidos <strong>${brl(lib)}</strong> para esta OT. Ao cancelar, esse valor vira uma
       <strong>pendência de devolução</strong> e aparece no painel Transferência da próxima OT para ser descontado.</div>` : ''}
-    <div class="field"><label for="cn-motivo">Motivo do cancelamento</label><textarea id="cn-motivo" rows="3" placeholder="Ex.: solicitação duplicada, viagem desnecessária…"></textarea></div>`,
+    <div class="field"><label for="cn-motivo">Motivo do cancelamento</label><textarea id="cn-motivo" rows="3" placeholder="Ex.: solicitação duplicada, colaborador afastado por atestado médico…"></textarea></div>`,
     [{ label: 'Voltar', onClick: closeModal },
      { label: 'Cancelar a OT', cls: 'danger', onClick: async (ev) => {
         const motivo = $('#cn-motivo').value.trim();
