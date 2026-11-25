@@ -7101,24 +7101,38 @@ function viaPodeCancelar(s) {
 }
 function viaCancelarModal(s) {
   const lib = Number(s.valor_liberado) || 0;
+  const perguntaDev = lib > 0 && typeof USER !== 'undefined' && USER.role === 'admin';
   const iniciada = ['em_viagem', 'aguardando_comprovacao'].includes(s.status) || (['transferencia_agendada', 'liberado'].includes(s.status) && todayISO() >= String(s.data_inicio).slice(0, 10));
   openModal(`Cancelar OT ${esc(s.ordem_trabalho || s.id)}`, `
     ${iniciada ? `<div class="alert-item warn" style="margin-bottom:10px">⚠️ A viagem já começou (saída em ${brDate(s.data_inicio)}). Só o administrador cancela nesta situação — use, por exemplo, quando o colaborador foi afastado e não viajou. Se já houver despesas lançadas, o sistema pede para resolvê-las antes.</div>` : ''}
     <p style="font-size:13.5px; color:var(--ink-2); margin:0 0 10px">Use quando a solicitação foi feita por engano ou a viagem não vai mais acontecer.
       A OT não é apagada: fica no histórico como <strong>Cancelada</strong>, com o motivo.</p>
-    ${lib > 0 ? `<div class="alert-item warn" style="margin-bottom:10px">⚠️ Já foram transferidos <strong>${brl(lib)}</strong> para esta OT. Ao cancelar, esse valor vira uma
-      <strong>pendência de devolução</strong> e aparece no painel Transferência da próxima OT para ser descontado.</div>` : ''}
+    ${lib > 0 ? `<div class="alert-item warn" style="margin-bottom:10px">⚠️ Já foram transferidos <strong>${brl(lib)}</strong> para esta OT. Se o valor ainda não voltou, ele vira uma
+      <strong>pendência de devolução</strong> e aparece no painel Transferência da próxima OT para ser descontado.</div>
+      ${perguntaDev ? `<div class="field" style="margin-bottom:10px"><label>O valor transferido já foi devolvido (estorno no Flash)?</label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:4px 0"><input type="radio" name="cn-dev" value="sim" style="width:auto;margin:0"> Sim, já foi devolvido</label>
+        <div id="cn-dev-box" style="display:none;margin:2px 0 6px 26px"><label for="cn-dev-val" style="font-weight:400">Valor devolvido (R$)</label>
+          <input id="cn-dev-val" type="number" step="0.01" min="0" max="${lib}" value="${lib.toFixed(2)}" style="max-width:180px"></div>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:4px 0"><input type="radio" name="cn-dev" value="nao" style="width:auto;margin:0"> Não, ainda não foi devolvido (gera pendência)</label></div>` : ''}` : ''}
     <div class="field"><label for="cn-motivo">Motivo do cancelamento</label><textarea id="cn-motivo" rows="3" placeholder="Ex.: solicitação duplicada, colaborador afastado por atestado médico…"></textarea></div>`,
     [{ label: 'Voltar', onClick: closeModal },
      { label: 'Cancelar a OT', cls: 'danger', onClick: async (ev) => {
         const motivo = $('#cn-motivo').value.trim();
         if (!motivo) return modalError('Informe o motivo do cancelamento.');
+        let valor_devolvido;
+        if (perguntaDev) {
+          const op = document.querySelector('input[name="cn-dev"]:checked');
+          if (!op) return modalError('Informe se o valor transferido já foi devolvido.');
+          valor_devolvido = op.value === 'sim' ? Number($('#cn-dev-val').value) : 0;
+          if (op.value === 'sim' && (!(valor_devolvido >= 0) || valor_devolvido > lib + 0.005)) return modalError('Informe o valor devolvido (entre 0 e ' + brl(lib) + ').');
+        }
         const btn = ev && ev.target; if (btn) { btn.disabled = true; btn.textContent = 'Cancelando…'; }
         try {
-          await api(`/api/viaticos/solicitacoes/${s.id}/cancelar`, { method: 'POST', body: { motivo }, autosservico: true });
+          await api(`/api/viaticos/solicitacoes/${s.id}/cancelar`, { method: 'POST', body: { motivo, valor_devolvido }, autosservico: true });
           closeModal(); toast('OT cancelada.'); renderViaticos();
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Cancelar a OT'; } }
      } }]);
+  document.querySelectorAll('input[name="cn-dev"]').forEach(r => r.onchange = () => { const b = $('#cn-dev-box'); if (b) b.style.display = r.value === 'sim' && r.checked ? 'block' : 'none'; });
 }
 
 // ---- Família de OTs (origem + complementares): comprovação única ----

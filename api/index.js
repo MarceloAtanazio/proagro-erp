@@ -7100,9 +7100,16 @@ app.post('/api/viaticos/solicitacoes/:id/cancelar', requireAuth, h(async (req, r
     if (dsp > 0) return res.status(400).json({ error: `Esta OT já tem ${dsp} despesa(s) lançada(s). Resolva a comprovação (exclua as despesas ou feche a OT) antes de cancelar.` });
   }
   const lib = n(s.valor_liberado);
+  // O valor transferido pode já ter sido devolvido (estorno feito à mão no Flash): nesse caso informa-se quanto, e só o resto vira pendência.
+  let dev = 0;
+  if (req.body && req.body.valor_devolvido !== undefined && req.body.valor_devolvido !== null && req.body.valor_devolvido !== '') {
+    dev = Math.round(Number(req.body.valor_devolvido) * 100) / 100;
+    if (!Number.isFinite(dev) || dev < 0 || dev > lib + 0.005) return res.status(400).json({ error: `O valor devolvido deve ficar entre R$ 0,00 e o valor transferido (${fmtBRL(lib)}).` });
+  }
+  const pend = Math.max(0, Math.round((lib - dev) * 100) / 100);
   await query(`UPDATE erp_viaticos_solicitacoes SET status='cancelada', status_manual=true, cancelada_em=now(), cancelada_por=$2, cancelamento_motivo=$3,
-      valor_devolvido=0, valor_pendencia=$4, pendencia_resolvida=$5 WHERE id=$1`, [s.id, req.user.id, motivo, lib, lib <= 0]);
-  res.json({ ok: true, pendencia: lib });
+      valor_devolvido=$6, valor_pendencia=$4, pendencia_resolvida=$5 WHERE id=$1`, [s.id, req.user.id, motivo, pend, pend <= 0.005, dev]);
+  res.json({ ok: true, pendencia: pend, devolvido: dev });
 }));
 
 // Soma dos excessos da TUD que foram REPROVADOS e tiveram o valor guardado na reprovação. Reprovações antigas, de
