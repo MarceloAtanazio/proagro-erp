@@ -6894,7 +6894,8 @@ app.get('/api/viaticos/solicitacoes', requireAuth, requireViewAny(['viaticos']),
   const escopo = await viaticosEscopo(req.user);
   const rows = await query(`
     ${FAMILIA_CTE}
-    SELECT s.*, (s.comprovacao_fechada_em AT TIME ZONE 'America/Sao_Paulo')::date::text AS comprov_fechada_dia, f.raiz_id AS familia_raiz_id, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
+    SELECT s.*, TO_CHAR(COALESCE(s.data_expiracao_flash, s.data_fim + 1), 'YYYY-MM-DD') AS data_expiracao_efetiva,
+      (s.comprovacao_fechada_em AT TIME ZONE 'America/Sao_Paulo')::date::text AS comprov_fechada_dia, f.raiz_id AS familia_raiz_id, c.name AS colaborador_name, c.cargo AS colaborador_cargo,
       c.cidade_base_uf AS colaborador_cidade_base_uf, c.cidade_base_municipio AS colaborador_cidade_base_municipio,
       c.veiculo_consumo_kml AS colaborador_veiculo_consumo_kml,
       -- Placa e modelo já cadastrados: o formulário de quilometragem chega
@@ -8084,7 +8085,7 @@ app.get('/api/viaticos/dashboard', requireAuth, requireViewAny(['viaticos']), h(
     saldoCarteira = transferido - alocado;
   }
 
-  const aguardando = await query(`SELECT id, destino, data_expiracao_flash, valor_liberado, solicitacao_pai_id FROM erp_viaticos_solicitacoes
+  const aguardando = await query(`SELECT id, destino, COALESCE(data_expiracao_flash, data_fim + 1) AS data_expiracao_flash, valor_liberado, solicitacao_pai_id FROM erp_viaticos_solicitacoes
     WHERE status IN ('liberado','em_viagem','aguardando_comprovacao')${filtroColab}`, paramsColab);
   const vencidas = aguardando.filter(r => r.data_expiracao_flash && r.data_expiracao_flash < today);
   const divergentes = await query(`SELECT COUNT(*)::int AS n, COALESCE(SUM(valor_pendencia - COALESCE((SELECT SUM(a.valor) FROM erp_viaticos_pendencia_abatimentos a WHERE a.solicitacao_origem_id = erp_viaticos_solicitacoes.id AND a.decisao='descontada'),0)),0) AS v FROM erp_viaticos_solicitacoes WHERE status='divergente' AND solicitacao_pai_id IS NULL AND pendencia_resolvida=false${filtroColab}`, paramsColab);

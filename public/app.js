@@ -6589,7 +6589,7 @@ async function renderViaticos() {
     };
     // o: { fam } raiz com complementares (totais da família + etiqueta) · { filho, raiz } sub-linha · { soltaDe } complementar sem a raiz no filtro
     const linhaHtml = (s, o = {}) => {
-      const vencida = ['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) && s.data_expiracao_flash && s.data_expiracao_flash < todayISO();
+      const vencida = ['liberado', 'em_viagem', 'aguardando_comprovacao'].includes(s.status) && (s.data_expiracao_efetiva || s.data_expiracao_flash) && (s.data_expiracao_efetiva || s.data_expiracao_flash) < todayISO();
       const filhos = o.fam ? o.fam.filter(x => x.id !== s.id) : [];
       const tot = o.fam ? viaFamiliaTotais(o.fam) : null;
       const aberta = VIA_FAM_ABERTAS.has(s.id);
@@ -6841,7 +6841,8 @@ async function formSolicitacao(existing) {
       ${fld('vs-inicio', 'Início da viagem', 'date', existing ? existing.data_inicio : todayISO())}
       ${fld('vs-fim', 'Fim da viagem', 'date', existing ? existing.data_fim : todayISO())}
     </div>
-    ${fld('vs-expira', 'Dinheiro disponível no Flash até', 'date', existing ? (existing.data_expiracao_flash || '') : '')}
+    ${fld('vs-expira', 'Dinheiro disponível no Flash até', 'date', existing ? (existing.data_expiracao_efetiva || existing.data_expiracao_flash || '') : viaMaisUmDia(todayISO()))}
+    <p class="hint" style="margin:-6px 0 10px">Preenchido sozinho com o dia seguinte ao fim da viagem (a validade que se coloca no repasse do Flash). Altere só se for diferente.</p>
     <div class="field-row">
       ${fld('vs-solicitado', 'Valor solicitado (referência)', 'number', existing ? (viaTotalSolicitado(existing) || '') : '', 'step="0.01" min="0"')}
       ${fld('vs-liberado', 'Valor liberado no Flash', 'number', existing ? existing.valor_liberado : '', 'step="0.01" min="0"')}
@@ -6855,7 +6856,7 @@ async function formSolicitacao(existing) {
           colaborador_id: Number($('#vs-colab').value), tier: $('#vs-tier').value, categoria_local: $('#vs-local').value,
           ordem_trabalho: $('#vs-ordem').value, destinos: destinosList, motivo: $('#vs-motivo').value,
           data_inicio: $('#vs-inicio').value, data_fim: $('#vs-fim').value,
-          data_expiracao_flash: $('#vs-expira').value || null, valor_solicitado: $('#vs-solicitado').value || null,
+          data_expiracao_flash: ($('#vs-expira').value && $('#vs-expira').value !== viaMaisUmDia($('#vs-fim').value)) ? $('#vs-expira').value : null, valor_solicitado: $('#vs-solicitado').value || null,
           valor_liberado: Number($('#vs-liberado').value) || 0,
           notes: $('#vs-notes').value
         };
@@ -6880,6 +6881,12 @@ async function formSolicitacao(existing) {
           closeModal(); toast(isEdit ? 'Solicitação atualizada.' : 'Solicitação criada.'); renderViaticos();
         } catch (e) { modalError(e.message); }
      }}]);
+  // "Flash expira em" acompanha a data final (fim + 1) enquanto não for editado à mão.
+  { const fim = $('#vs-fim'), exp = $('#vs-expira');
+    let manual = !!(existing && existing.data_expiracao_flash && String(existing.data_expiracao_flash).slice(0, 10) !== viaMaisUmDia(existing.data_fim));
+    exp.addEventListener('input', () => { manual = exp.value !== viaMaisUmDia(fim.value); });
+    fim.addEventListener('change', () => { if (!manual && fim.value) exp.value = viaMaisUmDia(fim.value); });
+    if (!existing) exp.value = viaMaisUmDia(fim.value); }
 
   // Estado -> Município em cascata, e lista acumulada de destinos já adicionados.
   const popularMunicipios = () => {
@@ -7093,6 +7100,12 @@ function viaTrocarCarroProprioModal(s, depois, alugRegs, taxa) {
         } catch (e) { modalError(e.message); if (btn) { btn.disabled = false; btn.textContent = 'Trocar para carro próprio'; } }
      } }]);
 }
+// Dia seguinte (YYYY-MM-DD). O repasse no Flash vale até o dia final da viagem + 1: é a data em que o saldo volta sozinho à carteira.
+function viaMaisUmDia(iso) {
+  const p = String(iso || '').slice(0, 10).split('-').map(Number);
+  if (p.length !== 3 || p.some(isNaN)) return '';
+  return new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1)).toISOString().slice(0, 10);
+}
 function viaPodeCancelar(s) {
   if (s.status === 'em_approvals') return true;
   // administrador: também com a viagem em curso (ex.: colaborador afastado), com justificativa
@@ -7287,7 +7300,7 @@ async function viewSolicitacao(id) {
         <div><small style="color:var(--muted)">Ordem de Trabalho</small><br><strong>${s.ordem_trabalho ? 'OT ' + esc(s.ordem_trabalho) : '—'}</strong></div>
         <div><small style="color:var(--muted)">Local / Tier</small><br><strong>${LOCAL_LABEL[s.categoria_local] || '—'} · Tier ${esc(s.tier || '—')}</strong></div>
         <div><small style="color:var(--muted)">Período${familia.length > 1 ? ' (todas as OTs)' : ''}</small><br><strong>${brDate(totaisFam.inicio || s.data_inicio)} – ${brDate(totaisFam.fim || s.data_fim)}</strong></div>
-        <div><small style="color:var(--muted)">Flash expira em</small><br><strong>${s.data_expiracao_flash ? brDate(s.data_expiracao_flash) : '—'}</strong></div>
+        <div><small style="color:var(--muted)">Flash expira em</small><br><strong>${(() => { const d = familia.filter(m => m.status !== 'cancelada').map(m => viaDia(m.data_expiracao_efetiva || m.data_expiracao_flash)).filter(Boolean).sort().pop() || viaDia(s.data_expiracao_efetiva || s.data_expiracao_flash); return d ? brDate(d) : '—'; })()}</strong></div>
         <div><small style="color:var(--muted)">Status</small><br><span class="badge ${VIA_STATUS_BADGE[s.status]}">${VIA_STATUS_LABEL[s.status]}</span></div>
         <div style="grid-column:1 / -1"><small style="color:var(--muted)">Destinos</small><br><strong>${destinosTxt}</strong></div>
       </div>
