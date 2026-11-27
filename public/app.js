@@ -8113,24 +8113,14 @@ function viaWizCustoExtra() {
         <div id="ce-desc-wrap" style="display:${ce.tipo === 'outro' ? 'block' : 'none'}">${fld('ce-desc', 'Qual custo? *', 'text', ce.descricao, 'maxlength="120" placeholder="Ex.: troca de nome no bilhete"')}</div>
         ${fld('ce-valor', 'Valor (R$) *', 'number', ce.valor, 'step="0.01" min="0.01" inputmode="decimal"')}
         <div class="field"><label for="ce-just">Por que esse custo é necessário? *</label><textarea id="ce-just" rows="3" maxlength="400" placeholder="Ex.: a passagem foi comprada com a data errada e precisa ser remarcada.">${esc(ce.justificativa)}</textarea></div>
-        <div class="alert-item warn" style="margin-top:6px">ℹ️ O pedido segue para aprovação como qualquer OT. Use <strong>Gerar PDF</strong> para anexar o pedido no Approvals. Pendências de OTs anteriores, se houver, são conferidas na transferência.</div>
+        <div class="alert-item warn" style="margin-top:6px">ℹ️ O pedido segue para aprovação como qualquer OT. Ao enviar, você poderá imprimir o PDF para anexar o pedido no Approvals. Pendências de OTs anteriores, se houver, são conferidas na transferência.</div>
       </div>
       <div class="wiz-actions"><button class="btn" id="ce-voltar">Voltar</button>
-        <div style="display:flex; gap:10px"><button class="btn" id="ce-pdf">Gerar PDF</button><button class="btn primary" id="ce-enviar">Enviar solicitação</button></div></div>
+        <div style="display:flex; gap:10px"><button class="btn primary" id="ce-enviar">Enviar solicitação</button></div></div>
     </div>`;
   const ler = () => { ce.tipo = $('#ce-tipo').value; ce.descricao = $('#ce-desc').value; ce.valor = $('#ce-valor').value; ce.justificativa = $('#ce-just').value; };
   $('#ce-tipo').onchange = () => { ler(); $('#ce-desc-wrap').style.display = ce.tipo === 'outro' ? 'block' : 'none'; };
   $('#ce-voltar').onclick = () => { ler(); k.tipo = null; viaWizComplTipo(); };
-  $('#ce-pdf').onclick = async (ev) => {
-    ler();
-    const erro = viaCustoExtraErro(ce);
-    if (erro) { toast(erro.msg); const el = $('#' + erro.foco); if (el) el.focus(); return; }
-    const btn = ev.currentTarget, txt = btn.textContent; btn.disabled = true; btn.textContent = 'Gerando…';
-    try {
-      await viaGerarPdfCustoExtra({ colab: w.colab, ot: null, otOrigem: k.raiz, pai: k.pai, tipo: ce.tipo, descricao: ce.tipo === 'outro' ? ce.descricao : '',
-        valor: Number(String(ce.valor).replace(',', '.')), justificativa: ce.justificativa, destinos: k.destinos_pai });
-    } finally { btn.disabled = false; btn.textContent = txt; }
-  };
   $('#ce-enviar').onclick = async (ev) => {
     ler();
     const erro = viaCustoExtraErro(ce);
@@ -8146,6 +8136,8 @@ function viaWizCustoExtra() {
       } });
       toast('Solicitação enviada! Ela segue para aprovação.');
       renderViaticos();
+      viaPerguntarImprimirPdf(() => viaGerarPdfCustoExtra({ colab: w.colab, ot: null, otOrigem: k.raiz, pai: k.pai, tipo: ce.tipo, descricao: ce.tipo === 'outro' ? ce.descricao : '',
+        valor: Number(String(ce.valor).replace(',', '.')), justificativa: ce.justificativa, destinos: k.destinos_pai }));
     } catch (e) { btn.disabled = false; toast(e.message); }
   };
 }
@@ -9817,7 +9809,6 @@ function viaWizStep5() {
       </div>
       <div class="wiz-actions"><button class="btn" id="wiz-back">Voltar</button>
         <div style="display:flex; gap:10px">
-          <button class="btn" id="wiz-pdf">Gerar PDF</button>
           <button class="btn primary" id="wiz-enviar">Enviar solicitação</button>
         </div>
       </div>
@@ -9826,11 +9817,6 @@ function viaWizStep5() {
   VIA_MAP = null; // o mapa do resumo é uma instância nova a cada entrada na etapa
   viaRenderMapaResumo(w);
   $('#wiz-back').onclick = () => viaWizStep4();
-  $('#wiz-pdf').onclick = async (ev) => {
-    const btn = ev.currentTarget, txt = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Gerando mapa…';
-    try { await viaGerarPDF(w, r); } finally { btn.disabled = false; btn.textContent = txt; }
-  };
   $('#wiz-enviar').onclick = async () => {
     // Revalida tudo antes de enviar: dá para chegar aqui, voltar, apagar um
     // campo e avançar de novo pelos botões das etapas.
@@ -9852,8 +9838,23 @@ function viaWizStep5() {
       if (typeof viaDirecionadorPosEnvio === 'function') await viaDirecionadorPosEnvio(w, respSol && respSol.id);
       toast('Solicitação enviada! Ela segue para aprovação.');
       renderViaticos();
+      viaPerguntarImprimirPdf(() => viaGerarPDF(w, r));
     } catch (e) { toast(e.message); }
   };
+}
+
+// Depois de enviada a solicitação: pergunta se a pessoa quer imprimir o PDF.
+// O envio já está feito; "Agora não" não desfaz nada (o PDF pode ser baixado depois, no resumo da OT).
+function viaPerguntarImprimirPdf(gerar) {
+  openModal('Solicitação enviada ✓',
+    '<p style="margin:0 0 8px">Sua solicitação foi enviada e segue para aprovação.</p><p style="margin:0">Deseja imprimir o PDF agora, para anexar no Approvals?</p>',
+    [
+      { label: 'Agora não', onClick: closeModal },
+      { label: '🖨 Imprimir PDF', cls: 'primary', onClick: async (ev) => {
+        const btn = ev.currentTarget; btn.disabled = true; btn.textContent = 'Gerando PDF…';
+        try { await gerar(); closeModal(); } catch (e) { btn.disabled = false; btn.textContent = '🖨 Imprimir PDF'; toast(e.message || 'Não foi possível gerar o PDF.'); }
+      } }
+    ]);
 }
 
 // "Tem PDF" = solicitação criada pelo assistente de autosserviço (novo
